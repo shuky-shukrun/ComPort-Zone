@@ -1,0 +1,50 @@
+# Serial Terminal
+
+Windows-first serial terminal for device bring-up, debugging, and repetitive command workflows.
+
+## Included in this first implementation
+- COM port selection and refresh
+- Baud rate, data bits, parity, stop bits, flow control, DTR, RTS, and line ending configuration
+- Connect, disconnect, and auto-reconnect with exponential backoff
+- Command history on arrow keys
+- Autocomplete from previous commands
+- Theme switching with separate colors for TX, RX, status, and errors
+- Command file and batch script execution
+- Session logging to file
+- Optional timestamps in the terminal view
+- Named connection profiles saved locally
+
+## Install
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e .
+```
+
+## Run
+```powershell
+python -m serial_terminal
+```
+
+## Batch Script Format
+Plain text files can be used directly. Every non-empty line is sent as a command with the active line-ending setting.
+
+The parser also supports a small batch DSL:
+
+```text
+# Comment
+SEND version
+WAIT 1000
+HEX 55 AA 01 0D
+reset
+```
+
+- `SEND <text>` sends text with the active line ending.
+- `WAIT <milliseconds>` pauses before the next step.
+- `HEX <bytes>` sends raw bytes without appending a line ending.
+- Bare lines are treated like `SEND`.
+
+## Notes
+- Settings and profiles are stored under `%LOCALAPPDATA%\SerialTerminal\settings.json`.
+- Logging writes a readable text transcript with timestamps and event types.
+- The UI depends on `PySide6`. If it is missing, the launcher prints an install hint.
