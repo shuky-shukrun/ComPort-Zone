@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QToolButton,
@@ -1195,10 +1196,9 @@ class MainWindow(QMainWindow):
         self.tabs = TerminalTabWidget(self)
         self.tabs.setDocumentMode(True)
         self.tabs.setMovable(True)
-        self.tabs.setTabsClosable(True)
+        self.tabs.setTabsClosable(False)
         self.tabs.setUsesScrollButtons(True)
         self.tabs.newTabRequested.connect(lambda: self.add_session(prompt_settings=True))
-        self.tabs.tabCloseRequested.connect(self.close_session)
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
@@ -1420,10 +1420,24 @@ class MainWindow(QMainWindow):
             standard_icon(QStyle.StandardPixmap.SP_ComputerIcon),
             session.tab_title,
         )
+        self.attach_tab_close_button(index, session)
         self.tabs.setCurrentIndex(index)
         self.update_tab_titles()
         if prompt_settings:
             self.prompt_session_settings(session)
+
+    def attach_tab_close_button(self, index: int, session: TerminalSessionWidget) -> None:
+        close_button = QToolButton(self.tabs.tabBar())
+        close_button.setObjectName("tabCloseButton")
+        close_button.setAutoRaise(True)
+        close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_button.setFixedSize(22, 22)
+        close_button.setToolTip(f"Close {session.title}")
+        set_button_icon(close_button, QStyle.StandardPixmap.SP_DialogCloseButton, 13)
+        close_button.clicked.connect(
+            lambda _checked=False, target=session: self.close_session(self.tabs.indexOf(target))
+        )
+        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
 
     def prompt_current_session_settings(self) -> None:
         session = self.current_session()
@@ -1944,7 +1958,7 @@ class MainWindow(QMainWindow):
         QTabBar::tab {{
             background: {theme.surface_alt};
             color: {theme.text};
-            padding: 8px 16px;
+            padding: 8px 8px 8px 16px;
             min-width: 130px;
             border: 1px solid transparent;
             border-top-left-radius: 9px;
@@ -1970,6 +1984,22 @@ class MainWindow(QMainWindow):
         }}
         QToolButton#newTabButton:hover {{
             background: {theme.surface};
+            border-color: {theme.accent};
+        }}
+        QToolButton#tabCloseButton {{
+            background: transparent;
+            color: {theme.muted};
+            border: 1px solid transparent;
+            border-radius: 7px;
+            padding: 0;
+            margin-right: 2px;
+        }}
+        QToolButton#tabCloseButton:hover {{
+            background: {theme.surface};
+            border-color: {theme.border};
+        }}
+        QToolButton#tabCloseButton:pressed {{
+            background: {theme.accent_soft};
             border-color: {theme.accent};
         }}
         QFrame#drawer {{
