@@ -7,6 +7,7 @@ from queue import Empty
 from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QDialog,
@@ -396,6 +397,7 @@ class TerminalSessionWidget(QWidget):
         self.pending_events: list[SerialEvent] = []
         self._connected = False
         self._status_text = "Disconnected"
+        self._quick_list_refreshing = False
 
         self._build_ui()
         self.refresh_ports()
@@ -599,7 +601,23 @@ class TerminalSessionWidget(QWidget):
         layout.setSpacing(8)
         title = self._drawer_title("Quick Send", page)
         self.quick_list = QListWidget(page)
+        self.quick_list.setObjectName("quickCommandList")
+        self.quick_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.quick_list.setDragEnabled(True)
+        self.quick_list.setAcceptDrops(True)
+        self.quick_list.setDropIndicatorShown(True)
+        self.quick_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.quick_list.setDragDropOverwriteMode(False)
+        self.quick_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.quick_list.setSpacing(1)
+        self.quick_list.setUniformItemSizes(True)
+        self.quick_list.setToolTip("Right-click a saved command for actions. Press and drag to reorder.")
+        self.quick_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.quick_list.itemDoubleClicked.connect(lambda _: self.send_selected_quick_command())
+        self.quick_list.customContextMenuRequested.connect(self.show_quick_command_context_menu)
+        self.quick_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
+        self.quick_list.model().rowsInserted.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
+        self.quick_list.model().rowsRemoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
         send = self._drawer_action("Send Selected", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, page, role="drawerPrimary")
         add = self._drawer_action("Add", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, page)
         edit = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_command(self.selected_quick_command_id()), page)
@@ -723,17 +741,129 @@ class TerminalSessionWidget(QWidget):
         item = self.quick_list.currentItem()
         return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
 
+    def quick_command_row(self, command_id: str) -> int:
+        for row in range(self.quick_list.count()):
+            item = self.quick_list.item(row)
+            if str(item.data(Qt.ItemDataRole.UserRole)) == command_id:
+                return row
+        return -1
+
+    def quick_command_ids_in_list_order(self) -> list[str]:
+        return [
+            str(self.quick_list.item(row).data(Qt.ItemDataRole.UserRole))
+            for row in range(self.quick_list.count())
+        ]
+
+    def persist_quick_command_order(self) -> None:
+        if self._quick_list_refreshing:
+            return
+        self.host.reorder_quick_commands(
+            self.quick_command_ids_in_list_order(),
+            selected_id=self.selected_quick_command_id(),
+        )
+
+    def show_quick_command_context_menu(self, position) -> None:
+        item = self.quick_list.itemAt(position)
+        command_id = ""
+        if item:
+            self.quick_list.setCurrentItem(item)
+            command_id = str(item.data(Qt.ItemDataRole.UserRole))
+        menu = self.build_quick_command_context_menu(command_id)
+        menu.exec(self.quick_list.mapToGlobal(position))
+
+    def build_quick_command_context_menu(self, command_id: str) -> QMenu:
+        menu = QMenu(self)
+        command = self.host.quick_command_by_id(command_id)
+        if not command:
+            self.host._add_context_action(
+                menu,
+                "Add New Command",
+                self.host.add_quick_command,
+                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+            )
+            return menu
+
+        row = self.quick_command_row(command_id)
+        menu.setTitle(command.display_label())
+        self.host._add_context_action(
+            menu,
+            "Send",
+            self.send_selected_quick_command,
+            icon=QStyle.StandardPixmap.SP_ArrowForward,
+        )
+        menu.addSeparator()
+        self.host._add_context_action(
+            menu,
+            "Add New Command",
+            self.host.add_quick_command,
+            icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+        )
+        self.host._add_context_action(
+            menu,
+            "Edit",
+            lambda command_id=command_id: self.host.edit_quick_command(command_id),
+            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        )
+        self.host._add_context_action(
+            menu,
+            "Duplicate",
+            lambda command_id=command_id: self.host.duplicate_quick_command(command_id),
+            icon=QStyle.StandardPixmap.SP_FileIcon,
+        )
+        self.host._add_context_action(
+            menu,
+            "Delete",
+            lambda command_id=command_id: self.host.delete_quick_command(command_id),
+            icon=QStyle.StandardPixmap.SP_TrashIcon,
+        )
+        menu.addSeparator()
+        self.host._add_context_action(
+            menu,
+            "Copy Command Text",
+            lambda command_id=command_id: self.host.copy_quick_command_text(command_id),
+            icon=QStyle.StandardPixmap.SP_FileIcon,
+        )
+        menu.addSeparator()
+        self.host._add_context_action(
+            menu,
+            "Move Up",
+            lambda command_id=command_id: self.host.move_quick_command(command_id, -1),
+            icon=QStyle.StandardPixmap.SP_ArrowUp,
+            enabled=row > 0,
+        )
+        self.host._add_context_action(
+            menu,
+            "Move Down",
+            lambda command_id=command_id: self.host.move_quick_command(command_id, 1),
+            icon=QStyle.StandardPixmap.SP_ArrowDown,
+            enabled=0 <= row < self.quick_list.count() - 1,
+        )
+        return menu
+
     def selected_profile_name(self) -> str:
         item = self.profile_list.currentItem()
         return str(item.data(Qt.ItemDataRole.UserRole)) if item else self.profile_name
 
-    def refresh_quick_commands(self) -> None:
+    def refresh_quick_commands(self, selected_id: str | None = None) -> None:
+        selected_id = selected_id or self.selected_quick_command_id()
+        self._quick_list_refreshing = True
         self.quick_list.clear()
+        selected_row = -1
         for command in self.host.settings.quick_commands:
-            item = QListWidgetItem(f"{command.group}  |  {command.display_label()}")
+            label = short_label(command.display_label(), 30)
+            group = command.group.strip()
+            item_text = label if not group or group.casefold() == "general" else f"{short_label(group, 10)}: {label}"
+            item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, command.id)
-            item.setToolTip(command.command)
+            item.setToolTip(f"{command.group} | {command.command}")
+            item.setSizeHint(QSize(0, 24))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
             self.quick_list.addItem(item)
+            if command.id == selected_id:
+                selected_row = self.quick_list.count() - 1
+        if selected_row >= 0:
+            self.quick_list.setCurrentRow(selected_row)
+        self._quick_list_refreshing = False
         self._update_completion_model()
 
     def refresh_profiles(self) -> None:
@@ -1658,12 +1788,41 @@ class MainWindow(QMainWindow):
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
+    def duplicate_quick_command(self, command_id: str) -> None:
+        command = self.quick_command_by_id(command_id)
+        if not command:
+            return
+        now = utc_now_iso()
+        duplicate = QuickCommand(
+            label=f"{command.display_label()} Copy",
+            command=command.command,
+            send_mode=command.send_mode,
+            group=command.group,
+            line_ending_override=command.line_ending_override,
+            created_at=now,
+            updated_at=now,
+        )
+        source_index = next(
+            (index for index, existing in enumerate(self.settings.quick_commands) if existing.id == command_id),
+            len(self.settings.quick_commands) - 1,
+        )
+        self.settings.quick_commands.insert(source_index + 1, duplicate)
+        self.refresh_quick_commands_everywhere(duplicate.id)
+        self.save_settings()
+
     def delete_quick_command(self, command_id: str) -> None:
         if not command_id:
             return
         self.settings.quick_commands = [command for command in self.settings.quick_commands if command.id != command_id]
         self.refresh_quick_commands_everywhere()
         self.save_settings()
+
+    def copy_quick_command_text(self, command_id: str) -> None:
+        command = self.quick_command_by_id(command_id)
+        if not command:
+            return
+        QApplication.clipboard().setText(command.command)
+        self.set_status(f"Copied quick command: {short_label(command.display_label(), 32)}")
 
     def move_quick_command(self, command_id: str, direction: int) -> None:
         commands = self.settings.quick_commands
@@ -1672,12 +1831,31 @@ class MainWindow(QMainWindow):
         if index < 0 or target < 0 or target >= len(commands):
             return
         commands[index], commands[target] = commands[target], commands[index]
-        self.refresh_quick_commands_everywhere()
+        self.refresh_quick_commands_everywhere(command_id)
         self.save_settings()
 
-    def refresh_quick_commands_everywhere(self) -> None:
+    def reorder_quick_commands(self, command_ids: list[str], *, selected_id: str = "") -> None:
+        existing_ids = [command.id for command in self.settings.quick_commands]
+        if command_ids == existing_ids:
+            return
+        commands_by_id = {command.id: command for command in self.settings.quick_commands}
+        seen: set[str] = set()
+        reordered: list[QuickCommand] = []
+        for command_id in command_ids:
+            command = commands_by_id.get(command_id)
+            if command and command_id not in seen:
+                reordered.append(command)
+                seen.add(command_id)
+        reordered.extend(command for command in self.settings.quick_commands if command.id not in seen)
+        if [command.id for command in reordered] == existing_ids:
+            return
+        self.settings.quick_commands = reordered
+        self.refresh_quick_commands_everywhere(selected_id)
+        self.save_settings()
+
+    def refresh_quick_commands_everywhere(self, selected_id: str | None = None) -> None:
         for session in self.iter_sessions():
-            session.refresh_quick_commands()
+            session.refresh_quick_commands(selected_id)
 
     def record_command(self, command: str) -> None:
         self.history_catalog.add(command)
@@ -1864,6 +2042,14 @@ class MainWindow(QMainWindow):
         QListWidget::item:selected {{
             background: {theme.accent_soft};
             color: {theme.text};
+        }}
+        QListWidget#quickCommandList {{
+            padding: 4px;
+        }}
+        QListWidget#quickCommandList::item {{
+            border-radius: 5px;
+            padding: 3px 6px;
+            margin: 1px 0;
         }}
         QComboBox {{
             padding-right: 28px;
