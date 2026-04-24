@@ -649,7 +649,7 @@ class TerminalSessionWidget(QWidget):
         log = self._drawer_action("Start / Stop Log", QStyle.StandardPixmap.SP_DialogSaveButton, self.toggle_logging, page)
         clear = self._drawer_action("Clear Terminal", QStyle.StandardPixmap.SP_TrashIcon, self.clear_terminal, page, role="drawerDanger")
         pause = self._drawer_action("Pause / Resume Output", QStyle.StandardPixmap.SP_MediaPause, self.toggle_pause, page)
-        save = self._drawer_action("Save Current Input", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_current_input_as_quick_command, page)
+        save = self._drawer_action("Save Input to Quick Send", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_current_input_as_quick_command, page)
         layout.addWidget(title)
         layout.addWidget(self._drawer_section("Session", page))
         layout.addWidget(connect)
