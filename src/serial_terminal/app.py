@@ -419,7 +419,8 @@ class TerminalSessionWidget(QWidget):
         command_layout.setContentsMargins(8, 6, 8, 6)
         command_layout.setSpacing(6)
 
-        self.status_label = QLabel("Disconnected", self.command_bar)
+        self.status_label = QLabel("Disconnected", self)
+        self.status_label.hide()
         self.mode_combo = ChevronComboBox(self.command_bar)
         self.mode_combo.addItems(SEND_MODES)
         self.mode_combo.setFixedWidth(118)
@@ -450,7 +451,6 @@ class TerminalSessionWidget(QWidget):
         font_up.setToolTip("Increase terminal font")
         font_up.clicked.connect(lambda: self.host.change_font_size(1))
 
-        command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.command_input, 1)
         command_layout.addWidget(send_button)
