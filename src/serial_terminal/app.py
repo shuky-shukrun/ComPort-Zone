@@ -564,38 +564,54 @@ class TerminalSessionWidget(QWidget):
         self.splitter.setStretchFactor(1, 1)
         root.addWidget(self.splitter)
 
+    def _drawer_title(self, text: str, parent: QWidget) -> QLabel:
+        title = QLabel(text, parent)
+        title.setObjectName("drawerTitle")
+        return title
+
+    def _drawer_section(self, text: str, parent: QWidget) -> QLabel:
+        section = QLabel(text.upper(), parent)
+        section.setObjectName("drawerSection")
+        return section
+
+    def _drawer_action(
+        self,
+        text: str,
+        icon: QStyle.StandardPixmap,
+        callback,
+        parent: QWidget,
+        *,
+        role: str = "drawerAction",
+    ) -> QPushButton:
+        button = QPushButton(text, parent)
+        button.setObjectName("drawerActionButton")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        set_button_icon(button, icon)
+        set_button_role(button, role)
+        button.clicked.connect(callback)
+        return button
+
     def _build_quick_page(self) -> QWidget:
         page = QWidget(self)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        title = QLabel("Quick Send", page)
-        title.setObjectName("drawerTitle")
+        title = self._drawer_title("Quick Send", page)
         self.quick_list = QListWidget(page)
         self.quick_list.itemDoubleClicked.connect(lambda _: self.send_selected_quick_command())
-        send = QPushButton("Send", page)
-        set_button_icon(send, QStyle.StandardPixmap.SP_ArrowForward)
-        send.clicked.connect(self.send_selected_quick_command)
-        add = QPushButton("Add", page)
-        set_button_icon(add, QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        add.clicked.connect(self.host.add_quick_command)
-        edit = QPushButton("Edit", page)
-        set_button_icon(edit, QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        edit.clicked.connect(lambda: self.host.edit_quick_command(self.selected_quick_command_id()))
-        delete = QPushButton("Delete", page)
-        set_button_icon(delete, QStyle.StandardPixmap.SP_TrashIcon)
-        delete.clicked.connect(lambda: self.host.delete_quick_command(self.selected_quick_command_id()))
-        up = QPushButton("Up", page)
-        set_button_icon(up, QStyle.StandardPixmap.SP_ArrowUp)
-        up.clicked.connect(lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1))
-        down = QPushButton("Down", page)
-        set_button_icon(down, QStyle.StandardPixmap.SP_ArrowDown)
-        down.clicked.connect(lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1))
+        send = self._drawer_action("Send Selected", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, page, role="drawerPrimary")
+        add = self._drawer_action("Add", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, page)
+        edit = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_command(self.selected_quick_command_id()), page)
+        delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_command(self.selected_quick_command_id()), page, role="drawerDanger")
+        up = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), page)
+        down = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1), page)
         layout.addWidget(title)
+        layout.addWidget(self._drawer_section("Saved Commands", page))
         layout.addWidget(self.quick_list, 1)
         for row in ((send, add), (edit, delete), (up, down)):
             line = QHBoxLayout()
             line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
             for button in row:
                 line.addWidget(button)
             layout.addLayout(line)
@@ -605,36 +621,30 @@ class TerminalSessionWidget(QWidget):
         page = QWidget(self)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        title = QLabel("Shortcuts", page)
-        title.setObjectName("drawerTitle")
-        connect = QPushButton("Connect / Disconnect", page)
-        set_button_icon(connect, QStyle.StandardPixmap.SP_ComputerIcon)
-        connect.clicked.connect(self.toggle_connection)
-        settings = QPushButton("Serial Settings", page)
-        set_button_icon(settings, QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        settings.clicked.connect(lambda: self.open_connection_settings())
-        run = QPushButton("Run Command File", page)
-        set_button_icon(run, QStyle.StandardPixmap.SP_MediaPlay)
-        run.clicked.connect(self.run_script)
-        stop = QPushButton("Stop Command File", page)
-        set_button_icon(stop, QStyle.StandardPixmap.SP_MediaStop)
-        stop.clicked.connect(self.stop_script)
-        log = QPushButton("Start / Stop Log", page)
-        set_button_icon(log, QStyle.StandardPixmap.SP_DialogSaveButton)
-        log.clicked.connect(self.toggle_logging)
-        clear = QPushButton("Clear Terminal", page)
-        set_button_icon(clear, QStyle.StandardPixmap.SP_TrashIcon)
-        clear.clicked.connect(self.clear_terminal)
-        pause = QPushButton("Pause / Resume Output", page)
-        set_button_icon(pause, QStyle.StandardPixmap.SP_MediaPause)
-        pause.clicked.connect(self.toggle_pause)
-        save = QPushButton("Save Current Input", page)
-        set_button_icon(save, QStyle.StandardPixmap.SP_DialogSaveButton)
-        save.clicked.connect(self.save_current_input_as_quick_command)
+        layout.setSpacing(7)
+        title = self._drawer_title("Shortcuts", page)
+        connect = self._drawer_action("Connect / Disconnect", QStyle.StandardPixmap.SP_ComputerIcon, self.toggle_connection, page, role="drawerPrimary")
+        settings = self._drawer_action("Serial Settings", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.open_connection_settings(), page)
+        run = self._drawer_action("Run Command File", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
+        stop = self._drawer_action("Stop Command File", QStyle.StandardPixmap.SP_MediaStop, self.stop_script, page)
+        log = self._drawer_action("Start / Stop Log", QStyle.StandardPixmap.SP_DialogSaveButton, self.toggle_logging, page)
+        clear = self._drawer_action("Clear Terminal", QStyle.StandardPixmap.SP_TrashIcon, self.clear_terminal, page, role="drawerDanger")
+        pause = self._drawer_action("Pause / Resume Output", QStyle.StandardPixmap.SP_MediaPause, self.toggle_pause, page)
+        save = self._drawer_action("Save Current Input", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_current_input_as_quick_command, page)
         layout.addWidget(title)
-        for button in (connect, settings, run, stop, log, clear, pause, save):
-            layout.addWidget(button)
+        layout.addWidget(self._drawer_section("Session", page))
+        layout.addWidget(connect)
+        layout.addWidget(settings)
+        layout.addSpacing(5)
+        layout.addWidget(self._drawer_section("Scripts & Logs", page))
+        layout.addWidget(run)
+        layout.addWidget(stop)
+        layout.addWidget(log)
+        layout.addSpacing(5)
+        layout.addWidget(self._drawer_section("Terminal", page))
+        layout.addWidget(clear)
+        layout.addWidget(pause)
+        layout.addWidget(save)
         layout.addStretch(1)
         return page
 
@@ -643,28 +653,21 @@ class TerminalSessionWidget(QWidget):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        title = QLabel("Profiles", page)
-        title.setObjectName("drawerTitle")
+        title = self._drawer_title("Profiles", page)
         self.profile_list = QListWidget(page)
         self.profile_list.itemDoubleClicked.connect(lambda _: self.apply_selected_profile())
-        apply = QPushButton("Apply Profile", page)
-        set_button_icon(apply, QStyle.StandardPixmap.SP_DialogApplyButton)
-        apply.clicked.connect(self.apply_selected_profile)
-        save = QPushButton("Save Current As Profile", page)
-        set_button_icon(save, QStyle.StandardPixmap.SP_DialogSaveButton)
-        save.clicked.connect(self.save_current_profile)
-        rename = QPushButton("Rename", page)
-        set_button_icon(rename, QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        rename.clicked.connect(lambda: self.host.rename_profile(self.selected_profile_name()))
-        delete = QPushButton("Delete", page)
-        set_button_icon(delete, QStyle.StandardPixmap.SP_TrashIcon)
-        delete.clicked.connect(lambda: self.host.delete_profile(self.selected_profile_name()))
+        apply = self._drawer_action("Apply Profile", QStyle.StandardPixmap.SP_DialogApplyButton, self.apply_selected_profile, page, role="drawerPrimary")
+        save = self._drawer_action("Save Current As Profile", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_current_profile, page)
+        rename = self._drawer_action("Rename", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.rename_profile(self.selected_profile_name()), page)
+        delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_profile(self.selected_profile_name()), page, role="drawerDanger")
         layout.addWidget(title)
+        layout.addWidget(self._drawer_section("Available Profiles", page))
         layout.addWidget(self.profile_list, 1)
         layout.addWidget(apply)
         layout.addWidget(save)
         line = QHBoxLayout()
         line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
         line.addWidget(rename)
         line.addWidget(delete)
         layout.addLayout(line)
@@ -1086,17 +1089,21 @@ class MainWindow(QMainWindow):
         edit_menu = self.menuBar().addMenu("Edit")
         self._add_action(edit_menu, "Copy", "Ctrl+Shift+C", lambda: self.with_session(lambda s: s.copy_selection()), icon=QStyle.StandardPixmap.SP_FileIcon)
         self._add_action(edit_menu, "Select All", "Ctrl+A", lambda: self.with_session(lambda s: s.select_all()), icon=QStyle.StandardPixmap.SP_FileDialogListView)
+        edit_menu.addSeparator()
         self._add_action(edit_menu, "Clear Terminal", "Ctrl+K", lambda: self.with_session(lambda s: s.clear_terminal()), icon=QStyle.StandardPixmap.SP_TrashIcon)
         self._add_action(edit_menu, "Search", "Ctrl+F", lambda: self.with_session(lambda s: s.show_search()), icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
 
         view_menu = self.menuBar().addMenu("View")
         self._add_action(view_menu, "Toggle Drawer", "Ctrl+B", self.toggle_drawer, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        view_menu.addSeparator()
         self._add_action(view_menu, "Increase Font", "Ctrl+=", lambda: self.change_font_size(1), icon=QStyle.StandardPixmap.SP_ArrowUp)
         self._add_action(view_menu, "Decrease Font", "Ctrl+-", lambda: self.change_font_size(-1), icon=QStyle.StandardPixmap.SP_ArrowDown)
+        view_menu.addSeparator()
         self.timestamps_action = self._add_action(view_menu, "Show Timestamps", "", self.toggle_timestamps, checkable=True, icon=QStyle.StandardPixmap.SP_FileDialogInfoView)
         self.timestamps_action.setChecked(self.settings.timestamps_enabled)
         self.wrap_action = self._add_action(view_menu, "Line Wrap", "", self.toggle_line_wrap, checkable=True, icon=QStyle.StandardPixmap.SP_FileDialogListView)
         self.wrap_action.setChecked(self.settings.line_wrap_enabled)
+        view_menu.addSeparator()
         theme_menu = view_menu.addMenu("Theme")
         self.theme_group = QActionGroup(self)
         self.theme_group.setExclusive(True)
@@ -1111,19 +1118,24 @@ class MainWindow(QMainWindow):
 
         session_menu = self.menuBar().addMenu("Session")
         self._add_action(session_menu, "Rename Tab", "F2", self.rename_current_session, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        session_menu.addSeparator()
         self._add_action(session_menu, "Connect / Disconnect", "Ctrl+Enter", lambda: self.with_session(lambda s: s.toggle_connection()), icon=QStyle.StandardPixmap.SP_ComputerIcon)
         self._add_action(session_menu, "Pause / Resume Output", "Ctrl+P", lambda: self.with_session(lambda s: s.toggle_pause()), icon=QStyle.StandardPixmap.SP_MediaPause)
 
         serial_menu = self.menuBar().addMenu("Serial")
         self._add_action(serial_menu, "Serial Settings", "Ctrl+,", lambda: self.with_session(lambda s: s.open_connection_settings()), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(serial_menu, "Refresh Ports", "F5", lambda: self.with_session(lambda s: s.refresh_ports()), icon=QStyle.StandardPixmap.SP_BrowserReload)
+        serial_menu.addSeparator()
         self._add_action(serial_menu, "Save Profile", "", lambda: self.with_session(lambda s: s.save_current_profile()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
         self._add_action(serial_menu, "Rename Profile", "", lambda: self.with_session(lambda s: self.rename_profile(s.selected_profile_name())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(serial_menu, "Delete Profile", "", lambda: self.with_session(lambda s: self.delete_profile(s.selected_profile_name())), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        serial_menu.addSeparator()
         self._add_action(serial_menu, "Import Profiles", "", self.import_profiles, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         self._add_action(serial_menu, "Export Profiles", "", self.export_profiles, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
         tools_menu = self.menuBar().addMenu("Tools")
+        self._add_action(tools_menu, "Send Selected Quick Command", "", lambda: self.with_session(lambda s: s.send_selected_quick_command()), icon=QStyle.StandardPixmap.SP_ArrowForward)
+        tools_menu.addSeparator()
         self._add_action(tools_menu, "Add Quick Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
         self._add_action(tools_menu, "Edit Selected Quick Command", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(tools_menu, "Delete Selected Quick Command", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
@@ -1643,6 +1655,13 @@ class MainWindow(QMainWindow):
         QLabel#drawerTitle {{
             font-weight: 650;
             color: {theme.text};
+            padding: 1px 2px 4px 2px;
+        }}
+        QLabel#drawerSection {{
+            color: {theme.muted};
+            font-size: 8pt;
+            font-weight: 700;
+            padding: 9px 3px 1px 3px;
         }}
         QFrame#terminalColumn, QTextEdit#terminal {{
             background: {terminal_background};
@@ -1707,6 +1726,23 @@ class MainWindow(QMainWindow):
             background: {theme.accent};
             color: #ffffff;
             border-color: {theme.accent};
+        }}
+        QPushButton#drawerActionButton {{
+            text-align: left;
+            border-radius: 9px;
+            padding: 8px 10px;
+        }}
+        QPushButton#drawerActionButton[role="drawerPrimary"] {{
+            background: {theme.chip};
+            border-color: {theme.accent_soft};
+        }}
+        QPushButton#drawerActionButton[role="drawerPrimary"]:hover {{
+            background: {theme.accent_soft};
+            border-color: {theme.accent};
+        }}
+        QPushButton#drawerActionButton[role="drawerDanger"]:hover {{
+            background: {theme.surface};
+            border-color: {theme.error};
         }}
         QSplitter::handle {{
             background: {theme.border};
