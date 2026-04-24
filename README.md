@@ -6,6 +6,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 
 ## Current Features
 - Terminal-first layout with minimal chrome and a VS Code dark default theme
+- Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
 - Tabs for independent serial sessions
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, and optional line-ending override
@@ -79,3 +80,6 @@ reset
 Settings are stored under `%LOCALAPPDATA%\ComPortZone\settings.json`.
 
 Older prototype settings from `%LOCALAPPDATA%\SerialTerminal\settings.json` are read automatically if the new settings file does not exist yet.
+
+## Third-Party Notices
+The bundled icon subset comes from Tabler Icons under the MIT license. See `THIRD_PARTY_NOTICES.md`.
