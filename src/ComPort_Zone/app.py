@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 from queue import Empty
@@ -64,6 +65,8 @@ SEND_MODES = ("Text", "Hex Bytes")
 TERMINAL_FONT_MIN = 8
 TERMINAL_FONT_MAX = 24
 DRAWER_COLLAPSED_WIDTH = 48
+APP_USER_MODEL_ID = "ComPortZone.Terminal"
+APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "comport-zone-icon.png"
 
 TABLER_ICON_PATHS = {
     "arrow-left": '<path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" />',
@@ -162,6 +165,23 @@ def standard_icon(
 def set_button_icon(button, pixmap: QStyle.StandardPixmap, size: int = 16) -> None:
     button.setIcon(standard_icon(pixmap, size))
     button.setIconSize(QSize(size, size))
+
+
+def app_icon() -> QIcon:
+    icon = QIcon(str(APP_ICON_PATH))
+    return icon if not icon.isNull() else standard_icon(QStyle.StandardPixmap.SP_ComputerIcon, 32)
+
+
+def set_windows_app_user_model_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        # The icon still works in-window if Windows refuses the taskbar identity call.
+        pass
 
 
 def pick_ui_font() -> QFont:
@@ -1183,6 +1203,7 @@ class MainWindow(QMainWindow):
         self._profile_dirty = False
 
         self.setWindowTitle("ComPort Zone")
+        self.setWindowIcon(app_icon())
         self.setFont(pick_ui_font())
         self.resize(self.settings.window_width, self.settings.window_height)
         self._build_ui()
@@ -2165,8 +2186,10 @@ class MainWindow(QMainWindow):
 
 
 def run() -> int:
+    set_windows_app_user_model_id()
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("ComPort Zone")
+    app.setWindowIcon(app_icon())
     app.setFont(pick_ui_font())
     window = MainWindow()
     window.show()
