@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -1069,6 +1070,8 @@ class MainWindow(QMainWindow):
         self.tabs.newTabRequested.connect(lambda: self.add_session(prompt_settings=True))
         self.tabs.tabCloseRequested.connect(self.close_session)
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
+        self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
         self.setCentralWidget(self.tabs)
 
         self.footer = QLabel("Ready", self)
@@ -1163,6 +1166,113 @@ class MainWindow(QMainWindow):
         menu.addAction(action)
         return action
 
+    def _add_context_action(
+        self,
+        menu: QMenu,
+        text: str,
+        callback,
+        *,
+        icon: QStyle.StandardPixmap | None = None,
+        enabled: bool = True,
+    ) -> QAction:
+        action = QAction(text, self)
+        if icon is not None:
+            action.setIcon(standard_icon(icon))
+        action.setEnabled(enabled)
+        action.triggered.connect(lambda _checked=False: callback())
+        menu.addAction(action)
+        return action
+
+    def show_tab_context_menu(self, position) -> None:
+        tab_bar = self.tabs.tabBar()
+        index = tab_bar.tabAt(position)
+        menu = self.build_tab_context_menu(index)
+        menu.exec(tab_bar.mapToGlobal(position))
+
+    def build_tab_context_menu(self, index: int) -> QMenu:
+        menu = QMenu(self)
+        if index < 0:
+            self._add_context_action(
+                menu,
+                "New Tab",
+                lambda: self.add_session(prompt_settings=True),
+                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+            )
+            return menu
+
+        session = self.session_at(index)
+        is_connected = bool(session and session.serial_client.is_connected)
+        menu.setTitle(session.title if session else self.tabs.tabText(index))
+        self._add_context_action(
+            menu,
+            "New Tab",
+            lambda: self.add_session(prompt_settings=True),
+            icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+        )
+        self._add_context_action(
+            menu,
+            "Duplicate Tab",
+            lambda tab_index=index: self.duplicate_session(tab_index),
+            icon=QStyle.StandardPixmap.SP_FileIcon,
+        )
+        self._add_context_action(
+            menu,
+            "Rename Tab",
+            lambda tab_index=index: self.rename_session(tab_index),
+            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        )
+        menu.addSeparator()
+        self._add_context_action(
+            menu,
+            "Serial Settings",
+            lambda tab_index=index: self.open_session_settings(tab_index),
+            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            enabled=session is not None,
+        )
+        self._add_context_action(
+            menu,
+            "Disconnect" if is_connected else "Connect",
+            lambda tab_index=index: self.toggle_session_connection(tab_index),
+            icon=QStyle.StandardPixmap.SP_ComputerIcon,
+            enabled=session is not None,
+        )
+        self._add_context_action(
+            menu,
+            "Search",
+            lambda tab_index=index: self.show_session_search(tab_index),
+            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+            enabled=session is not None,
+        )
+        self._add_context_action(
+            menu,
+            "Clear Terminal",
+            lambda tab_index=index: self.clear_session_terminal(tab_index),
+            icon=QStyle.StandardPixmap.SP_TrashIcon,
+            enabled=session is not None,
+        )
+        menu.addSeparator()
+        self._add_context_action(
+            menu,
+            "Close Tab",
+            lambda tab_index=index: self.close_session(tab_index),
+            icon=QStyle.StandardPixmap.SP_DialogCloseButton,
+        )
+        self._add_context_action(
+            menu,
+            "Close Other Tabs",
+            lambda tab_index=index: self.close_other_sessions(tab_index),
+            icon=QStyle.StandardPixmap.SP_TitleBarCloseButton,
+            enabled=self.tabs.count() > 1,
+        )
+        self._add_context_action(
+            menu,
+            "Close Tabs to the Right",
+            lambda tab_index=index: self.close_sessions_to_right(tab_index),
+            icon=QStyle.StandardPixmap.SP_ArrowRight,
+            enabled=index < self.tabs.count() - 1,
+        )
+        return menu
+
     def restore_sessions(self) -> None:
         states = self.settings.restored_tabs or [TerminalSessionState(title="Terminal 1", profile_name=self.settings.active_profile)]
         for state in states:
@@ -1200,7 +1310,10 @@ class MainWindow(QMainWindow):
         session.open_connection_settings(connect_after_accept=True)
 
     def duplicate_current_session(self) -> None:
-        session = self.current_session()
+        self.duplicate_session(self.tabs.currentIndex())
+
+    def duplicate_session(self, index: int) -> None:
+        session = self.session_at(index)
         if not session:
             self.add_session()
             return
@@ -1215,6 +1328,8 @@ class MainWindow(QMainWindow):
             self.close_session(index)
 
     def close_session(self, index: int) -> None:
+        if index < 0 or index >= self.tabs.count():
+            return
         session = self.tabs.widget(index)
         if isinstance(session, TerminalSessionWidget):
             session.shutdown()
@@ -1225,10 +1340,34 @@ class MainWindow(QMainWindow):
             self.add_session()
         self.save_settings()
 
+    def close_other_sessions(self, index: int) -> None:
+        target = self.session_at(index)
+        if not target:
+            return
+        for tab_index in range(self.tabs.count() - 1, -1, -1):
+            if self.tabs.widget(tab_index) is not target:
+                self.close_session(tab_index)
+        current_index = self.tabs.indexOf(target)
+        if current_index >= 0:
+            self.tabs.setCurrentIndex(current_index)
+        self.save_settings()
+
+    def close_sessions_to_right(self, index: int) -> None:
+        if index < 0 or index >= self.tabs.count() - 1:
+            return
+        for tab_index in range(self.tabs.count() - 1, index, -1):
+            self.close_session(tab_index)
+        self.tabs.setCurrentIndex(min(index, self.tabs.count() - 1))
+        self.save_settings()
+
     def rename_current_session(self) -> None:
-        session = self.current_session()
+        self.rename_session(self.tabs.currentIndex())
+
+    def rename_session(self, index: int) -> None:
+        session = self.session_at(index)
         if not session:
             return
+        self.tabs.setCurrentIndex(index)
         title, accepted = QInputDialog.getText(self, "Rename Tab", "Tab name", text=session.title)
         if accepted and title.strip():
             session.title = title.strip()
@@ -1238,6 +1377,34 @@ class MainWindow(QMainWindow):
     def current_session(self) -> TerminalSessionWidget | None:
         widget = self.tabs.currentWidget()
         return widget if isinstance(widget, TerminalSessionWidget) else None
+
+    def session_at(self, index: int) -> TerminalSessionWidget | None:
+        widget = self.tabs.widget(index)
+        return widget if isinstance(widget, TerminalSessionWidget) else None
+
+    def open_session_settings(self, index: int) -> None:
+        session = self.session_at(index)
+        if session:
+            self.tabs.setCurrentIndex(index)
+            session.open_connection_settings(connect_after_accept=True)
+
+    def toggle_session_connection(self, index: int) -> None:
+        session = self.session_at(index)
+        if session:
+            self.tabs.setCurrentIndex(index)
+            session.toggle_connection()
+
+    def show_session_search(self, index: int) -> None:
+        session = self.session_at(index)
+        if session:
+            self.tabs.setCurrentIndex(index)
+            session.show_search()
+
+    def clear_session_terminal(self, index: int) -> None:
+        session = self.session_at(index)
+        if session:
+            self.tabs.setCurrentIndex(index)
+            session.clear_terminal()
 
     def iter_sessions(self) -> list[TerminalSessionWidget]:
         sessions: list[TerminalSessionWidget] = []
