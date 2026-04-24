@@ -1,6 +1,6 @@
 # ComPort Zone
 
-ComPort Zone is a Windows-first serial terminal for device bring-up, debugging, and repeated engineering command workflows.
+ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows.
 
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick-send commands and shortcuts.
 
@@ -36,14 +36,13 @@ python -m pip install -e .
 
 ## Run
 ```powershell
-python -m serial_terminal
+python -m ComPort_Zone
 ```
 
-After installation, either console script can also launch the app:
+After installation, the console script can also launch the app:
 
 ```powershell
 comport-zone
-serial-terminal
 ```
 
 ## Batch Script Format
@@ -78,8 +77,6 @@ reset
 
 ## Settings
 Settings are stored under `%LOCALAPPDATA%\ComPortZone\settings.json`.
-
-Older prototype settings from `%LOCALAPPDATA%\SerialTerminal\settings.json` are read automatically if the new settings file does not exist yet.
 
 ## Third-Party Notices
 The bundled icon subset comes from Tabler Icons under the MIT license. See `THIRD_PARTY_NOTICES.md`.

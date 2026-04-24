@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "serial-terminal"
+name = "ComPort-Zone"
 version = "0.1.0"
-description = "ComPort Zone, a Windows-first serial terminal focused on physical device communication"
+description = "ComPort Zone, a Windows-first COM-port terminal focused on physical device communication"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,8 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-comport-zone = "serial_terminal.__main__:main"
-serial-terminal = "serial_terminal.__main__:main"
+comport-zone = "ComPort_Zone.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -1,6 +1,6 @@
 import unittest
 
-from serial_terminal.batch import BatchParseError, parse_batch_script, parse_hex_payload
+from ComPort_Zone.batch import BatchParseError, parse_batch_script, parse_hex_payload
 
 
 class BatchParserTests(unittest.TestCase):

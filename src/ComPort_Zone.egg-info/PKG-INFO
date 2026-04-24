@@ -1,15 +1,15 @@
 Metadata-Version: 2.4
-Name: serial-terminal
+Name: ComPort-Zone
 Version: 0.1.0
-Summary: Windows serial terminal focused on physical device communication
+Summary: Windows COM-port terminal focused on physical device communication
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: pyserial>=3.5
 Requires-Dist: PySide6>=6.7
 
-# Serial Terminal
+# ComPort Zone
 
-Windows-first serial terminal for device bring-up, debugging, and repetitive command workflows.
+Windows-first COM-port terminal for device bring-up, debugging, and repetitive command workflows.
 
 ## Included in this first implementation
 - COM port selection and refresh
@@ -32,7 +32,7 @@ python -m pip install -e .
 
 ## Run
 ```powershell
-python -m serial_terminal
+python -m ComPort_Zone
 ```
 
 ## Batch Script Format
@@ -54,6 +54,6 @@ reset
 - Bare lines are treated like `SEND`.
 
 ## Notes
-- Settings and profiles are stored under `%LOCALAPPDATA%\SerialTerminal\settings.json`.
+- Settings and profiles are stored under `%LOCALAPPDATA%\ComPortZone\settings.json`.
 - Logging writes a readable text transcript with timestamps and event types.
 - The UI depends on `PySide6`. If it is missing, the launcher prints an install hint.

@@ -11,22 +11,12 @@ def default_config_path() -> Path:
     base_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     return base_dir / "ComPortZone" / "settings.json"
 
-
-def legacy_config_path() -> Path:
-    base_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    return base_dir / "SerialTerminal" / "settings.json"
-
-
 class SettingsStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_config_path()
 
     def load(self) -> AppSettings:
         load_path = self.path
-        if not load_path.exists() and self.path == default_config_path():
-            legacy_path = legacy_config_path()
-            if legacy_path.exists():
-                load_path = legacy_path
         if not load_path.exists():
             return AppSettings()
         try:

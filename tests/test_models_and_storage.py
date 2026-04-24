@@ -1,14 +1,14 @@
 import unittest
 from unittest.mock import Mock
 
-from serial_terminal.models import (
+from ComPort_Zone.models import (
     AppSettings,
     QuickCommand,
     SerialProfile,
     TerminalSessionState,
     apply_line_ending,
 )
-from serial_terminal.storage import SettingsStore
+from ComPort_Zone.storage import SettingsStore
 
 
 class ModelsAndStorageTests(unittest.TestCase):

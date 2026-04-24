@@ -1,6 +1,6 @@
 import unittest
 
-from serial_terminal.history import HistoryStore
+from ComPort_Zone.history import HistoryStore
 
 
 class HistoryStoreTests(unittest.TestCase):

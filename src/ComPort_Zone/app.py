@@ -1550,7 +1550,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Profiles", str(exc))
 
     def show_about(self) -> None:
-        QMessageBox.information(self, "About ComPort Zone", "ComPort Zone\nSerial terminal for Windows COM-port workflows.")
+        QMessageBox.information(self, "About ComPort Zone", "ComPort Zone\nCOM-port terminal for Windows device workflows.")
 
     def apply_theme(self, name: str, *, save: bool = True) -> None:
         self.theme = THEMES.get(name, THEMES["VS Code Dark"])
