@@ -42,6 +42,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 from .batch import BatchParseError, BatchRunner, load_batch_file, parse_hex_payload
 from .history import HistoryStore
+from . import __version__
 from .models import (
     AppSettings,
     DEFAULT_PROFILE_NAME,
@@ -1227,7 +1228,11 @@ class MainWindow(QMainWindow):
 
         self.footer = QLabel("Ready", self)
         self.footer.setObjectName("footer")
-        self.statusBar().addPermanentWidget(self.footer, 1)
+        self.version_label = QLabel(f"ComPort Zone v{__version__}", self)
+        self.version_label.setObjectName("versionInfo")
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.statusBar().addWidget(self.footer, 1)
+        self.statusBar().addPermanentWidget(self.version_label)
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -1930,7 +1935,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Profiles", str(exc))
 
     def show_about(self) -> None:
-        QMessageBox.information(self, "About ComPort Zone", "ComPort Zone\nCOM-port terminal for Windows device workflows.")
+        QMessageBox.information(
+            self,
+            "About ComPort Zone",
+            f"ComPort Zone\nVersion {__version__}\n\nCOM-port terminal for Windows device workflows.",
+        )
 
     def apply_theme(self, name: str, *, save: bool = True) -> None:
         self.theme = THEMES.get(name, THEMES["VS Code Dark"])
@@ -2158,6 +2167,10 @@ class MainWindow(QMainWindow):
             background: {theme.accent};
             color: #ffffff;
         }}
+        QLabel#versionInfo {{
+            color: #ffffff;
+            padding: 0 8px;
+        }}
         """
 
     def save_settings(self, *, profile_sync: bool = True) -> None:
@@ -2189,6 +2202,7 @@ def run() -> int:
     set_windows_app_user_model_id()
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("ComPort Zone")
+    app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
     app.setFont(pick_ui_font())
     window = MainWindow()
