@@ -65,7 +65,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         fake_path.write_text.assert_called_once()
         fake_path.read_text.assert_called_once()
         self.assertEqual(loaded.active_profile, "Bench")
-        self.assertEqual(loaded.profiles["Bench"].port, "COM7")
+        self.assertEqual(loaded.profiles["Bench"].serial.port, "COM7")
         self.assertEqual(loaded.command_history, ["status", "reset"])
         self.assertEqual(loaded.quick_snippets, ["status", "reboot"])
         self.assertEqual(len(loaded.quick_commands), 1)
@@ -91,6 +91,52 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings.from_dict({"theme": "Workshop Dark"})
 
         self.assertEqual(settings.theme, "VS Code Dark")
+
+    def test_active_profile_applies_saved_preferences(self) -> None:
+        settings = AppSettings.from_dict(
+            {
+                "active_profile": "Lab",
+                "profiles": {
+                    "Lab": {
+                        "serial": {"port": "COM12", "baudrate": 9600},
+                        "theme": "Scope Amber",
+                        "terminal_font_size": 15,
+                        "quick_commands": [
+                            {
+                                "id": "cmd-2",
+                                "label": "Version",
+                                "command": "version",
+                            }
+                        ],
+                    }
+                },
+                "theme": "VS Code Dark",
+                "terminal_font_size": 10,
+            }
+        )
+
+        self.assertEqual(settings.theme, "Scope Amber")
+        self.assertEqual(settings.terminal_font_size, 15)
+        self.assertEqual(settings.profiles["Lab"].serial.port, "COM12")
+        self.assertEqual(settings.quick_commands[0].command, "version")
+
+    def test_default_profile_can_capture_all_preferences(self) -> None:
+        settings = AppSettings(
+            active_profile="Default",
+            theme="Bench Light",
+            terminal_font_size=14,
+            quick_commands=[QuickCommand(label="Errors", command="ERRORS")],
+        )
+
+        settings.profiles["Default"] = settings.capture_user_profile(
+            SerialProfile(port="COM4", baudrate=230400)
+        )
+        restored = AppSettings.from_dict(settings.to_dict())
+
+        self.assertEqual(restored.theme, "Bench Light")
+        self.assertEqual(restored.terminal_font_size, 14)
+        self.assertEqual(restored.quick_commands[0].command, "ERRORS")
+        self.assertEqual(restored.profiles["Default"].serial.port, "COM4")
 
 
 if __name__ == "__main__":

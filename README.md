@@ -10,6 +10,9 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, and optional line-ending override
 - Serial profiles with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
+- Rich profiles that also include theme, terminal font, history, drawer state, quick commands, log/script paths, and other workflow preferences
+- Default profile autosaves changes; non-default profiles ask whether to save unsaved changes on exit or profile switch
+- Profile management includes save-as, rename, delete, import, and export. The Default profile is protected from rename/delete.
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
 - Text sending and hex/raw-byte sending
