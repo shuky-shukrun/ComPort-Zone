@@ -1,7 +1,13 @@
 import unittest
 from unittest.mock import Mock
 
-from serial_terminal.models import AppSettings, SerialProfile, apply_line_ending
+from serial_terminal.models import (
+    AppSettings,
+    QuickCommand,
+    SerialProfile,
+    TerminalSessionState,
+    apply_line_ending,
+)
 from serial_terminal.storage import SettingsStore
 
 
@@ -17,8 +23,29 @@ class ModelsAndStorageTests(unittest.TestCase):
                 "Bench": SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
             },
             command_history=["status", "reset"],
+            quick_snippets=["status", "reboot"],
+            quick_commands=[
+                QuickCommand(
+                    id="cmd-1",
+                    label="Read ID",
+                    command="id?",
+                    send_mode="Text",
+                    group="Factory",
+                    line_ending_override="LF",
+                )
+            ],
+            restored_tabs=[
+                TerminalSessionState(title="DUT A", profile_name="Bench"),
+                TerminalSessionState(title="DUT B", profile_name="Bench"),
+            ],
             theme="Scope Amber",
             timestamps_enabled=False,
+            terminal_font_size=13,
+            terminal_font_family="Cascadia Mono",
+            line_wrap_enabled=True,
+            scrollback_size=20000,
+            drawer_collapsed=False,
+            drawer_width=340,
         )
         payload: dict[str, str] = {}
         fake_parent = Mock()
@@ -40,8 +67,30 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.active_profile, "Bench")
         self.assertEqual(loaded.profiles["Bench"].port, "COM7")
         self.assertEqual(loaded.command_history, ["status", "reset"])
+        self.assertEqual(loaded.quick_snippets, ["status", "reboot"])
+        self.assertEqual(len(loaded.quick_commands), 1)
+        self.assertEqual(loaded.quick_commands[0].label, "Read ID")
+        self.assertEqual(loaded.quick_commands[0].line_ending_override, "LF")
+        self.assertEqual([tab.title for tab in loaded.restored_tabs], ["DUT A", "DUT B"])
         self.assertEqual(loaded.theme, "Scope Amber")
         self.assertFalse(loaded.timestamps_enabled)
+        self.assertEqual(loaded.terminal_font_size, 13)
+        self.assertEqual(loaded.terminal_font_family, "Cascadia Mono")
+        self.assertTrue(loaded.line_wrap_enabled)
+        self.assertEqual(loaded.scrollback_size, 20000)
+        self.assertFalse(loaded.drawer_collapsed)
+        self.assertEqual(loaded.drawer_width, 340)
+
+    def test_legacy_quick_snippets_become_quick_commands(self) -> None:
+        settings = AppSettings.from_dict({"quick_snippets": ["status", "reset"]})
+
+        self.assertEqual([command.command for command in settings.quick_commands], ["status", "reset"])
+        self.assertEqual([command.label for command in settings.quick_commands], ["status", "reset"])
+
+    def test_legacy_workshop_theme_maps_to_vs_code_dark(self) -> None:
+        settings = AppSettings.from_dict({"theme": "Workshop Dark"})
+
+        self.assertEqual(settings.theme, "VS Code Dark")
 
 
 if __name__ == "__main__":

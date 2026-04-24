@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 LINE_ENDINGS = {
     "None": "",
@@ -11,7 +13,12 @@ LINE_ENDINGS = {
 }
 
 FLOW_CONTROL_OPTIONS = ("None", "RTS/CTS", "XON/XOFF", "DSR/DTR")
-THEME_OPTIONS = ("Workshop Dark", "Bench Light", "Scope Amber")
+THEME_OPTIONS = ("VS Code Dark", "Windows Terminal", "Bench Light", "Scope Amber")
+DEFAULT_SNIPPETS = ["status", "help", "reset"]
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def apply_line_ending(text: str, line_ending: str) -> bytes:
@@ -74,14 +81,94 @@ class SerialProfile:
 
 
 @dataclass(slots=True)
+class QuickCommand:
+    id: str = field(default_factory=lambda: uuid4().hex)
+    label: str = ""
+    command: str = ""
+    send_mode: str = "Text"
+    group: str = "General"
+    line_ending_override: str = ""
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+
+    def display_label(self) -> str:
+        return self.label or self.command
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "command": self.command,
+            "send_mode": self.send_mode,
+            "group": self.group,
+            "line_ending_override": self.line_ending_override,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | str) -> "QuickCommand":
+        if isinstance(data, str):
+            value = data.strip()
+            return cls(label=value, command=value)
+        command = str(data.get("command", "")).strip()
+        label = str(data.get("label", command)).strip()
+        return cls(
+            id=str(data.get("id", uuid4().hex)),
+            label=label,
+            command=command,
+            send_mode=str(data.get("send_mode", "Text")),
+            group=str(data.get("group", "General")) or "General",
+            line_ending_override=str(data.get("line_ending_override", "")),
+            created_at=str(data.get("created_at", utc_now_iso())),
+            updated_at=str(data.get("updated_at", utc_now_iso())),
+        )
+
+
+@dataclass(slots=True)
+class TerminalSessionState:
+    title: str = "Terminal"
+    profile_name: str = "Default"
+    connected_on_launch: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "profile_name": self.profile_name,
+            "connected_on_launch": self.connected_on_launch,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "TerminalSessionState":
+        if not data:
+            return cls()
+        return cls(
+            title=str(data.get("title", "Terminal")) or "Terminal",
+            profile_name=str(data.get("profile_name", "Default")) or "Default",
+            connected_on_launch=bool(data.get("connected_on_launch", False)),
+        )
+
+
+@dataclass(slots=True)
 class AppSettings:
     active_profile: str = "Default"
     profiles: dict[str, SerialProfile] = field(
         default_factory=lambda: {"Default": SerialProfile()}
     )
     command_history: list[str] = field(default_factory=list)
-    theme: str = "Workshop Dark"
+    quick_snippets: list[str] = field(default_factory=lambda: list(DEFAULT_SNIPPETS))
+    quick_commands: list[QuickCommand] = field(
+        default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
+    )
+    restored_tabs: list[TerminalSessionState] = field(default_factory=list)
+    theme: str = "VS Code Dark"
     timestamps_enabled: bool = True
+    terminal_font_size: int = 10
+    terminal_font_family: str = ""
+    line_wrap_enabled: bool = False
+    scrollback_size: int = 10000
+    drawer_collapsed: bool = True
+    drawer_width: int = 260
     log_path: str = ""
     last_script_path: str = ""
     window_width: int = 1320
@@ -98,8 +185,17 @@ class AppSettings:
             "active_profile": self.active_profile,
             "profiles": {name: profile.to_dict() for name, profile in self.profiles.items()},
             "command_history": list(self.command_history),
+            "quick_snippets": list(self.quick_snippets),
+            "quick_commands": [command.to_dict() for command in self.quick_commands],
+            "restored_tabs": [session.to_dict() for session in self.restored_tabs],
             "theme": self.theme,
             "timestamps_enabled": self.timestamps_enabled,
+            "terminal_font_size": self.terminal_font_size,
+            "terminal_font_family": self.terminal_font_family,
+            "line_wrap_enabled": self.line_wrap_enabled,
+            "scrollback_size": self.scrollback_size,
+            "drawer_collapsed": self.drawer_collapsed,
+            "drawer_width": self.drawer_width,
             "log_path": self.log_path,
             "last_script_path": self.last_script_path,
             "window_width": self.window_width,
@@ -115,12 +211,40 @@ class AppSettings:
             str(name): SerialProfile.from_dict(profile_data)
             for name, profile_data in profiles_data.items()
         }
+        quick_commands_data = data.get("quick_commands")
+        if quick_commands_data is None:
+            quick_commands_data = data.get("quick_snippets", DEFAULT_SNIPPETS)
+        quick_commands = []
+        for item in quick_commands_data:
+            quick_command = QuickCommand.from_dict(item)
+            if quick_command.command:
+                quick_commands.append(quick_command)
         settings = cls(
             active_profile=str(data.get("active_profile", "Default")),
             profiles=profiles or {"Default": SerialProfile()},
             command_history=[str(item) for item in data.get("command_history", [])],
-            theme=str(data.get("theme", "Workshop Dark")),
+            quick_snippets=[
+                str(item).strip()
+                for item in data.get("quick_snippets", DEFAULT_SNIPPETS)
+                if str(item).strip()
+            ]
+            or list(DEFAULT_SNIPPETS),
+            quick_commands=quick_commands
+            or [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS],
+            restored_tabs=[
+                TerminalSessionState.from_dict(item)
+                for item in data.get("restored_tabs", [])
+            ],
+            theme="VS Code Dark"
+            if str(data.get("theme", "VS Code Dark")) == "Workshop Dark"
+            else str(data.get("theme", "VS Code Dark")),
             timestamps_enabled=bool(data.get("timestamps_enabled", True)),
+            terminal_font_size=int(data.get("terminal_font_size", 10)),
+            terminal_font_family=str(data.get("terminal_font_family", "")),
+            line_wrap_enabled=bool(data.get("line_wrap_enabled", False)),
+            scrollback_size=int(data.get("scrollback_size", 10000)),
+            drawer_collapsed=bool(data.get("drawer_collapsed", True)),
+            drawer_width=int(data.get("drawer_width", 260)),
             log_path=str(data.get("log_path", "")),
             last_script_path=str(data.get("last_script_path", "")),
             window_width=int(data.get("window_width", 1320)),

@@ -27,6 +27,20 @@ class BatchStep:
     line_number: int
 
 
+def parse_hex_payload(text: str) -> bytes:
+    normalized = text.replace(",", " ").replace("-", " ")
+    parts = [part.removeprefix("0x").removeprefix("0X") for part in normalized.split()]
+    compact = "".join(parts)
+    if not compact:
+        raise ValueError("Provide at least one byte.")
+    if len(compact) % 2 != 0:
+        raise ValueError("HEX byte count must be even.")
+    try:
+        return bytes.fromhex(compact)
+    except ValueError as exc:
+        raise ValueError("HEX payload contains invalid characters.") from exc
+
+
 def parse_batch_script(text: str) -> list[BatchStep]:
     steps: list[BatchStep] = []
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
@@ -43,13 +57,10 @@ def parse_batch_script(text: str) -> list[BatchStep]:
             continue
         hex_match = HEX_PATTERN.match(stripped)
         if hex_match:
-            hex_text = "".join(hex_match.group(1).split())
-            if len(hex_text) % 2 != 0:
-                raise BatchParseError("HEX byte count must be even.", line_number)
             try:
-                payload = bytes.fromhex(hex_text)
+                payload = parse_hex_payload(hex_match.group(1))
             except ValueError as exc:
-                raise BatchParseError("HEX payload contains invalid characters.", line_number) from exc
+                raise BatchParseError(str(exc), line_number) from exc
             steps.append(BatchStep("hex", payload, line_number))
             continue
         steps.append(BatchStep("send", stripped, line_number))

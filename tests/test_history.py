@@ -20,6 +20,10 @@ class HistoryStoreTests(unittest.TestCase):
         history.add("status")
         self.assertEqual(history.suggestions("s")[:2], ["status", "set mode auto"])
 
+    def test_suggestions_include_contains_matches_after_prefix_matches(self) -> None:
+        history = HistoryStore(["factory reset", "reset counters", "status"])
+        self.assertEqual(history.suggestions("set")[:2], ["reset counters", "factory reset"])
+
 
 if __name__ == "__main__":
     unittest.main()

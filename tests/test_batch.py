@@ -1,6 +1,6 @@
 import unittest
 
-from serial_terminal.batch import BatchParseError, parse_batch_script
+from serial_terminal.batch import BatchParseError, parse_batch_script, parse_hex_payload
 
 
 class BatchParserTests(unittest.TestCase):
@@ -26,6 +26,10 @@ class BatchParserTests(unittest.TestCase):
         with self.assertRaises(BatchParseError) as context:
             parse_batch_script("HEX ABC")
         self.assertEqual(context.exception.line_number, 1)
+
+    def test_parse_hex_payload_accepts_spaces_commas_and_prefixes(self) -> None:
+        payload = parse_hex_payload("0xAA, 55 01-0D")
+        self.assertEqual(payload, bytes.fromhex("AA55010D"))
 
 
 if __name__ == "__main__":

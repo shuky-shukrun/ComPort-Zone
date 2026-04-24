@@ -81,11 +81,12 @@ class SerialClient:
         self._stop_reconnect_thread()
         self._close_serial(emit_event=True, reason="Disconnected.", unexpected=False)
 
-    def send_text(self, text: str) -> None:
+    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
         profile = self.active_profile
         if not profile:
             raise RuntimeError("No serial profile is active.")
-        payload = apply_line_ending(text, profile.line_ending)
+        line_ending = line_ending_override or profile.line_ending
+        payload = apply_line_ending(text, line_ending)
         self._write(payload, text)
 
     def send_bytes(self, data: bytes) -> None:

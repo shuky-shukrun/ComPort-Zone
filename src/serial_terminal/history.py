@@ -60,10 +60,11 @@ class HistoryStore:
         matches = [
             command
             for command in self._commands
-            if not prefix or command.casefold().startswith(prefix)
+            if not prefix or prefix in command.casefold()
         ]
         matches.sort(
             key=lambda command: (
+                0 if not prefix or command.casefold().startswith(prefix) else 1,
                 -self._counts[command],
                 -self._recency[command],
                 command.casefold(),
