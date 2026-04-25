@@ -14,6 +14,7 @@ LINE_ENDINGS = {
 
 FLOW_CONTROL_OPTIONS = ("None", "RTS/CTS", "XON/XOFF", "DSR/DTR")
 THEME_OPTIONS = ("VS Code Dark", "Windows Terminal", "Bench Light", "Scope Amber")
+RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 DEFAULT_SNIPPETS = ["status", "help", "reset"]
 DEFAULT_PROFILE_NAME = "Default"
 
@@ -164,6 +165,7 @@ class UserProfile:
     terminal_font_family: str = ""
     line_wrap_enabled: bool = False
     scrollback_size: int = 10000
+    receive_display_mode: str = "Text"
     drawer_collapsed: bool = True
     drawer_width: int = 260
     log_path: str = ""
@@ -181,6 +183,7 @@ class UserProfile:
             "terminal_font_family": self.terminal_font_family,
             "line_wrap_enabled": self.line_wrap_enabled,
             "scrollback_size": self.scrollback_size,
+            "receive_display_mode": self.receive_display_mode,
             "drawer_collapsed": self.drawer_collapsed,
             "drawer_width": self.drawer_width,
             "log_path": self.log_path,
@@ -205,6 +208,7 @@ class UserProfile:
                 "quick_commands",
                 "theme",
                 "terminal_font_size",
+                "receive_display_mode",
                 "drawer_collapsed",
             )
         )
@@ -225,6 +229,9 @@ class UserProfile:
         theme = str(data.get("theme", fallback.theme))
         if theme == "Workshop Dark":
             theme = "VS Code Dark"
+        receive_display_mode = str(data.get("receive_display_mode", fallback.receive_display_mode))
+        if receive_display_mode not in RECEIVE_DISPLAY_MODES:
+            receive_display_mode = "Text"
         return cls(
             serial=SerialProfile.from_dict(serial_data),
             command_history=[
@@ -245,6 +252,7 @@ class UserProfile:
             terminal_font_family=str(data.get("terminal_font_family", fallback.terminal_font_family)),
             line_wrap_enabled=bool(data.get("line_wrap_enabled", fallback.line_wrap_enabled)),
             scrollback_size=int(data.get("scrollback_size", fallback.scrollback_size)),
+            receive_display_mode=receive_display_mode,
             drawer_collapsed=bool(data.get("drawer_collapsed", fallback.drawer_collapsed)),
             drawer_width=int(data.get("drawer_width", fallback.drawer_width)),
             log_path=str(data.get("log_path", fallback.log_path)),
@@ -271,6 +279,7 @@ class UserProfile:
             terminal_font_family=settings.terminal_font_family,
             line_wrap_enabled=settings.line_wrap_enabled,
             scrollback_size=settings.scrollback_size,
+            receive_display_mode=settings.receive_display_mode,
             drawer_collapsed=settings.drawer_collapsed,
             drawer_width=settings.drawer_width,
             log_path=settings.log_path,
@@ -299,6 +308,7 @@ class AppSettings:
     terminal_font_family: str = ""
     line_wrap_enabled: bool = False
     scrollback_size: int = 10000
+    receive_display_mode: str = "Text"
     drawer_collapsed: bool = True
     drawer_width: int = 260
     log_path: str = ""
@@ -340,6 +350,7 @@ class AppSettings:
         self.terminal_font_family = profile.terminal_font_family
         self.line_wrap_enabled = profile.line_wrap_enabled
         self.scrollback_size = profile.scrollback_size
+        self.receive_display_mode = profile.receive_display_mode
         self.drawer_collapsed = profile.drawer_collapsed
         self.drawer_width = profile.drawer_width
         self.log_path = profile.log_path
@@ -359,6 +370,7 @@ class AppSettings:
             "terminal_font_family": self.terminal_font_family,
             "line_wrap_enabled": self.line_wrap_enabled,
             "scrollback_size": self.scrollback_size,
+            "receive_display_mode": self.receive_display_mode,
             "drawer_collapsed": self.drawer_collapsed,
             "drawer_width": self.drawer_width,
             "log_path": self.log_path,
@@ -379,6 +391,9 @@ class AppSettings:
             quick_command = QuickCommand.from_dict(item)
             if quick_command.command:
                 quick_commands.append(quick_command)
+        receive_display_mode = str(data.get("receive_display_mode", "Text"))
+        if receive_display_mode not in RECEIVE_DISPLAY_MODES:
+            receive_display_mode = "Text"
         settings = cls(
             active_profile=str(data.get("active_profile", DEFAULT_PROFILE_NAME)),
             profiles={},
@@ -403,6 +418,7 @@ class AppSettings:
             terminal_font_family=str(data.get("terminal_font_family", "")),
             line_wrap_enabled=bool(data.get("line_wrap_enabled", False)),
             scrollback_size=int(data.get("scrollback_size", 10000)),
+            receive_display_mode=receive_display_mode,
             drawer_collapsed=bool(data.get("drawer_collapsed", True)),
             drawer_width=int(data.get("drawer_width", 260)),
             log_path=str(data.get("log_path", "")),

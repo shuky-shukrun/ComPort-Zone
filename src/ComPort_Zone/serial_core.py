@@ -21,10 +21,19 @@ FLOW_CONTROL_FLAGS = {
 }
 
 
+def decode_serial_bytes(data: bytes) -> str:
+    return data.decode("utf-8", errors="replace")
+
+
+def format_hex_bytes(data: bytes) -> str:
+    return " ".join(f"{byte:02X}" for byte in data)
+
+
 @dataclass(slots=True)
 class SerialEvent:
     kind: str
     message: str
+    raw: bytes = b""
     timestamp: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc).astimezone()
     )
@@ -90,7 +99,7 @@ class SerialClient:
         self._write(payload, text)
 
     def send_bytes(self, data: bytes) -> None:
-        display = "HEX " + " ".join(f"{byte:02X}" for byte in data)
+        display = "HEX " + format_hex_bytes(data)
         self._write(data, display)
 
     def _write(self, data: bytes, display_text: str) -> None:
@@ -152,7 +161,7 @@ class SerialClient:
                 self._handle_connection_loss(str(exc))
                 return
             if payload:
-                self._emit("rx", payload.decode("utf-8", errors="replace"))
+                self._emit("rx", decode_serial_bytes(payload), raw=payload)
 
     def _handle_connection_loss(self, reason: str) -> None:
         self._close_serial(
@@ -227,5 +236,5 @@ class SerialClient:
             if reason:
                 self._emit("error" if unexpected else "status", reason)
 
-    def _emit(self, kind: str, message: str) -> None:
-        self.events.put(SerialEvent(kind=kind, message=message))
+    def _emit(self, kind: str, message: str, *, raw: bytes = b"") -> None:
+        self.events.put(SerialEvent(kind=kind, message=message, raw=raw))

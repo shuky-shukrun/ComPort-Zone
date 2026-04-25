@@ -49,13 +49,14 @@ from .models import (
     FLOW_CONTROL_OPTIONS,
     LINE_ENDINGS,
     QuickCommand,
+    RECEIVE_DISPLAY_MODES,
     SerialProfile,
     TerminalSessionState,
     THEME_OPTIONS,
     UserProfile,
     utc_now_iso,
 )
-from .serial_core import SerialClient, SerialEvent
+from .serial_core import SerialClient, SerialEvent, decode_serial_bytes, format_hex_bytes
 from .session_log import SessionLogger
 from .storage import SettingsStore, default_config_path
 from .themes import THEMES, ThemePalette
@@ -530,6 +531,8 @@ class TerminalSessionWidget(QWidget):
         self.terminal.setReadOnly(True)
         self.terminal.setAcceptRichText(False)
         self.terminal.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.terminal.customContextMenuRequested.connect(self.show_terminal_context_menu)
 
         self.command_bar = QFrame(terminal_column)
         self.command_bar.setObjectName("commandBar")
@@ -542,6 +545,13 @@ class TerminalSessionWidget(QWidget):
         self.mode_combo = ChevronComboBox(self.command_bar)
         self.mode_combo.addItems(SEND_MODES)
         self.mode_combo.setFixedWidth(118)
+        self.mode_combo.setToolTip("Send mode")
+        self.rx_display_combo = ChevronComboBox(self.command_bar)
+        for receive_mode in RECEIVE_DISPLAY_MODES:
+            self.rx_display_combo.addItem(f"RX {receive_mode}", receive_mode)
+        self.rx_display_combo.setFixedWidth(132)
+        self.rx_display_combo.setToolTip("Receive display mode")
+        self.rx_display_combo.currentIndexChanged.connect(self._receive_display_mode_changed)
         self.command_input = HistoryLineEdit(self.command_bar)
         self.command_input.setPlaceholderText("Send command")
         self.command_input.returnPressed.connect(self.send_from_input)
@@ -571,6 +581,7 @@ class TerminalSessionWidget(QWidget):
         font_up.clicked.connect(lambda: self.host.change_font_size(1))
 
         command_layout.addWidget(self.mode_combo)
+        command_layout.addWidget(self.rx_display_combo)
         command_layout.addWidget(self.command_input, 1)
         command_layout.addWidget(send_button)
         command_layout.addWidget(self.line_ending_label)
@@ -738,7 +749,22 @@ class TerminalSessionWidget(QWidget):
         )
         self.terminal.setFont(terminal_font)
         self.terminal.document().setDefaultFont(terminal_font)
+        receive_mode = (
+            self.host.settings.receive_display_mode
+            if self.host.settings.receive_display_mode in RECEIVE_DISPLAY_MODES
+            else "Text"
+        )
+        self.rx_display_combo.blockSignals(True)
+        receive_mode_index = self.rx_display_combo.findData(receive_mode)
+        if receive_mode_index >= 0:
+            self.rx_display_combo.setCurrentIndex(receive_mode_index)
+        self.rx_display_combo.blockSignals(False)
         self._update_line_ending_label()
+
+    def _receive_display_mode_changed(self) -> None:
+        mode = self.rx_display_combo.currentData()
+        if mode:
+            self.host.set_receive_display_mode(str(mode))
 
     def apply_drawer_state(self, collapsed: bool, width: int) -> None:
         self.drawer_panel.setVisible(not collapsed)
@@ -1060,6 +1086,91 @@ class TerminalSessionWidget(QWidget):
     def select_all(self) -> None:
         self.terminal.selectAll()
 
+    def selected_terminal_text(self) -> str:
+        return self.terminal.textCursor().selectedText().replace("\u2029", "\n")
+
+    def show_terminal_context_menu(self, position) -> None:
+        menu = self.terminal.createStandardContextMenu(position)
+        selected_text = self.selected_terminal_text()
+        if selected_text:
+            menu.addSeparator()
+            self.host._add_context_action(
+                menu,
+                "Show Selection as Hex",
+                lambda text=selected_text: self.show_converted_selection("Selection as Hex", self.text_to_hex(text)),
+                icon=QStyle.StandardPixmap.SP_FileDialogInfoView,
+            )
+            self.host._add_context_action(
+                menu,
+                "Show Hex Selection as Text",
+                lambda text=selected_text: self.show_hex_selection_as_text(text),
+                icon=QStyle.StandardPixmap.SP_FileDialogInfoView,
+            )
+            menu.addSeparator()
+            self.host._add_context_action(
+                menu,
+                "Replace Selection with Hex",
+                lambda text=selected_text: self.replace_terminal_selection(self.text_to_hex(text)),
+                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            )
+            self.host._add_context_action(
+                menu,
+                "Replace Hex Selection with Text",
+                lambda text=selected_text: self.replace_hex_selection_with_text(text),
+                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            )
+        menu.exec(self.terminal.mapToGlobal(position))
+
+    def text_to_hex(self, text: str) -> str:
+        return format_hex_bytes(text.encode("utf-8"))
+
+    def hex_to_text(self, text: str) -> str:
+        return decode_serial_bytes(parse_hex_payload(text))
+
+    def show_hex_selection_as_text(self, text: str) -> None:
+        try:
+            converted = self.hex_to_text(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Convert Hex to Text", str(exc))
+            return
+        self.show_converted_selection("Hex Selection as Text", converted)
+
+    def replace_hex_selection_with_text(self, text: str) -> None:
+        try:
+            converted = self.hex_to_text(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Convert Hex to Text", str(exc))
+            return
+        self.replace_terminal_selection(converted)
+
+    def replace_terminal_selection(self, replacement: str) -> None:
+        cursor = self.terminal.textCursor()
+        if not cursor.hasSelection():
+            return
+        was_read_only = self.terminal.isReadOnly()
+        self.terminal.setReadOnly(False)
+        cursor.insertText(replacement)
+        self.terminal.setReadOnly(was_read_only)
+        self.terminal.setTextCursor(cursor)
+        if self.search_bar.isVisible():
+            self._refresh_search_highlights(self.search_input.text())
+
+    def show_converted_selection(self, title: str, content: str) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setMinimumSize(520, 320)
+        layout = QVBoxLayout(dialog)
+        output = QTextEdit(dialog)
+        output.setReadOnly(True)
+        output.setPlainText(content)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        copy_button = buttons.addButton("Copy", QDialogButtonBox.ButtonRole.ActionRole)
+        copy_button.clicked.connect(lambda: QApplication.clipboard().setText(output.toPlainText()))
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(output, 1)
+        layout.addWidget(buttons)
+        dialog.exec()
+
     def _find_in_terminal(self, *, backward: bool) -> None:
         query = self.search_input.text().strip()
         if not query:
@@ -1154,7 +1265,7 @@ class TerminalSessionWidget(QWidget):
             "status": "SYS ",
             "error": "ERR ",
         }
-        message = event.message.replace("\r\n", "\n").replace("\r", "\n")
+        message = self.display_message_for_event(event).replace("\r\n", "\n").replace("\r", "\n")
         if self.host.settings.timestamps_enabled:
             stamp = event.timestamp.astimezone().strftime("%H:%M:%S.%f")[:-3]
             rendered = "".join(f"[{stamp}] {prefixes.get(event.kind, '')}{line}\n" for line in message.split("\n") if line != "")
@@ -1169,6 +1280,16 @@ class TerminalSessionWidget(QWidget):
         self.terminal.ensureCursorVisible()
         if self.search_bar.isVisible():
             self._refresh_search_highlights(self.search_input.text())
+
+    def display_message_for_event(self, event: SerialEvent) -> str:
+        if event.kind != "rx" or not event.raw:
+            return event.message
+        mode = self.host.settings.receive_display_mode
+        if mode == "Hex":
+            return format_hex_bytes(event.raw)
+        if mode == "Text + Hex":
+            return f"{decode_serial_bytes(event.raw)}\nHEX {format_hex_bytes(event.raw)}"
+        return decode_serial_bytes(event.raw)
 
     def _append_status(self, message: str) -> None:
         self._render_event(SerialEvent(kind="status", message=message))
@@ -1630,6 +1751,16 @@ class MainWindow(QMainWindow):
 
     def toggle_line_wrap(self) -> None:
         self.settings.line_wrap_enabled = self.wrap_action.isChecked()
+        for session in self.iter_sessions():
+            session.apply_settings()
+        self.save_settings()
+
+    def set_receive_display_mode(self, mode: str) -> None:
+        if mode not in RECEIVE_DISPLAY_MODES:
+            mode = "Text"
+        if self.settings.receive_display_mode == mode:
+            return
+        self.settings.receive_display_mode = mode
         for session in self.iter_sessions():
             session.apply_settings()
         self.save_settings()

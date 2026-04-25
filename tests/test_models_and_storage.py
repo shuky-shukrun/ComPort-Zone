@@ -44,6 +44,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             terminal_font_family="Cascadia Mono",
             line_wrap_enabled=True,
             scrollback_size=20000,
+            receive_display_mode="Text + Hex",
             drawer_collapsed=False,
             drawer_width=340,
         )
@@ -78,6 +79,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.terminal_font_family, "Cascadia Mono")
         self.assertTrue(loaded.line_wrap_enabled)
         self.assertEqual(loaded.scrollback_size, 20000)
+        self.assertEqual(loaded.receive_display_mode, "Text + Hex")
         self.assertFalse(loaded.drawer_collapsed)
         self.assertEqual(loaded.drawer_width, 340)
 
@@ -101,6 +103,7 @@ class ModelsAndStorageTests(unittest.TestCase):
                         "serial": {"port": "COM12", "baudrate": 9600},
                         "theme": "Scope Amber",
                         "terminal_font_size": 15,
+                        "receive_display_mode": "Hex",
                         "quick_commands": [
                             {
                                 "id": "cmd-2",
@@ -117,6 +120,7 @@ class ModelsAndStorageTests(unittest.TestCase):
 
         self.assertEqual(settings.theme, "Scope Amber")
         self.assertEqual(settings.terminal_font_size, 15)
+        self.assertEqual(settings.receive_display_mode, "Hex")
         self.assertEqual(settings.profiles["Lab"].serial.port, "COM12")
         self.assertEqual(settings.quick_commands[0].command, "version")
 
@@ -125,6 +129,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             active_profile="Default",
             theme="Bench Light",
             terminal_font_size=14,
+            receive_display_mode="Text + Hex",
             quick_commands=[QuickCommand(label="Errors", command="ERRORS")],
         )
 
@@ -135,6 +140,7 @@ class ModelsAndStorageTests(unittest.TestCase):
 
         self.assertEqual(restored.theme, "Bench Light")
         self.assertEqual(restored.terminal_font_size, 14)
+        self.assertEqual(restored.receive_display_mode, "Text + Hex")
         self.assertEqual(restored.quick_commands[0].command, "ERRORS")
         self.assertEqual(restored.profiles["Default"].serial.port, "COM4")
 
