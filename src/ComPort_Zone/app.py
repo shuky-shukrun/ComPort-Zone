@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -48,7 +49,6 @@ from .history import HistoryStore
 from . import __version__
 from .models import (
     AppSettings,
-    DEFAULT_PROFILE_NAME,
     FLOW_CONTROL_OPTIONS,
     LINE_ENDINGS,
     QuickCommand,
@@ -57,7 +57,6 @@ from .models import (
     SerialProfile,
     TerminalSessionState,
     THEME_OPTIONS,
-    UserProfile,
     utc_now_iso,
 )
 from .serial_core import SerialClient, SerialEvent, decode_serial_bytes, format_hex_bytes
@@ -559,8 +558,7 @@ class TerminalSessionWidget(QWidget):
         self.host = host
         self.session_id = session_id
         self.title = state.title or f"Terminal {session_id}"
-        self.profile_name = state.profile_name if state.profile_name in host.settings.profiles else host.settings.active_profile
-        self.profile = clone_profile(state.serial) if state.serial is not None else host.get_profile(self.profile_name)
+        self.profile = clone_profile(state.serial) if state.serial is not None else host.default_serial_profile()
         self.serial_client = SerialClient()
         self.history_store = HistoryStore(host.history_catalog.all_commands())
         self.logger = SessionLogger()
@@ -579,7 +577,6 @@ class TerminalSessionWidget(QWidget):
         self._build_ui()
         self.refresh_ports()
         self.refresh_quick_commands()
-        self.refresh_profiles()
         self.apply_settings()
         if state.send_mode in SEND_MODES:
             self.mode_combo.setCurrentText(state.send_mode)
@@ -603,7 +600,6 @@ class TerminalSessionWidget(QWidget):
     def to_state(self) -> TerminalSessionState:
         return TerminalSessionState(
             title=self.title,
-            profile_name=self.profile_name,
             serial=clone_profile(self.profile),
             connected_on_launch=self._connected or self.serial_client.is_connected,
             terminal_text=self.terminal.toPlainText(),
@@ -637,7 +633,7 @@ class TerminalSessionWidget(QWidget):
         for icon, tooltip, callback in (
             (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", lambda: self._select_drawer_page(0)),
             (QStyle.StandardPixmap.SP_MediaPlay, "Scripts and shortcuts", lambda: self._select_drawer_page(1)),
-            (QStyle.StandardPixmap.SP_DriveHDIcon, "Profiles", lambda: self._select_drawer_page(2)),
+            (QStyle.StandardPixmap.SP_DriveHDIcon, "Settings", lambda: self._select_drawer_page(2)),
         ):
             button = QToolButton(self.drawer_rail)
             button.setObjectName("railButton")
@@ -657,7 +653,7 @@ class TerminalSessionWidget(QWidget):
         self.drawer_pages = QStackedWidget(self.drawer_panel)
         self.drawer_pages.addWidget(self._build_quick_page())
         self.drawer_pages.addWidget(self._build_scripts_page())
-        self.drawer_pages.addWidget(self._build_profiles_page())
+        self.drawer_pages.addWidget(self._build_settings_page())
         panel_layout.addWidget(self.drawer_pages, 1)
 
         drawer_layout.addWidget(self.drawer_rail)
@@ -889,29 +885,58 @@ class TerminalSessionWidget(QWidget):
         layout.addStretch(1)
         return page
 
-    def _build_profiles_page(self) -> QWidget:
+    def _build_settings_page(self) -> QWidget:
         page = QWidget(self)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        title = self._drawer_title("Profiles", page)
-        self.profile_list = QListWidget(page)
-        self.profile_list.itemDoubleClicked.connect(lambda _: self.apply_selected_profile())
-        apply = self._drawer_action("Apply Profile", QStyle.StandardPixmap.SP_DialogApplyButton, self.apply_selected_profile, page, role="drawerPrimary")
-        save = self._drawer_action("Save Current As Profile", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_current_profile, page)
-        rename = self._drawer_action("Rename", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.rename_profile(self.selected_profile_name()), page)
-        delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_profile(self.selected_profile_name()), page, role="drawerDanger")
+        title = self._drawer_title("Settings", page)
+        description = QLabel(
+            "Export or import the complete app setup as a JSON file. "
+            "This includes serial defaults, quick commands, theme, terminal preferences, and restored tabs.",
+            page,
+        )
+        description.setObjectName("drawerHelpText")
+        description.setWordWrap(True)
+        export_settings = self._drawer_action(
+            "Export Settings",
+            QStyle.StandardPixmap.SP_DialogSaveButton,
+            self.host.export_settings,
+            page,
+            role="drawerPrimary",
+        )
+        import_settings = self._drawer_action(
+            "Import Settings",
+            QStyle.StandardPixmap.SP_DialogOpenButton,
+            self.host.import_settings,
+            page,
+        )
+        export_quick = self._drawer_action(
+            "Export Quick Commands CSV",
+            QStyle.StandardPixmap.SP_DialogSaveButton,
+            self.host.export_quick_commands_csv,
+            page,
+        )
+        import_quick = self._drawer_action(
+            "Import Quick Commands CSV",
+            QStyle.StandardPixmap.SP_DialogOpenButton,
+            self.host.import_quick_commands_csv,
+            page,
+        )
         layout.addWidget(title)
-        layout.addWidget(self._drawer_section("Available Profiles", page))
-        layout.addWidget(self.profile_list, 1)
-        layout.addWidget(apply)
-        layout.addWidget(save)
+        layout.addWidget(description)
+        layout.addWidget(self._drawer_section("Settings Bundle", page))
+        layout.addWidget(export_settings)
+        layout.addWidget(import_settings)
+        layout.addSpacing(8)
+        layout.addWidget(self._drawer_section("Quick Commands", page))
         line = QHBoxLayout()
         line.setContentsMargins(0, 0, 0, 0)
         line.setSpacing(8)
-        line.addWidget(rename)
-        line.addWidget(delete)
+        line.addWidget(export_quick)
+        line.addWidget(import_quick)
         layout.addLayout(line)
+        layout.addStretch(1)
         return page
 
     def _select_drawer_page(self, index: int) -> None:
@@ -1231,10 +1256,6 @@ class TerminalSessionWidget(QWidget):
         )
         return menu
 
-    def selected_profile_name(self) -> str:
-        item = self.profile_list.currentItem()
-        return str(item.data(Qt.ItemDataRole.UserRole)) if item else self.profile_name
-
     def refresh_quick_commands(self, selected_id: str | None = None) -> None:
         selected_id = selected_id or self.selected_quick_command_id()
         self._quick_list_refreshing = True
@@ -1259,34 +1280,9 @@ class TerminalSessionWidget(QWidget):
         self._quick_list_refreshing = False
         self._update_completion_model()
 
-    def refresh_profiles(self) -> None:
-        self.profile_list.clear()
-        selected_row = -1
-        for name in self.host.settings.profiles:
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            self.profile_list.addItem(item)
-            if name == self.profile_name:
-                selected_row = self.profile_list.count() - 1
-        if selected_row >= 0:
-            self.profile_list.setCurrentRow(selected_row)
-
     def refresh_ports(self) -> None:
         self._ports = self.serial_client.list_ports()
         self.host.set_status(f"{len(self._ports)} serial port(s) detected.")
-
-    def apply_selected_profile(self) -> None:
-        item = self.profile_list.currentItem()
-        if not item:
-            return
-        profile_name = str(item.data(Qt.ItemDataRole.UserRole))
-        self.host.activate_profile(profile_name, self)
-
-    def save_current_profile(self) -> None:
-        name, accepted = QInputDialog.getText(self, "Save Profile", "Profile name", text=self.profile_name)
-        if not accepted or not name.strip():
-            return
-        self.host.save_profile_as(name.strip(), self)
 
     def open_connection_settings(self, *, connect_after_accept: bool = True) -> bool:
         dialog = ConnectionSettingsDialog(self.profile, self.serial_client.list_ports(), self)
@@ -1662,12 +1658,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings_store = SettingsStore(default_config_path())
         self.settings = self.settings_store.load()
-        self.settings.ensure_active_profile()
         self.history_catalog = HistoryStore(self.settings.command_history)
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
         self._session_counter = 0
         self._loading = True
-        self._profile_dirty = False
 
         self.setWindowTitle("ComPort Zone")
         self.setWindowIcon(app_icon())
@@ -1708,6 +1702,9 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self._add_action(file_menu, "Run Command File", "Ctrl+R", lambda: self.with_session(lambda s: s.run_script()), icon=QStyle.StandardPixmap.SP_MediaPlay)
         self._add_action(file_menu, "Start / Stop Log", "Ctrl+L", lambda: self.with_session(lambda s: s.toggle_logging()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Import Settings", "", self.import_settings, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
+        self._add_action(file_menu, "Export Settings", "", self.export_settings, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
         file_menu.addSeparator()
         self._add_action(file_menu, "Exit", "", self.close, icon=QStyle.StandardPixmap.SP_TitleBarCloseButton)
 
@@ -1750,13 +1747,6 @@ class MainWindow(QMainWindow):
         serial_menu = self.menuBar().addMenu("Serial")
         self._add_action(serial_menu, "Serial Settings", "Ctrl+,", lambda: self.with_session(lambda s: s.open_connection_settings()), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(serial_menu, "Refresh Ports", "F5", lambda: self.with_session(lambda s: s.refresh_ports()), icon=QStyle.StandardPixmap.SP_BrowserReload)
-        serial_menu.addSeparator()
-        self._add_action(serial_menu, "Save Profile", "", lambda: self.with_session(lambda s: s.save_current_profile()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
-        self._add_action(serial_menu, "Rename Profile", "", lambda: self.with_session(lambda s: self.rename_profile(s.selected_profile_name())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        self._add_action(serial_menu, "Delete Profile", "", lambda: self.with_session(lambda s: self.delete_profile(s.selected_profile_name())), icon=QStyle.StandardPixmap.SP_TrashIcon)
-        serial_menu.addSeparator()
-        self._add_action(serial_menu, "Import Profiles", "", self.import_profiles, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        self._add_action(serial_menu, "Export Profiles", "", self.export_profiles, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
         tools_menu = self.menuBar().addMenu("Tools")
         self._add_action(tools_menu, "Command Palette", "Ctrl+Shift+P", self.show_command_palette, icon=QStyle.StandardPixmap.SP_CommandLink)
@@ -1856,6 +1846,20 @@ class MainWindow(QMainWindow):
                 callback=lambda: self.with_session(lambda session: session.save_current_input_as_quick_command()),
                 icon=QStyle.StandardPixmap.SP_DialogSaveButton,
                 keywords="snippet quick send shortcut",
+            ),
+            CommandPaletteEntry(
+                title="Import Settings",
+                subtitle="Load a complete ComPort Zone settings JSON file",
+                callback=self.import_settings,
+                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+                keywords="settings json restore preferences",
+            ),
+            CommandPaletteEntry(
+                title="Export Settings",
+                subtitle="Save the complete app setup to a JSON file",
+                callback=self.export_settings,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                keywords="settings json backup preferences",
             ),
             CommandPaletteEntry(
                 title="Import Quick Commands from CSV",
@@ -1977,14 +1981,15 @@ class MainWindow(QMainWindow):
         )
         return menu
 
-    def restore_sessions(self) -> None:
+    def restore_sessions(self, *, prompt_first_settings: bool = True) -> None:
         states = self.settings.restored_tabs
         if not states:
             self.add_session(
-                TerminalSessionState(title="Terminal 1", profile_name=self.settings.active_profile),
+                TerminalSessionState(title="Terminal 1"),
                 prompt_settings=False,
             )
-            self.prompt_current_session_settings()
+            if prompt_first_settings:
+                self.prompt_current_session_settings()
             return
         for state in states:
             self.add_session(state, prompt_settings=False)
@@ -1993,7 +1998,7 @@ class MainWindow(QMainWindow):
 
     def add_session(self, state: TerminalSessionState | None = None, *, prompt_settings: bool = True) -> None:
         self._session_counter += 1
-        state = state or TerminalSessionState(title=f"Terminal {self._session_counter}", profile_name=self.settings.active_profile)
+        state = state or TerminalSessionState(title=f"Terminal {self._session_counter}")
         session = TerminalSessionWidget(self, self._session_counter, state)
         index = self.tabs.addTab(
             session,
@@ -2051,7 +2056,6 @@ class MainWindow(QMainWindow):
         self.add_session(
             TerminalSessionState(
                 title=f"{session.title} Copy",
-                profile_name=session.profile_name,
                 serial=clone_profile(session.profile),
                 connected_on_launch=False,
                 terminal_text=session.terminal.toPlainText(),
@@ -2213,120 +2217,10 @@ class MainWindow(QMainWindow):
             session.apply_settings()
         self.save_settings()
 
-    def get_profile(self, name: str) -> SerialProfile:
-        profile = self.settings.profiles.get(name)
-        if not profile:
-            profile = next(iter(self.settings.profiles.values()))
-        return clone_profile(profile.serial)
+    def default_serial_profile(self) -> SerialProfile:
+        return clone_profile(self.settings.serial)
 
-    def active_profile_snapshot(self, serial: SerialProfile | None = None) -> UserProfile:
-        return self.settings.capture_user_profile(serial)
-
-    def save_profile_as(self, name: str, session: TerminalSessionWidget) -> None:
-        session.profile_name = name
-        self.settings.active_profile = name
-        self.settings.profiles[name] = self.active_profile_snapshot(session.profile)
-        self._profile_dirty = False
-        self.refresh_profiles_everywhere()
-        self.update_tab_titles()
-        self.save_settings(profile_sync=False)
-
-    def rename_profile(self, old_name: str) -> None:
-        old_name = old_name.strip()
-        if not old_name or old_name not in self.settings.profiles:
-            return
-        if old_name == DEFAULT_PROFILE_NAME:
-            QMessageBox.information(
-                self,
-                "Rename Profile",
-                "The Default profile cannot be renamed.",
-            )
-            return
-        new_name, accepted = QInputDialog.getText(
-            self,
-            "Rename Profile",
-            "Profile name",
-            text=old_name,
-        )
-        new_name = new_name.strip()
-        if not accepted or not new_name or new_name == old_name:
-            return
-        if new_name in self.settings.profiles:
-            QMessageBox.warning(
-                self,
-                "Rename Profile",
-                f"A profile named '{new_name}' already exists.",
-            )
-            return
-        self.settings.profiles[new_name] = self.settings.profiles.pop(old_name)
-        if self.settings.active_profile == old_name:
-            self.settings.active_profile = new_name
-        for session in self.iter_sessions():
-            if session.profile_name == old_name:
-                session.profile_name = new_name
-        self.refresh_profiles_everywhere()
-        self.update_tab_titles()
-        self.save_settings(profile_sync=False)
-
-    def delete_profile(self, name: str) -> None:
-        name = name.strip()
-        if not name or name not in self.settings.profiles:
-            return
-        if name == DEFAULT_PROFILE_NAME:
-            QMessageBox.information(
-                self,
-                "Delete Profile",
-                "The Default profile cannot be deleted.",
-            )
-            return
-        result = QMessageBox.question(
-            self,
-            "Delete Profile",
-            f"Delete profile '{name}'? This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if result != QMessageBox.StandardButton.Yes:
-            return
-        was_active = self.settings.active_profile == name
-        self.settings.profiles.pop(name)
-        for session in self.iter_sessions():
-            if session.profile_name == name:
-                session.profile_name = DEFAULT_PROFILE_NAME
-        self._profile_dirty = False
-        if was_active:
-            self.activate_profile(DEFAULT_PROFILE_NAME)
-        else:
-            self.refresh_profiles_everywhere()
-            self.save_settings(profile_sync=False)
-
-    def save_active_profile_changes(self) -> None:
-        session = self.current_session()
-        serial = session.profile if session else None
-        self.settings.profiles[self.settings.active_profile] = self.active_profile_snapshot(serial)
-        self._profile_dirty = False
-        self.refresh_profiles_everywhere()
-        self.save_settings(profile_sync=False)
-
-    def activate_profile(self, name: str, session: TerminalSessionWidget | None = None) -> None:
-        if name not in self.settings.profiles:
-            return
-        if not self.confirm_unsaved_profile_changes():
-            return
-        target = session or self.current_session()
-        profile = self.settings.profiles[name]
-        self.settings.apply_user_profile(name)
-        self.history_catalog = HistoryStore(self.settings.command_history)
-        if target:
-            target.profile_name = name
-            target.profile = clone_profile(profile.serial)
-            target._update_line_ending_label()
-            target._update_connection_ui(target.serial_client.is_connected)
-        self.apply_profile_preferences_to_ui()
-        self._profile_dirty = False
-        self.save_settings(profile_sync=False)
-
-    def apply_profile_preferences_to_ui(self) -> None:
+    def apply_settings_to_ui(self) -> None:
         self.apply_theme(self.settings.theme, save=False)
         if hasattr(self, "timestamps_action"):
             self.timestamps_action.setChecked(self.settings.timestamps_enabled)
@@ -2340,42 +2234,8 @@ class MainWindow(QMainWindow):
                 self.settings.drawer_width,
             )
             session.refresh_quick_commands()
-            session.refresh_profiles()
         self.update_tab_titles()
         self.sync_status_from_current_session()
-
-    def update_profile_state(self, serial: SerialProfile | None = None) -> None:
-        snapshot = self.active_profile_snapshot(serial)
-        if self.settings.active_profile == DEFAULT_PROFILE_NAME:
-            self.settings.profiles[DEFAULT_PROFILE_NAME] = snapshot
-            self._profile_dirty = False
-            return
-        stored = self.settings.profiles.get(self.settings.active_profile)
-        self._profile_dirty = stored is not None and snapshot.to_dict() != stored.to_dict()
-
-    def confirm_unsaved_profile_changes(self) -> bool:
-        if not self._profile_dirty or self.settings.active_profile == DEFAULT_PROFILE_NAME:
-            return True
-        result = QMessageBox.question(
-            self,
-            "Save Profile Changes?",
-            f"Save changes to profile '{self.settings.active_profile}'?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Save,
-        )
-        if result == QMessageBox.StandardButton.Cancel:
-            return False
-        if result == QMessageBox.StandardButton.Save:
-            self.save_active_profile_changes()
-        else:
-            self._profile_dirty = False
-        return True
-
-    def refresh_profiles_everywhere(self) -> None:
-        for session in self.iter_sessions():
-            session.refresh_profiles()
 
     def quick_command_by_id(self, command_id: str) -> QuickCommand | None:
         return next((command for command in self.settings.quick_commands if command.id == command_id), None)
@@ -2603,35 +2463,70 @@ class MainWindow(QMainWindow):
             session._update_completion_model()
         self.save_settings()
 
-    def import_profiles(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import Profiles", str(Path.cwd()), "JSON Files (*.json);;All Files (*)")
+    def import_settings(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Settings",
+            str(Path.cwd()),
+            "JSON Files (*.json);;All Files (*)",
+        )
         if not path:
             return
         try:
-            import json
-
-            payload = json.loads(Path(path).read_text(encoding="utf-8"))
-            profiles = payload.get("profiles", payload)
-            fallback = self.active_profile_snapshot(self.current_session().profile if self.current_session() else None)
-            for name, data in profiles.items():
-                self.settings.profiles[str(name)] = UserProfile.from_dict(data, fallback)
-        except (OSError, ValueError, TypeError) as exc:
-            QMessageBox.warning(self, "Import Profiles", str(exc))
+            imported_settings = self.load_settings_from_json(Path(path))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Import Settings", str(exc))
             return
-        self.refresh_profiles_everywhere()
-        self.save_settings(profile_sync=False)
+        self.apply_imported_settings(imported_settings)
+        if not self.settings_store.save(self.settings):
+            self.set_status("Could not save imported settings to disk.")
+            return
+        self.set_status(f"Imported settings from {path}")
 
-    def export_profiles(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Export Profiles", str(Path.cwd() / "comport-zone-profiles.json"), "JSON Files (*.json);;All Files (*)")
+    def export_settings(self) -> None:
+        self.save_settings()
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Settings",
+            str(Path.cwd() / "comport-zone-settings.json"),
+            "JSON Files (*.json);;All Files (*)",
+        )
         if not path:
             return
         try:
-            import json
-
-            payload = {"profiles": {name: profile.to_dict() for name, profile in self.settings.profiles.items()}}
-            Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            self.export_settings_to_json(Path(path))
         except OSError as exc:
-            QMessageBox.warning(self, "Export Profiles", str(exc))
+            QMessageBox.warning(self, "Export Settings", str(exc))
+            return
+        self.set_status(f"Exported settings to {path}")
+
+    def load_settings_from_json(self, path: Path) -> AppSettings:
+        return AppSettings.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+    def export_settings_to_json(self, path: Path) -> None:
+        path.write_text(
+            json.dumps(self.settings.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    def apply_imported_settings(self, settings: AppSettings) -> None:
+        for index in range(self.tabs.count() - 1, -1, -1):
+            session = self.session_at(index)
+            if session:
+                session.shutdown()
+            widget = self.tabs.widget(index)
+            self.tabs.removeTab(index)
+            if widget:
+                widget.deleteLater()
+        previous_loading = self._loading
+        self._loading = True
+        self.settings = settings
+        self.history_catalog = HistoryStore(self.settings.command_history)
+        self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
+        self.resize(self.settings.window_width, self.settings.window_height)
+        self.restore_sessions(prompt_first_settings=False)
+        self._loading = previous_loading
+        self.apply_settings_to_ui()
 
     def show_about(self) -> None:
         QMessageBox.information(
@@ -2766,6 +2661,11 @@ class MainWindow(QMainWindow):
             font-size: 8pt;
             font-weight: 700;
             padding: 9px 3px 1px 3px;
+        }}
+        QLabel#drawerHelpText {{
+            color: {theme.muted};
+            line-height: 1.3;
+            padding: 2px 3px 6px 3px;
         }}
         QFrame#terminalColumn, QTextEdit#terminal {{
             background: {terminal_background};
@@ -2909,26 +2809,21 @@ class MainWindow(QMainWindow):
         }}
         """
 
-    def save_settings(self, *, profile_sync: bool = True) -> None:
+    def save_settings(self) -> None:
         if self._loading:
             return
         session = self.current_session()
         if session:
-            self.settings.active_profile = session.profile_name
+            self.settings.serial = clone_profile(session.profile)
         self.settings.command_history = self.history_catalog.all_commands()
         self.settings.window_width = self.width()
         self.settings.window_height = self.height()
         self.settings.restored_tabs = [session.to_state() for session in self.iter_sessions()]
-        if profile_sync:
-            self.update_profile_state(session.profile if session else None)
         if not self.settings_store.save(self.settings):
             self.set_status("Could not save settings to disk.")
 
     def closeEvent(self, event) -> None:
-        if not self.confirm_unsaved_profile_changes():
-            event.ignore()
-            return
-        self.save_settings(profile_sync=False)
+        self.save_settings()
         for session in self.iter_sessions():
             session.shutdown()
         super().closeEvent(event)

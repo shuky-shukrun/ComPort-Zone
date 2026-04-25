@@ -25,7 +25,6 @@ class AppSessionTests(unittest.TestCase):
                         restored_tabs=[
                             TerminalSessionState(
                                 title="DUT",
-                                profile_name="Default",
                                 serial=SerialProfile(port="COM77", baudrate=57600, line_ending="LF"),
                                 connected_on_launch=True,
                                 terminal_text="previous output",
@@ -139,7 +138,6 @@ class AppSessionTests(unittest.TestCase):
                     ),
                 ]
             )
-            settings.profiles["Default"] = settings.capture_user_profile()
             self.assertTrue(
                 SettingsStore(settings_path).save(settings)
             )
@@ -185,7 +183,6 @@ class AppSessionTests(unittest.TestCase):
                 quick_command_sort_mode="Group",
                 quick_command_hidden_groups=["Hidden"],
             )
-            settings.profiles["Default"] = settings.capture_user_profile()
             self.assertTrue(SettingsStore(settings_path).save(settings))
             old_config_path = app_module.default_config_path
             old_prompt_current = app_module.MainWindow.prompt_current_session_settings
@@ -248,6 +245,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Clear Terminal", titles)
             self.assertIn("Search Terminal", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
+            self.assertIn("Import Settings", titles)
+            self.assertIn("Export Settings", titles)
             self.assertIn("Import Quick Commands from CSV", titles)
             self.assertIn("Export Quick Commands to CSV", titles)
             self.assertTrue(any(title.startswith("Switch to Tab 1:") for title in titles))
@@ -330,6 +329,62 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
             csv_path.unlink(missing_ok=True)
+
+    def test_settings_json_export_import_applies_full_settings(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_bundle.json")
+        export_path = Path(__file__).with_name("_tmp_exported_settings.json")
+        settings_path.unlink(missing_ok=True)
+        export_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            exported = AppSettings(
+                serial=SerialProfile(port="COM44", baudrate=57600, line_ending="LF"),
+                theme="Bench Light",
+                terminal_font_size=14,
+                quick_commands=[
+                    QuickCommand(label="Version", command="version", group="General")
+                ],
+                restored_tabs=[
+                    TerminalSessionState(
+                        title="Imported DUT",
+                        serial=SerialProfile(port="COM55", baudrate=230400),
+                        command_draft="status",
+                    )
+                ],
+            )
+            window.settings = exported
+            window.export_settings_to_json(export_path)
+
+            loaded = window.load_settings_from_json(export_path)
+            self.assertEqual(loaded.serial.port, "COM44")
+            self.assertEqual(loaded.quick_commands[0].command, "version")
+
+            window.apply_imported_settings(loaded)
+            session = window.current_session()
+
+            self.assertEqual(window.settings.theme, "Bench Light")
+            self.assertEqual(window.settings.terminal_font_size, 14)
+            self.assertEqual(session.title, "Imported DUT")
+            self.assertEqual(session.profile.port, "COM55")
+            self.assertEqual(session.command_input.text(), "status")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            export_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -10,10 +10,9 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Tabs for independent serial sessions
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
-- Serial profiles with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
-- Rich profiles that also include theme, terminal font, history, drawer state, quick commands, log/script paths, and other workflow preferences
-- Default profile autosaves changes; non-default profiles ask whether to save unsaved changes on exit or profile switch
-- Profile management includes save-as, rename, delete, import, and export. The Default profile is protected from rename/delete.
+- Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
+- Full settings import/export as JSON bundles instead of an internal profile list
+- Settings bundles include serial defaults, theme, terminal font, history, drawer state, quick commands, log/script paths, restored tabs, and workflow preferences
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
 - Text sending and hex/raw-byte sending
@@ -25,7 +24,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Clear, copy, select all, pause/resume output, and line wrap controls
 - Per-tab command file execution
 - Per-tab logging to text files
-- Persisted settings for theme, drawer state, profiles, quick commands, font size, history, scrollback, and restored tabs
+- Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, and restored tabs
 
 ## Install
 ```powershell
@@ -86,10 +85,29 @@ Boot Wake,55 AA 00,Send bootloader wake bytes,Hex Bytes,Boot,
 Read ID,id?,Read factory identity string,Text,Factory,LF
 ```
 
+## Settings Bundles
+The app autosaves the current setup to:
+
+```text
+%LOCALAPPDATA%\ComPortZone\settings.json
+```
+
+Use `File > Export Settings` to save a complete JSON settings bundle, and `File > Import Settings` to load one. This replaces the older idea of managing named profiles inside the app.
+
+Settings bundles include:
+
+- Serial defaults for new tabs
+- Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
+- Quick commands, descriptions, groups, sort mode, and hidden groups
+- Command history and autocomplete source data
+- Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state
+- Last log/script paths and window size
+
 ## Keyboard Shortcuts
 - `Ctrl+T`: New tab
 - `Ctrl+Shift+T`: Duplicate tab
 - `Ctrl+W`: Close tab
+- `Ctrl+Shift+P`: Command palette
 - `Ctrl+B`: Toggle left drawer
 - `Ctrl+Enter`: Connect or disconnect
 - `Ctrl+F`: Search active terminal
@@ -97,9 +115,6 @@ Read ID,id?,Read factory identity string,Text,Factory,LF
 - `Ctrl+Space`: Autocomplete command input
 - `Up` / `Down`: Navigate command history
 - `Ctrl+=` / `Ctrl+-`: Increase or decrease terminal font size
-
-## Settings
-Settings are stored under `%LOCALAPPDATA%\ComPortZone\settings.json`.
 
 ## Third-Party Notices
 The bundled icon subset comes from Tabler Icons under the MIT license. See `THIRD_PARTY_NOTICES.md`.

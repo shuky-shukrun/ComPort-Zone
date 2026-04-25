@@ -18,10 +18,7 @@ class ModelsAndStorageTests(unittest.TestCase):
 
     def test_settings_store_round_trip(self) -> None:
         settings = AppSettings(
-            active_profile="Bench",
-            profiles={
-                "Bench": SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
-            },
+            serial=SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
             command_history=["status", "reset"],
             quick_snippets=["status", "reboot"],
             quick_commands=[
@@ -40,14 +37,13 @@ class ModelsAndStorageTests(unittest.TestCase):
             restored_tabs=[
                 TerminalSessionState(
                     title="DUT A",
-                    profile_name="Bench",
                     serial=SerialProfile(port="COM9", baudrate=921600, line_ending="None"),
                     connected_on_launch=True,
                     terminal_text="boot ok",
                     command_draft="55 AA",
                     send_mode="Hex Bytes",
                 ),
-                TerminalSessionState(title="DUT B", profile_name="Bench"),
+                TerminalSessionState(title="DUT B"),
             ],
             theme="Scope Amber",
             timestamps_enabled=False,
@@ -76,8 +72,9 @@ class ModelsAndStorageTests(unittest.TestCase):
         fake_parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
         fake_path.write_text.assert_called_once()
         fake_path.read_text.assert_called_once()
-        self.assertEqual(loaded.active_profile, "Bench")
-        self.assertEqual(loaded.profiles["Bench"].serial.port, "COM7")
+        self.assertEqual(loaded.serial.port, "COM7")
+        self.assertEqual(loaded.serial.baudrate, 57600)
+        self.assertEqual(loaded.serial.line_ending, "LF")
         self.assertEqual(loaded.command_history, ["status", "reset"])
         self.assertEqual(loaded.quick_snippets, ["status", "reboot"])
         self.assertEqual(len(loaded.quick_commands), 1)
@@ -115,49 +112,38 @@ class ModelsAndStorageTests(unittest.TestCase):
 
         self.assertEqual(settings.theme, "VS Code Dark")
 
-    def test_active_profile_applies_saved_preferences(self) -> None:
+    def test_settings_file_uses_top_level_preferences(self) -> None:
         settings = AppSettings.from_dict(
             {
-                "active_profile": "Lab",
-                "profiles": {
-                    "Lab": {
-                        "serial": {"port": "COM12", "baudrate": 9600},
-                        "theme": "Scope Amber",
-                        "terminal_font_size": 15,
-                        "receive_display_mode": "Hex",
-                        "quick_commands": [
-                            {
-                                "id": "cmd-2",
-                                "label": "Version",
-                                "command": "version",
-                            }
-                        ],
+                "serial": {"port": "COM12", "baudrate": 9600},
+                "theme": "Scope Amber",
+                "terminal_font_size": 15,
+                "receive_display_mode": "Hex",
+                "quick_commands": [
+                    {
+                        "id": "cmd-2",
+                        "label": "Version",
+                        "command": "version",
                     }
-                },
-                "theme": "VS Code Dark",
-                "terminal_font_size": 10,
+                ],
             }
         )
 
         self.assertEqual(settings.theme, "Scope Amber")
         self.assertEqual(settings.terminal_font_size, 15)
         self.assertEqual(settings.receive_display_mode, "Hex")
-        self.assertEqual(settings.profiles["Lab"].serial.port, "COM12")
+        self.assertEqual(settings.serial.port, "COM12")
         self.assertEqual(settings.quick_commands[0].command, "version")
 
-    def test_default_profile_can_capture_all_preferences(self) -> None:
+    def test_settings_bundle_captures_all_preferences(self) -> None:
         settings = AppSettings(
-            active_profile="Default",
+            serial=SerialProfile(port="COM4", baudrate=230400),
             theme="Bench Light",
             terminal_font_size=14,
             receive_display_mode="Text + Hex",
             quick_commands=[QuickCommand(label="Errors", command="ERRORS")],
             quick_command_sort_mode="Title",
             quick_command_hidden_groups=["Factory"],
-        )
-
-        settings.profiles["Default"] = settings.capture_user_profile(
-            SerialProfile(port="COM4", baudrate=230400)
         )
         restored = AppSettings.from_dict(settings.to_dict())
 
@@ -167,7 +153,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.quick_commands[0].command, "ERRORS")
         self.assertEqual(restored.quick_command_sort_mode, "Title")
         self.assertEqual(restored.quick_command_hidden_groups, ["Factory"])
-        self.assertEqual(restored.profiles["Default"].serial.port, "COM4")
+        self.assertEqual(restored.serial.port, "COM4")
 
 
 if __name__ == "__main__":
