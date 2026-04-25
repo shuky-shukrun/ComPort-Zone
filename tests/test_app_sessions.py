@@ -310,14 +310,85 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(csv_path.read_text(encoding="utf-8-sig").startswith("label,command,description"))
 
             window.settings.quick_commands = []
-            imported_count = window.import_quick_commands_from_csv(csv_path)
+            result = window.import_quick_commands_from_csv(csv_path)
 
-            self.assertEqual(imported_count, 2)
+            self.assertEqual(result.imported_count, 2)
+            self.assertEqual(result.skipped_count, 0)
             self.assertEqual([command.label for command in window.settings.quick_commands], ["Read ID", "Wake Bytes"])
             self.assertEqual(window.settings.quick_commands[0].description, "Read factory identity")
             self.assertEqual(window.settings.quick_commands[0].line_ending_override, "LF")
             self.assertEqual(window.settings.quick_commands[1].send_mode, "Hex Bytes")
             self.assertEqual(window.settings.quick_commands[1].group, "Boot")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            csv_path.unlink(missing_ok=True)
+
+    def test_quick_command_csv_import_can_append_or_replace(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_import_mode.json")
+        csv_path = Path(__file__).with_name("_tmp_quick_import_mode.csv")
+        settings_path.unlink(missing_ok=True)
+        csv_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            csv_path.write_text(
+                "label,command,description,send_mode,group,line_ending_override\n"
+                "Read ID,id?,Imported description,Text,Factory,LF\n"
+                "Wake,wake,,Text,Factory,\n",
+                encoding="utf-8",
+            )
+            window = app_module.MainWindow()
+            window.settings.quick_commands = [
+                QuickCommand(
+                    label="Read ID",
+                    command="id?",
+                    description="Local note",
+                    send_mode="Text",
+                    group="Factory",
+                ),
+                QuickCommand(label="Local Only", command="local", send_mode="Text", group="General"),
+            ]
+
+            append_result = window.import_quick_commands_from_csv(
+                csv_path,
+                options=app_module.QuickCommandImportOptions(
+                    replace_existing=False,
+                    skip_duplicates=True,
+                ),
+            )
+
+            self.assertEqual(append_result.imported_count, 1)
+            self.assertEqual(append_result.skipped_count, 1)
+            self.assertEqual(
+                [command.label for command in window.settings.quick_commands],
+                ["Read ID", "Local Only", "Wake"],
+            )
+
+            replace_result = window.import_quick_commands_from_csv(
+                csv_path,
+                options=app_module.QuickCommandImportOptions(
+                    replace_existing=True,
+                    skip_duplicates=False,
+                ),
+            )
+
+            self.assertEqual(replace_result.imported_count, 2)
+            self.assertEqual(replace_result.skipped_count, 0)
+            self.assertEqual([command.label for command in window.settings.quick_commands], ["Read ID", "Wake"])
+            self.assertEqual(window.settings.quick_commands[0].description, "Imported description")
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -366,9 +437,11 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(loaded.serial.port, "COM44")
             self.assertEqual(loaded.quick_commands[0].command, "version")
 
-            window.apply_imported_settings(loaded)
+            result = window.apply_imported_settings(loaded)
             session = window.current_session()
 
+            self.assertEqual(result.imported_count, 1)
+            self.assertEqual(result.skipped_count, 0)
             self.assertEqual(window.settings.theme, "Bench Light")
             self.assertEqual(window.settings.terminal_font_size, 14)
             self.assertEqual(session.title, "Imported DUT")
@@ -385,6 +458,58 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
             export_path.unlink(missing_ok=True)
+
+    def test_settings_import_can_append_quick_commands_and_skip_duplicates(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_import_append.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.quick_commands = [
+                QuickCommand(label="Local", command="local", send_mode="Text", group="General"),
+                QuickCommand(label="Version", command="version", send_mode="Text", group="General"),
+            ]
+            imported = AppSettings(
+                quick_commands=[
+                    QuickCommand(label="Version", command="version", description="Imported note", group="General"),
+                    QuickCommand(label="Reset", command="reset", group="General"),
+                ],
+                restored_tabs=[
+                    TerminalSessionState(title="Imported", serial=SerialProfile(port="COM12"))
+                ],
+            )
+
+            result = window.apply_imported_settings(
+                imported,
+                quick_command_options=app_module.QuickCommandImportOptions(
+                    replace_existing=False,
+                    skip_duplicates=True,
+                ),
+            )
+
+            self.assertEqual(result.imported_count, 1)
+            self.assertEqual(result.skipped_count, 1)
+            self.assertEqual(
+                [command.label for command in window.settings.quick_commands],
+                ["Local", "Version", "Reset"],
+            )
+            self.assertEqual(window.current_session().profile.port, "COM12")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

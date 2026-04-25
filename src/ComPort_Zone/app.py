@@ -257,6 +257,72 @@ def quick_command_from_csv_row(row: dict[str, str]) -> QuickCommand | None:
 
 
 @dataclass(slots=True)
+class QuickCommandImportOptions:
+    replace_existing: bool = False
+    skip_duplicates: bool = True
+
+
+@dataclass(slots=True)
+class QuickCommandImportResult:
+    imported_count: int = 0
+    skipped_count: int = 0
+
+    def status_suffix(self) -> str:
+        if self.skipped_count:
+            return f", skipped {self.skipped_count} duplicate(s)"
+        return ""
+
+
+def quick_command_duplicate_key(command: QuickCommand) -> tuple[str, str, str, str]:
+    return (
+        quick_group_name(command.group).casefold(),
+        command.display_label().strip().casefold(),
+        command.command.strip(),
+        command.send_mode.strip().casefold(),
+    )
+
+
+def clone_quick_command(command: QuickCommand, *, preserve_id: bool) -> QuickCommand:
+    fields = {
+        "label": command.label,
+        "command": command.command,
+        "description": command.description,
+        "send_mode": command.send_mode,
+        "group": command.group,
+        "line_ending_override": command.line_ending_override,
+        "created_at": command.created_at,
+        "updated_at": command.updated_at,
+    }
+    if preserve_id:
+        fields["id"] = command.id
+    return QuickCommand(**fields)
+
+
+def merge_quick_commands(
+    existing: list[QuickCommand],
+    imported: list[QuickCommand],
+    options: QuickCommandImportOptions,
+) -> tuple[list[QuickCommand], QuickCommandImportResult]:
+    merged = [] if options.replace_existing else [
+        clone_quick_command(command, preserve_id=True)
+        for command in existing
+    ]
+    seen = {quick_command_duplicate_key(command) for command in merged}
+    result = QuickCommandImportResult()
+    for command in imported:
+        if not command.command.strip():
+            continue
+        key = quick_command_duplicate_key(command)
+        if options.skip_duplicates and key in seen:
+            result.skipped_count += 1
+            continue
+        merged.append(clone_quick_command(command, preserve_id=options.replace_existing))
+        seen.add(key)
+        result.imported_count += 1
+    return merged, result
+
+
+@dataclass(slots=True)
 class CommandPaletteEntry:
     title: str
     subtitle: str
@@ -459,6 +525,62 @@ class QuickCommandDialog(QDialog):
             line_ending_override=str(self.line_ending_combo.currentData() or ""),
             created_at=self._original.created_at or now,
             updated_at=now,
+        )
+
+
+class QuickCommandImportDialog(QDialog):
+    def __init__(
+        self,
+        *,
+        title: str,
+        message: str,
+        default_replace: bool,
+        default_skip_duplicates: bool,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(430)
+
+        intro = QLabel(message, self)
+        intro.setWordWrap(True)
+
+        self.behavior_combo = ChevronComboBox(self)
+        self.behavior_combo.addItem("Append imported commands", False)
+        self.behavior_combo.addItem("Replace current quick commands", True)
+        self.behavior_combo.setCurrentIndex(1 if default_replace else 0)
+
+        self.skip_duplicates = QCheckBox("Skip duplicate commands", self)
+        self.skip_duplicates.setToolTip(
+            "Duplicates use group, title, command text, and send mode. Descriptions are ignored."
+        )
+        self.skip_duplicates.setChecked(default_skip_duplicates)
+
+        duplicate_hint = QLabel(
+            "Duplicate detection ignores descriptions so imported notes can change without creating extra copies.",
+            self,
+        )
+        duplicate_hint.setWordWrap(True)
+        duplicate_hint.setObjectName("dialogHint")
+
+        form = QFormLayout()
+        form.addRow("Behavior", self.behavior_combo)
+        form.addRow("", self.skip_duplicates)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addLayout(form)
+        layout.addWidget(duplicate_hint)
+        layout.addWidget(buttons)
+
+    def options(self) -> QuickCommandImportOptions:
+        return QuickCommandImportOptions(
+            replace_existing=bool(self.behavior_combo.currentData()),
+            skip_duplicates=self.skip_duplicates.isChecked(),
         )
 
 
@@ -2367,12 +2489,23 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        dialog = QuickCommandImportDialog(
+            title="Import Quick Commands",
+            message="Choose whether this CSV adds to your current quick commands or replaces them.",
+            default_replace=False,
+            default_skip_duplicates=True,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
         try:
-            imported_count = self.import_quick_commands_from_csv(Path(path))
+            result = self.import_quick_commands_from_csv(Path(path), options=dialog.options())
         except (OSError, csv.Error, ValueError) as exc:
             QMessageBox.warning(self, "Import Quick Commands", str(exc))
             return
-        self.set_status(f"Imported {imported_count} quick command(s).")
+        self.set_status(
+            f"Imported {result.imported_count} quick command(s){result.status_suffix()}."
+        )
 
     def export_quick_commands_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -2390,7 +2523,13 @@ class MainWindow(QMainWindow):
             return
         self.set_status(f"Exported {exported_count} quick command(s).")
 
-    def import_quick_commands_from_csv(self, path: Path) -> int:
+    def import_quick_commands_from_csv(
+        self,
+        path: Path,
+        *,
+        options: QuickCommandImportOptions | None = None,
+    ) -> QuickCommandImportResult:
+        options = options or QuickCommandImportOptions()
         with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
             reader = csv.DictReader(csv_file)
             if reader.fieldnames is None:
@@ -2409,11 +2548,16 @@ class MainWindow(QMainWindow):
                 if quick_command:
                     imported.append(quick_command)
         if not imported:
-            return 0
-        self.settings.quick_commands.extend(imported)
-        self.refresh_quick_commands_everywhere(imported[-1].id)
+            return QuickCommandImportResult()
+        self.settings.quick_commands, result = merge_quick_commands(
+            self.settings.quick_commands,
+            imported,
+            options,
+        )
+        selected_id = self.settings.quick_commands[-1].id if self.settings.quick_commands else ""
+        self.refresh_quick_commands_everywhere(selected_id)
         self.save_settings()
-        return len(imported)
+        return result
 
     def export_quick_commands_to_csv(self, path: Path) -> int:
         with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
@@ -2477,11 +2621,25 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             QMessageBox.warning(self, "Import Settings", str(exc))
             return
-        self.apply_imported_settings(imported_settings)
+        dialog = QuickCommandImportDialog(
+            title="Import Settings",
+            message=(
+                "The settings bundle will replace the app setup. Choose how quick commands should be handled."
+            ),
+            default_replace=True,
+            default_skip_duplicates=False,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = self.apply_imported_settings(imported_settings, quick_command_options=dialog.options())
         if not self.settings_store.save(self.settings):
             self.set_status("Could not save imported settings to disk.")
             return
-        self.set_status(f"Imported settings from {path}")
+        self.set_status(
+            f"Imported settings from {path}. Quick commands: {result.imported_count}"
+            f"{result.status_suffix()}."
+        )
 
     def export_settings(self) -> None:
         self.save_settings()
@@ -2509,7 +2667,22 @@ class MainWindow(QMainWindow):
             encoding="utf-8",
         )
 
-    def apply_imported_settings(self, settings: AppSettings) -> None:
+    def apply_imported_settings(
+        self,
+        settings: AppSettings,
+        *,
+        quick_command_options: QuickCommandImportOptions | None = None,
+    ) -> QuickCommandImportResult:
+        quick_command_options = quick_command_options or QuickCommandImportOptions(
+            replace_existing=True,
+            skip_duplicates=False,
+        )
+        current_quick_commands = list(self.settings.quick_commands)
+        settings.quick_commands, result = merge_quick_commands(
+            current_quick_commands,
+            settings.quick_commands,
+            quick_command_options,
+        )
         for index in range(self.tabs.count() - 1, -1, -1):
             session = self.session_at(index)
             if session:
@@ -2527,6 +2700,7 @@ class MainWindow(QMainWindow):
         self.restore_sessions(prompt_first_settings=False)
         self._loading = previous_loading
         self.apply_settings_to_ui()
+        return result
 
     def show_about(self) -> None:
         QMessageBox.information(

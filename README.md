@@ -65,7 +65,9 @@ reset
 ## Quick Commands CSV Format
 Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.
 
-Import appends commands to the current quick-command list. Export writes UTF-8 CSV with these columns:
+During import, choose whether to append incoming commands to the current list or replace the current list.
+The import dialog can also skip duplicates, where duplicates are matched by group, title, command text, and send mode.
+Export writes UTF-8 CSV with these columns:
 
 | Column | Required | Description |
 | --- | --- | --- |
@@ -93,6 +95,11 @@ The app autosaves the current setup to:
 ```
 
 Use `File > Export Settings` to save a complete JSON settings bundle, and `File > Import Settings` to load one. This replaces the older idea of managing named profiles inside the app.
+During settings import, ComPort Zone asks how to handle quick commands:
+
+- `Replace current quick commands`: use the commands from the settings file.
+- `Append imported commands`: keep local commands and add the imported ones.
+- `Skip duplicate commands`: avoid repeated commands when appending.
 
 Settings bundles include:
 
