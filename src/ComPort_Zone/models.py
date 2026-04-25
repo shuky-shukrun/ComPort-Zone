@@ -15,6 +15,7 @@ LINE_ENDINGS = {
 FLOW_CONTROL_OPTIONS = ("None", "RTS/CTS", "XON/XOFF", "DSR/DTR")
 THEME_OPTIONS = ("VS Code Dark", "Windows Terminal", "Bench Light", "Scope Amber")
 RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
+QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 DEFAULT_SNIPPETS = ["status", "help", "reset"]
 DEFAULT_PROFILE_NAME = "Default"
 
@@ -180,6 +181,8 @@ class UserProfile:
     quick_commands: list[QuickCommand] = field(
         default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
     )
+    quick_command_sort_mode: str = "Custom"
+    quick_command_hidden_groups: list[str] = field(default_factory=list)
     theme: str = "VS Code Dark"
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
@@ -198,6 +201,8 @@ class UserProfile:
             "command_history": list(self.command_history),
             "quick_snippets": list(self.quick_snippets),
             "quick_commands": [command.to_dict() for command in self.quick_commands],
+            "quick_command_sort_mode": self.quick_command_sort_mode,
+            "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
             "theme": self.theme,
             "timestamps_enabled": self.timestamps_enabled,
             "terminal_font_size": self.terminal_font_size,
@@ -227,6 +232,8 @@ class UserProfile:
                 "command_history",
                 "quick_snippets",
                 "quick_commands",
+                "quick_command_sort_mode",
+                "quick_command_hidden_groups",
                 "theme",
                 "terminal_font_size",
                 "receive_display_mode",
@@ -253,6 +260,9 @@ class UserProfile:
         receive_display_mode = str(data.get("receive_display_mode", fallback.receive_display_mode))
         if receive_display_mode not in RECEIVE_DISPLAY_MODES:
             receive_display_mode = "Text"
+        quick_command_sort_mode = str(data.get("quick_command_sort_mode", fallback.quick_command_sort_mode))
+        if quick_command_sort_mode not in QUICK_COMMAND_SORT_MODES:
+            quick_command_sort_mode = "Custom"
         return cls(
             serial=SerialProfile.from_dict(serial_data),
             command_history=[
@@ -267,6 +277,12 @@ class UserProfile:
             or list(DEFAULT_SNIPPETS),
             quick_commands=quick_commands
             or [QuickCommand.from_dict(command.to_dict()) for command in fallback.quick_commands],
+            quick_command_sort_mode=quick_command_sort_mode,
+            quick_command_hidden_groups=[
+                str(group).strip()
+                for group in data.get("quick_command_hidden_groups", fallback.quick_command_hidden_groups)
+                if str(group).strip()
+            ],
             theme=theme,
             timestamps_enabled=bool(data.get("timestamps_enabled", fallback.timestamps_enabled)),
             terminal_font_size=int(data.get("terminal_font_size", fallback.terminal_font_size)),
@@ -294,6 +310,8 @@ class UserProfile:
                 QuickCommand.from_dict(command.to_dict())
                 for command in settings.quick_commands
             ],
+            quick_command_sort_mode=settings.quick_command_sort_mode,
+            quick_command_hidden_groups=list(settings.quick_command_hidden_groups),
             theme=settings.theme,
             timestamps_enabled=settings.timestamps_enabled,
             terminal_font_size=settings.terminal_font_size,
@@ -322,6 +340,8 @@ class AppSettings:
     quick_commands: list[QuickCommand] = field(
         default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
     )
+    quick_command_sort_mode: str = "Custom"
+    quick_command_hidden_groups: list[str] = field(default_factory=list)
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     theme: str = "VS Code Dark"
     timestamps_enabled: bool = True
@@ -365,6 +385,8 @@ class AppSettings:
             QuickCommand.from_dict(command.to_dict())
             for command in profile.quick_commands
         ]
+        self.quick_command_sort_mode = profile.quick_command_sort_mode
+        self.quick_command_hidden_groups = list(profile.quick_command_hidden_groups)
         self.theme = profile.theme
         self.timestamps_enabled = profile.timestamps_enabled
         self.terminal_font_size = profile.terminal_font_size
@@ -384,6 +406,8 @@ class AppSettings:
             "command_history": list(self.command_history),
             "quick_snippets": list(self.quick_snippets),
             "quick_commands": [command.to_dict() for command in self.quick_commands],
+            "quick_command_sort_mode": self.quick_command_sort_mode,
+            "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
             "restored_tabs": [session.to_dict() for session in self.restored_tabs],
             "theme": self.theme,
             "timestamps_enabled": self.timestamps_enabled,
@@ -415,6 +439,9 @@ class AppSettings:
         receive_display_mode = str(data.get("receive_display_mode", "Text"))
         if receive_display_mode not in RECEIVE_DISPLAY_MODES:
             receive_display_mode = "Text"
+        quick_command_sort_mode = str(data.get("quick_command_sort_mode", "Custom"))
+        if quick_command_sort_mode not in QUICK_COMMAND_SORT_MODES:
+            quick_command_sort_mode = "Custom"
         settings = cls(
             active_profile=str(data.get("active_profile", DEFAULT_PROFILE_NAME)),
             profiles={},
@@ -427,6 +454,12 @@ class AppSettings:
             or list(DEFAULT_SNIPPETS),
             quick_commands=quick_commands
             or [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS],
+            quick_command_sort_mode=quick_command_sort_mode,
+            quick_command_hidden_groups=[
+                str(group).strip()
+                for group in data.get("quick_command_hidden_groups", [])
+                if str(group).strip()
+            ],
             restored_tabs=[
                 TerminalSessionState.from_dict(item)
                 for item in data.get("restored_tabs", [])

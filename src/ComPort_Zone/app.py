@@ -49,6 +49,7 @@ from .models import (
     FLOW_CONTROL_OPTIONS,
     LINE_ENDINGS,
     QuickCommand,
+    QUICK_COMMAND_SORT_MODES,
     RECEIVE_DISPLAY_MODES,
     SerialProfile,
     TerminalSessionState,
@@ -208,6 +209,10 @@ def pick_mono_font(point_size: int, family_name: str = "") -> QFont:
 def short_label(text: str, limit: int = 40) -> str:
     text = text.strip()
     return text if len(text) <= limit else f"{text[: limit - 3]}..."
+
+
+def quick_group_name(group: str) -> str:
+    return group.strip() or "General"
 
 
 class TerminalTabWidget(QTabWidget):
@@ -671,16 +676,36 @@ class TerminalSessionWidget(QWidget):
         self.quick_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
         self.quick_list.model().rowsInserted.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
         self.quick_list.model().rowsRemoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
+        self.quick_sort_combo = ChevronComboBox(page)
+        self.quick_sort_combo.setObjectName("quickSortCombo")
+        for mode in QUICK_COMMAND_SORT_MODES:
+            label = "Custom order" if mode == "Custom" else mode
+            self.quick_sort_combo.addItem(label, mode)
+        self.quick_sort_combo.setToolTip("Sort quick commands")
+        self.quick_sort_combo.currentIndexChanged.connect(self._quick_sort_changed)
+        self.quick_group_button = QToolButton(page)
+        self.quick_group_button.setObjectName("drawerMenuButton")
+        self.quick_group_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quick_group_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.quick_group_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.quick_group_button.setToolTip("Show or hide quick command groups")
+        set_button_icon(self.quick_group_button, QStyle.StandardPixmap.SP_FileDialogListView)
         send = self._drawer_action("Send Selected", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, page, role="drawerPrimary")
         add = self._drawer_action("Add", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, page)
         edit = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_command(self.selected_quick_command_id()), page)
         delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_command(self.selected_quick_command_id()), page, role="drawerDanger")
-        up = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), page)
-        down = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1), page)
+        self.quick_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), page)
+        self.quick_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1), page)
         layout.addWidget(title)
         layout.addWidget(self._drawer_section("Saved Commands", page))
+        filter_line = QHBoxLayout()
+        filter_line.setContentsMargins(0, 0, 0, 0)
+        filter_line.setSpacing(8)
+        filter_line.addWidget(self.quick_sort_combo, 1)
+        filter_line.addWidget(self.quick_group_button, 1)
+        layout.addLayout(filter_line)
         layout.addWidget(self.quick_list, 1)
-        for row in ((send, add), (edit, delete), (up, down)):
+        for row in ((send, add), (edit, delete), (self.quick_move_up_button, self.quick_move_down_button)):
             line = QHBoxLayout()
             line.setContentsMargins(0, 0, 0, 0)
             line.setSpacing(8)
@@ -805,6 +830,133 @@ class TerminalSessionWidget(QWidget):
         if sizes:
             self.host.set_drawer_width(sizes[0])
 
+    def _quick_sort_changed(self) -> None:
+        mode = self.quick_sort_combo.currentData()
+        if mode:
+            self.host.set_quick_command_sort_mode(str(mode))
+
+    def quick_command_groups(self) -> list[str]:
+        groups: list[str] = []
+        seen: set[str] = set()
+        for command in self.host.settings.quick_commands:
+            group = quick_group_name(command.group)
+            key = group.casefold()
+            if key not in seen:
+                groups.append(group)
+                seen.add(key)
+        return sorted(groups, key=str.casefold)
+
+    def visible_quick_commands(self) -> list[QuickCommand]:
+        hidden = {group.casefold() for group in self.host.settings.quick_command_hidden_groups}
+        commands = [
+            command
+            for command in self.host.settings.quick_commands
+            if quick_group_name(command.group).casefold() not in hidden
+        ]
+        mode = self.host.settings.quick_command_sort_mode
+        if mode == "Title":
+            return sorted(
+                commands,
+                key=lambda command: (
+                    command.display_label().casefold(),
+                    quick_group_name(command.group).casefold(),
+                    command.command.casefold(),
+                ),
+            )
+        if mode == "Group":
+            return sorted(
+                commands,
+                key=lambda command: (
+                    quick_group_name(command.group).casefold(),
+                    command.display_label().casefold(),
+                    command.command.casefold(),
+                ),
+            )
+        return commands
+
+    def can_manually_reorder_quick_commands(self) -> bool:
+        groups = {group.casefold() for group in self.quick_command_groups()}
+        hidden_active = any(
+            group.casefold() in groups
+            for group in self.host.settings.quick_command_hidden_groups
+        )
+        return self.host.settings.quick_command_sort_mode == "Custom" and not hidden_active
+
+    def refresh_quick_command_controls(self) -> None:
+        mode = (
+            self.host.settings.quick_command_sort_mode
+            if self.host.settings.quick_command_sort_mode in QUICK_COMMAND_SORT_MODES
+            else "Custom"
+        )
+        self.quick_sort_combo.blockSignals(True)
+        index = self.quick_sort_combo.findData(mode)
+        if index >= 0:
+            self.quick_sort_combo.setCurrentIndex(index)
+        self.quick_sort_combo.blockSignals(False)
+
+        groups = self.quick_command_groups()
+        hidden = {group.casefold() for group in self.host.settings.quick_command_hidden_groups}
+        visible_count = sum(1 for group in groups if group.casefold() not in hidden)
+        total_count = len(groups)
+        if total_count == 0:
+            group_text = "Groups: None"
+        elif visible_count == total_count:
+            group_text = "Groups: All"
+        elif visible_count == 0:
+            group_text = "Groups: Hidden"
+        else:
+            group_text = f"Groups: {visible_count}/{total_count}"
+        self.quick_group_button.setText(group_text)
+
+        old_menu = self.quick_group_button.menu()
+        if old_menu is not None:
+            old_menu.deleteLater()
+        menu = QMenu(self.quick_group_button)
+        self.host._add_context_action(
+            menu,
+            "Show All Groups",
+            self.host.show_all_quick_command_groups,
+            icon=QStyle.StandardPixmap.SP_DialogApplyButton,
+            enabled=total_count > 0 and visible_count < total_count,
+        )
+        self.host._add_context_action(
+            menu,
+            "Hide All Groups",
+            self.host.hide_all_quick_command_groups,
+            icon=QStyle.StandardPixmap.SP_TrashIcon,
+            enabled=total_count > 0 and visible_count > 0,
+        )
+        if groups:
+            menu.addSeparator()
+            for group in groups:
+                action = QAction(group, menu)
+                action.setCheckable(True)
+                action.setChecked(group.casefold() not in hidden)
+                action.toggled.connect(
+                    lambda checked, group=group: self.host.set_quick_command_group_visible(group, checked)
+                )
+                menu.addAction(action)
+        else:
+            action = QAction("No groups yet", menu)
+            action.setEnabled(False)
+            menu.addAction(action)
+        self.quick_group_button.setMenu(menu)
+
+        can_reorder = self.can_manually_reorder_quick_commands()
+        self.quick_list.setDragEnabled(can_reorder)
+        self.quick_list.setAcceptDrops(can_reorder)
+        self.quick_list.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove
+            if can_reorder
+            else QAbstractItemView.DragDropMode.NoDragDrop
+        )
+        self.quick_move_up_button.setEnabled(can_reorder)
+        self.quick_move_down_button.setEnabled(can_reorder)
+        if can_reorder:
+            self.quick_list.setToolTip("Right-click a saved command for actions. Press and drag to reorder.")
+        else:
+            self.quick_list.setToolTip("Reorder is available only in Custom order with all groups visible.")
+
     def selected_quick_command_id(self) -> str:
         item = self.quick_list.currentItem()
         return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
@@ -823,7 +975,7 @@ class TerminalSessionWidget(QWidget):
         ]
 
     def persist_quick_command_order(self) -> None:
-        if self._quick_list_refreshing:
+        if self._quick_list_refreshing or not self.can_manually_reorder_quick_commands():
             return
         self.host.reorder_quick_commands(
             self.quick_command_ids_in_list_order(),
@@ -852,6 +1004,7 @@ class TerminalSessionWidget(QWidget):
             return menu
 
         row = self.quick_command_row(command_id)
+        can_reorder = self.can_manually_reorder_quick_commands()
         menu.setTitle(command.display_label())
         self.host._add_context_action(
             menu,
@@ -897,14 +1050,14 @@ class TerminalSessionWidget(QWidget):
             "Move Up",
             lambda command_id=command_id: self.host.move_quick_command(command_id, -1),
             icon=QStyle.StandardPixmap.SP_ArrowUp,
-            enabled=row > 0,
+            enabled=can_reorder and row > 0,
         )
         self.host._add_context_action(
             menu,
             "Move Down",
             lambda command_id=command_id: self.host.move_quick_command(command_id, 1),
             icon=QStyle.StandardPixmap.SP_ArrowDown,
-            enabled=0 <= row < self.quick_list.count() - 1,
+            enabled=can_reorder and 0 <= row < self.quick_list.count() - 1,
         )
         return menu
 
@@ -916,14 +1069,15 @@ class TerminalSessionWidget(QWidget):
         selected_id = selected_id or self.selected_quick_command_id()
         self._quick_list_refreshing = True
         self.quick_list.clear()
+        self.refresh_quick_command_controls()
         selected_row = -1
-        for command in self.host.settings.quick_commands:
+        for command in self.visible_quick_commands():
             label = short_label(command.display_label(), 30)
-            group = command.group.strip()
+            group = quick_group_name(command.group)
             item_text = label if not group or group.casefold() == "general" else f"{short_label(group, 10)}: {label}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, command.id)
-            tooltip = command.description.strip() or f"{command.group} | {command.command}"
+            tooltip = command.description.strip() or f"{group} | {command.command}"
             item.setToolTip(tooltip)
             item.setSizeHint(QSize(0, 24))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
@@ -1974,6 +2128,60 @@ class MainWindow(QMainWindow):
     def quick_command_by_id(self, command_id: str) -> QuickCommand | None:
         return next((command for command in self.settings.quick_commands if command.id == command_id), None)
 
+    def quick_command_group_names(self) -> list[str]:
+        groups: list[str] = []
+        seen: set[str] = set()
+        for command in self.settings.quick_commands:
+            group = quick_group_name(command.group)
+            key = group.casefold()
+            if key not in seen:
+                groups.append(group)
+                seen.add(key)
+        return sorted(groups, key=str.casefold)
+
+    def set_quick_command_sort_mode(self, mode: str) -> None:
+        if mode not in QUICK_COMMAND_SORT_MODES:
+            mode = "Custom"
+        if self.settings.quick_command_sort_mode == mode:
+            return
+        self.settings.quick_command_sort_mode = mode
+        self.refresh_quick_commands_everywhere()
+        self.save_settings()
+
+    def set_quick_command_group_visible(self, group: str, visible: bool) -> None:
+        group = quick_group_name(group)
+        hidden = [
+            hidden_group
+            for hidden_group in self.settings.quick_command_hidden_groups
+            if hidden_group.casefold() != group.casefold()
+        ]
+        if not visible:
+            hidden.append(group)
+        if [item.casefold() for item in hidden] == [
+            item.casefold() for item in self.settings.quick_command_hidden_groups
+        ]:
+            return
+        self.settings.quick_command_hidden_groups = hidden
+        self.refresh_quick_commands_everywhere()
+        self.save_settings()
+
+    def show_all_quick_command_groups(self) -> None:
+        if not self.settings.quick_command_hidden_groups:
+            return
+        self.settings.quick_command_hidden_groups = []
+        self.refresh_quick_commands_everywhere()
+        self.save_settings()
+
+    def hide_all_quick_command_groups(self) -> None:
+        groups = self.quick_command_group_names()
+        if [group.casefold() for group in groups] == [
+            group.casefold() for group in self.settings.quick_command_hidden_groups
+        ]:
+            return
+        self.settings.quick_command_hidden_groups = groups
+        self.refresh_quick_commands_everywhere()
+        self.save_settings()
+
     def add_quick_command(self, command: QuickCommand | None = None) -> None:
         if command is None or isinstance(command, bool):
             dialog = QuickCommandDialog(parent=self)
@@ -2330,6 +2538,21 @@ class MainWindow(QMainWindow):
         QPushButton#drawerActionButton[role="drawerDanger"]:hover {{
             background: {theme.surface};
             border-color: {theme.error};
+        }}
+        QToolButton#drawerMenuButton {{
+            background: {theme.field};
+            color: {theme.text};
+            border: 1px solid {theme.border};
+            border-radius: 8px;
+            padding: 7px 9px;
+        }}
+        QToolButton#drawerMenuButton:hover {{
+            background: {theme.surface};
+            border-color: {theme.accent};
+        }}
+        QToolButton#drawerMenuButton::menu-indicator {{
+            image: none;
+            width: 0px;
         }}
         QSplitter::handle {{
             background: {theme.border};

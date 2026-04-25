@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from ComPort_Zone import app as app_module
@@ -157,6 +158,61 @@ class AppSessionTests(unittest.TestCase):
                     "Reads the board identity from EEPROM.",
                 )
                 self.assertEqual(session.quick_list.item(1).toolTip(), "General | reset")
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_quick_commands_sort_and_group_visibility(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_sort.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            settings = AppSettings(
+                quick_commands=[
+                    QuickCommand(id="zebra", label="Zebra", command="z", group="Beta"),
+                    QuickCommand(id="alpha", label="Alpha", command="a", group="Beta"),
+                    QuickCommand(id="cable", label="Cable", command="c", group="Alpha"),
+                    QuickCommand(id="hidden", label="Hidden", command="h", group="Hidden"),
+                ],
+                quick_command_sort_mode="Group",
+                quick_command_hidden_groups=["Hidden"],
+            )
+            settings.profiles["Default"] = settings.capture_user_profile()
+            self.assertTrue(SettingsStore(settings_path).save(settings))
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            try:
+                window = app_module.MainWindow()
+                session = window.current_session()
+
+                def visible_ids() -> list[str]:
+                    return [
+                        str(session.quick_list.item(row).data(Qt.ItemDataRole.UserRole))
+                        for row in range(session.quick_list.count())
+                    ]
+
+                self.assertEqual(visible_ids(), ["cable", "alpha", "zebra"])
+                self.assertEqual(session.quick_sort_combo.currentData(), "Group")
+
+                window.set_quick_command_sort_mode("Title")
+                self.assertEqual(visible_ids(), ["alpha", "cable", "zebra"])
+                self.assertFalse(session.quick_list.dragEnabled())
+
+                window.set_quick_command_group_visible("Hidden", True)
+                self.assertEqual(visible_ids(), ["alpha", "cable", "hidden", "zebra"])
+                self.assertEqual(window.settings.quick_command_hidden_groups, [])
             finally:
                 app_module.default_config_path = old_config_path
                 app_module.MainWindow.prompt_current_session_settings = old_prompt_current

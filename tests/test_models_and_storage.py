@@ -35,6 +35,8 @@ class ModelsAndStorageTests(unittest.TestCase):
                     line_ending_override="LF",
                 )
             ],
+            quick_command_sort_mode="Group",
+            quick_command_hidden_groups=["Debug"],
             restored_tabs=[
                 TerminalSessionState(
                     title="DUT A",
@@ -82,6 +84,8 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.quick_commands[0].label, "Read ID")
         self.assertEqual(loaded.quick_commands[0].description, "Read the factory identity string.")
         self.assertEqual(loaded.quick_commands[0].line_ending_override, "LF")
+        self.assertEqual(loaded.quick_command_sort_mode, "Group")
+        self.assertEqual(loaded.quick_command_hidden_groups, ["Debug"])
         self.assertEqual([tab.title for tab in loaded.restored_tabs], ["DUT A", "DUT B"])
         self.assertEqual(loaded.restored_tabs[0].serial.port, "COM9")
         self.assertEqual(loaded.restored_tabs[0].serial.baudrate, 921600)
@@ -148,6 +152,8 @@ class ModelsAndStorageTests(unittest.TestCase):
             terminal_font_size=14,
             receive_display_mode="Text + Hex",
             quick_commands=[QuickCommand(label="Errors", command="ERRORS")],
+            quick_command_sort_mode="Title",
+            quick_command_hidden_groups=["Factory"],
         )
 
         settings.profiles["Default"] = settings.capture_user_profile(
@@ -159,6 +165,8 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.terminal_font_size, 14)
         self.assertEqual(restored.receive_display_mode, "Text + Hex")
         self.assertEqual(restored.quick_commands[0].command, "ERRORS")
+        self.assertEqual(restored.quick_command_sort_mode, "Title")
+        self.assertEqual(restored.quick_command_hidden_groups, ["Factory"])
         self.assertEqual(restored.profiles["Default"].serial.port, "COM4")
 
 
