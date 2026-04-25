@@ -35,7 +35,15 @@ class ModelsAndStorageTests(unittest.TestCase):
                 )
             ],
             restored_tabs=[
-                TerminalSessionState(title="DUT A", profile_name="Bench"),
+                TerminalSessionState(
+                    title="DUT A",
+                    profile_name="Bench",
+                    serial=SerialProfile(port="COM9", baudrate=921600, line_ending="None"),
+                    connected_on_launch=True,
+                    terminal_text="boot ok",
+                    command_draft="55 AA",
+                    send_mode="Hex Bytes",
+                ),
                 TerminalSessionState(title="DUT B", profile_name="Bench"),
             ],
             theme="Scope Amber",
@@ -73,6 +81,13 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.quick_commands[0].label, "Read ID")
         self.assertEqual(loaded.quick_commands[0].line_ending_override, "LF")
         self.assertEqual([tab.title for tab in loaded.restored_tabs], ["DUT A", "DUT B"])
+        self.assertEqual(loaded.restored_tabs[0].serial.port, "COM9")
+        self.assertEqual(loaded.restored_tabs[0].serial.baudrate, 921600)
+        self.assertEqual(loaded.restored_tabs[0].serial.line_ending, "None")
+        self.assertTrue(loaded.restored_tabs[0].connected_on_launch)
+        self.assertEqual(loaded.restored_tabs[0].terminal_text, "boot ok")
+        self.assertEqual(loaded.restored_tabs[0].command_draft, "55 AA")
+        self.assertEqual(loaded.restored_tabs[0].send_mode, "Hex Bytes")
         self.assertEqual(loaded.theme, "Scope Amber")
         self.assertFalse(loaded.timestamps_enabled)
         self.assertEqual(loaded.terminal_font_size, 13)

@@ -406,7 +406,7 @@ class TerminalSessionWidget(QWidget):
         self.session_id = session_id
         self.title = state.title or f"Terminal {session_id}"
         self.profile_name = state.profile_name if state.profile_name in host.settings.profiles else host.settings.active_profile
-        self.profile = host.get_profile(self.profile_name)
+        self.profile = clone_profile(state.serial) if state.serial is not None else host.get_profile(self.profile_name)
         self.serial_client = SerialClient()
         self.history_store = HistoryStore(host.history_catalog.all_commands())
         self.logger = SessionLogger()
@@ -427,6 +427,13 @@ class TerminalSessionWidget(QWidget):
         self.refresh_quick_commands()
         self.refresh_profiles()
         self.apply_settings()
+        if state.send_mode in SEND_MODES:
+            self.mode_combo.setCurrentText(state.send_mode)
+        if state.command_draft:
+            self.command_input.setText(state.command_draft)
+        if state.terminal_text:
+            self.terminal.setPlainText(state.terminal_text)
+            self.terminal.moveCursor(QTextCursor.MoveOperation.End)
         self.apply_drawer_state(host.settings.drawer_collapsed, host.settings.drawer_width)
         self._update_connection_ui(False)
 
@@ -440,7 +447,15 @@ class TerminalSessionWidget(QWidget):
         return f"{self.title}{marker}"
 
     def to_state(self) -> TerminalSessionState:
-        return TerminalSessionState(title=self.title, profile_name=self.profile_name)
+        return TerminalSessionState(
+            title=self.title,
+            profile_name=self.profile_name,
+            serial=clone_profile(self.profile),
+            connected_on_launch=self._connected or self.serial_client.is_connected,
+            terminal_text=self.terminal.toPlainText(),
+            command_draft=self.command_input.text(),
+            send_mode=self.mode_combo.currentText(),
+        )
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -1551,12 +1566,18 @@ class MainWindow(QMainWindow):
         return menu
 
     def restore_sessions(self) -> None:
-        states = self.settings.restored_tabs or [TerminalSessionState(title="Terminal 1", profile_name=self.settings.active_profile)]
+        states = self.settings.restored_tabs
+        if not states:
+            self.add_session(
+                TerminalSessionState(title="Terminal 1", profile_name=self.settings.active_profile),
+                prompt_settings=False,
+            )
+            self.prompt_current_session_settings()
+            return
         for state in states:
             self.add_session(state, prompt_settings=False)
         if self.tabs.count() == 0:
             self.add_session(prompt_settings=False)
-        self.prompt_current_session_settings()
 
     def add_session(self, state: TerminalSessionState | None = None, *, prompt_settings: bool = True) -> None:
         self._session_counter += 1
@@ -1572,6 +1593,13 @@ class MainWindow(QMainWindow):
         self.update_tab_titles()
         if prompt_settings:
             self.prompt_session_settings(session)
+        if state.connected_on_launch and session.profile.port:
+            QTimer.singleShot(0, lambda target=session: self.restore_session_connection(target))
+
+    def restore_session_connection(self, session: TerminalSessionWidget) -> None:
+        if self.tabs.indexOf(session) < 0 or session.serial_client.is_connected:
+            return
+        session.serial_client.connect(session.profile)
 
     def attach_tab_close_button(self, index: int, session: TerminalSessionWidget) -> None:
         close_button = QToolButton(self.tabs.tabBar())
@@ -1609,7 +1637,15 @@ class MainWindow(QMainWindow):
             self.add_session()
             return
         self.add_session(
-            TerminalSessionState(title=f"{session.title} Copy", profile_name=session.profile_name),
+            TerminalSessionState(
+                title=f"{session.title} Copy",
+                profile_name=session.profile_name,
+                serial=clone_profile(session.profile),
+                connected_on_launch=False,
+                terminal_text=session.terminal.toPlainText(),
+                command_draft=session.command_input.text(),
+                send_mode=session.mode_combo.currentText(),
+            ),
             prompt_settings=False,
         )
 
@@ -2323,9 +2359,9 @@ class MainWindow(QMainWindow):
         if not self.confirm_unsaved_profile_changes():
             event.ignore()
             return
+        self.save_settings(profile_sync=False)
         for session in self.iter_sessions():
             session.shutdown()
-        self.save_settings(profile_sync=False)
         super().closeEvent(event)
 
 

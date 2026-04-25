@@ -131,23 +131,41 @@ class QuickCommand:
 class TerminalSessionState:
     title: str = "Terminal"
     profile_name: str = "Default"
+    serial: SerialProfile | None = None
     connected_on_launch: bool = False
+    terminal_text: str = ""
+    command_draft: str = ""
+    send_mode: str = "Text"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "title": self.title,
             "profile_name": self.profile_name,
             "connected_on_launch": self.connected_on_launch,
+            "terminal_text": self.terminal_text,
+            "command_draft": self.command_draft,
+            "send_mode": self.send_mode,
         }
+        if self.serial is not None:
+            payload["serial"] = self.serial.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TerminalSessionState":
         if not data:
             return cls()
+        send_mode = str(data.get("send_mode", "Text"))
+        if send_mode not in {"Text", "Hex Bytes"}:
+            send_mode = "Text"
+        serial_data = data.get("serial", data.get("serial_profile"))
         return cls(
             title=str(data.get("title", "Terminal")) or "Terminal",
             profile_name=str(data.get("profile_name", "Default")) or "Default",
+            serial=SerialProfile.from_dict(serial_data) if serial_data else None,
             connected_on_launch=bool(data.get("connected_on_launch", False)),
+            terminal_text=str(data.get("terminal_text", "")),
+            command_draft=str(data.get("command_draft", "")),
+            send_mode=send_mode,
         )
 
 
