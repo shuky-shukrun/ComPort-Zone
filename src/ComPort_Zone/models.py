@@ -87,6 +87,7 @@ class QuickCommand:
     id: str = field(default_factory=lambda: uuid4().hex)
     label: str = ""
     command: str = ""
+    description: str = ""
     send_mode: str = "Text"
     group: str = "General"
     line_ending_override: str = ""
@@ -101,6 +102,7 @@ class QuickCommand:
             "id": self.id,
             "label": self.label,
             "command": self.command,
+            "description": self.description,
             "send_mode": self.send_mode,
             "group": self.group,
             "line_ending_override": self.line_ending_override,
@@ -119,6 +121,7 @@ class QuickCommand:
             id=str(data.get("id", uuid4().hex)),
             label=label,
             command=command,
+            description=str(data.get("description", "")).strip(),
             send_mode=str(data.get("send_mode", "Text")),
             group=str(data.get("group", "General")) or "General",
             line_ending_override=str(data.get("line_ending_override", "")),

@@ -29,6 +29,7 @@ class ModelsAndStorageTests(unittest.TestCase):
                     id="cmd-1",
                     label="Read ID",
                     command="id?",
+                    description="Read the factory identity string.",
                     send_mode="Text",
                     group="Factory",
                     line_ending_override="LF",
@@ -79,6 +80,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.quick_snippets, ["status", "reboot"])
         self.assertEqual(len(loaded.quick_commands), 1)
         self.assertEqual(loaded.quick_commands[0].label, "Read ID")
+        self.assertEqual(loaded.quick_commands[0].description, "Read the factory identity string.")
         self.assertEqual(loaded.quick_commands[0].line_ending_override, "LF")
         self.assertEqual([tab.title for tab in loaded.restored_tabs], ["DUT A", "DUT B"])
         self.assertEqual(loaded.restored_tabs[0].serial.port, "COM9")

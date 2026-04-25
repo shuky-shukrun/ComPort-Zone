@@ -358,6 +358,9 @@ class QuickCommandDialog(QDialog):
 
         self.label_input = QLineEdit(command.label, self)
         self.command_input = QLineEdit(command.command, self)
+        self.description_input = QTextEdit(command.description, self)
+        self.description_input.setPlaceholderText("Optional note shown when hovering this quick command")
+        self.description_input.setFixedHeight(76)
         self.group_input = QLineEdit(command.group, self)
         self.mode_combo = ChevronComboBox(self)
         self.mode_combo.addItems(SEND_MODES)
@@ -373,6 +376,7 @@ class QuickCommandDialog(QDialog):
         form = QFormLayout()
         form.addRow("Label", self.label_input)
         form.addRow("Command", self.command_input)
+        form.addRow("Description", self.description_input)
         form.addRow("Group", self.group_input)
         form.addRow("Send mode", self.mode_combo)
         form.addRow("Line ending", self.line_ending_combo)
@@ -391,6 +395,7 @@ class QuickCommandDialog(QDialog):
             id=self._original.id,
             label=self.label_input.text().strip() or self.command_input.text().strip(),
             command=self.command_input.text().strip(),
+            description=self.description_input.toPlainText().strip(),
             send_mode=self.mode_combo.currentText(),
             group=self.group_input.text().strip() or "General",
             line_ending_override=str(self.line_ending_combo.currentData() or ""),
@@ -918,7 +923,8 @@ class TerminalSessionWidget(QWidget):
             item_text = label if not group or group.casefold() == "general" else f"{short_label(group, 10)}: {label}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, command.id)
-            item.setToolTip(f"{command.group} | {command.command}")
+            tooltip = command.description.strip() or f"{command.group} | {command.command}"
+            item.setToolTip(tooltip)
             item.setSizeHint(QSize(0, 24))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
             self.quick_list.addItem(item)
@@ -2003,6 +2009,7 @@ class MainWindow(QMainWindow):
         duplicate = QuickCommand(
             label=f"{command.display_label()} Copy",
             command=command.command,
+            description=command.description,
             send_mode=command.send_mode,
             group=command.group,
             line_ending_override=command.line_ending_override,
