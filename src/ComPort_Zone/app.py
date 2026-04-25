@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -67,6 +68,14 @@ from .widgets import ChevronComboBox, HistoryLineEdit
 
 COMMON_BAUD_RATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 SEND_MODES = ("Text", "Hex Bytes")
+QUICK_COMMAND_CSV_FIELDS = (
+    "label",
+    "command",
+    "description",
+    "send_mode",
+    "group",
+    "line_ending_override",
+)
 TERMINAL_FONT_MIN = 8
 TERMINAL_FONT_MAX = 24
 DRAWER_COLLAPSED_WIDTH = 48
@@ -215,6 +224,37 @@ def short_label(text: str, limit: int = 40) -> str:
 
 def quick_group_name(group: str) -> str:
     return group.strip() or "General"
+
+
+def quick_command_csv_row(command: QuickCommand) -> dict[str, str]:
+    return {
+        "label": command.label,
+        "command": command.command,
+        "description": command.description,
+        "send_mode": command.send_mode,
+        "group": quick_group_name(command.group),
+        "line_ending_override": command.line_ending_override,
+    }
+
+
+def quick_command_from_csv_row(row: dict[str, str]) -> QuickCommand | None:
+    command_text = str(row.get("command") or row.get("text") or "").strip()
+    if not command_text:
+        return None
+    send_mode = str(row.get("send_mode") or row.get("mode") or "Text").strip() or "Text"
+    if send_mode not in SEND_MODES:
+        send_mode = "Text"
+    line_ending = str(row.get("line_ending_override") or row.get("line_ending") or "").strip()
+    if line_ending and line_ending not in LINE_ENDINGS:
+        line_ending = ""
+    return QuickCommand(
+        label=str(row.get("label") or row.get("title") or "").strip() or command_text,
+        command=command_text,
+        description=str(row.get("description") or row.get("notes") or "").strip(),
+        send_mode=send_mode,
+        group=quick_group_name(str(row.get("group", ""))),
+        line_ending_override=line_ending,
+    )
 
 
 @dataclass(slots=True)
@@ -1105,6 +1145,19 @@ class TerminalSessionWidget(QWidget):
                 self.host.add_quick_command,
                 icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
             )
+            self.host._add_context_action(
+                menu,
+                "Import from CSV",
+                self.host.import_quick_commands_csv,
+                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+            )
+            self.host._add_context_action(
+                menu,
+                "Export to CSV",
+                self.host.export_quick_commands_csv,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                enabled=bool(self.host.settings.quick_commands),
+            )
             return menu
 
         row = self.quick_command_row(command_id)
@@ -1147,6 +1200,19 @@ class TerminalSessionWidget(QWidget):
             "Copy Command Text",
             lambda command_id=command_id: self.host.copy_quick_command_text(command_id),
             icon=QStyle.StandardPixmap.SP_FileIcon,
+        )
+        self.host._add_context_action(
+            menu,
+            "Import from CSV",
+            self.host.import_quick_commands_csv,
+            icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+        )
+        self.host._add_context_action(
+            menu,
+            "Export to CSV",
+            self.host.export_quick_commands_csv,
+            icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+            enabled=bool(self.host.settings.quick_commands),
         )
         menu.addSeparator()
         self.host._add_context_action(
@@ -1700,6 +1766,9 @@ class MainWindow(QMainWindow):
         self._add_action(tools_menu, "Add Quick Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
         self._add_action(tools_menu, "Edit Selected Quick Command", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(tools_menu, "Delete Selected Quick Command", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        tools_menu.addSeparator()
+        self._add_action(tools_menu, "Import Quick Commands from CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
+        self._add_action(tools_menu, "Export Quick Commands to CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
         help_menu = self.menuBar().addMenu("Help")
         self._add_action(help_menu, "About", "", self.show_about, icon=QStyle.StandardPixmap.SP_MessageBoxInformation)
@@ -1787,6 +1856,20 @@ class MainWindow(QMainWindow):
                 callback=lambda: self.with_session(lambda session: session.save_current_input_as_quick_command()),
                 icon=QStyle.StandardPixmap.SP_DialogSaveButton,
                 keywords="snippet quick send shortcut",
+            ),
+            CommandPaletteEntry(
+                title="Import Quick Commands from CSV",
+                subtitle="Append quick commands from a CSV file",
+                callback=self.import_quick_commands_csv,
+                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+                keywords="quick send snippets commands csv import",
+            ),
+            CommandPaletteEntry(
+                title="Export Quick Commands to CSV",
+                subtitle="Save all quick commands to a CSV file",
+                callback=self.export_quick_commands_csv,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                keywords="quick send snippets commands csv export",
             ),
         ]
         for index in range(self.tabs.count()):
@@ -2414,6 +2497,71 @@ class MainWindow(QMainWindow):
             return
         QApplication.clipboard().setText(command.command)
         self.set_status(f"Copied quick command: {short_label(command.display_label(), 32)}")
+
+    def import_quick_commands_csv(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Quick Commands",
+            str(Path.cwd()),
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            imported_count = self.import_quick_commands_from_csv(Path(path))
+        except (OSError, csv.Error, ValueError) as exc:
+            QMessageBox.warning(self, "Import Quick Commands", str(exc))
+            return
+        self.set_status(f"Imported {imported_count} quick command(s).")
+
+    def export_quick_commands_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Quick Commands",
+            str(Path.cwd() / "comport-zone-quick-commands.csv"),
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            exported_count = self.export_quick_commands_to_csv(Path(path))
+        except (OSError, csv.Error) as exc:
+            QMessageBox.warning(self, "Export Quick Commands", str(exc))
+            return
+        self.set_status(f"Exported {exported_count} quick command(s).")
+
+    def import_quick_commands_from_csv(self, path: Path) -> int:
+        with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            reader = csv.DictReader(csv_file)
+            if reader.fieldnames is None:
+                raise ValueError("CSV file is empty.")
+            normalized_names = {name.strip().casefold() for name in reader.fieldnames if name}
+            if "command" not in normalized_names and "text" not in normalized_names:
+                raise ValueError("CSV must include a 'command' column.")
+            imported: list[QuickCommand] = []
+            for row in reader:
+                normalized_row = {
+                    str(key).strip().casefold(): str(value or "")
+                    for key, value in row.items()
+                    if key is not None
+                }
+                quick_command = quick_command_from_csv_row(normalized_row)
+                if quick_command:
+                    imported.append(quick_command)
+        if not imported:
+            return 0
+        self.settings.quick_commands.extend(imported)
+        self.refresh_quick_commands_everywhere(imported[-1].id)
+        self.save_settings()
+        return len(imported)
+
+    def export_quick_commands_to_csv(self, path: Path) -> int:
+        with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=QUICK_COMMAND_CSV_FIELDS)
+            writer.writeheader()
+            for command in self.settings.quick_commands:
+                writer.writerow(quick_command_csv_row(command))
+        return len(self.settings.quick_commands)
 
     def move_quick_command(self, command_id: str, direction: int) -> None:
         commands = self.settings.quick_commands

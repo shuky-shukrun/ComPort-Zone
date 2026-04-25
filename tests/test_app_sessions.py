@@ -248,6 +248,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Clear Terminal", titles)
             self.assertIn("Search Terminal", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
+            self.assertIn("Import Quick Commands from CSV", titles)
+            self.assertIn("Export Quick Commands to CSV", titles)
             self.assertTrue(any(title.startswith("Switch to Tab 1:") for title in titles))
             self.assertTrue(any(title == "Switch to Tab 2: Second" for title in titles))
 
@@ -273,6 +275,61 @@ class AppSessionTests(unittest.TestCase):
                 window.deleteLater()
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
+
+    def test_quick_commands_csv_export_import_round_trip(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_csv.json")
+        csv_path = Path(__file__).with_name("_tmp_quick_commands.csv")
+        settings_path.unlink(missing_ok=True)
+        csv_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.quick_commands = [
+                QuickCommand(
+                    label="Read ID",
+                    command="id?",
+                    description="Read factory identity",
+                    send_mode="Text",
+                    group="Factory",
+                    line_ending_override="LF",
+                ),
+                QuickCommand(
+                    label="Wake Bytes",
+                    command="55 AA 00",
+                    send_mode="Hex Bytes",
+                    group="Boot",
+                ),
+            ]
+
+            self.assertEqual(window.export_quick_commands_to_csv(csv_path), 2)
+            self.assertTrue(csv_path.read_text(encoding="utf-8-sig").startswith("label,command,description"))
+
+            window.settings.quick_commands = []
+            imported_count = window.import_quick_commands_from_csv(csv_path)
+
+            self.assertEqual(imported_count, 2)
+            self.assertEqual([command.label for command in window.settings.quick_commands], ["Read ID", "Wake Bytes"])
+            self.assertEqual(window.settings.quick_commands[0].description, "Read factory identity")
+            self.assertEqual(window.settings.quick_commands[0].line_ending_override, "LF")
+            self.assertEqual(window.settings.quick_commands[1].send_mode, "Hex Bytes")
+            self.assertEqual(window.settings.quick_commands[1].group, "Boot")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            csv_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+label,command,description,send_mode,group,line_ending_override
+VOLT,VOLT,,Text,SOURce,
+VOLT?,VOLT?,,Text,SOURce,
+CURR,CURR,,Text,SOURce,
+CURR?,CURR?,,Text,SOURce,
+SINK:CURR,SINK:CURR,,Text,SOURce,
+SINK:CURR?,SINK:CURR?,,Text,SOURce,
+POW,POW,,Text,SOURce,
+POW?,POW?,,Text,SOURce,
+SINK:POW,SINK:POW,,Text,SOURce,
+SINK:POW?,SINK:POW?,,Text,SOURce,

@@ -9,7 +9,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
 - Tabs for independent serial sessions
 - Foldable and resizable left drawer, collapsed by default
-- Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, and optional line-ending override
+- Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
 - Serial profiles with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
 - Rich profiles that also include theme, terminal font, history, drawer state, quick commands, log/script paths, and other workflow preferences
 - Default profile autosaves changes; non-default profiles ask whether to save unsaved changes on exit or profile switch
@@ -62,6 +62,29 @@ reset
 - `WAIT <milliseconds>` pauses before the next step.
 - `HEX <bytes>` sends raw bytes without appending a line ending.
 - Bare lines are treated like `SEND`.
+
+## Quick Commands CSV Format
+Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.
+
+Import appends commands to the current quick-command list. Export writes UTF-8 CSV with these columns:
+
+| Column | Required | Description |
+| --- | --- | --- |
+| `label` | No | Display name shown in Quick Send. If empty, the command text is used. |
+| `command` | Yes | Text command or hex byte sequence to send. |
+| `description` | No | Optional hover text for the saved command. |
+| `send_mode` | No | `Text` or `Hex Bytes`. Invalid or empty values default to `Text`. |
+| `group` | No | Group name used for sorting and show/hide filtering. Empty values become `General`. |
+| `line_ending_override` | No | Optional text-mode line ending override: `None`, `CR`, `LF`, or `CRLF`. Empty uses the active session setting. |
+
+Example:
+
+```csv
+label,command,description,send_mode,group,line_ending_override
+Read Version,version,Read firmware version,Text,General,CRLF
+Boot Wake,55 AA 00,Send bootloader wake bytes,Hex Bytes,Boot,
+Read ID,id?,Read factory identity string,Text,Factory,LF
+```
 
 ## Keyboard Shortcuts
 - `Ctrl+T`: New tab
