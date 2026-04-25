@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication
 
 from ComPort_Zone import app as app_module
@@ -223,6 +224,54 @@ class AppSessionTests(unittest.TestCase):
                     window.deleteLater()
                 self.qt.processEvents()
         finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_command_palette_entries_and_shortcut(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_command_palette.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.add_session(TerminalSessionState(title="Second"), prompt_settings=False)
+            entries = window.command_palette_entries()
+            titles = [entry.title for entry in entries]
+
+            self.assertIn("Connect / Disconnect", titles)
+            self.assertIn("Serial Settings", titles)
+            self.assertIn("Run Command File", titles)
+            self.assertIn("Clear Terminal", titles)
+            self.assertIn("Search Terminal", titles)
+            self.assertIn("Save Current Input as Quick Command", titles)
+            self.assertTrue(any(title.startswith("Switch to Tab 1:") for title in titles))
+            self.assertTrue(any(title == "Switch to Tab 2: Second" for title in titles))
+
+            switch_first = next(entry for entry in entries if entry.title.startswith("Switch to Tab 1:"))
+            self.assertEqual(window.tabs.currentIndex(), 1)
+            switch_first.callback()
+            self.assertEqual(window.tabs.currentIndex(), 0)
+
+            palette_actions = [
+                action
+                for action in window.findChildren(QAction)
+                if action.text() == "Command Palette"
+            ]
+            self.assertEqual(len(palette_actions), 1)
+            self.assertEqual(palette_actions[0].shortcut().toString(), "Ctrl+Shift+P")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
 

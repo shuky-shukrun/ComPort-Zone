@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from queue import Empty
@@ -215,6 +217,18 @@ def quick_group_name(group: str) -> str:
     return group.strip() or "General"
 
 
+@dataclass(slots=True)
+class CommandPaletteEntry:
+    title: str
+    subtitle: str
+    callback: Callable[[], None]
+    icon: QStyle.StandardPixmap | None = None
+    keywords: str = ""
+
+    def searchable_text(self) -> str:
+        return f"{self.title} {self.subtitle} {self.keywords}".casefold()
+
+
 class TerminalTabWidget(QTabWidget):
     newTabRequested = Signal()
 
@@ -407,6 +421,96 @@ class QuickCommandDialog(QDialog):
             created_at=self._original.created_at or now,
             updated_at=now,
         )
+
+
+class CommandPaletteDialog(QDialog):
+    def __init__(self, host: "MainWindow") -> None:
+        super().__init__(host)
+        self.host = host
+        self.entries = host.command_palette_entries()
+        self.filtered_entries: list[CommandPaletteEntry] = []
+        self._executed = False
+        self.setObjectName("commandPalette")
+        self.setWindowTitle("Command Palette")
+        self.setMinimumSize(560, 420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(10)
+
+        self.search_input = QLineEdit(self)
+        self.search_input.setObjectName("commandPaletteSearch")
+        self.search_input.setPlaceholderText("Type a command, action, or tab name")
+        self.search_input.textChanged.connect(self.refresh_results)
+        self.search_input.returnPressed.connect(self.execute_current)
+        self.search_input.installEventFilter(self)
+
+        self.result_list = QListWidget(self)
+        self.result_list.setObjectName("commandPaletteList")
+        self.result_list.itemActivated.connect(lambda _: self.execute_current())
+        self.result_list.itemDoubleClicked.connect(lambda _: self.execute_current())
+
+        hint = QLabel("Enter runs the selected command. Esc closes the palette.", self)
+        hint.setObjectName("commandPaletteHint")
+
+        layout.addWidget(self.search_input)
+        layout.addWidget(self.result_list, 1)
+        layout.addWidget(hint)
+        self.refresh_results()
+        QTimer.singleShot(0, self.search_input.setFocus)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.search_input and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Down:
+                self.move_selection(1)
+                return True
+            if event.key() == Qt.Key.Key_Up:
+                self.move_selection(-1)
+                return True
+        return super().eventFilter(watched, event)
+
+    def refresh_results(self) -> None:
+        terms = [term for term in self.search_input.text().casefold().split() if term]
+        self.filtered_entries = [
+            entry
+            for entry in self.entries
+            if all(term in entry.searchable_text() for term in terms)
+        ]
+        self.result_list.clear()
+        for index, entry in enumerate(self.filtered_entries):
+            text = entry.title if not entry.subtitle else f"{entry.title}\n{entry.subtitle}"
+            item = QListWidgetItem(text)
+            if entry.icon is not None:
+                item.setIcon(standard_icon(entry.icon))
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            item.setToolTip(entry.subtitle)
+            item.setSizeHint(QSize(0, 48 if entry.subtitle else 34))
+            self.result_list.addItem(item)
+        if self.result_list.count() > 0:
+            self.result_list.setCurrentRow(0)
+
+    def move_selection(self, direction: int) -> None:
+        count = self.result_list.count()
+        if count == 0:
+            return
+        row = self.result_list.currentRow()
+        if row < 0:
+            row = 0
+        self.result_list.setCurrentRow(max(0, min(count - 1, row + direction)))
+
+    def execute_current(self) -> None:
+        if self._executed:
+            return
+        if not self.filtered_entries:
+            return
+        item = self.result_list.currentItem() or self.result_list.item(0)
+        if item is None:
+            return
+        index = int(item.data(Qt.ItemDataRole.UserRole))
+        entry = self.filtered_entries[index]
+        self._executed = True
+        self.accept()
+        QTimer.singleShot(0, entry.callback)
 
 
 class TerminalSessionWidget(QWidget):
@@ -1589,6 +1693,8 @@ class MainWindow(QMainWindow):
         self._add_action(serial_menu, "Export Profiles", "", self.export_profiles, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
         tools_menu = self.menuBar().addMenu("Tools")
+        self._add_action(tools_menu, "Command Palette", "Ctrl+Shift+P", self.show_command_palette, icon=QStyle.StandardPixmap.SP_CommandLink)
+        tools_menu.addSeparator()
         self._add_action(tools_menu, "Send Selected Quick Command", "", lambda: self.with_session(lambda s: s.send_selected_quick_command()), icon=QStyle.StandardPixmap.SP_ArrowForward)
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Add Quick Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
@@ -1634,6 +1740,69 @@ class MainWindow(QMainWindow):
         action.triggered.connect(lambda _checked=False: callback())
         menu.addAction(action)
         return action
+
+    def show_command_palette(self) -> None:
+        CommandPaletteDialog(self).exec()
+
+    def command_palette_entries(self) -> list[CommandPaletteEntry]:
+        entries = [
+            CommandPaletteEntry(
+                title="Connect / Disconnect",
+                subtitle="Toggle the serial connection for the active tab",
+                callback=lambda: self.with_session(lambda session: session.toggle_connection()),
+                icon=QStyle.StandardPixmap.SP_ComputerIcon,
+                keywords="serial port open close reconnect",
+            ),
+            CommandPaletteEntry(
+                title="Serial Settings",
+                subtitle="Open COM port, baud rate, line ending, DTR, and RTS settings",
+                callback=lambda: self.with_session(lambda session: session.open_connection_settings()),
+                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+                keywords="settings port baud parity stop bits flow control",
+            ),
+            CommandPaletteEntry(
+                title="Run Command File",
+                subtitle="Run a SEND / WAIT / HEX command script in the active tab",
+                callback=lambda: self.with_session(lambda session: session.run_script()),
+                icon=QStyle.StandardPixmap.SP_MediaPlay,
+                keywords="script batch file",
+            ),
+            CommandPaletteEntry(
+                title="Clear Terminal",
+                subtitle="Clear output in the active tab",
+                callback=lambda: self.with_session(lambda session: session.clear_terminal()),
+                icon=QStyle.StandardPixmap.SP_TrashIcon,
+                keywords="clean erase output",
+            ),
+            CommandPaletteEntry(
+                title="Search Terminal",
+                subtitle="Search output in the active tab",
+                callback=lambda: self.with_session(lambda session: session.show_search()),
+                icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+                keywords="find current tab",
+            ),
+            CommandPaletteEntry(
+                title="Save Current Input as Quick Command",
+                subtitle="Save the command input from the active tab into Quick Send",
+                callback=lambda: self.with_session(lambda session: session.save_current_input_as_quick_command()),
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                keywords="snippet quick send shortcut",
+            ),
+        ]
+        for index in range(self.tabs.count()):
+            session = self.session_at(index)
+            title = session.title if session else self.tabs.tabText(index)
+            port = session.profile.port if session and session.profile.port else "No port"
+            entries.append(
+                CommandPaletteEntry(
+                    title=f"Switch to Tab {index + 1}: {title}",
+                    subtitle=f"{port} | {self.tabs.tabText(index)}",
+                    callback=lambda tab_index=index: self.tabs.setCurrentIndex(tab_index),
+                    icon=QStyle.StandardPixmap.SP_ComputerIcon,
+                    keywords=f"switch tab terminal session {index + 1} {title} {port}",
+                )
+            )
+        return entries
 
     def show_tab_context_menu(self, position) -> None:
         tab_bar = self.tabs.tabBar()
@@ -2492,6 +2661,28 @@ class MainWindow(QMainWindow):
             border-radius: 5px;
             padding: 3px 6px;
             margin: 1px 0;
+        }}
+        QDialog#commandPalette {{
+            background: {theme.window};
+            color: {theme.text};
+        }}
+        QLineEdit#commandPaletteSearch {{
+            font-size: 11pt;
+            padding: 10px 12px;
+            border-radius: 10px;
+        }}
+        QListWidget#commandPaletteList {{
+            padding: 6px;
+            border-radius: 10px;
+        }}
+        QListWidget#commandPaletteList::item {{
+            border-radius: 8px;
+            padding: 7px 10px;
+            margin: 2px;
+        }}
+        QLabel#commandPaletteHint {{
+            color: {theme.muted};
+            padding: 0 4px;
         }}
         QComboBox {{
             padding-right: 28px;
