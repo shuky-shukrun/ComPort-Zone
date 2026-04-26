@@ -117,6 +117,142 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_closed_connection_state_is_visible_and_actionable(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_connection_closed.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.profile = SerialProfile(port="COM22", baudrate=115200, auto_reconnect=False)
+            session._ports = [{"device": "COM22", "description": "Test port", "hwid": ""}]
+            session._update_connection_ui(False)
+
+            connect_calls: list[str] = []
+            session.serial_client.connect = lambda profile: connect_calls.append(profile.port) or False
+
+            self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "COM22")
+            self.assertEqual(
+                window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
+                window.theme.text.lower(),
+            )
+            self.assertEqual(window.connection_status_label.text(), "Closed | COM22 | 115200 8N1 | CRLF | Log off")
+            self.assertEqual(window.connection_action_button.text(), "Connect")
+
+            window.connection_action_button.click()
+
+            self.assertEqual(connect_calls, ["COM22"])
+            self.assertEqual(window.connection_status_label.text(), "Closed | COM22 | 115200 8N1 | CRLF | Log off")
+            self.assertEqual(window.connection_action_button.text(), "Connect")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_retrying_connection_can_be_stopped_from_command_bar(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_connection_retry.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        class AliveThread:
+            def is_alive(self) -> bool:
+                return True
+
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.profile = SerialProfile(port="COM99", baudrate=115200, auto_reconnect=True)
+            session._ports = []
+            session.serial_client._reconnect_thread = AliveThread()
+            disconnect_calls: list[bool] = []
+
+            def fake_disconnect() -> None:
+                disconnect_calls.append(True)
+                session.serial_client._reconnect_thread = None
+
+            session.serial_client.disconnect = fake_disconnect
+            session._update_connection_ui(False)
+
+            self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "COM99")
+            self.assertEqual(
+                window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
+                window.theme.status.lower(),
+            )
+            self.assertEqual(window.connection_action_button.text(), "Stop Retry")
+            self.assertTrue(window.connection_status_label.text().startswith("Retrying | COM99"))
+
+            window.connection_action_button.click()
+
+            self.assertEqual(disconnect_calls, [True])
+            self.assertEqual(window.connection_action_button.text(), "Connect")
+            self.assertTrue(window.connection_status_label.text().startswith("Missing | COM99"))
+            self.assertEqual(
+                window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
+                window.theme.error.lower(),
+            )
+            self.assertIn("Auto-reconnect stopped.", session.terminal.toPlainText())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_double_click_connection_status_opens_serial_settings(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_connection_settings.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            settings_calls: list[bool] = []
+            session.open_connection_settings = (
+                lambda *, connect_after_accept=True: settings_calls.append(connect_after_accept) or True
+            )
+
+            window.connection_status_label.doubleClicked.emit()
+
+            self.assertEqual(settings_calls, [True])
+            self.assertIn("Double-click to open Serial Settings.", window.connection_status_label.toolTip())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_rx_text_chunks_stream_without_extra_line_breaks(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_rx_stream.json")
         settings_path.unlink(missing_ok=True)

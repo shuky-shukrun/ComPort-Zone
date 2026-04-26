@@ -169,6 +169,7 @@ class QuickFile:
 @dataclass(slots=True)
 class TerminalSessionState:
     title: str = "Terminal"
+    title_is_custom: bool = False
     serial: SerialProfile | None = None
     connected_on_launch: bool = False
     terminal_text: str = ""
@@ -178,6 +179,7 @@ class TerminalSessionState:
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "title": self.title,
+            "title_is_custom": self.title_is_custom,
             "connected_on_launch": self.connected_on_launch,
             "terminal_text": self.terminal_text,
             "command_draft": self.command_draft,
@@ -195,8 +197,15 @@ class TerminalSessionState:
         if send_mode not in {"Text", "Hex Bytes"}:
             send_mode = "Text"
         serial_data = data.get("serial", data.get("serial_profile"))
+        title = str(data.get("title", "Terminal")) or "Terminal"
         return cls(
-            title=str(data.get("title", "Terminal")) or "Terminal",
+            title=title,
+            title_is_custom=bool(
+                data.get(
+                    "title_is_custom",
+                    not title.startswith("Terminal") and title != "No port",
+                )
+            ),
             serial=SerialProfile.from_dict(serial_data) if serial_data else None,
             connected_on_launch=bool(data.get("connected_on_launch", False)),
             terminal_text=str(data.get("terminal_text", "")),

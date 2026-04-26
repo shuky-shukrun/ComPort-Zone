@@ -157,6 +157,13 @@ def set_button_role(button: QPushButton, role: str) -> None:
     button.update()
 
 
+def set_widget_state(widget: QWidget, state: str) -> None:
+    widget.setProperty("state", state)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    widget.update()
+
+
 def standard_icon(
     pixmap: QStyle.StandardPixmap,
     size: int = 18,
@@ -408,6 +415,14 @@ class TerminalTabWidget(QTabWidget):
         y = max(2, int((bar.height() - self.new_tab_button.height()) / 2))
         self.new_tab_button.move(x, y)
         self.new_tab_button.raise_()
+
+
+class ConnectionStatusLabel(QLabel):
+    doubleClicked = Signal()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 class ConnectionSettingsDialog(QDialog):
@@ -826,6 +841,11 @@ class TerminalSessionWidget(QWidget):
         self.host = host
         self.session_id = session_id
         self.title = state.title or f"Terminal {session_id}"
+        self.title_is_custom = state.title_is_custom or (
+            bool(self.title)
+            and not self.title.startswith("Terminal")
+            and self.title != "No port"
+        )
         self.profile = clone_profile(state.serial) if state.serial is not None else host.default_serial_profile()
         self.serial_client = SerialClient()
         self.history_store = HistoryStore(host.history_catalog.all_commands())
@@ -863,12 +883,16 @@ class TerminalSessionWidget(QWidget):
 
     @property
     def tab_title(self) -> str:
-        marker = " *" if self._connected else ""
-        return f"{self.title}{marker}"
+        if self.title_is_custom:
+            return self.title
+        if self.profile.port:
+            return self.profile.port
+        return "No port"
 
     def to_state(self) -> TerminalSessionState:
         return TerminalSessionState(
             title=self.title,
+            title_is_custom=self.title_is_custom,
             serial=clone_profile(self.profile),
             connected_on_launch=self._connected or self.serial_client.is_connected,
             terminal_text=self.terminal.toPlainText(),
@@ -1670,6 +1694,7 @@ class TerminalSessionWidget(QWidget):
     def refresh_ports(self) -> None:
         self._ports = self.serial_client.list_ports()
         self.host.set_status(f"{len(self._ports)} serial port(s) detected.")
+        self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
 
     def open_connection_settings(self, *, connect_after_accept: bool = True) -> bool:
         dialog = ConnectionSettingsDialog(self.profile, self.serial_client.list_ports(), self)
@@ -1687,17 +1712,25 @@ class TerminalSessionWidget(QWidget):
                 self.serial_client.disconnect()
             self.host.set_status(f"Connecting to {self.profile.port}...")
             self.serial_client.connect(self.profile)
+            self._update_connection_ui(self.serial_client.is_connected)
         self.host.save_settings()
         return True
 
     def toggle_connection(self) -> None:
-        if self.serial_client.is_connected:
+        retrying = self.serial_client.is_reconnecting
+        if self.serial_client.is_connected or retrying:
             self.serial_client.disconnect()
+            if retrying:
+                self._append_status("Auto-reconnect stopped.")
+            self._update_connection_ui(False)
+            self.host.save_settings()
             return
         if not self.profile.port:
             self.open_connection_settings(connect_after_accept=True)
             return
+        self.host.set_status(f"Connecting to {self.profile.port}...")
         self.serial_client.connect(self.profile)
+        self._update_connection_ui(self.serial_client.is_connected)
         self.host.save_settings()
 
     def send_from_input(self) -> None:
@@ -1771,6 +1804,7 @@ class TerminalSessionWidget(QWidget):
             path = self.logger.path
             self.logger.close()
             self.log_label.setText("Log off")
+            self.host.update_connection_status(self)
             self._append_status(f"Logging stopped: {path}" if path else "Logging stopped.")
             return
         default_dir = Path(self.host.settings.log_path).parent if self.host.settings.log_path else Path.cwd()
@@ -1781,6 +1815,7 @@ class TerminalSessionWidget(QWidget):
         self.logger.open(path)
         self.host.settings.log_path = path
         self.log_label.setText("Logging")
+        self.host.update_connection_status(self)
         self._append_status(f"Logging to {path}")
         self.host.save_settings()
 
@@ -1981,6 +2016,9 @@ class TerminalSessionWidget(QWidget):
             self.pause_label.setText(f"Paused ({len(self.pending_events)})")
             return
         self._render_event(event)
+        if event.kind in {"status", "error"}:
+            self.host.set_status(event.message)
+            self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
         if self.logger.enabled:
             self.logger.log_event(event)
 
@@ -2068,16 +2106,86 @@ class TerminalSessionWidget(QWidget):
     def _append_status(self, message: str) -> None:
         self._render_event(SerialEvent(kind="status", message=message))
 
-    def _update_connection_ui(self, connected: bool) -> None:
+    def _update_connection_ui(self, connected: bool, *, update_footer: bool = True) -> None:
         self._connected = connected
-        self._status_text = "Connected" if connected else "Disconnected"
-        profile_text = f"{self.profile.port or 'No port'} {self.profile.baudrate} {self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
-        self.status_label.setText(f"{self._status_text} | {profile_text}")
+        self._status_text = self.connection_state_label()
+        status_text = self.connection_status_text()
+        self.status_label.setText(status_text)
         self.host.update_tab_titles()
-        self.host.set_status(self.status_label.text())
+        self.host.update_connection_status(self)
+        if update_footer:
+            self.host.set_status(self._status_text)
+
+    def connection_state(self) -> str:
+        if self._connected or self.serial_client.is_connected:
+            return "connected"
+        if self.serial_client.is_reconnecting:
+            return "retrying"
+        if not self.profile.port:
+            return "no-port"
+        if self._profile_port_missing():
+            return "missing"
+        return "closed"
+
+    def connection_state_label(self) -> str:
+        return {
+            "connected": "Connected",
+            "retrying": "Retrying",
+            "missing": "Missing",
+            "no-port": "No port",
+            "closed": "Closed",
+        }[self.connection_state()]
+
+    def connection_action_text(self) -> str:
+        return {
+            "connected": "Disconnect",
+            "retrying": "Stop Retry",
+            "missing": "Connect",
+            "no-port": "Set Port",
+            "closed": "Connect",
+        }[self.connection_state()]
+
+    def connection_tooltip(self) -> str:
+        state = self.connection_state()
+        profile_text = self._profile_summary()
+        if state == "connected":
+            return f"Disconnect {profile_text}."
+        if state == "retrying":
+            return f"Stop auto-reconnect attempts for {profile_text}."
+        if state == "missing":
+            return f"{self.profile.port} is not currently detected. Try to connect anyway or open Serial Settings."
+        if state == "no-port":
+            return "Choose a COM port and connect."
+        return f"Connect to {profile_text}."
+
+    def connection_status_text(self) -> str:
+        if not self.profile.port:
+            return "No port selected"
+        framing = f"{self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
+        log_status = "Log on" if self.logger.enabled else "Log off"
+        return " | ".join(
+            [
+                self.connection_state_label(),
+                self.profile.port,
+                f"{self.profile.baudrate} {framing}",
+                self.profile.line_ending,
+                log_status,
+            ]
+        )
+
+    def _profile_summary(self) -> str:
+        if not self.profile.port:
+            return "No port"
+        return f"{self.profile.port} {self.profile.baudrate} {self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
+
+    def _profile_port_missing(self) -> bool:
+        ports = getattr(self, "_ports", [])
+        known_ports = {str(port.get("device", "")) for port in ports}
+        return bool(self.profile.port and self.profile.port not in known_ports)
 
     def _update_line_ending_label(self) -> None:
         self.line_ending_label.setText(self.profile.line_ending)
+        self.host.update_connection_status(self)
 
     def shutdown(self) -> None:
         self.event_timer.stop()
@@ -2121,10 +2229,21 @@ class MainWindow(QMainWindow):
 
         self.footer = QLabel("Ready", self)
         self.footer.setObjectName("footer")
+        self.connection_status_label = ConnectionStatusLabel("No port selected", self)
+        self.connection_status_label.setObjectName("connectionStatus")
+        self.connection_status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.connection_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connection_status_label.doubleClicked.connect(self.open_current_connection_settings)
+        self.connection_action_button = QPushButton("Set Port", self)
+        self.connection_action_button.setObjectName("statusActionButton")
+        self.connection_action_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connection_action_button.clicked.connect(self.connection_status_action_clicked)
         self.version_label = QLabel(f"ComPort Zone v{__version__}", self)
         self.version_label.setObjectName("versionInfo")
         self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.statusBar().addWidget(self.footer, 1)
+        self.statusBar().addPermanentWidget(self.connection_status_label)
+        self.statusBar().addPermanentWidget(self.connection_action_button)
         self.statusBar().addPermanentWidget(self.version_label)
 
     def _build_menus(self) -> None:
@@ -2244,10 +2363,10 @@ class MainWindow(QMainWindow):
         entries = [
             CommandPaletteEntry(
                 title="Connect / Disconnect",
-                subtitle="Toggle the serial connection for the active tab",
+                subtitle="Connect, disconnect, or stop auto-reconnect for the active tab",
                 callback=lambda: self.with_session(lambda session: session.toggle_connection()),
                 icon=QStyle.StandardPixmap.SP_ComputerIcon,
-                keywords="serial port open close reconnect",
+                keywords="serial port open close reconnect stop retry",
             ),
             CommandPaletteEntry(
                 title="Serial Settings",
@@ -2336,15 +2455,16 @@ class MainWindow(QMainWindow):
         ]
         for index in range(self.tabs.count()):
             session = self.session_at(index)
-            title = session.title if session else self.tabs.tabText(index)
+            title = session.tab_title if session else self.tabs.tabText(index)
             port = session.profile.port if session and session.profile.port else "No port"
+            subtitle = session.connection_status_text() if session else port
             entries.append(
                 CommandPaletteEntry(
                     title=f"Switch to Tab {index + 1}: {title}",
-                    subtitle=f"{port} | {self.tabs.tabText(index)}",
+                    subtitle=subtitle,
                     callback=lambda tab_index=index: self.tabs.setCurrentIndex(tab_index),
                     icon=QStyle.StandardPixmap.SP_ComputerIcon,
-                    keywords=f"switch tab terminal session {index + 1} {title} {port}",
+                    keywords=f"switch tab terminal session {index + 1} {title} {port} {session.title if session else ''}",
                 )
             )
         return entries
@@ -2368,7 +2488,8 @@ class MainWindow(QMainWindow):
 
         session = self.session_at(index)
         is_connected = bool(session and session.serial_client.is_connected)
-        menu.setTitle(session.title if session else self.tabs.tabText(index))
+        is_reconnecting = bool(session and session.serial_client.is_reconnecting)
+        menu.setTitle(session.tab_title if session else self.tabs.tabText(index))
         self._add_context_action(
             menu,
             "New Tab",
@@ -2397,7 +2518,7 @@ class MainWindow(QMainWindow):
         )
         self._add_context_action(
             menu,
-            "Disconnect" if is_connected else "Connect",
+            "Disconnect" if is_connected else "Stop Retry" if is_reconnecting else "Connect",
             lambda tab_index=index: self.toggle_session_connection(tab_index),
             icon=QStyle.StandardPixmap.SP_ComputerIcon,
             enabled=session is not None,
@@ -2474,7 +2595,9 @@ class MainWindow(QMainWindow):
     def restore_session_connection(self, session: TerminalSessionWidget) -> None:
         if self.tabs.indexOf(session) < 0 or session.serial_client.is_connected:
             return
+        self.set_status(f"Connecting to {session.profile.port}...")
         session.serial_client.connect(session.profile)
+        session._update_connection_ui(session.serial_client.is_connected)
 
     def attach_tab_close_button(self, index: int, session: TerminalSessionWidget) -> None:
         close_button = QToolButton(self.tabs.tabBar())
@@ -2482,7 +2605,7 @@ class MainWindow(QMainWindow):
         close_button.setAutoRaise(True)
         close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         close_button.setFixedSize(22, 22)
-        close_button.setToolTip(f"Close {session.title}")
+        close_button.setToolTip(f"Close {session.tab_title}")
         set_button_icon(close_button, QStyle.StandardPixmap.SP_DialogCloseButton, 13)
         close_button.clicked.connect(
             lambda _checked=False, target=session: self.close_session(self.tabs.indexOf(target))
@@ -2513,7 +2636,8 @@ class MainWindow(QMainWindow):
             return
         self.add_session(
             TerminalSessionState(
-                title=f"{session.title} Copy",
+                title=f"{session.tab_title} Copy",
+                title_is_custom=True,
                 serial=clone_profile(session.profile),
                 connected_on_launch=False,
                 terminal_text=session.terminal.toPlainText(),
@@ -2572,6 +2696,7 @@ class MainWindow(QMainWindow):
         title, accepted = QInputDialog.getText(self, "Rename Tab", "Tab name", text=session.title)
         if accepted and title.strip():
             session.title = title.strip()
+            session.title_is_custom = True
             self.update_tab_titles()
             self.save_settings()
 
@@ -2623,11 +2748,61 @@ class MainWindow(QMainWindow):
     def update_tab_titles(self) -> None:
         for index, session in enumerate(self.iter_sessions()):
             self.tabs.setTabText(index, session.tab_title)
+            state = session.connection_state()
+            color = self.connection_state_color(state)
+            icon = QStyle.StandardPixmap.SP_BrowserReload if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
+            self.tabs.setTabIcon(index, standard_icon(icon, 18, color))
+            self.tabs.setTabToolTip(index, session.connection_status_text())
+            self.tabs.tabBar().setTabTextColor(index, QColor(color))
 
     def sync_status_from_current_session(self) -> None:
         session = self.current_session()
         if session:
-            self.set_status(session.status_label.text())
+            self.update_connection_status(session)
+
+    def connection_state_color(self, state: str) -> str:
+        if state == "connected":
+            return self.theme.rx
+        if state == "retrying":
+            return self.theme.status
+        if state == "missing":
+            return self.theme.error
+        if state == "no-port":
+            return self.theme.muted
+        return self.theme.text
+
+    def connection_status_action_clicked(self) -> None:
+        session = self.current_session()
+        if session:
+            session.toggle_connection()
+
+    def open_current_connection_settings(self) -> None:
+        session = self.current_session()
+        if session:
+            session.open_connection_settings(connect_after_accept=True)
+
+    def update_connection_status(self, session: TerminalSessionWidget | None = None) -> None:
+        session = session or self.current_session()
+        if not session:
+            self.connection_status_label.setText("No session")
+            self.connection_action_button.setEnabled(False)
+            return
+        state = session.connection_state()
+        self.connection_status_label.setText(session.connection_status_text())
+        self.connection_status_label.setToolTip(
+            f"{session.connection_tooltip()}\nDouble-click to open Serial Settings."
+        )
+        set_widget_state(self.connection_status_label, state)
+        self.connection_action_button.setEnabled(True)
+        self.connection_action_button.setText(session.connection_action_text())
+        self.connection_action_button.setToolTip(session.connection_tooltip())
+        action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
+        if state == "no-port":
+            action_icon = QStyle.StandardPixmap.SP_FileDialogDetailedView
+        if state == "connected":
+            action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
+        set_button_icon(self.connection_action_button, action_icon, 15)
+        set_button_role(self.connection_action_button, state)
 
     def set_status(self, text: str) -> None:
         self.footer.setText(text)
@@ -3128,6 +3303,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(self._stylesheet(self.theme))
         for theme_name, action in getattr(self, "theme_actions", {}).items():
             action.setChecked(theme_name == self.theme.name)
+        self.update_tab_titles()
+        self.sync_status_from_current_session()
         if save:
             self.save_settings()
 
@@ -3263,6 +3440,29 @@ class MainWindow(QMainWindow):
             background: {theme.window};
             border-top: 1px solid {theme.border};
         }}
+        QLabel#connectionStatus {{
+            background: {theme.chip};
+            color: {theme.text};
+            border: 1px solid {theme.border};
+            border-radius: 7px;
+            padding: 3px 9px;
+        }}
+        QLabel#connectionStatus[state="connected"] {{
+            color: {theme.rx};
+            border-color: {theme.rx};
+        }}
+        QLabel#connectionStatus[state="retrying"] {{
+            color: {theme.status};
+            border-color: {theme.status};
+        }}
+        QLabel#connectionStatus[state="missing"] {{
+            color: {theme.error};
+            border-color: {theme.error};
+        }}
+        QLabel#connectionStatus[state="no-port"] {{
+            color: {theme.muted};
+            border-color: {theme.border};
+        }}
         QLineEdit, QComboBox, QListWidget {{
             background: {theme.field};
             color: {theme.text};
@@ -3389,11 +3589,40 @@ class MainWindow(QMainWindow):
             background: {theme.accent};
         }}
         QStatusBar {{
-            background: {theme.accent};
-            color: #ffffff;
+            background: {theme.window_alt};
+            color: {theme.text};
+            border-top: 1px solid {theme.border};
+        }}
+        QLabel#footer {{
+            color: {theme.muted};
+            padding-left: 4px;
+        }}
+        QPushButton#statusActionButton {{
+            min-width: 92px;
+            padding: 3px 10px;
+            border-radius: 7px;
+            background: {theme.surface_alt};
+        }}
+        QPushButton#statusActionButton[role="connected"] {{
+            color: {theme.rx};
+            border-color: {theme.rx};
+        }}
+        QPushButton#statusActionButton[role="retrying"] {{
+            color: {theme.error};
+            border-color: {theme.error};
+        }}
+        QPushButton#statusActionButton[role="missing"] {{
+            color: {theme.error};
+            border-color: {theme.error};
+        }}
+        QPushButton#statusActionButton[role="no-port"] {{
+            color: {theme.muted};
+        }}
+        QPushButton#statusActionButton:hover {{
+            border-color: {theme.accent};
         }}
         QLabel#versionInfo {{
-            color: #ffffff;
+            color: {theme.muted};
             padding: 0 8px;
         }}
         """

@@ -16,6 +16,23 @@ class SerialCoreTests(unittest.TestCase):
     def test_format_hex_bytes(self) -> None:
         self.assertEqual(format_hex_bytes(b"\x00\x7f\xff"), "00 7F FF")
 
+    def test_reconnect_state_reports_live_thread(self) -> None:
+        class AliveThread:
+            def __init__(self, alive: bool) -> None:
+                self.alive = alive
+
+            def is_alive(self) -> bool:
+                return self.alive
+
+        client = SerialClient()
+        self.assertFalse(client.is_reconnecting)
+
+        client._reconnect_thread = AliveThread(True)
+        self.assertTrue(client.is_reconnecting)
+
+        client._reconnect_thread.alive = False
+        self.assertFalse(client.is_reconnecting)
+
 
 if __name__ == "__main__":
     unittest.main()

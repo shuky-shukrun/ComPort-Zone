@@ -58,6 +58,11 @@ class SerialClient:
             return self._serial is not None and self._serial.is_open
 
     @property
+    def is_reconnecting(self) -> bool:
+        thread = self._reconnect_thread
+        return bool(thread and thread.is_alive())
+
+    @property
     def active_profile(self) -> SerialProfile | None:
         with self._lock:
             return deepcopy(self._profile or self._desired_profile)
