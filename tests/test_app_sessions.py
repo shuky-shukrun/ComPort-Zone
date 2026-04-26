@@ -420,6 +420,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Export Settings", titles)
             self.assertIn("Import Quick Commands from CSV", titles)
             self.assertIn("Export Quick Commands to CSV", titles)
+            self.assertIn("Import Quick Files from CSV", titles)
+            self.assertIn("Export Quick Files to CSV", titles)
             self.assertTrue(any(title.startswith("Switch to Tab 1:") for title in titles))
             self.assertTrue(any(title == "Switch to Tab 2: Second" for title in titles))
 
@@ -531,6 +533,162 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
             script_path.unlink(missing_ok=True)
+
+    def test_quick_files_sort_modes(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_file_sort.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            settings = AppSettings(
+                quick_files=[
+                    QuickFile(id="zebra", label="Zebra", path="C:/zeta/zebra.txt"),
+                    QuickFile(id="alpha", label="Alpha", path="C:/omega/alpha.txt"),
+                    QuickFile(id="cable", label="Cable", path="C:/alpha/cable.txt"),
+                ],
+                quick_file_sort_mode="Title",
+            )
+            self.assertTrue(SettingsStore(settings_path).save(settings))
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            try:
+                window = app_module.MainWindow()
+                session = window.current_session()
+
+                def visible_ids() -> list[str]:
+                    return [
+                        str(session.quick_file_list.item(row).data(Qt.ItemDataRole.UserRole))
+                        for row in range(session.quick_file_list.count())
+                    ]
+
+                self.assertEqual(visible_ids(), ["alpha", "cable", "zebra"])
+                self.assertEqual(session.quick_file_sort_combo.currentData(), "Title")
+
+                window.set_quick_file_sort_mode("Path")
+                self.assertEqual(visible_ids(), ["cable", "alpha", "zebra"])
+
+                window.set_quick_file_sort_mode("Custom")
+                self.assertEqual(visible_ids(), ["zebra", "alpha", "cable"])
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_quick_files_csv_export_import_round_trip(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_files_csv.json")
+        csv_path = Path(__file__).with_name("_tmp_quick_files.csv")
+        settings_path.unlink(missing_ok=True)
+        csv_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.quick_files = [
+                QuickFile(label="Bring-up", path="C:/scripts/bringup.txt"),
+                QuickFile(label="Factory Check", path="C:/scripts/factory-check.scr"),
+            ]
+
+            self.assertEqual(window.export_quick_files_to_csv(csv_path), 2)
+            self.assertTrue(csv_path.read_text(encoding="utf-8-sig").startswith("label,path"))
+
+            window.settings.quick_files = []
+            result = window.import_quick_files_from_csv(csv_path)
+
+            self.assertEqual(result.imported_count, 2)
+            self.assertEqual(result.skipped_count, 0)
+            self.assertEqual([quick_file.label for quick_file in window.settings.quick_files], ["Bring-up", "Factory Check"])
+            self.assertEqual(window.settings.quick_files[0].path, "C:/scripts/bringup.txt")
+            self.assertEqual(window.settings.quick_files[1].path, "C:/scripts/factory-check.scr")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            csv_path.unlink(missing_ok=True)
+
+    def test_quick_file_csv_import_can_append_or_replace(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_file_import_mode.json")
+        csv_path = Path(__file__).with_name("_tmp_quick_file_import_mode.csv")
+        settings_path.unlink(missing_ok=True)
+        csv_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            csv_path.write_text(
+                "label,path\n"
+                "Bring-up,C:/scripts/bringup.txt\n"
+                "Factory,C:/scripts/factory.txt\n",
+                encoding="utf-8",
+            )
+            window = app_module.MainWindow()
+            window.settings.quick_files = [
+                QuickFile(label="Local Bring-up", path="C:/scripts/bringup.txt"),
+                QuickFile(label="Local Only", path="C:/scripts/local.txt"),
+            ]
+
+            append_result = window.import_quick_files_from_csv(
+                csv_path,
+                options=app_module.QuickFileImportOptions(
+                    replace_existing=False,
+                    skip_duplicates=True,
+                ),
+            )
+
+            self.assertEqual(append_result.imported_count, 1)
+            self.assertEqual(append_result.skipped_count, 1)
+            self.assertEqual(
+                [quick_file.label for quick_file in window.settings.quick_files],
+                ["Local Bring-up", "Local Only", "Factory"],
+            )
+
+            replace_result = window.import_quick_files_from_csv(
+                csv_path,
+                options=app_module.QuickFileImportOptions(
+                    replace_existing=True,
+                    skip_duplicates=False,
+                ),
+            )
+
+            self.assertEqual(replace_result.imported_count, 2)
+            self.assertEqual(replace_result.skipped_count, 0)
+            self.assertEqual([quick_file.label for quick_file in window.settings.quick_files], ["Bring-up", "Factory"])
+            self.assertEqual(window.settings.quick_files[0].path, "C:/scripts/bringup.txt")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            csv_path.unlink(missing_ok=True)
 
     def test_quick_commands_csv_export_import_round_trip(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_csv.json")

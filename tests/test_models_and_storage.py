@@ -51,6 +51,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             ],
             quick_command_sort_mode="Group",
             quick_command_hidden_groups=["Debug"],
+            quick_file_sort_mode="Path",
             restored_tabs=[
                 TerminalSessionState(
                     title="DUT A",
@@ -103,6 +104,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.quick_files[0].path, "C:/scripts/bringup.txt")
         self.assertEqual(loaded.quick_command_sort_mode, "Group")
         self.assertEqual(loaded.quick_command_hidden_groups, ["Debug"])
+        self.assertEqual(loaded.quick_file_sort_mode, "Path")
         self.assertEqual([tab.title for tab in loaded.restored_tabs], ["DUT A", "DUT B"])
         self.assertEqual(loaded.restored_tabs[0].serial.port, "COM9")
         self.assertEqual(loaded.restored_tabs[0].serial.baudrate, 921600)
@@ -165,6 +167,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             quick_files=[QuickFile(label="Factory", path="C:/scripts/factory.txt")],
             quick_command_sort_mode="Title",
             quick_command_hidden_groups=["Factory"],
+            quick_file_sort_mode="Title",
         )
         restored = AppSettings.from_dict(settings.to_dict())
 
@@ -175,6 +178,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.quick_files[0].path, "C:/scripts/factory.txt")
         self.assertEqual(restored.quick_command_sort_mode, "Title")
         self.assertEqual(restored.quick_command_hidden_groups, ["Factory"])
+        self.assertEqual(restored.quick_file_sort_mode, "Title")
         self.assertEqual(restored.serial.port, "COM4")
 
 

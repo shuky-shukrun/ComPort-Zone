@@ -56,6 +56,7 @@ from .models import (
     QuickCommand,
     QuickFile,
     QUICK_COMMAND_SORT_MODES,
+    QUICK_FILE_SORT_MODES,
     RECEIVE_DISPLAY_MODES,
     SerialProfile,
     TerminalSessionState,
@@ -78,6 +79,7 @@ QUICK_COMMAND_CSV_FIELDS = (
     "group",
     "line_ending_override",
 )
+QUICK_FILE_CSV_FIELDS = ("label", "path")
 TERMINAL_FONT_MIN = 8
 TERMINAL_FONT_MAX = 24
 DRAWER_COLLAPSED_WIDTH = 48
@@ -286,6 +288,27 @@ def quick_file_display_text(quick_file: QuickFile) -> str:
     return Path(quick_file.path).name or quick_file.path
 
 
+def quick_file_csv_row(quick_file: QuickFile) -> dict[str, str]:
+    return {
+        "label": quick_file.label,
+        "path": quick_file.path,
+    }
+
+
+def quick_file_from_csv_row(row: dict[str, str]) -> QuickFile | None:
+    path = str(
+        row.get("path")
+        or row.get("file")
+        or row.get("command_file")
+        or row.get("script")
+        or ""
+    ).strip()
+    if not path:
+        return None
+    label = str(row.get("label") or row.get("title") or "").strip()
+    return QuickFile(label=label or Path(path).name, path=path)
+
+
 @dataclass(slots=True)
 class QuickCommandImportOptions:
     replace_existing: bool = False
@@ -294,6 +317,23 @@ class QuickCommandImportOptions:
 
 @dataclass(slots=True)
 class QuickCommandImportResult:
+    imported_count: int = 0
+    skipped_count: int = 0
+
+    def status_suffix(self) -> str:
+        if self.skipped_count:
+            return f", skipped {self.skipped_count} duplicate(s)"
+        return ""
+
+
+@dataclass(slots=True)
+class QuickFileImportOptions:
+    replace_existing: bool = False
+    skip_duplicates: bool = True
+
+
+@dataclass(slots=True)
+class QuickFileImportResult:
     imported_count: int = 0
     skipped_count: int = 0
 
@@ -328,6 +368,22 @@ def clone_quick_command(command: QuickCommand, *, preserve_id: bool) -> QuickCom
     return QuickCommand(**fields)
 
 
+def quick_file_duplicate_key(quick_file: QuickFile) -> str:
+    return quick_file.path.strip().replace("\\", "/").casefold()
+
+
+def clone_quick_file(quick_file: QuickFile, *, preserve_id: bool) -> QuickFile:
+    fields = {
+        "label": quick_file.label,
+        "path": quick_file.path,
+        "created_at": quick_file.created_at,
+        "updated_at": quick_file.updated_at,
+    }
+    if preserve_id:
+        fields["id"] = quick_file.id
+    return QuickFile(**fields)
+
+
 def merge_quick_commands(
     existing: list[QuickCommand],
     imported: list[QuickCommand],
@@ -347,6 +403,30 @@ def merge_quick_commands(
             result.skipped_count += 1
             continue
         merged.append(clone_quick_command(command, preserve_id=options.replace_existing))
+        seen.add(key)
+        result.imported_count += 1
+    return merged, result
+
+
+def merge_quick_files(
+    existing: list[QuickFile],
+    imported: list[QuickFile],
+    options: QuickFileImportOptions,
+) -> tuple[list[QuickFile], QuickFileImportResult]:
+    merged = [] if options.replace_existing else [
+        clone_quick_file(quick_file, preserve_id=True)
+        for quick_file in existing
+    ]
+    seen = {quick_file_duplicate_key(quick_file) for quick_file in merged}
+    result = QuickFileImportResult()
+    for quick_file in imported:
+        if not quick_file.path.strip():
+            continue
+        key = quick_file_duplicate_key(quick_file)
+        if options.skip_duplicates and key in seen:
+            result.skipped_count += 1
+            continue
+        merged.append(clone_quick_file(quick_file, preserve_id=options.replace_existing))
         seen.add(key)
         result.imported_count += 1
     return merged, result
@@ -697,6 +777,12 @@ class QuickCommandImportDialog(QDialog):
         message: str,
         default_replace: bool,
         default_skip_duplicates: bool,
+        append_label: str = "Append imported commands",
+        replace_label: str = "Replace current quick commands",
+        duplicate_checkbox_text: str = "Skip duplicate commands",
+        duplicate_hint_text: str = (
+            "Duplicate detection ignores descriptions so imported notes can change without creating extra copies."
+        ),
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -707,20 +793,17 @@ class QuickCommandImportDialog(QDialog):
         intro.setWordWrap(True)
 
         self.behavior_combo = ChevronComboBox(self)
-        self.behavior_combo.addItem("Append imported commands", False)
-        self.behavior_combo.addItem("Replace current quick commands", True)
+        self.behavior_combo.addItem(append_label, False)
+        self.behavior_combo.addItem(replace_label, True)
         self.behavior_combo.setCurrentIndex(1 if default_replace else 0)
 
-        self.skip_duplicates = QCheckBox("Skip duplicate commands", self)
+        self.skip_duplicates = QCheckBox(duplicate_checkbox_text, self)
         self.skip_duplicates.setToolTip(
             "Duplicates use group, title, command text, and send mode. Descriptions are ignored."
         )
         self.skip_duplicates.setChecked(default_skip_duplicates)
 
-        duplicate_hint = QLabel(
-            "Duplicate detection ignores descriptions so imported notes can change without creating extra copies.",
-            self,
-        )
+        duplicate_hint = QLabel(duplicate_hint_text, self)
         duplicate_hint.setWordWrap(True)
         duplicate_hint.setObjectName("dialogHint")
 
@@ -1155,6 +1238,13 @@ class TerminalSessionWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(7)
         title = self._drawer_title("Quick Files", page)
+        self.quick_file_sort_combo = ChevronComboBox(page)
+        self.quick_file_sort_combo.setObjectName("quickFileSortCombo")
+        for mode in QUICK_FILE_SORT_MODES:
+            label = "Custom order" if mode == "Custom" else mode
+            self.quick_file_sort_combo.addItem(label, mode)
+        self.quick_file_sort_combo.setToolTip("Sort quick files")
+        self.quick_file_sort_combo.currentIndexChanged.connect(self._quick_file_sort_changed)
         self.quick_file_list = QListWidget(page)
         self.quick_file_list.setObjectName("quickFileList")
         self.quick_file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -1168,13 +1258,16 @@ class TerminalSessionWidget(QWidget):
         add_file = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_file, page)
         edit_file = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_file(self.selected_quick_file_id()), page)
         delete_file = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_file(self.selected_quick_file_id()), page, role="drawerDanger")
+        import_files = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_files_csv, page)
+        export_files = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_files_csv, page)
         run = self._drawer_action("Run Command File...", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
         stop = self._drawer_action("Stop Command File", QStyle.StandardPixmap.SP_MediaStop, self.stop_script, page)
 
         layout.addWidget(title)
         layout.addWidget(self._drawer_section("Saved Files", page))
+        layout.addWidget(self.quick_file_sort_combo)
         layout.addWidget(self.quick_file_list, 1)
-        for row in ((send_file, add_file), (edit_file, delete_file), (run, stop)):
+        for row in ((send_file, add_file), (edit_file, delete_file), (import_files, export_files), (run, stop)):
             line = QHBoxLayout()
             line.setContentsMargins(0, 0, 0, 0)
             line.setSpacing(8)
@@ -1251,6 +1344,18 @@ class TerminalSessionWidget(QWidget):
             self.host.import_quick_commands_csv,
             page,
         )
+        export_files = self._drawer_action(
+            "Export Quick Files CSV",
+            QStyle.StandardPixmap.SP_DialogSaveButton,
+            self.host.export_quick_files_csv,
+            page,
+        )
+        import_files = self._drawer_action(
+            "Import Quick Files CSV",
+            QStyle.StandardPixmap.SP_DialogOpenButton,
+            self.host.import_quick_files_csv,
+            page,
+        )
         layout.addWidget(title)
         layout.addWidget(description)
         layout.addWidget(self._drawer_section("Settings Bundle", page))
@@ -1264,6 +1369,14 @@ class TerminalSessionWidget(QWidget):
         line.addWidget(export_quick)
         line.addWidget(import_quick)
         layout.addLayout(line)
+        layout.addSpacing(8)
+        layout.addWidget(self._drawer_section("Quick Files", page))
+        file_line = QHBoxLayout()
+        file_line.setContentsMargins(0, 0, 0, 0)
+        file_line.setSpacing(8)
+        file_line.addWidget(export_files)
+        file_line.addWidget(import_files)
+        layout.addLayout(file_line)
         layout.addStretch(1)
         return page
 
@@ -1331,6 +1444,11 @@ class TerminalSessionWidget(QWidget):
         mode = self.quick_sort_combo.currentData()
         if mode:
             self.host.set_quick_command_sort_mode(str(mode))
+
+    def _quick_file_sort_changed(self) -> None:
+        mode = self.quick_file_sort_combo.currentData()
+        if mode:
+            self.host.set_quick_file_sort_mode(str(mode))
 
     def quick_command_groups(self) -> list[str]:
         groups: list[str] = []
@@ -1453,6 +1571,41 @@ class TerminalSessionWidget(QWidget):
             self.quick_list.setToolTip("Right-click a saved command for actions. Press and drag to reorder.")
         else:
             self.quick_list.setToolTip("Reorder is available only in Custom order with all groups visible.")
+
+    def visible_quick_files(self) -> list[QuickFile]:
+        quick_files = list(self.host.settings.quick_files)
+        mode = self.host.settings.quick_file_sort_mode
+        if mode == "Title":
+            return sorted(
+                quick_files,
+                key=lambda quick_file: (
+                    quick_file_display_text(quick_file).casefold(),
+                    quick_file.path.casefold(),
+                ),
+            )
+        if mode == "Path":
+            return sorted(
+                quick_files,
+                key=lambda quick_file: (
+                    quick_file.path.casefold(),
+                    quick_file_display_text(quick_file).casefold(),
+                ),
+            )
+        return quick_files
+
+    def refresh_quick_file_controls(self) -> None:
+        if not hasattr(self, "quick_file_sort_combo"):
+            return
+        mode = (
+            self.host.settings.quick_file_sort_mode
+            if self.host.settings.quick_file_sort_mode in QUICK_FILE_SORT_MODES
+            else "Custom"
+        )
+        self.quick_file_sort_combo.blockSignals(True)
+        index = self.quick_file_sort_combo.findData(mode)
+        if index >= 0:
+            self.quick_file_sort_combo.setCurrentIndex(index)
+        self.quick_file_sort_combo.blockSignals(False)
 
     def selected_quick_command_id(self) -> str:
         item = self.quick_list.currentItem()
@@ -1631,6 +1784,19 @@ class TerminalSessionWidget(QWidget):
                 self.host.add_quick_file,
                 icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
             )
+            self.host._add_context_action(
+                menu,
+                "Import from CSV",
+                self.host.import_quick_files_csv,
+                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+            )
+            self.host._add_context_action(
+                menu,
+                "Export to CSV",
+                self.host.export_quick_files_csv,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                enabled=bool(self.host.settings.quick_files),
+            )
             return menu
 
         menu.setTitle(quick_file_display_text(quick_file))
@@ -1665,6 +1831,20 @@ class TerminalSessionWidget(QWidget):
             lambda quick_file_id=quick_file_id: self.host.delete_quick_file(quick_file_id),
             icon=QStyle.StandardPixmap.SP_TrashIcon,
         )
+        menu.addSeparator()
+        self.host._add_context_action(
+            menu,
+            "Import from CSV",
+            self.host.import_quick_files_csv,
+            icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+        )
+        self.host._add_context_action(
+            menu,
+            "Export to CSV",
+            self.host.export_quick_files_csv,
+            icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+            enabled=bool(self.host.settings.quick_files),
+        )
         return menu
 
     def refresh_quick_files(self, selected_id: str | None = None) -> None:
@@ -1672,8 +1852,9 @@ class TerminalSessionWidget(QWidget):
             return
         selected_id = selected_id or self.selected_quick_file_id()
         self.quick_file_list.clear()
+        self.refresh_quick_file_controls()
         selected_row = -1
-        for quick_file in self.host.settings.quick_files:
+        for quick_file in self.visible_quick_files():
             label = short_label(quick_file_display_text(quick_file), 32)
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, quick_file.id)
@@ -2315,6 +2496,8 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Import Quick Commands from CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         self._add_action(tools_menu, "Export Quick Commands to CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        self._add_action(tools_menu, "Import Quick Files from CSV", "", self.import_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
+        self._add_action(tools_menu, "Export Quick Files to CSV", "", self.export_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
         help_menu = self.menuBar().addMenu("Help")
         self._add_action(help_menu, "About", "", self.show_about, icon=QStyle.StandardPixmap.SP_MessageBoxInformation)
@@ -2451,6 +2634,20 @@ class MainWindow(QMainWindow):
                 callback=self.export_quick_commands_csv,
                 icon=QStyle.StandardPixmap.SP_DialogSaveButton,
                 keywords="quick send snippets commands csv export",
+            ),
+            CommandPaletteEntry(
+                title="Import Quick Files from CSV",
+                subtitle="Append saved command-file paths from a CSV file",
+                callback=self.import_quick_files_csv,
+                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+                keywords="quick files command files scripts csv import",
+            ),
+            CommandPaletteEntry(
+                title="Export Quick Files to CSV",
+                subtitle="Save all saved command-file paths to a CSV file",
+                callback=self.export_quick_files_csv,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                keywords="quick files command files scripts csv export",
             ),
         ]
         for index in range(self.tabs.count()):
@@ -2913,6 +3110,15 @@ class MainWindow(QMainWindow):
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
+    def set_quick_file_sort_mode(self, mode: str) -> None:
+        if mode not in QUICK_FILE_SORT_MODES:
+            mode = "Custom"
+        if self.settings.quick_file_sort_mode == mode:
+            return
+        self.settings.quick_file_sort_mode = mode
+        self.refresh_quick_files_everywhere()
+        self.save_settings()
+
     def set_quick_command_group_visible(self, group: str, visible: bool) -> None:
         group = quick_group_name(group)
         hidden = [
@@ -3107,6 +3313,60 @@ class MainWindow(QMainWindow):
             return
         self.set_status(f"Exported {exported_count} quick command(s).")
 
+    def import_quick_files_csv(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Quick Files",
+            str(Path.cwd()),
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        dialog = QuickCommandImportDialog(
+            title="Import Quick Files",
+            message="Choose whether this CSV adds to your current quick files or replaces them.",
+            default_replace=False,
+            default_skip_duplicates=True,
+            append_label="Append imported files",
+            replace_label="Replace current quick files",
+            duplicate_checkbox_text="Skip duplicate file paths",
+            duplicate_hint_text="Duplicate detection uses the saved file path, ignoring label changes.",
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        import_options = dialog.options()
+        try:
+            result = self.import_quick_files_from_csv(
+                Path(path),
+                options=QuickFileImportOptions(
+                    replace_existing=import_options.replace_existing,
+                    skip_duplicates=import_options.skip_duplicates,
+                ),
+            )
+        except (OSError, csv.Error, ValueError) as exc:
+            QMessageBox.warning(self, "Import Quick Files", str(exc))
+            return
+        self.set_status(
+            f"Imported {result.imported_count} quick file(s){result.status_suffix()}."
+        )
+
+    def export_quick_files_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Quick Files",
+            str(Path.cwd() / "comport-zone-quick-files.csv"),
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            exported_count = self.export_quick_files_to_csv(Path(path))
+        except (OSError, csv.Error) as exc:
+            QMessageBox.warning(self, "Export Quick Files", str(exc))
+            return
+        self.set_status(f"Exported {exported_count} quick file(s).")
+
     def import_quick_commands_from_csv(
         self,
         path: Path,
@@ -3150,6 +3410,50 @@ class MainWindow(QMainWindow):
             for command in self.settings.quick_commands:
                 writer.writerow(quick_command_csv_row(command))
         return len(self.settings.quick_commands)
+
+    def import_quick_files_from_csv(
+        self,
+        path: Path,
+        *,
+        options: QuickFileImportOptions | None = None,
+    ) -> QuickFileImportResult:
+        options = options or QuickFileImportOptions()
+        with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            reader = csv.DictReader(csv_file)
+            if reader.fieldnames is None:
+                raise ValueError("CSV file is empty.")
+            normalized_names = {name.strip().casefold() for name in reader.fieldnames if name}
+            if not normalized_names.intersection({"path", "file", "command_file", "script"}):
+                raise ValueError("CSV must include a 'path' column.")
+            imported: list[QuickFile] = []
+            for row in reader:
+                normalized_row = {
+                    str(key).strip().casefold(): str(value or "")
+                    for key, value in row.items()
+                    if key is not None
+                }
+                quick_file = quick_file_from_csv_row(normalized_row)
+                if quick_file:
+                    imported.append(quick_file)
+        if not imported:
+            return QuickFileImportResult()
+        self.settings.quick_files, result = merge_quick_files(
+            self.settings.quick_files,
+            imported,
+            options,
+        )
+        selected_id = self.settings.quick_files[-1].id if self.settings.quick_files else ""
+        self.refresh_quick_files_everywhere(selected_id)
+        self.save_settings()
+        return result
+
+    def export_quick_files_to_csv(self, path: Path) -> int:
+        with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=QUICK_FILE_CSV_FIELDS)
+            writer.writeheader()
+            for quick_file in self.settings.quick_files:
+                writer.writerow(quick_file_csv_row(quick_file))
+        return len(self.settings.quick_files)
 
     def move_quick_command(self, command_id: str, direction: int) -> None:
         commands = self.settings.quick_commands

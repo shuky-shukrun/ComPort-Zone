@@ -16,6 +16,7 @@ FLOW_CONTROL_OPTIONS = ("None", "RTS/CTS", "XON/XOFF", "DSR/DTR")
 THEME_OPTIONS = ("VS Code Dark", "Windows Terminal", "Bench Light", "Scope Amber")
 RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
+QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
 
 
@@ -225,6 +226,7 @@ class AppSettings:
     quick_files: list[QuickFile] = field(default_factory=list)
     quick_command_sort_mode: str = "Custom"
     quick_command_hidden_groups: list[str] = field(default_factory=list)
+    quick_file_sort_mode: str = "Custom"
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     theme: str = "VS Code Dark"
     timestamps_enabled: bool = True
@@ -249,6 +251,7 @@ class AppSettings:
             "quick_files": [quick_file.to_dict() for quick_file in self.quick_files],
             "quick_command_sort_mode": self.quick_command_sort_mode,
             "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
+            "quick_file_sort_mode": self.quick_file_sort_mode,
             "restored_tabs": [session.to_dict() for session in self.restored_tabs],
             "theme": self.theme,
             "timestamps_enabled": self.timestamps_enabled,
@@ -289,6 +292,9 @@ class AppSettings:
         quick_command_sort_mode = str(data.get("quick_command_sort_mode", "Custom"))
         if quick_command_sort_mode not in QUICK_COMMAND_SORT_MODES:
             quick_command_sort_mode = "Custom"
+        quick_file_sort_mode = str(data.get("quick_file_sort_mode", "Custom"))
+        if quick_file_sort_mode not in QUICK_FILE_SORT_MODES:
+            quick_file_sort_mode = "Custom"
         settings = cls(
             serial=SerialProfile.from_dict(serial_data),
             command_history=[str(item) for item in data.get("command_history", [])],
@@ -307,6 +313,7 @@ class AppSettings:
                 for group in data.get("quick_command_hidden_groups", [])
                 if str(group).strip()
             ],
+            quick_file_sort_mode=quick_file_sort_mode,
             restored_tabs=[
                 TerminalSessionState.from_dict(item)
                 for item in data.get("restored_tabs", [])
