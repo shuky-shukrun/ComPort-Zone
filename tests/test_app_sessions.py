@@ -6,7 +6,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication
 
 from ComPort_Zone import app as app_module
-from ComPort_Zone.models import AppSettings, QuickCommand, SerialProfile, TerminalSessionState
+from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProfile, TerminalSessionState
 from ComPort_Zone.storage import SettingsStore
 
 
@@ -242,6 +242,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Connect / Disconnect", titles)
             self.assertIn("Serial Settings", titles)
             self.assertIn("Run Command File", titles)
+            self.assertIn("Send Selected Quick File", titles)
+            self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
             self.assertIn("Search Terminal", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
@@ -274,6 +276,61 @@ class AppSessionTests(unittest.TestCase):
                 window.deleteLater()
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
+
+    def test_quick_file_list_runs_selected_file(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_files.json")
+        script_path = Path(__file__).with_name("_tmp_quick_file.txt")
+        settings_path.unlink(missing_ok=True)
+        script_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        old_load_batch_file = app_module.load_batch_file
+        loaded_paths: list[Path] = []
+        started_steps: list[object] = []
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        app_module.load_batch_file = lambda path: loaded_paths.append(Path(path)) or ["step"]
+        try:
+            script_path.write_text("SEND status\n", encoding="utf-8")
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.batch_runner.start = lambda steps: started_steps.append(steps)
+
+            self.assertEqual(session.drawer_pages.count(), 4)
+            session._select_drawer_page(1)
+            self.assertEqual(session.drawer_pages.currentIndex(), 1)
+
+            window.add_quick_file(QuickFile(label="Bring-up", path=str(script_path)))
+            self.assertEqual(session.quick_file_list.count(), 1)
+            self.assertEqual(session.quick_file_list.item(0).text(), "Bring-up")
+
+            session.quick_file_list.setCurrentRow(0)
+            menu = session.build_quick_file_context_menu(session.selected_quick_file_id())
+            self.assertIn("Show in Explorer", [action.text() for action in menu.actions()])
+
+            session.run_selected_quick_file()
+
+            self.assertEqual(loaded_paths, [script_path])
+            self.assertEqual(started_steps, [["step"]])
+            self.assertEqual(window.settings.last_script_path, str(script_path.parent))
+
+            window.delete_quick_file(session.selected_quick_file_id())
+            self.assertEqual(session.quick_file_list.count(), 0)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            app_module.load_batch_file = old_load_batch_file
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            script_path.unlink(missing_ok=True)
 
     def test_quick_commands_csv_export_import_round_trip(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_csv.json")

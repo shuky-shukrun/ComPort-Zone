@@ -10,6 +10,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Tabs for independent serial sessions
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
+- Separate quick-file drawer entry for saved command-file paths, with double-click/send execution and Explorer reveal
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
 - Full settings import/export as JSON bundles instead of an internal profile list
 - Settings bundles include serial defaults, theme, terminal font, history, drawer state, quick commands, log/script paths, restored tabs, and workflow preferences
@@ -45,7 +46,7 @@ comport-zone
 ```
 
 ## Batch Script Format
-Plain text files can be run from `File > Run Command File`. Every non-empty bare line is sent as a command with the active session line-ending setting.
+Plain text files can be run from `File > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
 
 The parser also supports a small batch DSL:
 
@@ -105,7 +106,7 @@ Settings bundles include:
 
 - Serial defaults for new tabs
 - Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
-- Quick commands, descriptions, groups, sort mode, and hidden groups
+- Quick commands, descriptions, groups, sort mode, hidden groups, and saved quick files
 - Command history and autocomplete source data
 - Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state
 - Last log/script paths and window size

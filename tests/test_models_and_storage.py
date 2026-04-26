@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from ComPort_Zone.models import (
     AppSettings,
     QuickCommand,
+    QuickFile,
     SerialProfile,
     TerminalSessionState,
     apply_line_ending,
@@ -31,6 +32,9 @@ class ModelsAndStorageTests(unittest.TestCase):
                     group="Factory",
                     line_ending_override="LF",
                 )
+            ],
+            quick_files=[
+                QuickFile(id="file-1", label="Bring-up", path="C:/scripts/bringup.txt")
             ],
             quick_command_sort_mode="Group",
             quick_command_hidden_groups=["Debug"],
@@ -81,6 +85,9 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.quick_commands[0].label, "Read ID")
         self.assertEqual(loaded.quick_commands[0].description, "Read the factory identity string.")
         self.assertEqual(loaded.quick_commands[0].line_ending_override, "LF")
+        self.assertEqual(len(loaded.quick_files), 1)
+        self.assertEqual(loaded.quick_files[0].label, "Bring-up")
+        self.assertEqual(loaded.quick_files[0].path, "C:/scripts/bringup.txt")
         self.assertEqual(loaded.quick_command_sort_mode, "Group")
         self.assertEqual(loaded.quick_command_hidden_groups, ["Debug"])
         self.assertEqual([tab.title for tab in loaded.restored_tabs], ["DUT A", "DUT B"])
@@ -142,6 +149,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             terminal_font_size=14,
             receive_display_mode="Text + Hex",
             quick_commands=[QuickCommand(label="Errors", command="ERRORS")],
+            quick_files=[QuickFile(label="Factory", path="C:/scripts/factory.txt")],
             quick_command_sort_mode="Title",
             quick_command_hidden_groups=["Factory"],
         )
@@ -151,6 +159,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.terminal_font_size, 14)
         self.assertEqual(restored.receive_display_mode, "Text + Hex")
         self.assertEqual(restored.quick_commands[0].command, "ERRORS")
+        self.assertEqual(restored.quick_files[0].path, "C:/scripts/factory.txt")
         self.assertEqual(restored.quick_command_sort_mode, "Title")
         self.assertEqual(restored.quick_command_hidden_groups, ["Factory"])
         self.assertEqual(restored.serial.port, "COM4")

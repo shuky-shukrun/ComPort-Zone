@@ -131,6 +131,42 @@ class QuickCommand:
 
 
 @dataclass(slots=True)
+class QuickFile:
+    id: str = field(default_factory=lambda: uuid4().hex)
+    label: str = ""
+    path: str = ""
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+
+    def display_label(self) -> str:
+        return self.label or self.path
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "path": self.path,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | str) -> "QuickFile":
+        if isinstance(data, str):
+            value = data.strip()
+            return cls(label="", path=value)
+        path = str(data.get("path", "")).strip()
+        label = str(data.get("label", "")).strip()
+        return cls(
+            id=str(data.get("id", uuid4().hex)),
+            label=label,
+            path=path,
+            created_at=str(data.get("created_at", utc_now_iso())),
+            updated_at=str(data.get("updated_at", utc_now_iso())),
+        )
+
+
+@dataclass(slots=True)
 class TerminalSessionState:
     title: str = "Terminal"
     serial: SerialProfile | None = None
@@ -177,6 +213,7 @@ class AppSettings:
     quick_commands: list[QuickCommand] = field(
         default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
     )
+    quick_files: list[QuickFile] = field(default_factory=list)
     quick_command_sort_mode: str = "Custom"
     quick_command_hidden_groups: list[str] = field(default_factory=list)
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
@@ -200,6 +237,7 @@ class AppSettings:
             "command_history": list(self.command_history),
             "quick_snippets": list(self.quick_snippets),
             "quick_commands": [command.to_dict() for command in self.quick_commands],
+            "quick_files": [quick_file.to_dict() for quick_file in self.quick_files],
             "quick_command_sort_mode": self.quick_command_sort_mode,
             "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
             "restored_tabs": [session.to_dict() for session in self.restored_tabs],
@@ -231,6 +269,11 @@ class AppSettings:
             quick_command = QuickCommand.from_dict(item)
             if quick_command.command:
                 quick_commands.append(quick_command)
+        quick_files = []
+        for item in data.get("quick_files", []):
+            quick_file = QuickFile.from_dict(item)
+            if quick_file.path:
+                quick_files.append(quick_file)
         receive_display_mode = str(data.get("receive_display_mode", "Text"))
         if receive_display_mode not in RECEIVE_DISPLAY_MODES:
             receive_display_mode = "Text"
@@ -248,6 +291,7 @@ class AppSettings:
             or list(DEFAULT_SNIPPETS),
             quick_commands=quick_commands
             or [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS],
+            quick_files=quick_files,
             quick_command_sort_mode=quick_command_sort_mode,
             quick_command_hidden_groups=[
                 str(group).strip()

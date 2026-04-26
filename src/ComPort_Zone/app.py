@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,6 +53,7 @@ from .models import (
     FLOW_CONTROL_OPTIONS,
     LINE_ENDINGS,
     QuickCommand,
+    QuickFile,
     QUICK_COMMAND_SORT_MODES,
     RECEIVE_DISPLAY_MODES,
     SerialProfile,
@@ -254,6 +256,13 @@ def quick_command_from_csv_row(row: dict[str, str]) -> QuickCommand | None:
         group=quick_group_name(str(row.get("group", ""))),
         line_ending_override=line_ending,
     )
+
+
+def quick_file_display_text(quick_file: QuickFile) -> str:
+    label = quick_file.display_label()
+    if label:
+        return label
+    return Path(quick_file.path).name or quick_file.path
 
 
 @dataclass(slots=True)
@@ -528,6 +537,62 @@ class QuickCommandDialog(QDialog):
         )
 
 
+class QuickFileDialog(QDialog):
+    def __init__(self, quick_file: QuickFile | None = None, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Quick File")
+        self.setMinimumWidth(520)
+        self._original = quick_file or QuickFile()
+
+        self.label_input = QLineEdit(self._original.label, self)
+        self.label_input.setPlaceholderText("Optional display name")
+        self.path_input = QLineEdit(self._original.path, self)
+        self.path_input.setPlaceholderText("Path to command file")
+        browse = QPushButton("Browse", self)
+        set_button_icon(browse, QStyle.StandardPixmap.SP_DialogOpenButton)
+        browse.clicked.connect(self.browse_file)
+
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(6)
+        path_row.addWidget(self.path_input, 1)
+        path_row.addWidget(browse)
+
+        form = QFormLayout()
+        form.addRow("Label", self.label_input)
+        form.addRow("File", path_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def browse_file(self) -> None:
+        start_dir = self.path_input.text().strip() or str(Path.cwd())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Command File",
+            start_dir,
+            "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+        )
+        if path:
+            self.path_input.setText(path)
+
+    def quick_file(self) -> QuickFile:
+        now = utc_now_iso()
+        path = self.path_input.text().strip()
+        return QuickFile(
+            id=self._original.id,
+            label=self.label_input.text().strip() or Path(path).name,
+            path=path,
+            created_at=self._original.created_at or now,
+            updated_at=now,
+        )
+
+
 class QuickCommandImportDialog(QDialog):
     def __init__(
         self,
@@ -699,6 +764,7 @@ class TerminalSessionWidget(QWidget):
         self._build_ui()
         self.refresh_ports()
         self.refresh_quick_commands()
+        self.refresh_quick_files()
         self.apply_settings()
         if state.send_mode in SEND_MODES:
             self.mode_combo.setCurrentText(state.send_mode)
@@ -754,8 +820,9 @@ class TerminalSessionWidget(QWidget):
 
         for icon, tooltip, callback in (
             (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", lambda: self._select_drawer_page(0)),
-            (QStyle.StandardPixmap.SP_MediaPlay, "Scripts and shortcuts", lambda: self._select_drawer_page(1)),
-            (QStyle.StandardPixmap.SP_DriveHDIcon, "Settings", lambda: self._select_drawer_page(2)),
+            (QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", lambda: self._select_drawer_page(1)),
+            (QStyle.StandardPixmap.SP_MediaPlay, "Scripts and shortcuts", lambda: self._select_drawer_page(2)),
+            (QStyle.StandardPixmap.SP_DriveHDIcon, "Settings", lambda: self._select_drawer_page(3)),
         ):
             button = QToolButton(self.drawer_rail)
             button.setObjectName("railButton")
@@ -774,6 +841,7 @@ class TerminalSessionWidget(QWidget):
 
         self.drawer_pages = QStackedWidget(self.drawer_panel)
         self.drawer_pages.addWidget(self._build_quick_page())
+        self.drawer_pages.addWidget(self._build_quick_files_page())
         self.drawer_pages.addWidget(self._build_scripts_page())
         self.drawer_pages.addWidget(self._build_settings_page())
         panel_layout.addWidget(self.drawer_pages, 1)
@@ -976,6 +1044,40 @@ class TerminalSessionWidget(QWidget):
             layout.addLayout(line)
         return page
 
+    def _build_quick_files_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(7)
+        title = self._drawer_title("Quick Files", page)
+        self.quick_file_list = QListWidget(page)
+        self.quick_file_list.setObjectName("quickFileList")
+        self.quick_file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.quick_file_list.setSpacing(1)
+        self.quick_file_list.setUniformItemSizes(True)
+        self.quick_file_list.setToolTip("Double-click a saved command file to run it.")
+        self.quick_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.quick_file_list.itemDoubleClicked.connect(lambda _: self.run_selected_quick_file())
+        self.quick_file_list.customContextMenuRequested.connect(self.show_quick_file_context_menu)
+        send_file = self._drawer_action("Send Selected", QStyle.StandardPixmap.SP_ArrowForward, self.run_selected_quick_file, page, role="drawerPrimary")
+        add_file = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_file, page)
+        edit_file = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_file(self.selected_quick_file_id()), page)
+        delete_file = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_file(self.selected_quick_file_id()), page, role="drawerDanger")
+        run = self._drawer_action("Run Command File...", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
+        stop = self._drawer_action("Stop Command File", QStyle.StandardPixmap.SP_MediaStop, self.stop_script, page)
+
+        layout.addWidget(title)
+        layout.addWidget(self._drawer_section("Saved Files", page))
+        layout.addWidget(self.quick_file_list, 1)
+        for row in ((send_file, add_file), (edit_file, delete_file), (run, stop)):
+            line = QHBoxLayout()
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
+            for button in row:
+                line.addWidget(button)
+            layout.addLayout(line)
+        return page
+
     def _build_scripts_page(self) -> QWidget:
         page = QWidget(self)
         layout = QVBoxLayout(page)
@@ -984,7 +1086,7 @@ class TerminalSessionWidget(QWidget):
         title = self._drawer_title("Shortcuts", page)
         connect = self._drawer_action("Connect / Disconnect", QStyle.StandardPixmap.SP_ComputerIcon, self.toggle_connection, page, role="drawerPrimary")
         settings = self._drawer_action("Serial Settings", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.open_connection_settings(), page)
-        run = self._drawer_action("Run Command File", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
+        run = self._drawer_action("Run Command File...", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
         stop = self._drawer_action("Stop Command File", QStyle.StandardPixmap.SP_MediaStop, self.stop_script, page)
         log = self._drawer_action("Start / Stop Log", QStyle.StandardPixmap.SP_DialogSaveButton, self.toggle_logging, page)
         clear = self._drawer_action("Clear Terminal", QStyle.StandardPixmap.SP_TrashIcon, self.clear_terminal, page, role="drawerDanger")
@@ -1004,7 +1106,6 @@ class TerminalSessionWidget(QWidget):
         layout.addWidget(clear)
         layout.addWidget(pause)
         layout.addWidget(save)
-        layout.addStretch(1)
         return page
 
     def _build_settings_page(self) -> QWidget:
@@ -1015,7 +1116,7 @@ class TerminalSessionWidget(QWidget):
         title = self._drawer_title("Settings", page)
         description = QLabel(
             "Export or import the complete app setup as a JSON file. "
-            "This includes serial defaults, quick commands, theme, terminal preferences, and restored tabs.",
+            "This includes serial defaults, quick commands, quick files, theme, terminal preferences, and restored tabs.",
             page,
         )
         description.setObjectName("drawerHelpText")
@@ -1402,6 +1503,89 @@ class TerminalSessionWidget(QWidget):
         self._quick_list_refreshing = False
         self._update_completion_model()
 
+    def selected_quick_file_id(self) -> str:
+        item = self.quick_file_list.currentItem()
+        return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
+
+    def show_quick_file_context_menu(self, position) -> None:
+        item = self.quick_file_list.itemAt(position)
+        quick_file_id = ""
+        if item:
+            self.quick_file_list.setCurrentItem(item)
+            quick_file_id = str(item.data(Qt.ItemDataRole.UserRole))
+        menu = self.build_quick_file_context_menu(quick_file_id)
+        menu.exec(self.quick_file_list.mapToGlobal(position))
+
+    def build_quick_file_context_menu(self, quick_file_id: str) -> QMenu:
+        menu = QMenu(self)
+        quick_file = self.host.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            self.host._add_context_action(
+                menu,
+                "Add File",
+                self.host.add_quick_file,
+                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+            )
+            return menu
+
+        menu.setTitle(quick_file_display_text(quick_file))
+        self.host._add_context_action(
+            menu,
+            "Send",
+            self.run_selected_quick_file,
+            icon=QStyle.StandardPixmap.SP_ArrowForward,
+        )
+        self.host._add_context_action(
+            menu,
+            "Show in Explorer",
+            lambda quick_file_id=quick_file_id: self.host.show_quick_file_in_explorer(quick_file_id),
+            icon=QStyle.StandardPixmap.SP_DirOpenIcon,
+        )
+        menu.addSeparator()
+        self.host._add_context_action(
+            menu,
+            "Add File",
+            self.host.add_quick_file,
+            icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+        )
+        self.host._add_context_action(
+            menu,
+            "Edit",
+            lambda quick_file_id=quick_file_id: self.host.edit_quick_file(quick_file_id),
+            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        )
+        self.host._add_context_action(
+            menu,
+            "Delete",
+            lambda quick_file_id=quick_file_id: self.host.delete_quick_file(quick_file_id),
+            icon=QStyle.StandardPixmap.SP_TrashIcon,
+        )
+        return menu
+
+    def refresh_quick_files(self, selected_id: str | None = None) -> None:
+        if not hasattr(self, "quick_file_list"):
+            return
+        selected_id = selected_id or self.selected_quick_file_id()
+        self.quick_file_list.clear()
+        selected_row = -1
+        for quick_file in self.host.settings.quick_files:
+            label = short_label(quick_file_display_text(quick_file), 32)
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, quick_file.id)
+            item.setToolTip(quick_file.path)
+            item.setSizeHint(QSize(0, 24))
+            self.quick_file_list.addItem(item)
+            if quick_file.id == selected_id:
+                selected_row = self.quick_file_list.count() - 1
+        if selected_row >= 0:
+            self.quick_file_list.setCurrentRow(selected_row)
+
+    def run_selected_quick_file(self) -> None:
+        quick_file = self.host.quick_file_by_id(self.selected_quick_file_id())
+        if not quick_file:
+            return
+        self.run_script_path(Path(quick_file.path))
+
     def refresh_ports(self) -> None:
         self._ports = self.serial_client.list_ports()
         self.host.set_status(f"{len(self._ports)} serial port(s) detected.")
@@ -1485,13 +1669,17 @@ class TerminalSessionWidget(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Run Command File", start_dir, "Text Files (*.txt *.cmd *.scr);;All Files (*)")
         if not path:
             return
+        self.run_script_path(Path(path))
+
+    def run_script_path(self, path: Path) -> None:
         try:
             steps = load_batch_file(path)
         except (BatchParseError, OSError) as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
             return
-        self.host.settings.last_script_path = str(Path(path).parent)
+        self.host.settings.last_script_path = str(path.parent)
         self.batch_runner.start(steps)
+        self.host.set_status(f"Running command file: {path}")
         self.host.save_settings()
 
     def stop_script(self) -> None:
@@ -1879,6 +2067,9 @@ class MainWindow(QMainWindow):
         self._add_action(tools_menu, "Edit Selected Quick Command", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(tools_menu, "Delete Selected Quick Command", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
         tools_menu.addSeparator()
+        self._add_action(tools_menu, "Send Selected Quick File", "", lambda: self.with_session(lambda s: s.run_selected_quick_file()), icon=QStyle.StandardPixmap.SP_ArrowForward)
+        self._add_action(tools_menu, "Add Quick File", "", self.add_quick_file, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        tools_menu.addSeparator()
         self._add_action(tools_menu, "Import Quick Commands from CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         self._add_action(tools_menu, "Export Quick Commands to CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
@@ -1947,6 +2138,20 @@ class MainWindow(QMainWindow):
                 callback=lambda: self.with_session(lambda session: session.run_script()),
                 icon=QStyle.StandardPixmap.SP_MediaPlay,
                 keywords="script batch file",
+            ),
+            CommandPaletteEntry(
+                title="Send Selected Quick File",
+                subtitle="Run the saved command file selected in the left drawer",
+                callback=lambda: self.with_session(lambda session: session.run_selected_quick_file()),
+                icon=QStyle.StandardPixmap.SP_ArrowForward,
+                keywords="script batch file saved quick",
+            ),
+            CommandPaletteEntry(
+                title="Add Quick File",
+                subtitle="Save a command file path in the left drawer",
+                callback=self.add_quick_file,
+                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+                keywords="script batch file save shortcut",
             ),
             CommandPaletteEntry(
                 title="Clear Terminal",
@@ -2356,11 +2561,15 @@ class MainWindow(QMainWindow):
                 self.settings.drawer_width,
             )
             session.refresh_quick_commands()
+            session.refresh_quick_files()
         self.update_tab_titles()
         self.sync_status_from_current_session()
 
     def quick_command_by_id(self, command_id: str) -> QuickCommand | None:
         return next((command for command in self.settings.quick_commands if command.id == command_id), None)
+
+    def quick_file_by_id(self, quick_file_id: str) -> QuickFile | None:
+        return next((quick_file for quick_file in self.settings.quick_files if quick_file.id == quick_file_id), None)
 
     def quick_command_group_names(self) -> list[str]:
         groups: list[str] = []
@@ -2479,6 +2688,59 @@ class MainWindow(QMainWindow):
             return
         QApplication.clipboard().setText(command.command)
         self.set_status(f"Copied quick command: {short_label(command.display_label(), 32)}")
+
+    def add_quick_file(self, quick_file: QuickFile | None = None) -> None:
+        if quick_file is None or isinstance(quick_file, bool):
+            dialog = QuickFileDialog(parent=self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            quick_file = dialog.quick_file()
+        if not quick_file.path:
+            return
+        self.settings.quick_files.append(quick_file)
+        self.refresh_quick_files_everywhere(quick_file.id)
+        self.save_settings()
+
+    def edit_quick_file(self, quick_file_id: str) -> None:
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        dialog = QuickFileDialog(quick_file, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dialog.quick_file()
+        if not updated.path:
+            return
+        for index, existing in enumerate(self.settings.quick_files):
+            if existing.id == updated.id:
+                self.settings.quick_files[index] = updated
+                break
+        self.refresh_quick_files_everywhere(updated.id)
+        self.save_settings()
+
+    def delete_quick_file(self, quick_file_id: str) -> None:
+        if not quick_file_id:
+            return
+        self.settings.quick_files = [
+            quick_file
+            for quick_file in self.settings.quick_files
+            if quick_file.id != quick_file_id
+        ]
+        self.refresh_quick_files_everywhere()
+        self.save_settings()
+
+    def show_quick_file_in_explorer(self, quick_file_id: str) -> None:
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        path = Path(quick_file.path)
+        if not path.exists():
+            QMessageBox.warning(self, "Quick File", f"File not found:\n{path}")
+            return
+        try:
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        except OSError as exc:
+            QMessageBox.warning(self, "Quick File", str(exc))
 
     def import_quick_commands_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -2599,6 +2861,10 @@ class MainWindow(QMainWindow):
     def refresh_quick_commands_everywhere(self, selected_id: str | None = None) -> None:
         for session in self.iter_sessions():
             session.refresh_quick_commands(selected_id)
+
+    def refresh_quick_files_everywhere(self, selected_id: str | None = None) -> None:
+        for session in self.iter_sessions():
+            session.refresh_quick_files(selected_id)
 
     def record_command(self, command: str) -> None:
         self.history_catalog.add(command)
@@ -2876,10 +3142,12 @@ class MainWindow(QMainWindow):
             background: {theme.accent_soft};
             color: {theme.text};
         }}
-        QListWidget#quickCommandList {{
+        QListWidget#quickCommandList,
+        QListWidget#quickFileList {{
             padding: 4px;
         }}
-        QListWidget#quickCommandList::item {{
+        QListWidget#quickCommandList::item,
+        QListWidget#quickFileList::item {{
             border-radius: 5px;
             padding: 3px 6px;
             margin: 1px 0;
