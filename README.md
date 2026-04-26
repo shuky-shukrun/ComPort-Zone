@@ -50,19 +50,28 @@ comport-zone
 
 ## Build Windows EXE
 
+Update the app version before a release:
+
+```powershell
+.\update_version.bat -Version 1.2.3
+.\update_version.bat -Bump patch
+.\update_version.bat -Bump minor
+.\update_version.bat -Bump major
+```
+
 Double-click `build_exe.bat` from the project folder.
 
-The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, and writes publishable output to:
+The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, embeds Windows file-version properties, and writes publishable output to:
 
 ```text
-release\ComPort_Zone-0.0.2-win64\
-release\ComPort_Zone-0.0.2-win64.zip
+release\ComPort_Zone-X.Y.Z-win64\
+release\ComPort_Zone-X.Y.Z-win64.zip
 ```
 
 The generated executable is also available at:
 
 ```text
-dist\ComPort Zone.exe
+dist\ComPort Zone vX.Y.Z.exe
 ```
 
 After the first setup, later builds skip dependency installation when the `.venv` build environment is already ready. To force a dependency refresh, run:
