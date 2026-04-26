@@ -101,6 +101,25 @@ reset // Bare command
 - Bare lines are treated like `SEND`.
 - `//` starts a single-line comment. Everything after it is ignored until the next line.
 
+### Command File Parameters
+
+Command files can include simple runtime parameters:
+
+```text
+VOLT {{VOLT_VALUE}}
+CURR {{CURR_VALUE=1.00}}
+WAIT {{DELAY_MS=10}}
+HEX {{WAKE_BYTES=55 AA 01 0D}}
+```
+
+- `{{PARAM}}` appears in the pre-run parameter window with an empty value.
+- `{{PARAM=default}}` appears in the pre-run parameter window with `default` already filled in.
+- Parameter names may use letters, numbers, and underscores, and must start with a letter or underscore.
+- Before a parameterized file starts, ComPort Zone lets you set or override parameter values.
+- If a value is left empty, or a prefilled default is deleted, ComPort Zone asks for that value when execution reaches the line.
+- Values are remembered for the current run. If `{{VOLT_VALUE}}` appears again later, the first entered value is reused automatically.
+- Parameters work in bare commands, `SEND`, `WAIT`, and `HEX` lines.
+
 ## Quick Commands CSV Format
 
 Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.

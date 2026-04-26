@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from queue import Empty
+from threading import Event
 
-from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QStringListModel, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QSpinBox,
@@ -46,7 +48,15 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtSvg import QSvgRenderer
 
-from .batch import BatchParseError, BatchRunner, load_batch_file, parse_hex_payload
+from .batch import (
+    BatchParseError,
+    BatchRunner,
+    find_batch_parameters,
+    load_batch_file,
+    parse_batch_template,
+    parse_hex_payload,
+    substitute_batch_parameters,
+)
 from .history import HistoryStore
 from . import __version__
 from .models import (
@@ -918,6 +928,59 @@ class CommandPaletteDialog(QDialog):
         QTimer.singleShot(0, entry.callback)
 
 
+class BatchParameterPromptBridge(QObject):
+    prompt_requested = Signal(object)
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.prompt_requested.connect(self._handle_prompt)
+
+    def prompt(self, name: str, line_number: int, line_text: str) -> str | None:
+        request = {
+            "name": name,
+            "line_number": line_number,
+            "line_text": line_text,
+            "event": Event(),
+            "accepted": False,
+            "value": None,
+        }
+        self.prompt_requested.emit(request)
+        request["event"].wait()
+        if not request["accepted"]:
+            return None
+        return str(request["value"])
+
+    def _handle_prompt(self, request: dict[str, object]) -> None:
+        event = request["event"]
+        try:
+            name = str(request["name"])
+            line_number = int(request["line_number"])
+            line_text = str(request["line_text"])
+            prompt = f"Line {line_number}:\n{line_text}\n\nEnter value for {name}:"
+            while True:
+                value, accepted = QInputDialog.getText(
+                    self.parent_widget,
+                    "Command File Parameter",
+                    prompt,
+                )
+                if not accepted:
+                    request["accepted"] = False
+                    return
+                if not value.strip():
+                    QMessageBox.warning(
+                        self.parent_widget,
+                        "Command File Parameter",
+                        f"Value for {name} cannot be empty.",
+                    )
+                    continue
+                request["value"] = value
+                request["accepted"] = True
+                return
+        finally:
+            event.set()
+
+
 class TerminalSessionWidget(QWidget):
     def __init__(self, host: "MainWindow", session_id: int, state: TerminalSessionState) -> None:
         super().__init__(host)
@@ -933,6 +996,7 @@ class TerminalSessionWidget(QWidget):
         self.serial_client = SerialClient()
         self.history_store = HistoryStore(host.history_catalog.all_commands())
         self.logger = SessionLogger()
+        self.parameter_prompt_bridge = BatchParameterPromptBridge(self)
         self.batch_runner = BatchRunner(
             event_queue=self.serial_client.events,
             send_text=self.serial_client.send_text,
@@ -1968,6 +2032,35 @@ class TerminalSessionWidget(QWidget):
 
     def run_script_path(self, path: Path) -> None:
         try:
+            script_text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Run Command File", str(exc))
+            return
+
+        parameter_occurrences = find_batch_parameters(script_text)
+        if parameter_occurrences:
+            parameter_sheet = self._collect_parameter_values(parameter_occurrences)
+            if parameter_sheet is None:
+                return
+            parameter_values, ignored_defaults = parameter_sheet
+            template_steps = parse_batch_template(script_text)
+
+            def resolve_line(line: str, line_number: int) -> str | None:
+                return substitute_batch_parameters(
+                    line,
+                    parameter_values,
+                    self.parameter_prompt_bridge.prompt,
+                    line_number,
+                    ignored_defaults,
+                )
+
+            self.host.settings.last_script_path = str(path.parent)
+            self.batch_runner.start_template(template_steps, resolve_line)
+            self.host.set_status(f"Running command file: {path}")
+            self.host.save_settings()
+            return
+
+        try:
             steps = load_batch_file(path)
         except (BatchParseError, OSError) as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
@@ -1976,6 +2069,94 @@ class TerminalSessionWidget(QWidget):
         self.batch_runner.start(steps)
         self.host.set_status(f"Running command file: {path}")
         self.host.save_settings()
+
+    def _collect_parameter_values(self, parameter_occurrences) -> tuple[dict[str, str], set[str]] | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Command File Parameters")
+        dialog.setMinimumSize(680, 460)
+
+        intro = QLabel(
+            "Review command-file parameters before starting. Fill values now, override defaults, or leave a field empty to ask while running.",
+            dialog,
+        )
+        intro.setWordWrap(True)
+
+        parameter_names: list[str] = []
+        defaults: dict[str, str] = {}
+        lines_by_parameter: dict[str, list[str]] = {}
+        line_details: list[str] = []
+        seen_line_details: set[tuple[int, str]] = set()
+        for occurrence in parameter_occurrences:
+            if occurrence.name not in parameter_names:
+                parameter_names.append(occurrence.name)
+            if occurrence.default is not None and occurrence.name not in defaults:
+                defaults[occurrence.name] = occurrence.default
+            line_entry = f"Line {occurrence.line_number}: {occurrence.line_text}"
+            lines_by_parameter.setdefault(occurrence.name, [])
+            if line_entry not in lines_by_parameter[occurrence.name]:
+                lines_by_parameter[occurrence.name].append(line_entry)
+            line_key = (occurrence.line_number, occurrence.line_text)
+            if line_key not in seen_line_details:
+                line_details.append(line_entry)
+                seen_line_details.add(line_key)
+
+        field_widget = QWidget(dialog)
+        field_layout = QFormLayout(field_widget)
+        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.setSpacing(8)
+        inputs: dict[str, QLineEdit] = {}
+        for name in parameter_names:
+            input_field = QLineEdit(field_widget)
+            input_field.setText(defaults.get(name, ""))
+            input_field.setPlaceholderText("Ask while running")
+            input_field.setClearButtonEnabled(True)
+            input_field.setToolTip("\n".join(lines_by_parameter.get(name, [])))
+            inputs[name] = input_field
+            label = f"{name}"
+            if name in defaults:
+                label += " (default)"
+            field_layout.addRow(label, input_field)
+
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(field_widget)
+
+        details = QTextEdit(dialog)
+        details.setReadOnly(True)
+        details.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        details.setMaximumHeight(120)
+        details.setPlainText("\n".join(line_details))
+
+        hint = QLabel(
+            "Values are remembered for this run, so the same parameter name is asked only once. Empty default fields will prompt during execution instead of using the deleted default.",
+            dialog,
+        )
+        hint.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dialog)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Start")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(intro)
+        layout.addWidget(scroll, 1)
+        layout.addWidget(QLabel("Parameterized lines:", dialog))
+        layout.addWidget(details)
+        layout.addWidget(hint)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        values: dict[str, str] = {}
+        ignored_defaults: set[str] = set()
+        for name, input_field in inputs.items():
+            value = input_field.text().strip()
+            if value:
+                values[name] = value
+            else:
+                ignored_defaults.add(name)
+        return values, ignored_defaults
 
     def stop_script(self) -> None:
         self.batch_runner.stop()

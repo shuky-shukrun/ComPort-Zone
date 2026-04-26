@@ -534,6 +534,47 @@ class AppSessionTests(unittest.TestCase):
             settings_path.unlink(missing_ok=True)
             script_path.unlink(missing_ok=True)
 
+    def test_parameterized_command_file_uses_template_runner(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_parameterized_script.json")
+        script_path = Path(__file__).with_name("_tmp_parameterized_script.txt")
+        settings_path.unlink(missing_ok=True)
+        script_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            script_path.write_text("SEND VOLT {{VOLT_VALUE}}\nWAIT {{DELAY=5}}\n", encoding="utf-8")
+            window = app_module.MainWindow()
+            session = window.current_session()
+            collected_occurrences: list[object] = []
+            started_templates: list[tuple[list[object], object]] = []
+            session._collect_parameter_values = lambda occurrences: collected_occurrences.extend(occurrences) or ({"VOLT_VALUE": "3.3"}, set())
+            session.parameter_prompt_bridge.prompt = lambda name, line_number, line_text: "3.3"
+            session.batch_runner.start_template = lambda steps, resolver: started_templates.append((steps, resolver))
+
+            session.run_script_path(script_path)
+
+            self.assertEqual([occurrence.name for occurrence in collected_occurrences], ["VOLT_VALUE", "DELAY"])
+            steps, resolver = started_templates[0]
+            self.assertEqual(resolver(steps[0].line, steps[0].line_number), "SEND VOLT 3.3")
+            self.assertEqual(resolver(steps[1].line, steps[1].line_number), "WAIT 5")
+            self.assertEqual(window.settings.last_script_path, str(script_path.parent))
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            script_path.unlink(missing_ok=True)
+
     def test_quick_files_sort_modes(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_file_sort.json")
         settings_path.unlink(missing_ok=True)
