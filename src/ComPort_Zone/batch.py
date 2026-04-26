@@ -41,11 +41,15 @@ def parse_hex_payload(text: str) -> bytes:
         raise ValueError("HEX payload contains invalid characters.") from exc
 
 
+def strip_c_style_comment(line: str) -> str:
+    return line.split("//", 1)[0].strip()
+
+
 def parse_batch_script(text: str) -> list[BatchStep]:
     steps: list[BatchStep] = []
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("//"):
+        stripped = strip_c_style_comment(raw_line)
+        if not stripped or stripped.startswith("#"):
             continue
         wait_match = WAIT_PATTERN.match(stripped)
         if wait_match:

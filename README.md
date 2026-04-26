@@ -22,7 +22,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Search within the active terminal tab with highlighted matches
 - RX, TX, status, and error coloring
 - Optional terminal timestamps
-- Clear, copy, select all, pause/resume output, and line wrap controls
+- Clear, copy, select all, pause/resume output, terminal font settings, and line wrap controls
 - Per-tab command file execution
 - Per-tab logging to text files
 - Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, and restored tabs
@@ -74,16 +74,18 @@ The parser also supports a small batch DSL:
 
 ```text
 # Comment
+// C-style comment
 SEND version
-WAIT 1000
-HEX 55 AA 01 0D
-reset
+WAIT 1000 // Pause one second
+HEX 55 AA 01 0D // Send raw bytes
+reset // Bare command
 ```
 
 - `SEND <text>` sends text with the active line ending.
 - `WAIT <milliseconds>` pauses before the next step.
 - `HEX <bytes>` sends raw bytes without appending a line ending.
 - Bare lines are treated like `SEND`.
+- `//` starts a single-line comment. Everything after it is ignored until the next line.
 
 ## Quick Commands CSV Format
 Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.
@@ -145,6 +147,8 @@ Settings bundles include:
 - `Ctrl+Space`: Autocomplete command input
 - `Up` / `Down`: Navigate command history
 - `Ctrl+=` / `Ctrl+-`: Increase or decrease terminal font size
+
+Terminal font family and size can also be changed from `View > Terminal Font Settings`.
 
 ## Third-Party Notices
 The bundled icon subset comes from Tabler Icons under the MIT license. See `THIRD_PARTY_NOTICES.md`.

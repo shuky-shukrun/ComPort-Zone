@@ -9,10 +9,11 @@ class BatchParserTests(unittest.TestCase):
             "\n".join(
                 [
                     "# comment",
+                    "// C-style comment",
                     "SEND version",
-                    "WAIT 250",
-                    "HEX 55 AA 01 0D",
-                    "reset",
+                    "WAIT 250 // pause before payload",
+                    "HEX 55 AA 01 0D // wake bytes",
+                    "reset // plain command",
                 ]
             )
         )
