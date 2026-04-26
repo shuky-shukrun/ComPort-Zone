@@ -12,6 +12,7 @@ artifacts/
 build/
 develop-eggs/
 dist/
+release/
 downloads/
 eggs/
 .eggs/

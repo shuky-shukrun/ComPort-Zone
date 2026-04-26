@@ -45,6 +45,22 @@ After installation, the console script can also launch the app:
 comport-zone
 ```
 
+## Build Windows EXE
+Double-click `build_exe.bat` from the project folder.
+
+The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, and writes publishable output to:
+
+```text
+release\ComPort_Zone-0.0.1-win64\
+release\ComPort_Zone-0.0.1-win64.zip
+```
+
+The generated executable is also available at:
+
+```text
+dist\ComPort Zone.exe
+```
+
 ## Batch Script Format
 Plain text files can be run from `File > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
 
