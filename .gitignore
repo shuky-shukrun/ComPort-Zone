@@ -4,6 +4,7 @@ tests/__pycache__/
 *.py[codz]
 *$py.class
 artifacts/
+src/ComPort_Zone.egg-info
 # C extensions
 *.so
 

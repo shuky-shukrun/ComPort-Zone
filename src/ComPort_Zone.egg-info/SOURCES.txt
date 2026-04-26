@@ -1,8 +1,8 @@
 README.md
 pyproject.toml
+src/ComPort_Zone/VERSION
 src/ComPort_Zone/__init__.py
 src/ComPort_Zone/__main__.py
-src/ComPort_Zone/VERSION
 src/ComPort_Zone/app.py
 src/ComPort_Zone/batch.py
 src/ComPort_Zone/history.py
@@ -19,6 +19,8 @@ src/ComPort_Zone.egg-info/entry_points.txt
 src/ComPort_Zone.egg-info/requires.txt
 src/ComPort_Zone.egg-info/top_level.txt
 src/ComPort_Zone/assets/comport-zone-icon.png
+tests/test_app_sessions.py
 tests/test_batch.py
 tests/test_history.py
 tests/test_models_and_storage.py
+tests/test_serial_core.py

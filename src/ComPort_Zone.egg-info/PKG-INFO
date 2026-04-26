@@ -1,27 +1,42 @@
 Metadata-Version: 2.4
 Name: ComPort-Zone
 Version: 0.0.1
-Summary: Windows COM-port terminal focused on physical device communication
+Summary: ComPort Zone, a Windows-first COM-port terminal focused on physical device communication
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: pyserial>=3.5
 Requires-Dist: PySide6>=6.7
+Provides-Extra: build
+Requires-Dist: pyinstaller>=6.0; extra == "build"
 
 # ComPort Zone
 
-Windows-first COM-port terminal for device bring-up, debugging, and repetitive command workflows.
+ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows.
 
-## Included in this first implementation
-- COM port selection and refresh
-- Baud rate, data bits, parity, stop bits, flow control, DTR, RTS, and line ending configuration
-- Connect, disconnect, and auto-reconnect with exponential backoff
-- Command history on arrow keys
-- Autocomplete from previous commands
-- Theme switching with separate colors for TX, RX, status, and errors
-- Command file and batch script execution
-- Session logging to file
-- Optional timestamps in the terminal view
-- Named connection profiles saved locally
+The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick-send commands and shortcuts.
+
+## Current Features
+- Terminal-first layout with minimal chrome and a VS Code dark default theme
+- Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
+- Tabs for independent serial sessions
+- Foldable and resizable left drawer, collapsed by default
+- Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
+- Separate quick-file drawer entry for saved command-file paths, with double-click/send execution and Explorer reveal
+- Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
+- Full settings import/export as JSON bundles instead of an internal profile list
+- Settings bundles include serial defaults, theme, terminal font, history, drawer state, quick commands, log/script paths, restored tabs, and workflow preferences
+- Serial Settings opens automatically for the active tab on launch and for each new blank tab
+- Connect, disconnect, refresh ports, and reconnect feedback
+- Text sending and hex/raw-byte sending
+- Up/Down command history navigation
+- Autocomplete from command history and saved quick commands with `Ctrl+Space`
+- Search within the active terminal tab with highlighted matches
+- RX, TX, status, and error coloring
+- Optional terminal timestamps
+- Clear, copy, select all, pause/resume output, and line wrap controls
+- Per-tab command file execution
+- Per-tab logging to text files
+- Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, and restored tabs
 
 ## Install
 ```powershell
@@ -35,8 +50,30 @@ python -m pip install -e .
 python -m ComPort_Zone
 ```
 
+After installation, the console script can also launch the app:
+
+```powershell
+comport-zone
+```
+
+## Build Windows EXE
+Double-click `build_exe.bat` from the project folder.
+
+The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, and writes publishable output to:
+
+```text
+release\ComPort_Zone-0.0.1-win64\
+release\ComPort_Zone-0.0.1-win64.zip
+```
+
+The generated executable is also available at:
+
+```text
+dist\ComPort Zone.exe
+```
+
 ## Batch Script Format
-Plain text files can be used directly. Every non-empty line is sent as a command with the active line-ending setting.
+Plain text files can be run from `File > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
 
 The parser also supports a small batch DSL:
 
@@ -53,7 +90,66 @@ reset
 - `HEX <bytes>` sends raw bytes without appending a line ending.
 - Bare lines are treated like `SEND`.
 
-## Notes
-- Settings and profiles are stored under `%LOCALAPPDATA%\ComPortZone\settings.json`.
-- Logging writes a readable text transcript with timestamps and event types.
-- The UI depends on `PySide6`. If it is missing, the launcher prints an install hint.
+## Quick Commands CSV Format
+Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.
+
+During import, choose whether to append incoming commands to the current list or replace the current list.
+The import dialog can also skip duplicates, where duplicates are matched by group, title, command text, and send mode.
+Export writes UTF-8 CSV with these columns:
+
+| Column | Required | Description |
+| --- | --- | --- |
+| `label` | No | Display name shown in Quick Send. If empty, the command text is used. |
+| `command` | Yes | Text command or hex byte sequence to send. |
+| `description` | No | Optional hover text for the saved command. |
+| `send_mode` | No | `Text` or `Hex Bytes`. Invalid or empty values default to `Text`. |
+| `group` | No | Group name used for sorting and show/hide filtering. Empty values become `General`. |
+| `line_ending_override` | No | Optional text-mode line ending override: `None`, `CR`, `LF`, or `CRLF`. Empty uses the active session setting. |
+
+Example:
+
+```csv
+label,command,description,send_mode,group,line_ending_override
+Read Version,version,Read firmware version,Text,General,CRLF
+Boot Wake,55 AA 00,Send bootloader wake bytes,Hex Bytes,Boot,
+Read ID,id?,Read factory identity string,Text,Factory,LF
+```
+
+## Settings Bundles
+The app autosaves the current setup to:
+
+```text
+%LOCALAPPDATA%\ComPortZone\settings.json
+```
+
+Use `File > Export Settings` to save a complete JSON settings bundle, and `File > Import Settings` to load one. This replaces the older idea of managing named profiles inside the app.
+During settings import, ComPort Zone asks how to handle quick commands:
+
+- `Replace current quick commands`: use the commands from the settings file.
+- `Append imported commands`: keep local commands and add the imported ones.
+- `Skip duplicate commands`: avoid repeated commands when appending.
+
+Settings bundles include:
+
+- Serial defaults for new tabs
+- Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
+- Quick commands, descriptions, groups, sort mode, hidden groups, and saved quick files
+- Command history and autocomplete source data
+- Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state
+- Last log/script paths and window size
+
+## Keyboard Shortcuts
+- `Ctrl+T`: New tab
+- `Ctrl+Shift+T`: Duplicate tab
+- `Ctrl+W`: Close tab
+- `Ctrl+Shift+P`: Command palette
+- `Ctrl+B`: Toggle left drawer
+- `Ctrl+Enter`: Connect or disconnect
+- `Ctrl+F`: Search active terminal
+- `Ctrl+K`: Clear terminal
+- `Ctrl+Space`: Autocomplete command input
+- `Up` / `Down`: Navigate command history
+- `Ctrl+=` / `Ctrl+-`: Increase or decrease terminal font size
+
+## Third-Party Notices
+The bundled icon subset comes from Tabler Icons under the MIT license. See `THIRD_PARTY_NOTICES.md`.
