@@ -17,6 +17,19 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(apply_line_ending("ping", "CRLF"), b"ping\r\n")
         self.assertEqual(apply_line_ending("ping", "None"), b"ping")
 
+    def test_default_quick_commands_are_scpi_general_commands(self) -> None:
+        settings = AppSettings()
+
+        self.assertEqual(
+            [command.command for command in settings.quick_commands],
+            ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"],
+        )
+        self.assertEqual(
+            [command.label for command in settings.quick_commands],
+            ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"],
+        )
+        self.assertEqual([command.group for command in settings.quick_commands], ["General"] * 3)
+
     def test_settings_store_round_trip(self) -> None:
         settings = AppSettings(
             serial=SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
