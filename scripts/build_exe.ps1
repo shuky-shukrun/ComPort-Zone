@@ -1,5 +1,6 @@
 param(
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$ForceInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,10 +10,16 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Split-Path -Parent $ScriptDir
 $AppName = "ComPort Zone"
 $PackageName = "ComPort_Zone"
+$SourcePath = Join-Path $Root "src"
 $EntryPoint = Join-Path $Root "scripts\pyinstaller_entry.py"
 $IconPng = Join-Path $Root "src\$PackageName\assets\comport-zone-icon.png"
+$BuildId = Get-Date -Format "yyyyMMdd-HHmmss"
 $BuildRoot = Join-Path $Root "build\pyinstaller"
-$WorkPath = Join-Path $BuildRoot "work"
+$ToolTempRoot = Join-Path $BuildRoot "temp"
+$PipTempPath = Join-Path $ToolTempRoot "pip-$BuildId"
+$PipCachePath = Join-Path $ToolTempRoot "pip-cache"
+$WorkRoot = Join-Path $BuildRoot "work"
+$WorkPath = Join-Path $WorkRoot $BuildId
 $SpecPath = Join-Path $BuildRoot "spec"
 $DistPath = Join-Path $Root "dist"
 $ReleaseRoot = Join-Path $Root "release"
@@ -60,6 +67,34 @@ function Test-PythonModule {
     return $LASTEXITCODE -eq 0
 }
 
+function Test-BuildEnvironment {
+    $Modules = @("PyInstaller", "PySide6", "serial", "ComPort_Zone")
+    foreach ($Module in $Modules) {
+        if (-not (Test-PythonModule -PythonExe $VenvPython -ModuleName $Module)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Remove-OldWorkFolders {
+    $Cutoff = (Get-Date).AddDays(-3)
+    @($WorkRoot, $ToolTempRoot) |
+        Where-Object { Test-Path $_ } |
+        ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -Directory -ErrorAction SilentlyContinue
+        } |
+        Where-Object { $_.LastWriteTime -lt $Cutoff } |
+        ForEach-Object {
+            try {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Warning "Could not remove old build temp folder: $($_.FullName). $($_.Exception.Message)"
+            }
+        }
+}
+
 function New-IconFile {
     param(
         [string]$PythonExe,
@@ -101,7 +136,19 @@ if not icon.pixmap(QSize(256, 256)).save(str(target), "ICO"):
 }
 
 Write-Step "Preparing build folders"
-New-Item -ItemType Directory -Force -Path $BuildRoot, $WorkPath, $SpecPath, $ReleaseRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $BuildRoot, $ToolTempRoot, $PipTempPath, $PipCachePath, $WorkRoot, $WorkPath, $SpecPath, $ReleaseRoot | Out-Null
+Remove-OldWorkFolders
+$env:TEMP = $PipTempPath
+$env:TMP = $PipTempPath
+$env:PIP_CACHE_DIR = $PipCachePath
+$env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
+$env:PIP_NO_INPUT = "1"
+$env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) {
+    $SourcePath
+}
+else {
+    "$SourcePath;$env:PYTHONPATH"
+}
 
 if (-not (Test-Path $VenvPython)) {
     Write-Step "Creating virtual environment"
@@ -114,9 +161,15 @@ if (-not (Test-Path $VenvPython)) {
     Invoke-Checked $PythonExe ($PythonArgs + @("-m", "venv", $VenvPath))
 }
 
-Write-Step "Installing build dependencies"
-Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip")
-Invoke-Checked $VenvPython @("-m", "pip", "install", "-e", "${Root}[build]")
+if ($ForceInstall -or -not (Test-BuildEnvironment)) {
+    Write-Step "Installing build dependencies"
+    Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-Checked $VenvPython @("-m", "pip", "install", "-e", "${Root}[build]")
+}
+else {
+    Write-Step "Build dependencies already installed"
+    Write-Host "Skipping pip install. Use scripts\build_exe.ps1 -ForceInstall to refresh the build environment."
+}
 
 $IconArgs = @()
 $IconIco = Join-Path $BuildRoot "comport-zone.ico"

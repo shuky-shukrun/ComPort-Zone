@@ -61,6 +61,12 @@ The generated executable is also available at:
 dist\ComPort Zone.exe
 ```
 
+After the first setup, later builds skip dependency installation when the `.venv` build environment is already ready. To force a dependency refresh, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -ForceInstall
+```
+
 ## Batch Script Format
 Plain text files can be run from `File > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
 
