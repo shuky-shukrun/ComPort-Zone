@@ -5,6 +5,7 @@ ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick-send commands and shortcuts.
 
 ## Current Features
+
 - Terminal-first layout with minimal chrome and a VS Code dark default theme
 - Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
 - Tabs for independent serial sessions
@@ -28,6 +29,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, and restored tabs
 
 ## Install
+
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -35,6 +37,7 @@ python -m pip install -e .
 ```
 
 ## Run
+
 ```powershell
 python -m ComPort_Zone
 ```
@@ -46,13 +49,14 @@ comport-zone
 ```
 
 ## Build Windows EXE
+
 Double-click `build_exe.bat` from the project folder.
 
 The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, and writes publishable output to:
 
 ```text
-release\ComPort_Zone-0.0.1-win64\
-release\ComPort_Zone-0.0.1-win64.zip
+release\ComPort_Zone-0.0.2-win64\
+release\ComPort_Zone-0.0.2-win64.zip
 ```
 
 The generated executable is also available at:
@@ -68,6 +72,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Force
 ```
 
 ## Batch Script Format
+
 Plain text files can be run from `File > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
 
 The parser also supports a small batch DSL:
@@ -88,20 +93,21 @@ reset // Bare command
 - `//` starts a single-line comment. Everything after it is ignored until the next line.
 
 ## Quick Commands CSV Format
+
 Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.
 
 During import, choose whether to append incoming commands to the current list or replace the current list.
 The import dialog can also skip duplicates, where duplicates are matched by group, title, command text, and send mode.
 Export writes UTF-8 CSV with these columns:
 
-| Column | Required | Description |
-| --- | --- | --- |
-| `label` | No | Display name shown in Quick Send. If empty, the command text is used. |
-| `command` | Yes | Text command or hex byte sequence to send. |
-| `description` | No | Optional hover text for the saved command. |
-| `send_mode` | No | `Text` or `Hex Bytes`. Invalid or empty values default to `Text`. |
-| `group` | No | Group name used for sorting and show/hide filtering. Empty values become `General`. |
-| `line_ending_override` | No | Optional text-mode line ending override: `None`, `CR`, `LF`, or `CRLF`. Empty uses the active session setting. |
+| Column                 | Required | Description                                                                                                    |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `label`                | No       | Display name shown in Quick Send. If empty, the command text is used.                                          |
+| `command`              | Yes      | Text command or hex byte sequence to send.                                                                     |
+| `description`          | No       | Optional hover text for the saved command.                                                                     |
+| `send_mode`            | No       | `Text` or `Hex Bytes`. Invalid or empty values default to `Text`.                                              |
+| `group`                | No       | Group name used for sorting and show/hide filtering. Empty values become `General`.                            |
+| `line_ending_override` | No       | Optional text-mode line ending override: `None`, `CR`, `LF`, or `CRLF`. Empty uses the active session setting. |
 
 Example:
 
@@ -113,6 +119,7 @@ Read ID,id?,Read factory identity string,Text,Factory,LF
 ```
 
 ## Settings Bundles
+
 The app autosaves the current setup to:
 
 ```text
@@ -136,6 +143,7 @@ Settings bundles include:
 - Last log/script paths and window size
 
 ## Keyboard Shortcuts
+
 - `Ctrl+T`: New tab
 - `Ctrl+Shift+T`: Duplicate tab
 - `Ctrl+W`: Close tab
@@ -151,4 +159,5 @@ Settings bundles include:
 Terminal font family and size can also be changed from `View > Terminal Font Settings`.
 
 ## Third-Party Notices
+
 The bundled icon subset comes from Tabler Icons under the MIT license. See `THIRD_PARTY_NOTICES.md`.

@@ -526,7 +526,7 @@ class TerminalFontSettingsDialog(QDialog):
         self.preview = QTextEdit(self)
         self.preview.setReadOnly(True)
         self.preview.setFixedHeight(92)
-        self.preview.setPlainText("SYS Connected\nTX> *IDN?\nComPort Zone,Terminal,0.0.1")
+        self.preview.setPlainText("SYS Connected\nTX> *IDN?\nComPort Zone,Terminal,0.0.2")
 
         self.family_combo.currentTextChanged.connect(self.update_preview)
         self.size_input.valueChanged.connect(self.update_preview)
