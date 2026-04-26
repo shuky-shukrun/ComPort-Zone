@@ -278,6 +278,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
             self.assertIn("Search Terminal", titles)
+            self.assertIn("Terminal Font Settings", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
             self.assertIn("Import Settings", titles)
             self.assertIn("Export Settings", titles)
@@ -298,6 +299,37 @@ class AppSessionTests(unittest.TestCase):
             ]
             self.assertEqual(len(palette_actions), 1)
             self.assertEqual(palette_actions[0].shortcut().toString(), "Ctrl+Shift+P")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_terminal_font_settings_apply_to_active_terminal(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_terminal_font.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            window.settings.terminal_font_family = "Consolas"
+            window.settings.terminal_font_size = 15
+
+            window.apply_terminal_font_settings()
+
+            self.assertEqual(session.terminal.font().pointSize(), 15)
+            self.assertEqual(window.settings.terminal_font_family, "Consolas")
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

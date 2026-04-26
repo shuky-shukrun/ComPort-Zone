@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QSpinBox,
     QStackedWidget,
     QTabBar,
     QTabWidget,
@@ -216,6 +217,19 @@ def pick_mono_font(point_size: int, family_name: str = "") -> QFont:
     font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
     font.setPointSize(point_size)
     return font
+
+
+def preferred_terminal_font_families() -> list[str]:
+    families = sorted(QFontDatabase.families(), key=str.casefold)
+    preferred = ["Cascadia Mono", "Cascadia Code", "Consolas", "JetBrains Mono"]
+    preferred_lookup = {family.casefold(): family for family in families}
+    ordered = [
+        preferred_lookup[candidate.casefold()]
+        for candidate in preferred
+        if candidate.casefold() in preferred_lookup
+    ]
+    ordered.extend(family for family in families if family not in ordered)
+    return ordered
 
 
 def short_label(text: str, limit: int = 40) -> str:
@@ -480,6 +494,73 @@ class ConnectionSettingsDialog(QDialog):
             dtr=self.dtr.isChecked(),
             rts=self.rts.isChecked(),
         )
+
+
+class TerminalFontSettingsDialog(QDialog):
+    def __init__(self, family: str, point_size: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Terminal Font Settings")
+        self.setMinimumWidth(460)
+
+        self.family_combo = ChevronComboBox(self)
+        self.family_combo.setEditable(True)
+        self.family_combo.addItem("System default monospace", "")
+        for font_family in preferred_terminal_font_families():
+            self.family_combo.addItem(font_family, font_family)
+        if family:
+            index = self.family_combo.findData(family)
+            if index >= 0:
+                self.family_combo.setCurrentIndex(index)
+            else:
+                self.family_combo.setEditText(family)
+
+        self.size_input = QSpinBox(self)
+        self.size_input.setRange(TERMINAL_FONT_MIN, TERMINAL_FONT_MAX)
+        self.size_input.setValue(max(TERMINAL_FONT_MIN, min(point_size, TERMINAL_FONT_MAX)))
+        self.size_input.setSuffix(" pt")
+
+        reset = QPushButton("Use Default", self)
+        set_button_icon(reset, QStyle.StandardPixmap.SP_BrowserReload)
+        reset.clicked.connect(self.reset_defaults)
+
+        self.preview = QTextEdit(self)
+        self.preview.setReadOnly(True)
+        self.preview.setFixedHeight(92)
+        self.preview.setPlainText("SYS Connected\nTX> *IDN?\nComPort Zone,Terminal,0.0.1")
+
+        self.family_combo.currentTextChanged.connect(self.update_preview)
+        self.size_input.valueChanged.connect(self.update_preview)
+
+        form = QFormLayout()
+        form.addRow("Family", self.family_combo)
+        form.addRow("Size", self.size_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(reset)
+        layout.addWidget(self.preview)
+        layout.addWidget(buttons)
+        self.update_preview()
+
+    def reset_defaults(self) -> None:
+        self.family_combo.setCurrentIndex(0)
+        self.size_input.setValue(10)
+
+    def selected_family(self) -> str:
+        data = self.family_combo.currentData()
+        if data is not None:
+            return str(data)
+        return self.family_combo.currentText().strip()
+
+    def selected_size(self) -> int:
+        return int(self.size_input.value())
+
+    def update_preview(self) -> None:
+        self.preview.setFont(pick_mono_font(self.selected_size(), self.selected_family()))
 
 
 class QuickCommandDialog(QDialog):
@@ -2072,6 +2153,7 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         self._add_action(view_menu, "Increase Font", "Ctrl+=", lambda: self.change_font_size(1), icon=QStyle.StandardPixmap.SP_ArrowUp)
         self._add_action(view_menu, "Decrease Font", "Ctrl+-", lambda: self.change_font_size(-1), icon=QStyle.StandardPixmap.SP_ArrowDown)
+        self._add_action(view_menu, "Terminal Font Settings", "", self.show_terminal_font_settings, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         view_menu.addSeparator()
         self.timestamps_action = self._add_action(view_menu, "Show Timestamps", "", self.toggle_timestamps, checkable=True, icon=QStyle.StandardPixmap.SP_FileDialogInfoView)
         self.timestamps_action.setChecked(self.settings.timestamps_enabled)
@@ -2208,6 +2290,13 @@ class MainWindow(QMainWindow):
                 callback=lambda: self.with_session(lambda session: session.show_search()),
                 icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
                 keywords="find current tab",
+            ),
+            CommandPaletteEntry(
+                title="Terminal Font Settings",
+                subtitle="Choose terminal font family and size",
+                callback=self.show_terminal_font_settings,
+                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+                keywords="font family size monospace terminal",
             ),
             CommandPaletteEntry(
                 title="Save Current Input as Quick Command",
@@ -2562,9 +2651,25 @@ class MainWindow(QMainWindow):
             TERMINAL_FONT_MIN,
             min(self.settings.terminal_font_size + delta, TERMINAL_FONT_MAX),
         )
+        self.apply_terminal_font_settings()
+        self.save_settings()
+
+    def show_terminal_font_settings(self) -> None:
+        dialog = TerminalFontSettingsDialog(
+            self.settings.terminal_font_family,
+            self.settings.terminal_font_size,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.settings.terminal_font_family = dialog.selected_family()
+        self.settings.terminal_font_size = dialog.selected_size()
+        self.apply_terminal_font_settings()
+        self.save_settings()
+
+    def apply_terminal_font_settings(self) -> None:
         for session in self.iter_sessions():
             session.apply_settings()
-        self.save_settings()
 
     def toggle_timestamps(self) -> None:
         self.settings.timestamps_enabled = self.timestamps_action.isChecked()
