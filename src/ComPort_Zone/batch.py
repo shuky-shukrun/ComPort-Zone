@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 from threading import Event, Thread
-from time import monotonic, sleep
+from time import monotonic
 
 from .serial_core import SerialEvent
 
@@ -164,12 +164,15 @@ class BatchRunner:
         return not self._stop_event.is_set()
 
     def _sleep_interruptible(self, seconds: float) -> bool:
+        if seconds <= 0:
+            return not self._stop_event.is_set()
         deadline = monotonic() + seconds
-        while monotonic() < deadline:
-            if self._stop_event.wait(0.05):
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return True
+            if self._stop_event.wait(min(remaining, 0.05)):
                 return False
-            sleep(0.01)
-        return True
 
     def _emit(self, kind: str, message: str) -> None:
         self._event_queue.put(SerialEvent(kind=kind, message=message))

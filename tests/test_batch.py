@@ -1,6 +1,19 @@
 import unittest
+from queue import Queue
 
-from ComPort_Zone.batch import BatchParseError, parse_batch_script, parse_hex_payload
+from ComPort_Zone.batch import BatchParseError, BatchRunner, parse_batch_script, parse_hex_payload
+
+
+class RecordingStopEvent:
+    def __init__(self) -> None:
+        self.wait_calls: list[float] = []
+
+    def wait(self, timeout: float) -> bool:
+        self.wait_calls.append(timeout)
+        return False
+
+    def is_set(self) -> bool:
+        return False
 
 
 class BatchParserTests(unittest.TestCase):
@@ -31,6 +44,19 @@ class BatchParserTests(unittest.TestCase):
     def test_parse_hex_payload_accepts_spaces_commas_and_prefixes(self) -> None:
         payload = parse_hex_payload("0xAA, 55 01-0D")
         self.assertEqual(payload, bytes.fromhex("AA55010D"))
+
+    def test_wait_uses_requested_short_delay_without_fixed_minimum(self) -> None:
+        runner = BatchRunner(
+            event_queue=Queue(),
+            send_text=lambda text: None,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: True,
+        )
+        stop_event = RecordingStopEvent()
+        runner._stop_event = stop_event
+
+        self.assertTrue(runner._sleep_interruptible(0.005))
+        self.assertLess(max(stop_event.wait_calls), 0.01)
 
 
 if __name__ == "__main__":
