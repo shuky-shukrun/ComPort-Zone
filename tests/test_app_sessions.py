@@ -117,6 +117,38 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_rx_text_chunks_stream_without_extra_line_breaks(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_rx_stream.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.timestamps_enabled = False
+            window.settings.receive_display_mode = "Text"
+            session = window.current_session()
+
+            session._render_event(app_module.SerialEvent(kind="tx", message="SINK:CURR?"))
+            session._render_event(app_module.SerialEvent(kind="rx", message="1", raw=b"1"))
+            session._render_event(app_module.SerialEvent(kind="rx", message="67.00\r\n", raw=b"67.00\r\n"))
+
+            self.assertEqual(session.terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_quick_command_description_controls_tooltip(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_tooltip.json")
         settings_path.unlink(missing_ok=True)

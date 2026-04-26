@@ -1916,6 +1916,11 @@ class TerminalSessionWidget(QWidget):
             "status": "SYS ",
             "error": "ERR ",
         }
+        if event.kind == "rx" and self.host.settings.receive_display_mode == "Text":
+            self._render_rx_text_event(event, colors["rx"])
+            return
+        if event.kind != "rx":
+            self._ensure_terminal_line_break()
         message = self.display_message_for_event(event).replace("\r\n", "\n").replace("\r", "\n")
         if self.host.settings.timestamps_enabled:
             stamp = event.timestamp.astimezone().strftime("%H:%M:%S.%f")[:-3]
@@ -1931,6 +1936,43 @@ class TerminalSessionWidget(QWidget):
         self.terminal.ensureCursorVisible()
         if self.search_bar.isVisible():
             self._refresh_search_highlights(self.search_input.text())
+
+    def _render_rx_text_event(self, event: SerialEvent, color: str) -> None:
+        message = self.display_message_for_event(event).replace("\r\n", "\n").replace("\r", "\n")
+        if not message:
+            return
+        rendered = self._timestamp_rx_stream(message, event) if self.host.settings.timestamps_enabled else message
+        self._insert_terminal_text(rendered, color)
+
+    def _timestamp_rx_stream(self, message: str, event: SerialEvent) -> str:
+        stamp = f"[{event.timestamp.astimezone().strftime('%H:%M:%S.%f')[:-3]}] "
+        rendered: list[str] = []
+        at_line_start = self._terminal_at_line_start()
+        for chunk in message.splitlines(keepends=True):
+            if at_line_start and chunk != "\n":
+                rendered.append(stamp)
+            rendered.append(chunk)
+            at_line_start = chunk.endswith("\n")
+        return "".join(rendered)
+
+    def _insert_terminal_text(self, text: str, color: str) -> None:
+        cursor = self.terminal.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        cursor.insertText(text, fmt)
+        self.terminal.setTextCursor(cursor)
+        self.terminal.ensureCursorVisible()
+        if self.search_bar.isVisible():
+            self._refresh_search_highlights(self.search_input.text())
+
+    def _terminal_at_line_start(self) -> bool:
+        text = self.terminal.toPlainText()
+        return not text or text.endswith("\n")
+
+    def _ensure_terminal_line_break(self) -> None:
+        if not self._terminal_at_line_start():
+            self._insert_terminal_text("\n", self.host.theme.text)
 
     def display_message_for_event(self, event: SerialEvent) -> str:
         if event.kind != "rx" or not event.raw:
