@@ -11,7 +11,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Tabs for independent serial sessions
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
-- Separate quick-file drawer entry for saved command-file paths, with double-click/send execution and Explorer reveal
+- Separate quick-file drawer entry for saved command-file paths, with sorting, double-click/send execution, Explorer reveal, and CSV import/export
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
 - Full settings import/export as JSON bundles instead of an internal profile list
 - Settings bundles include serial defaults, theme, terminal font, history, drawer state, quick commands, log/script paths, restored tabs, and workflow preferences
@@ -127,6 +127,30 @@ Boot Wake,55 AA 00,Send bootloader wake bytes,Hex Bytes,Boot,
 Read ID,id?,Read factory identity string,Text,Factory,LF
 ```
 
+## Quick Files CSV Format
+
+Quick files are saved command-file paths shown in the left drawer. They can be exported from `Tools > Export Quick Files to CSV` or imported from `Tools > Import Quick Files from CSV`.
+
+During import, choose whether to append incoming files to the current list or replace the current list.
+The import dialog can also skip duplicates, where duplicates are matched by file path.
+Export writes UTF-8 CSV with these columns:
+
+| Column  | Required | Description                                                                           |
+| ------- | -------- | ------------------------------------------------------------------------------------- |
+| `label` | No       | Display name shown in Quick Files. If empty, the file name is used during import.     |
+| `path`  | Yes      | Path to the command file to run. The app stores the path as written in the CSV file.  |
+
+Import also accepts `title` as an alias for `label`, and `file`, `command_file`, or `script` as aliases for `path`.
+
+Example:
+
+```csv
+label,path
+Bring-up,C:/scripts/bringup.txt
+Factory Check,C:/scripts/factory-check.scr
+Smoke Test,C:/scripts/smoke-test.cmd
+```
+
 ## Settings Bundles
 
 The app autosaves the current setup to:
@@ -146,7 +170,7 @@ Settings bundles include:
 
 - Serial defaults for new tabs
 - Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
-- Quick commands, descriptions, groups, sort mode, hidden groups, and saved quick files
+- Quick commands, descriptions, groups, sort mode, hidden groups, and saved quick files with sort mode
 - Command history and autocomplete source data
 - Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state
 - Last log/script paths and window size
