@@ -144,6 +144,69 @@ if not icon.pixmap(QSize(256, 256)).save(str(target), "ICO"):
     Invoke-Checked $PythonExe @($IconScript, $SourcePng, $TargetIco)
 }
 
+function New-SplashFile {
+    param(
+        [string]$PythonExe,
+        [string]$SourcePng,
+        [string]$TargetPng
+    )
+    $SplashScript = Join-Path $BuildRoot "make_splash.py"
+    @'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPixmap
+
+app = QGuiApplication.instance() or QGuiApplication([])
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+
+width = 520
+height = 320
+pixmap = QPixmap(width, height)
+pixmap.fill(QColor("#111820"))
+
+painter = QPainter(pixmap)
+painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+painter.setPen(Qt.PenStyle.NoPen)
+painter.setBrush(QColor("#151c24"))
+painter.drawRoundedRect(18, 18, width - 36, height - 36, 28, 28)
+painter.setBrush(QColor("#1f2933"))
+painter.drawRoundedRect(32, 32, width - 64, height - 64, 22, 22)
+
+logo = QPixmap(str(source))
+if not logo.isNull():
+    logo = logo.scaled(
+        QSize(118, 118),
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    painter.drawPixmap(int((width - logo.width()) / 2), 58, logo)
+
+title_font = QFont("Segoe UI", 22)
+title_font.setBold(True)
+painter.setFont(title_font)
+painter.setPen(QColor("#f4f7fb"))
+painter.drawText(0, 190, width, 36, Qt.AlignmentFlag.AlignCenter, "ComPort Zone")
+
+body_font = QFont("Segoe UI", 10)
+painter.setFont(body_font)
+painter.setPen(QColor("#9fb0c2"))
+painter.drawText(0, 232, width, 26, Qt.AlignmentFlag.AlignCenter, "Loading serial workspace...")
+painter.setPen(QColor("#4fd1c5"))
+painter.drawLine(210, 274, 310, 274)
+painter.end()
+
+target.parent.mkdir(parents=True, exist_ok=True)
+if not pixmap.save(str(target), "PNG"):
+    raise RuntimeError(f"Could not write splash file: {target}")
+'@ | Set-Content -Path $SplashScript -Encoding UTF8
+    Invoke-Checked $PythonExe @($SplashScript, $SourcePng, $TargetPng)
+}
+
 function New-VersionInfoFile {
     param(
         [string]$TargetPath
@@ -234,6 +297,19 @@ catch {
     Write-Warning "Could not create .ico file. The app will still build, but the .exe file icon may be generic. $($_.Exception.Message)"
 }
 
+$SplashArgs = @()
+$SplashPng = Join-Path $BuildRoot "comport-zone-splash.png"
+try {
+    Write-Step "Preparing startup splash"
+    New-SplashFile -PythonExe $VenvPython -SourcePng $IconPng -TargetPng $SplashPng
+    if (Test-Path $SplashPng) {
+        $SplashArgs = @("--splash", $SplashPng)
+    }
+}
+catch {
+    Write-Warning "Could not create startup splash. The app will still build without a boot splash. $($_.Exception.Message)"
+}
+
 Write-Step "Building one-file executable"
 $AddDataVersion = "$((Join-Path $Root "src\$PackageName\VERSION"));$PackageName"
 $AddDataAssets = "$((Join-Path $Root "src\$PackageName\assets"));$PackageName\assets"
@@ -254,7 +330,7 @@ $PyInstallerArgs = @(
     "--add-data", $AddDataAssets,
     "--hidden-import", "serial.tools.list_ports_windows",
     "--hidden-import", "serial.tools.list_ports_common"
-) + $IconArgs + @($EntryPoint)
+) + $IconArgs + $SplashArgs + @($EntryPoint)
 Invoke-Checked $VenvPython $PyInstallerArgs
 
 $ExePath = Join-Path $DistPath $ExeFileName

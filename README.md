@@ -61,7 +61,7 @@ Update the app version before a release:
 
 Double-click `build_exe.bat` from the project folder.
 
-The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, embeds Windows file-version properties, and writes publishable output to:
+The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, embeds Windows file-version properties, adds a startup splash screen for the one-file unpack/load delay, and writes publishable output to:
 
 ```text
 release\ComPort_Zone-X.Y.Z-win64\

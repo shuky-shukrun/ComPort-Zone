@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QSpinBox,
+    QSplashScreen,
     QStackedWidget,
     QTabBar,
     QTabWidget,
@@ -4107,6 +4108,9 @@ class MainWindow(QMainWindow):
         QSplitter::handle:hover {{
             background: {theme.accent};
         }}
+        QSplashScreen {{
+            color: {theme.text};
+        }}
         QStatusBar {{
             background: {theme.window_alt};
             color: {theme.text};
@@ -4166,6 +4170,73 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def update_boot_splash(message: str):
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    try:
+        pyi_splash.update_text(message)
+    except Exception:
+        return None
+    return pyi_splash
+
+
+def close_boot_splash(boot_splash) -> None:
+    if boot_splash is None:
+        return
+    try:
+        boot_splash.close()
+    except Exception:
+        pass
+
+
+def create_startup_splash(message: str) -> QSplashScreen:
+    width = 520
+    height = 320
+    pixmap = QPixmap(width, height)
+    pixmap.fill(QColor("#111820"))
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#151c24"))
+    painter.drawRoundedRect(18, 18, width - 36, height - 36, 28, 28)
+    painter.setBrush(QColor("#1f2933"))
+    painter.drawRoundedRect(32, 32, width - 64, height - 64, 22, 22)
+
+    logo = QPixmap(str(APP_ICON_PATH))
+    if not logo.isNull():
+        logo = logo.scaled(
+            QSize(118, 118),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        painter.drawPixmap(int((width - logo.width()) / 2), 58, logo)
+
+    title_font = QFont(pick_ui_font())
+    title_font.setPointSize(22)
+    title_font.setBold(True)
+    painter.setFont(title_font)
+    painter.setPen(QColor("#f4f7fb"))
+    painter.drawText(0, 190, width, 36, Qt.AlignmentFlag.AlignCenter, "ComPort Zone")
+
+    body_font = QFont(pick_ui_font())
+    body_font.setPointSize(10)
+    painter.setFont(body_font)
+    painter.setPen(QColor("#9fb0c2"))
+    painter.drawText(0, 232, width, 26, Qt.AlignmentFlag.AlignCenter, message)
+    painter.setPen(QColor("#4fd1c5"))
+    painter.drawLine(210, 274, 310, 274)
+    painter.end()
+
+    splash = QSplashScreen(pixmap)
+    splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+    splash.show()
+    QApplication.processEvents()
+    return splash
+
+
 def run() -> int:
     set_windows_app_user_model_id()
     app = QApplication.instance() or QApplication([])
@@ -4173,6 +4244,21 @@ def run() -> int:
     app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
     app.setFont(pick_ui_font())
+    boot_splash = update_boot_splash("Loading ComPort Zone...")
+    splash = create_startup_splash("Loading serial workspace...")
+    close_boot_splash(boot_splash)
+    splash.showMessage(
+        "Restoring sessions and settings...",
+        Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+        QColor("#9fb0c2"),
+    )
+    app.processEvents()
     window = MainWindow()
+    splash.showMessage(
+        "Opening terminal...",
+        Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+        QColor("#9fb0c2"),
+    )
     window.show()
+    splash.finish(window)
     return app.exec()
