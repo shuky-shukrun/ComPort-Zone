@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -96,6 +97,13 @@ TERMINAL_FONT_MAX = 24
 DRAWER_COLLAPSED_WIDTH = 48
 APP_USER_MODEL_ID = "ComPortZone.Terminal"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "comport-zone-icon.png"
+APP_SETTINGS_EXPLANATION = (
+    "App Settings JSON includes serial defaults, restored tabs, theme, terminal font, "
+    "terminal display preferences, drawer and window state, command history, and last "
+    "log/script paths.\n\n"
+    "Quick Commands and Quick Files are not included here. Manage them with their own "
+    "CSV import/export actions from the Quick Send and Quick Files drawer pages."
+)
 
 TABLER_ICON_PATHS = {
     "arrow-left": '<path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" />',
@@ -839,6 +847,60 @@ class QuickCommandImportDialog(QDialog):
         )
 
 
+class AppSettingsTransferDialog(QDialog):
+    def __init__(self, mode: str = "choose", parent=None) -> None:
+        super().__init__(parent)
+        self.mode = mode if mode in {"choose", "import", "export"} else "choose"
+        self.selected_action = ""
+        titles = {
+            "choose": "App Settings Import / Export",
+            "import": "Import App Settings",
+            "export": "Export App Settings",
+        }
+        self.setWindowTitle(titles[self.mode])
+        self.setMinimumWidth(520)
+
+        heading = QLabel(titles[self.mode], self)
+        heading.setObjectName("dialogTitle")
+
+        intro_text = {
+            "choose": "Choose whether to import or export app-level preferences.",
+            "import": "Import app-level preferences from a JSON file.",
+            "export": "Export app-level preferences to a JSON file.",
+        }[self.mode]
+        intro = QLabel(intro_text, self)
+        intro.setWordWrap(True)
+
+        explanation = QLabel(APP_SETTINGS_EXPLANATION, self)
+        explanation.setObjectName("dialogHint")
+        explanation.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        if self.mode in {"choose", "import"}:
+            import_button = buttons.addButton(
+                "Import App Settings...",
+                QDialogButtonBox.ButtonRole.ActionRole,
+            )
+            import_button.clicked.connect(lambda: self._accept_action("import"))
+        if self.mode in {"choose", "export"}:
+            export_button = buttons.addButton(
+                "Export App Settings...",
+                QDialogButtonBox.ButtonRole.ActionRole,
+            )
+            export_button.clicked.connect(lambda: self._accept_action("export"))
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(heading)
+        layout.addWidget(intro)
+        layout.addWidget(explanation)
+        layout.addWidget(buttons)
+
+    def _accept_action(self, action: str) -> None:
+        self.selected_action = action
+        self.accept()
+
+
 class CommandPaletteDialog(QDialog):
     def __init__(self, host: "MainWindow") -> None:
         super().__init__(host)
@@ -1074,7 +1136,6 @@ class TerminalSessionWidget(QWidget):
         for icon, tooltip, callback in (
             (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", lambda: self._select_drawer_page(0)),
             (QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", lambda: self._select_drawer_page(1)),
-            (QStyle.StandardPixmap.SP_DriveHDIcon, "Settings", lambda: self._select_drawer_page(2)),
         ):
             button = QToolButton(self.drawer_rail)
             button.setObjectName("railButton")
@@ -1094,7 +1155,6 @@ class TerminalSessionWidget(QWidget):
         self.drawer_pages = QStackedWidget(self.drawer_panel)
         self.drawer_pages.addWidget(self._build_quick_page())
         self.drawer_pages.addWidget(self._build_quick_files_page())
-        self.drawer_pages.addWidget(self._build_settings_page())
         panel_layout.addWidget(self.drawer_pages, 1)
 
         drawer_layout.addWidget(self.drawer_rail)
@@ -1356,44 +1416,6 @@ class TerminalSessionWidget(QWidget):
                 (import_files, export_files),
             ),
         )
-        return page
-
-    def _build_settings_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        title = self._drawer_title("Settings", page)
-        description = QLabel(
-            "Export or import the complete app setup as a JSON file. "
-            "This includes serial defaults, quick commands, quick files, theme, terminal preferences, and restored tabs.",
-            page,
-        )
-        description.setObjectName("drawerHelpText")
-        description.setWordWrap(True)
-        export_settings = self._drawer_action(
-            "Export Settings",
-            QStyle.StandardPixmap.SP_DialogSaveButton,
-            self.host.export_settings,
-            page,
-            role="drawerPrimary",
-        )
-        import_settings = self._drawer_action(
-            "Import Settings",
-            QStyle.StandardPixmap.SP_DialogOpenButton,
-            self.host.import_settings,
-            page,
-        )
-        layout.addWidget(title)
-        layout.addWidget(description)
-        layout.addWidget(self._drawer_section("Settings Bundle", page))
-        self._add_drawer_action_rows(
-            layout,
-            (
-                (export_settings, import_settings),
-            ),
-        )
-        layout.addStretch(1)
         return page
 
     def _select_drawer_page(self, index: int) -> None:
@@ -2583,8 +2605,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Duplicate Tab", "Ctrl+Shift+T", self.duplicate_current_session, icon=QStyle.StandardPixmap.SP_FileIcon)
         self._add_action(file_menu, "Close Tab", "Ctrl+W", self.close_current_session, icon=QStyle.StandardPixmap.SP_DialogCloseButton)
         file_menu.addSeparator()
-        self._add_action(file_menu, "Import Settings", "", self.import_settings, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        self._add_action(file_menu, "Export Settings", "", self.export_settings, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        self._add_action(file_menu, "App Settings Import / Export...", "", self.show_app_settings_transfer_dialog, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         file_menu.addSeparator()
         self._add_action(file_menu, "Exit", "", self.close, icon=QStyle.StandardPixmap.SP_TitleBarCloseButton)
 
@@ -2777,18 +2798,11 @@ class MainWindow(QMainWindow):
                 keywords="snippet quick send shortcut",
             ),
             CommandPaletteEntry(
-                title="Import Settings",
-                subtitle="Load a complete ComPort Zone settings JSON file",
-                callback=self.import_settings,
+                title="App Settings Import / Export",
+                subtitle="Import or export app preferences as JSON",
+                callback=self.show_app_settings_transfer_dialog,
                 icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-                keywords="settings json restore preferences",
-            ),
-            CommandPaletteEntry(
-                title="Export Settings",
-                subtitle="Save the complete app setup to a JSON file",
-                callback=self.export_settings,
-                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                keywords="settings json backup preferences",
+                keywords="settings json import export restore backup preferences",
             ),
             CommandPaletteEntry(
                 title="Import Quick Commands from CSV",
@@ -3677,82 +3691,118 @@ class MainWindow(QMainWindow):
             self.save_settings()
         return removed
 
-    def import_settings(self) -> None:
+    def show_app_settings_transfer_dialog(self) -> None:
+        dialog = AppSettingsTransferDialog(parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.selected_action == "import":
+            self.import_settings(show_explanation=False)
+        elif dialog.selected_action == "export":
+            self.export_settings(show_explanation=False)
+
+    def confirm_app_settings_transfer(self, mode: str) -> bool:
+        dialog = AppSettingsTransferDialog(mode=mode, parent=self)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _show_busy_message(self, title: str, message: str) -> QProgressDialog:
+        self.set_status(message)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        dialog = QProgressDialog(message, "", 0, 0, self)
+        dialog.setWindowTitle(title)
+        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dialog.setCancelButton(None)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumDuration(0)
+        dialog.show()
+        QApplication.processEvents()
+        return dialog
+
+    def _hide_busy_message(self, dialog: QProgressDialog | None) -> None:
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        QApplication.restoreOverrideCursor()
+        QApplication.processEvents()
+
+    def import_settings(self, *, show_explanation: bool = True) -> None:
+        if show_explanation and not self.confirm_app_settings_transfer("import"):
+            return
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Import Settings",
+            "Import App Settings",
             str(Path.cwd()),
             "JSON Files (*.json);;All Files (*)",
         )
         if not path:
             return
+        busy = self._show_busy_message("Import App Settings", "Importing app settings...")
         try:
             imported_settings = self.load_settings_from_json(Path(path))
+            self.apply_imported_settings(imported_settings)
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
-            QMessageBox.warning(self, "Import Settings", str(exc))
+            self._hide_busy_message(busy)
+            QMessageBox.warning(self, "Import App Settings", str(exc))
             return
-        dialog = QuickCommandImportDialog(
-            title="Import Settings",
-            message=(
-                "The settings bundle will replace the app setup. Choose how quick commands should be handled."
-            ),
-            default_replace=True,
-            default_skip_duplicates=False,
-            parent=self,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        saved = self.settings_store.save(self.settings)
+        self._hide_busy_message(busy)
+        if not saved:
+            self.set_status("Could not save imported app settings to disk.")
+            QMessageBox.warning(
+                self,
+                "Import App Settings",
+                "Imported settings were applied, but could not be saved to disk.",
+            )
             return
-        result = self.apply_imported_settings(imported_settings, quick_command_options=dialog.options())
-        if not self.settings_store.save(self.settings):
-            self.set_status("Could not save imported settings to disk.")
-            return
-        self.set_status(
-            f"Imported settings from {path}. Quick commands: {result.imported_count}"
-            f"{result.status_suffix()}."
-        )
+        self.set_status(f"Imported app settings from {path}.")
 
-    def export_settings(self) -> None:
-        self.save_settings()
+    def export_settings(self, *, show_explanation: bool = True) -> None:
+        if show_explanation and not self.confirm_app_settings_transfer("export"):
+            return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Settings",
-            str(Path.cwd() / "comport-zone-settings.json"),
+            "Export App Settings",
+            str(Path.cwd() / "comport-zone-app-settings.json"),
             "JSON Files (*.json);;All Files (*)",
         )
         if not path:
             return
+        busy = self._show_busy_message("Export App Settings", "Exporting app settings...")
         try:
+            self.save_settings()
             self.export_settings_to_json(Path(path))
         except OSError as exc:
-            QMessageBox.warning(self, "Export Settings", str(exc))
+            self._hide_busy_message(busy)
+            QMessageBox.warning(self, "Export App Settings", str(exc))
             return
-        self.set_status(f"Exported settings to {path}")
+        self._hide_busy_message(busy)
+        self.set_status(f"Exported app settings to {path}")
 
     def load_settings_from_json(self, path: Path) -> AppSettings:
         return AppSettings.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
     def export_settings_to_json(self, path: Path) -> None:
         path.write_text(
-            json.dumps(self.settings.to_dict(), indent=2, sort_keys=True),
+            json.dumps(self.settings.to_app_settings_dict(), indent=2, sort_keys=True),
             encoding="utf-8",
         )
 
     def apply_imported_settings(
         self,
         settings: AppSettings,
-        *,
-        quick_command_options: QuickCommandImportOptions | None = None,
-    ) -> QuickCommandImportResult:
-        quick_command_options = quick_command_options or QuickCommandImportOptions(
-            replace_existing=True,
-            skip_duplicates=False,
-        )
+    ) -> None:
+        current_quick_snippets = list(self.settings.quick_snippets)
         current_quick_commands = list(self.settings.quick_commands)
-        settings.quick_commands, result = merge_quick_commands(
-            current_quick_commands,
-            settings.quick_commands,
-            quick_command_options,
-        )
+        current_quick_files = list(self.settings.quick_files)
+        current_quick_command_sort_mode = self.settings.quick_command_sort_mode
+        current_quick_command_hidden_groups = list(self.settings.quick_command_hidden_groups)
+        current_quick_file_sort_mode = self.settings.quick_file_sort_mode
+        settings.quick_snippets = current_quick_snippets
+        settings.quick_commands = current_quick_commands
+        settings.quick_files = current_quick_files
+        settings.quick_command_sort_mode = current_quick_command_sort_mode
+        settings.quick_command_hidden_groups = current_quick_command_hidden_groups
+        settings.quick_file_sort_mode = current_quick_file_sort_mode
         for index in range(self.tabs.count() - 1, -1, -1):
             session = self.session_at(index)
             if session:
@@ -3770,7 +3820,6 @@ class MainWindow(QMainWindow):
         self.restore_sessions(prompt_first_settings=False)
         self._loading = previous_loading
         self.apply_settings_to_ui()
-        return result
 
     def show_about(self) -> None:
         QMessageBox.information(
@@ -3980,6 +4029,22 @@ class MainWindow(QMainWindow):
             border-radius: 5px;
             padding: 3px 6px;
             margin: 1px 0;
+        }}
+        QDialog {{
+            background: {theme.window};
+            color: {theme.text};
+        }}
+        QLabel#dialogTitle {{
+            font-size: 13pt;
+            font-weight: 700;
+            color: {theme.text};
+        }}
+        QLabel#dialogHint {{
+            background: {theme.surface_alt};
+            color: {theme.muted};
+            border: 1px solid {theme.border};
+            border-radius: 10px;
+            padding: 10px;
         }}
         QDialog#commandPalette {{
             background: {theme.window};

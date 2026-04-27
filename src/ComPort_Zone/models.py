@@ -18,6 +18,16 @@ RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
+QUICK_ACTION_SETTING_KEYS = frozenset(
+    {
+        "quick_snippets",
+        "quick_commands",
+        "quick_files",
+        "quick_command_sort_mode",
+        "quick_command_hidden_groups",
+        "quick_file_sort_mode",
+    }
+)
 
 
 def utc_now_iso() -> str:
@@ -267,6 +277,12 @@ class AppSettings:
             "window_width": self.window_width,
             "window_height": self.window_height,
         }
+
+    def to_app_settings_dict(self) -> dict[str, Any]:
+        payload = self.to_dict()
+        for key in QUICK_ACTION_SETTING_KEYS:
+            payload.pop(key, None)
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AppSettings":

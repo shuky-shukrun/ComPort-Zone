@@ -2,7 +2,7 @@
 
 ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows.
 
-The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick commands, quick files, and settings.
+The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick commands and quick files.
 
 ## Current Features
 
@@ -13,8 +13,8 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
 - Separate quick-file drawer entry for saved command-file paths, with sorting, double-click/send execution, Explorer reveal, and CSV import/export
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
-- Full settings import/export as JSON bundles instead of an internal profile list
-- Settings bundles include serial defaults, theme, terminal font, history, drawer state, quick commands, log/script paths, restored tabs, and workflow preferences
+- App settings import/export as JSON files instead of an internal profile list
+- App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
 - Text sending and hex/raw-byte sending
@@ -170,7 +170,7 @@ Factory Check,C:/scripts/factory-check.scr
 Smoke Test,C:/scripts/smoke-test.cmd
 ```
 
-## Settings Bundles
+## App Settings JSON
 
 The app autosaves the current setup to:
 
@@ -178,18 +178,16 @@ The app autosaves the current setup to:
 %LOCALAPPDATA%\ComPortZone\settings.json
 ```
 
-Use `File > Export Settings` to save a complete JSON settings bundle, and `File > Import Settings` to load one. This replaces the older idea of managing named profiles inside the app.
-During settings import, ComPort Zone asks how to handle quick commands:
+Use `File > App Settings Import / Export...` to open the App Settings dialog, then choose whether to import or export a JSON app-settings file. This replaces the older idea of managing named profiles inside the app.
 
-- `Replace current quick commands`: use the commands from the settings file.
-- `Append imported commands`: keep local commands and add the imported ones.
-- `Skip duplicate commands`: avoid repeated commands when appending.
+Quick Commands and Quick Files are intentionally not included in app-settings JSON import/export. They are action libraries, so they use their own CSV import/export flows from the matching sidebar pages or `Tools > Quick Commands` and `Tools > Quick Files`.
 
-Settings bundles include:
+The local autosaved `%LOCALAPPDATA%\ComPortZone\settings.json` still stores Quick Commands and Quick Files so they persist after restart.
+
+App settings JSON includes:
 
 - Serial defaults for new tabs
 - Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
-- Quick commands, descriptions, groups, sort mode, hidden groups, and saved quick files with sort mode
 - Command history and autocomplete source data
 - Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state
 - Last log/script paths and window size

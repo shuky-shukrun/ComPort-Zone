@@ -1,9 +1,10 @@
+import json
 import unittest
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent
-from PySide6.QtWidgets import QApplication, QPushButton, QToolButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QToolButton
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProfile, TerminalSessionState
@@ -208,12 +209,44 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertIn("Import CSV", button_texts)
             self.assertIn("Export CSV", button_texts)
-            self.assertEqual(session.drawer_pages.count(), 3)
+            self.assertEqual(session.drawer_pages.count(), 2)
             rail_tooltips = [
                 button.toolTip()
                 for button in session.drawer_rail.findChildren(QToolButton)
             ]
-            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files", "Settings"])
+            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files"])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_file_menu_unifies_app_settings_import_export_dialog(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_file_menu_settings_dialog.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            file_titles = [action.text() for action in window.file_menu.actions()]
+
+            self.assertIn("App Settings Import / Export...", file_titles)
+            self.assertNotIn("Import App Settings", file_titles)
+            self.assertNotIn("Export App Settings", file_titles)
+
+            dialog = app_module.AppSettingsTransferDialog(parent=window)
+            label_text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+            self.assertIn("Quick Commands and Quick Files are not included", label_text)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -566,8 +599,9 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Search Terminal", titles)
             self.assertIn("Terminal Font Settings", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
-            self.assertIn("Import Settings", titles)
-            self.assertIn("Export Settings", titles)
+            self.assertIn("App Settings Import / Export", titles)
+            self.assertNotIn("Import App Settings", titles)
+            self.assertNotIn("Export App Settings", titles)
             self.assertIn("Import Quick Commands from CSV", titles)
             self.assertIn("Export Quick Commands to CSV", titles)
             self.assertIn("Import Quick Files from CSV", titles)
@@ -693,7 +727,7 @@ class AppSessionTests(unittest.TestCase):
             session = window.current_session()
             session.batch_runner.start = lambda steps: started_steps.append(steps)
 
-            self.assertEqual(session.drawer_pages.count(), 3)
+            self.assertEqual(session.drawer_pages.count(), 2)
             session._select_drawer_page(1)
             self.assertEqual(session.drawer_pages.currentIndex(), 1)
 
@@ -1049,8 +1083,8 @@ class AppSessionTests(unittest.TestCase):
             settings_path.unlink(missing_ok=True)
             csv_path.unlink(missing_ok=True)
 
-    def test_settings_json_export_import_applies_full_settings(self) -> None:
-        settings_path = Path(__file__).with_name("_tmp_settings_bundle.json")
+    def test_app_settings_json_export_import_excludes_quick_actions(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_app_settings_bundle.json")
         export_path = Path(__file__).with_name("_tmp_exported_settings.json")
         settings_path.unlink(missing_ok=True)
         export_path.unlink(missing_ok=True)
@@ -1070,6 +1104,12 @@ class AppSessionTests(unittest.TestCase):
                 quick_commands=[
                     QuickCommand(label="Version", command="version", group="General")
                 ],
+                quick_files=[
+                    QuickFile(label="Imported file", path="C:/scripts/imported.txt")
+                ],
+                quick_command_sort_mode="Title",
+                quick_command_hidden_groups=["Factory"],
+                quick_file_sort_mode="Path",
                 restored_tabs=[
                     TerminalSessionState(
                         title="Imported DUT",
@@ -1081,17 +1121,37 @@ class AppSessionTests(unittest.TestCase):
             window.settings = exported
             window.export_settings_to_json(export_path)
 
+            payload = json.loads(export_path.read_text(encoding="utf-8"))
+            for key in (
+                "quick_snippets",
+                "quick_commands",
+                "quick_files",
+                "quick_command_sort_mode",
+                "quick_command_hidden_groups",
+                "quick_file_sort_mode",
+            ):
+                self.assertNotIn(key, payload)
+
             loaded = window.load_settings_from_json(export_path)
             self.assertEqual(loaded.serial.port, "COM44")
-            self.assertEqual(loaded.quick_commands[0].command, "version")
 
-            result = window.apply_imported_settings(loaded)
+            window.settings = AppSettings(
+                quick_commands=[QuickCommand(label="Local", command="local")],
+                quick_files=[QuickFile(label="Local file", path="C:/scripts/local.txt")],
+                quick_command_sort_mode="Group",
+                quick_command_hidden_groups=["Hidden"],
+                quick_file_sort_mode="Title",
+            )
+            window.apply_imported_settings(loaded)
             session = window.current_session()
 
-            self.assertEqual(result.imported_count, 1)
-            self.assertEqual(result.skipped_count, 0)
             self.assertEqual(window.settings.theme, "Bench Light")
             self.assertEqual(window.settings.terminal_font_size, 14)
+            self.assertEqual([command.command for command in window.settings.quick_commands], ["local"])
+            self.assertEqual([quick_file.path for quick_file in window.settings.quick_files], ["C:/scripts/local.txt"])
+            self.assertEqual(window.settings.quick_command_sort_mode, "Group")
+            self.assertEqual(window.settings.quick_command_hidden_groups, ["Hidden"])
+            self.assertEqual(window.settings.quick_file_sort_mode, "Title")
             self.assertEqual(session.title, "Imported DUT")
             self.assertEqual(session.profile.port, "COM55")
             self.assertEqual(session.command_input.text(), "status")
@@ -1107,8 +1167,8 @@ class AppSessionTests(unittest.TestCase):
             settings_path.unlink(missing_ok=True)
             export_path.unlink(missing_ok=True)
 
-    def test_settings_import_can_append_quick_commands_and_skip_duplicates(self) -> None:
-        settings_path = Path(__file__).with_name("_tmp_settings_import_append.json")
+    def test_app_settings_import_ignores_incoming_quick_actions(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_app_settings_import_quick_actions.json")
         settings_path.unlink(missing_ok=True)
         old_config_path = app_module.default_config_path
         old_prompt_current = app_module.MainWindow.prompt_current_session_settings
@@ -1123,30 +1183,38 @@ class AppSessionTests(unittest.TestCase):
                 QuickCommand(label="Local", command="local", send_mode="Text", group="General"),
                 QuickCommand(label="Version", command="version", send_mode="Text", group="General"),
             ]
+            window.settings.quick_files = [
+                QuickFile(label="Local File", path="C:/scripts/local.txt")
+            ]
+            window.settings.quick_command_sort_mode = "Group"
+            window.settings.quick_command_hidden_groups = ["Hidden"]
+            window.settings.quick_file_sort_mode = "Path"
             imported = AppSettings(
                 quick_commands=[
                     QuickCommand(label="Version", command="version", description="Imported note", group="General"),
                     QuickCommand(label="Reset", command="reset", group="General"),
                 ],
+                quick_files=[
+                    QuickFile(label="Imported File", path="C:/scripts/imported.txt")
+                ],
+                quick_command_sort_mode="Title",
+                quick_command_hidden_groups=["Imported"],
+                quick_file_sort_mode="Title",
                 restored_tabs=[
                     TerminalSessionState(title="Imported", serial=SerialProfile(port="COM12"))
                 ],
             )
 
-            result = window.apply_imported_settings(
-                imported,
-                quick_command_options=app_module.QuickCommandImportOptions(
-                    replace_existing=False,
-                    skip_duplicates=True,
-                ),
-            )
+            window.apply_imported_settings(imported)
 
-            self.assertEqual(result.imported_count, 1)
-            self.assertEqual(result.skipped_count, 1)
             self.assertEqual(
                 [command.label for command in window.settings.quick_commands],
-                ["Local", "Version", "Reset"],
+                ["Local", "Version"],
             )
+            self.assertEqual([quick_file.label for quick_file in window.settings.quick_files], ["Local File"])
+            self.assertEqual(window.settings.quick_command_sort_mode, "Group")
+            self.assertEqual(window.settings.quick_command_hidden_groups, ["Hidden"])
+            self.assertEqual(window.settings.quick_file_sort_mode, "Path")
             self.assertEqual(window.current_session().profile.port, "COM12")
         finally:
             app_module.default_config_path = old_config_path
