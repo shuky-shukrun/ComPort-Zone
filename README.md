@@ -11,7 +11,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Tabs for independent serial sessions
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
-- Separate quick-file drawer entry for saved command-file paths, with sorting, double-click/send execution, Explorer reveal, and CSV import/export
+- Separate quick-file drawer entry for saved command-file paths, with sorting, drag/manual reorder, double-click/send execution, Explorer reveal, and CSV import/export
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
 - App settings import/export as JSON files instead of an internal profile list
 - App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences

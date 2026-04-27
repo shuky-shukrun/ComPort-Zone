@@ -11,6 +11,23 @@ from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProf
 from ComPort_Zone.storage import SettingsStore
 
 
+def drawer_action_rows(page) -> list[list[str]]:
+    rows: list[list[str]] = []
+    layout = page.layout()
+    for index in range(layout.count()):
+        row_layout = layout.itemAt(index).layout()
+        if row_layout is None:
+            continue
+        row_texts = [
+            row_layout.itemAt(item_index).widget().text()
+            for item_index in range(row_layout.count())
+            if isinstance(row_layout.itemAt(item_index).widget(), QPushButton)
+        ]
+        if row_texts:
+            rows.append(row_texts)
+    return rows
+
+
 class AppSessionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -209,6 +226,15 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertIn("Import CSV", button_texts)
             self.assertIn("Export CSV", button_texts)
+            self.assertEqual(
+                drawer_action_rows(quick_page),
+                [
+                    ["Send", "Add Command"],
+                    ["Edit", "Delete"],
+                    ["Move Up", "Move Down"],
+                    ["Import CSV", "Export CSV"],
+                ],
+            )
             self.assertEqual(session.drawer_pages.count(), 2)
             rail_tooltips = [
                 button.toolTip()
@@ -833,12 +859,49 @@ class AppSessionTests(unittest.TestCase):
 
                 self.assertEqual(visible_ids(), ["alpha", "cable", "zebra"])
                 self.assertEqual(session.quick_file_sort_combo.currentData(), "Title")
+                self.assertTrue(session.quick_file_list.dragEnabled())
+                self.assertTrue(session.quick_file_move_up_button.isEnabled())
+                session.quick_file_list.setCurrentRow(1)
+                session.quick_file_move_up_button.click()
+                self.assertEqual(window.settings.quick_file_sort_mode, "Custom")
+                self.assertEqual([quick_file.id for quick_file in window.settings.quick_files], ["cable", "alpha", "zebra"])
+                self.assertEqual(visible_ids(), ["cable", "alpha", "zebra"])
 
                 window.set_quick_file_sort_mode("Path")
                 self.assertEqual(visible_ids(), ["cable", "alpha", "zebra"])
+                self.assertTrue(session.quick_file_list.dragEnabled())
+                moved_item = session.quick_file_list.takeItem(2)
+                session.quick_file_list.insertItem(0, moved_item)
+                session.quick_file_list.setCurrentItem(moved_item)
+                session.persist_quick_file_order()
+                self.assertEqual(window.settings.quick_file_sort_mode, "Custom")
+                self.assertEqual([quick_file.id for quick_file in window.settings.quick_files], ["zebra", "cable", "alpha"])
+                self.assertEqual(visible_ids(), ["zebra", "cable", "alpha"])
 
                 window.set_quick_file_sort_mode("Custom")
-                self.assertEqual(visible_ids(), ["zebra", "alpha", "cable"])
+                self.assertEqual(visible_ids(), ["zebra", "cable", "alpha"])
+                self.assertTrue(session.quick_file_list.dragEnabled())
+                self.assertEqual(
+                    drawer_action_rows(session.drawer_pages.widget(1)),
+                    [
+                        ["Run", "Add File"],
+                        ["Edit", "Delete"],
+                        ["Move Up", "Move Down"],
+                        ["Import CSV", "Export CSV"],
+                    ],
+                )
+
+                window.move_quick_file("cable", -1)
+                self.assertEqual(visible_ids(), ["cable", "zebra", "alpha"])
+
+                menu = session.build_quick_file_context_menu("cable")
+                action_titles = [action.text() for action in menu.actions()]
+                self.assertIn("Move Up", action_titles)
+                self.assertIn("Move Down", action_titles)
+
+                window.reorder_quick_files(["alpha", "zebra", "cable"], selected_id="alpha")
+                self.assertEqual([quick_file.id for quick_file in window.settings.quick_files], ["alpha", "zebra", "cable"])
+                self.assertEqual(visible_ids(), ["alpha", "zebra", "cable"])
             finally:
                 app_module.default_config_path = old_config_path
                 app_module.MainWindow.prompt_current_session_settings = old_prompt_current

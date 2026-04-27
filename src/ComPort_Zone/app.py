@@ -1071,6 +1071,7 @@ class TerminalSessionWidget(QWidget):
         self._connected = False
         self._status_text = "Disconnected"
         self._quick_list_refreshing = False
+        self._quick_file_list_refreshing = False
 
         self._build_ui()
         self.refresh_ports()
@@ -1368,8 +1369,8 @@ class TerminalSessionWidget(QWidget):
             (
                 (send, add),
                 (edit, delete),
-                (import_quick, export_quick),
                 (self.quick_move_up_button, self.quick_move_down_button),
+                (import_quick, export_quick),
             ),
         )
         return page
@@ -1390,16 +1391,25 @@ class TerminalSessionWidget(QWidget):
         self.quick_file_list = QListWidget(page)
         self.quick_file_list.setObjectName("quickFileList")
         self.quick_file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.quick_file_list.setDragEnabled(True)
+        self.quick_file_list.setAcceptDrops(True)
+        self.quick_file_list.setDropIndicatorShown(True)
+        self.quick_file_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.quick_file_list.setDragDropOverwriteMode(False)
+        self.quick_file_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.quick_file_list.setSpacing(1)
         self.quick_file_list.setUniformItemSizes(True)
-        self.quick_file_list.setToolTip("Double-click a saved command file to run it.")
+        self.quick_file_list.setToolTip("Double-click a saved command file to run it. Press and drag to reorder.")
         self.quick_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.quick_file_list.itemDoubleClicked.connect(lambda _: self.run_selected_quick_file())
         self.quick_file_list.customContextMenuRequested.connect(self.show_quick_file_context_menu)
+        self.quick_file_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_file_order))
         send_file = self._drawer_action("Run", QStyle.StandardPixmap.SP_ArrowForward, self.run_selected_quick_file, page, role="drawerPrimary")
         add_file = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_file, page)
         edit_file = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_file(self.selected_quick_file_id()), page)
         delete_file = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_file(self.selected_quick_file_id()), page, role="drawerDanger")
+        self.quick_file_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.move_selected_quick_file(-1), page)
+        self.quick_file_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.move_selected_quick_file(1), page)
         import_files = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_files_csv, page)
         export_files = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_files_csv, page)
 
@@ -1413,6 +1423,7 @@ class TerminalSessionWidget(QWidget):
             (
                 (send_file, add_file),
                 (edit_file, delete_file),
+                (self.quick_file_move_up_button, self.quick_file_move_down_button),
                 (import_files, export_files),
             ),
         )
@@ -1644,6 +1655,17 @@ class TerminalSessionWidget(QWidget):
         if index >= 0:
             self.quick_file_sort_combo.setCurrentIndex(index)
         self.quick_file_sort_combo.blockSignals(False)
+        self.quick_file_list.setDragEnabled(True)
+        self.quick_file_list.setAcceptDrops(True)
+        self.quick_file_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        if hasattr(self, "quick_file_move_up_button"):
+            self.quick_file_move_up_button.setEnabled(True)
+        if hasattr(self, "quick_file_move_down_button"):
+            self.quick_file_move_down_button.setEnabled(True)
+        if mode == "Custom":
+            self.quick_file_list.setToolTip("Double-click a saved command file to run it. Press and drag to reorder.")
+        else:
+            self.quick_file_list.setToolTip("Double-click to run. Dragging or moving a file switches this list to Custom order.")
 
     def selected_quick_command_id(self) -> str:
         item = self.quick_list.currentItem()
@@ -1803,6 +1825,50 @@ class TerminalSessionWidget(QWidget):
         item = self.quick_file_list.currentItem()
         return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
 
+    def quick_file_row(self, quick_file_id: str) -> int:
+        for row in range(self.quick_file_list.count()):
+            item = self.quick_file_list.item(row)
+            if str(item.data(Qt.ItemDataRole.UserRole)) == quick_file_id:
+                return row
+        return -1
+
+    def quick_file_ids_in_list_order(self) -> list[str]:
+        return [
+            str(self.quick_file_list.item(row).data(Qt.ItemDataRole.UserRole))
+            for row in range(self.quick_file_list.count())
+        ]
+
+    def move_selected_quick_file(self, direction: int) -> None:
+        quick_file_id = self.selected_quick_file_id()
+        if not quick_file_id:
+            self.host.set_status("Select a quick file to move.")
+            return
+        row = self.quick_file_row(quick_file_id)
+        target = row + direction
+        if row < 0 or target < 0 or target >= self.quick_file_list.count():
+            return
+        self.host.reorder_quick_files(
+            self.quick_file_ids_in_list_order(),
+            selected_id=quick_file_id,
+            force_custom=True,
+        )
+        self.host.move_quick_file(quick_file_id, direction)
+
+    def move_quick_file_from_visible(self, quick_file_id: str, direction: int) -> None:
+        row = self.quick_file_row(quick_file_id)
+        if row >= 0:
+            self.quick_file_list.setCurrentRow(row)
+        self.move_selected_quick_file(direction)
+
+    def persist_quick_file_order(self) -> None:
+        if self._quick_file_list_refreshing:
+            return
+        self.host.reorder_quick_files(
+            self.quick_file_ids_in_list_order(),
+            selected_id=self.selected_quick_file_id(),
+            force_custom=True,
+        )
+
     def show_quick_file_context_menu(self, position) -> None:
         item = self.quick_file_list.itemAt(position)
         quick_file_id = ""
@@ -1838,6 +1904,7 @@ class TerminalSessionWidget(QWidget):
             return menu
 
         menu.setTitle(quick_file_display_text(quick_file))
+        row = self.quick_file_row(quick_file_id)
         self.host._add_context_action(
             menu,
             "Send",
@@ -1872,6 +1939,21 @@ class TerminalSessionWidget(QWidget):
         menu.addSeparator()
         self.host._add_context_action(
             menu,
+            "Move Up",
+            lambda quick_file_id=quick_file_id: self.move_quick_file_from_visible(quick_file_id, -1),
+            icon=QStyle.StandardPixmap.SP_ArrowUp,
+            enabled=row > 0,
+        )
+        self.host._add_context_action(
+            menu,
+            "Move Down",
+            lambda quick_file_id=quick_file_id: self.move_quick_file_from_visible(quick_file_id, 1),
+            icon=QStyle.StandardPixmap.SP_ArrowDown,
+            enabled=0 <= row < self.quick_file_list.count() - 1,
+        )
+        menu.addSeparator()
+        self.host._add_context_action(
+            menu,
             "Import from CSV",
             self.host.import_quick_files_csv,
             icon=QStyle.StandardPixmap.SP_DialogOpenButton,
@@ -1889,6 +1971,7 @@ class TerminalSessionWidget(QWidget):
         if not hasattr(self, "quick_file_list"):
             return
         selected_id = selected_id or self.selected_quick_file_id()
+        self._quick_file_list_refreshing = True
         self.quick_file_list.clear()
         self.refresh_quick_file_controls()
         selected_row = -1
@@ -1898,11 +1981,13 @@ class TerminalSessionWidget(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, quick_file.id)
             item.setToolTip(quick_file.path)
             item.setSizeHint(QSize(0, 24))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
             self.quick_file_list.addItem(item)
             if quick_file.id == selected_id:
                 selected_row = self.quick_file_list.count() - 1
         if selected_row >= 0:
             self.quick_file_list.setCurrentRow(selected_row)
+        self._quick_file_list_refreshing = False
 
     def run_selected_quick_file(self) -> None:
         quick_file = self.host.quick_file_by_id(self.selected_quick_file_id())
@@ -3648,6 +3733,16 @@ class MainWindow(QMainWindow):
         self.refresh_quick_commands_everywhere(command_id)
         self.save_settings()
 
+    def move_quick_file(self, quick_file_id: str, direction: int) -> None:
+        quick_files = self.settings.quick_files
+        index = next((i for i, quick_file in enumerate(quick_files) if quick_file.id == quick_file_id), -1)
+        target = index + direction
+        if index < 0 or target < 0 or target >= len(quick_files):
+            return
+        quick_files[index], quick_files[target] = quick_files[target], quick_files[index]
+        self.refresh_quick_files_everywhere(quick_file_id)
+        self.save_settings()
+
     def reorder_quick_commands(self, command_ids: list[str], *, selected_id: str = "") -> None:
         existing_ids = [command.id for command in self.settings.quick_commands]
         if command_ids == existing_ids:
@@ -3665,6 +3760,36 @@ class MainWindow(QMainWindow):
             return
         self.settings.quick_commands = reordered
         self.refresh_quick_commands_everywhere(selected_id)
+        self.save_settings()
+
+    def reorder_quick_files(
+        self,
+        quick_file_ids: list[str],
+        *,
+        selected_id: str = "",
+        force_custom: bool = False,
+    ) -> None:
+        existing_ids = [quick_file.id for quick_file in self.settings.quick_files]
+        mode_changed = force_custom and self.settings.quick_file_sort_mode != "Custom"
+        if quick_file_ids == existing_ids and not mode_changed:
+            return
+        quick_files_by_id = {quick_file.id: quick_file for quick_file in self.settings.quick_files}
+        seen: set[str] = set()
+        reordered: list[QuickFile] = []
+        for quick_file_id in quick_file_ids:
+            quick_file = quick_files_by_id.get(quick_file_id)
+            if quick_file and quick_file_id not in seen:
+                reordered.append(quick_file)
+                seen.add(quick_file_id)
+        reordered.extend(quick_file for quick_file in self.settings.quick_files if quick_file.id not in seen)
+        order_changed = [quick_file.id for quick_file in reordered] != existing_ids
+        if not order_changed and not mode_changed:
+            return
+        if force_custom:
+            self.settings.quick_file_sort_mode = "Custom"
+        if order_changed:
+            self.settings.quick_files = reordered
+        self.refresh_quick_files_everywhere(selected_id)
         self.save_settings()
 
     def refresh_quick_commands_everywhere(self, selected_id: str | None = None) -> None:
