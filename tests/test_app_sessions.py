@@ -117,6 +117,79 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_input_clears_after_enter_send_even_if_completion_reapplies(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_input_clear.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            sent: list[str] = []
+            session.serial_client.send_text = lambda text, *_: sent.append(text)
+
+            session.command_input.setText("status")
+            session.send_from_input()
+            session._apply_completion("status")
+            self.qt.processEvents()
+            self.qt.processEvents()
+
+            self.assertEqual(sent, ["status"])
+            self.assertEqual(session.command_input.text(), "")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_input_clears_after_quick_command_send(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_command_clear.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            sent: list[tuple[str, str | None]] = []
+            quick_command = QuickCommand(id="status-command", label="Status", command="status", line_ending_override="LF")
+            window.settings.quick_commands = [quick_command]
+            session.refresh_quick_commands(quick_command.id)
+            session.quick_list.setCurrentRow(0)
+            session.serial_client.send_text = lambda text, ending=None: sent.append((text, ending))
+
+            session.command_input.setText("draft")
+            session.send_selected_quick_command()
+            self.qt.processEvents()
+            self.qt.processEvents()
+
+            self.assertEqual(sent, [("status", "LF")])
+            self.assertEqual(session.command_input.text(), "")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_closed_connection_state_is_visible_and_actionable(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_connection_closed.json")
         settings_path.unlink(missing_ok=True)

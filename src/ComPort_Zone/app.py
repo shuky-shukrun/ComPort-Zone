@@ -1988,7 +1988,7 @@ class TerminalSessionWidget(QWidget):
             QMessageBox.warning(self, "Send", str(exc))
             return
         self.host.record_command(raw.strip())
-        self.command_input.clear()
+        self._clear_command_input_after_send()
 
     def _send_payload(self, raw: str, mode: str) -> None:
         if mode == "Hex Bytes":
@@ -2015,6 +2015,13 @@ class TerminalSessionWidget(QWidget):
             QMessageBox.warning(self, "Quick Send", str(exc))
             return
         self.host.record_command(command.command)
+        self._clear_command_input_after_send()
+
+    def _clear_command_input_after_send(self) -> None:
+        self.command_input.clear()
+        # Completer activation can arrive after returnPressed; clear again after
+        # the event loop settles so accepted history/snippet text does not stick.
+        QTimer.singleShot(0, self.command_input.clear)
 
     def save_current_input_as_quick_command(self) -> None:
         value = self.command_input.text().strip()
