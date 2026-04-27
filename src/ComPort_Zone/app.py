@@ -1164,6 +1164,7 @@ class TerminalSessionWidget(QWidget):
         self.command_input.returnPressed.connect(self.send_from_input)
         self.command_input.historyRequested.connect(self._navigate_history)
         self.command_input.autocompleteRequested.connect(self._show_completion_popup)
+        self.command_input.deleteHistoryRequested.connect(self._delete_current_input_from_history)
         self.command_input.textEdited.connect(self._on_command_edited)
         self.completion_model = QStringListModel(self)
         completer = QCompleter(self.completion_model, self)
@@ -2351,6 +2352,16 @@ class TerminalSessionWidget(QWidget):
     def _on_command_edited(self, text: str) -> None:
         self.history_store.reset_navigation()
         self._update_completion_model(text)
+
+    def _delete_current_input_from_history(self) -> None:
+        command = self.command_input.text().strip()
+        if not command:
+            return
+        if self.host.remove_command_from_history(command):
+            self.command_input.clear()
+            self.host.set_status(f"Removed '{short_label(command, 40)}' from command history.")
+            return
+        self.host.set_status(f"'{short_label(command, 40)}' is not in command history.")
 
     def _update_completion_model(self, prefix: str | None = None) -> None:
         text = prefix if prefix is not None else self.command_input.text()
@@ -3693,6 +3704,15 @@ class MainWindow(QMainWindow):
             session.history_store.add(command)
             session._update_completion_model()
         self.save_settings()
+
+    def remove_command_from_history(self, command: str) -> bool:
+        removed = self.history_catalog.remove(command)
+        for session in self.iter_sessions():
+            session.history_store.remove(command)
+            session._update_completion_model()
+        if removed:
+            self.save_settings()
+        return removed
 
     def import_settings(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

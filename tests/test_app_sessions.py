@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeyEvent
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from ComPort_Zone import app as app_module
@@ -208,6 +208,47 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertIn("Import CSV", button_texts)
             self.assertIn("Export CSV", button_texts)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_shift_delete_removes_input_text_from_history_only(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_shift_delete_history.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            window.settings.quick_commands = [QuickCommand(id="quick-status", label="Status", command="status")]
+            window.record_command("status")
+            session.command_input.setText("status")
+
+            event = QKeyEvent(
+                QKeyEvent.Type.KeyPress,
+                Qt.Key.Key_Delete,
+                Qt.KeyboardModifier.ShiftModifier,
+            )
+            QApplication.sendEvent(session.command_input, event)
+            self.qt.processEvents()
+
+            self.assertEqual(window.history_catalog.all_commands(), [])
+            self.assertEqual(session.history_store.all_commands(), [])
+            self.assertEqual([command.command for command in window.settings.quick_commands], ["status"])
+            self.assertEqual(session.command_input.text(), "")
+            self.assertIn("status", session.completion_model.stringList())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

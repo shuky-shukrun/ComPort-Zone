@@ -24,6 +24,14 @@ class HistoryStoreTests(unittest.TestCase):
         history = HistoryStore(["factory reset", "reset counters", "status"])
         self.assertEqual(history.suggestions("set")[:2], ["reset counters", "factory reset"])
 
+    def test_remove_deletes_exact_command_from_history(self) -> None:
+        history = HistoryStore(["status", "reset"])
+
+        self.assertTrue(history.remove("status"))
+        self.assertFalse(history.remove("missing"))
+        self.assertEqual(history.all_commands(), ["reset"])
+        self.assertEqual(history.suggestions("status"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

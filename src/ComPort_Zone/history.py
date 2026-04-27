@@ -32,6 +32,16 @@ class HistoryStore:
                 self._recency.pop(removed, None)
         self.reset_navigation()
 
+    def remove(self, command: str) -> bool:
+        command = command.strip()
+        if not command or command not in self._commands:
+            return False
+        self._commands.remove(command)
+        self._counts.pop(command, None)
+        self._recency.pop(command, None)
+        self.reset_navigation()
+        return True
+
     def all_commands(self) -> list[str]:
         return list(self._commands)
 
