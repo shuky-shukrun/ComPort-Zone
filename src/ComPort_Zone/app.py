@@ -1074,8 +1074,7 @@ class TerminalSessionWidget(QWidget):
         for icon, tooltip, callback in (
             (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", lambda: self._select_drawer_page(0)),
             (QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", lambda: self._select_drawer_page(1)),
-            (QStyle.StandardPixmap.SP_MediaPlay, "Scripts and shortcuts", lambda: self._select_drawer_page(2)),
-            (QStyle.StandardPixmap.SP_DriveHDIcon, "Settings", lambda: self._select_drawer_page(3)),
+            (QStyle.StandardPixmap.SP_DriveHDIcon, "Settings", lambda: self._select_drawer_page(2)),
         ):
             button = QToolButton(self.drawer_rail)
             button.setObjectName("railButton")
@@ -1095,7 +1094,6 @@ class TerminalSessionWidget(QWidget):
         self.drawer_pages = QStackedWidget(self.drawer_panel)
         self.drawer_pages.addWidget(self._build_quick_page())
         self.drawer_pages.addWidget(self._build_quick_files_page())
-        self.drawer_pages.addWidget(self._build_scripts_page())
         self.drawer_pages.addWidget(self._build_settings_page())
         panel_layout.addWidget(self.drawer_pages, 1)
 
@@ -1236,6 +1234,19 @@ class TerminalSessionWidget(QWidget):
         button.clicked.connect(callback)
         return button
 
+    def _add_drawer_action_rows(
+        self,
+        layout: QVBoxLayout,
+        rows: tuple[tuple[QPushButton, ...], ...],
+    ) -> None:
+        for row in rows:
+            line = QHBoxLayout()
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
+            for button in row:
+                line.addWidget(button)
+            layout.addLayout(line)
+
     def _build_quick_page(self) -> QWidget:
         page = QWidget(self)
         layout = QVBoxLayout(page)
@@ -1274,8 +1285,8 @@ class TerminalSessionWidget(QWidget):
         self.quick_group_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.quick_group_button.setToolTip("Show or hide quick command groups")
         set_button_icon(self.quick_group_button, QStyle.StandardPixmap.SP_FileDialogListView)
-        send = self._drawer_action("Send Selected", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, page, role="drawerPrimary")
-        add = self._drawer_action("Add", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, page)
+        send = self._drawer_action("Send", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, page, role="drawerPrimary")
+        add = self._drawer_action("Add Command", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, page)
         edit = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_command(self.selected_quick_command_id()), page)
         delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_command(self.selected_quick_command_id()), page, role="drawerDanger")
         self.quick_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), page)
@@ -1291,18 +1302,16 @@ class TerminalSessionWidget(QWidget):
         filter_line.addWidget(self.quick_group_button, 1)
         layout.addLayout(filter_line)
         layout.addWidget(self.quick_list, 1)
-        for row in (
-            (send, add),
-            (edit, delete),
-            (self.quick_move_up_button, self.quick_move_down_button),
-            (import_quick, export_quick),
-        ):
-            line = QHBoxLayout()
-            line.setContentsMargins(0, 0, 0, 0)
-            line.setSpacing(8)
-            for button in row:
-                line.addWidget(button)
-            layout.addLayout(line)
+        layout.addWidget(self._drawer_section("Actions", page))
+        self._add_drawer_action_rows(
+            layout,
+            (
+                (send, add),
+                (edit, delete),
+                (import_quick, export_quick),
+                (self.quick_move_up_button, self.quick_move_down_button),
+            ),
+        )
         return page
 
     def _build_quick_files_page(self) -> QWidget:
@@ -1327,56 +1336,26 @@ class TerminalSessionWidget(QWidget):
         self.quick_file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.quick_file_list.itemDoubleClicked.connect(lambda _: self.run_selected_quick_file())
         self.quick_file_list.customContextMenuRequested.connect(self.show_quick_file_context_menu)
-        send_file = self._drawer_action("Send Selected", QStyle.StandardPixmap.SP_ArrowForward, self.run_selected_quick_file, page, role="drawerPrimary")
+        send_file = self._drawer_action("Run", QStyle.StandardPixmap.SP_ArrowForward, self.run_selected_quick_file, page, role="drawerPrimary")
         add_file = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_file, page)
         edit_file = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_file(self.selected_quick_file_id()), page)
         delete_file = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_file(self.selected_quick_file_id()), page, role="drawerDanger")
         import_files = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_files_csv, page)
         export_files = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_files_csv, page)
-        run = self._drawer_action("Run Command File...", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
-        stop = self._drawer_action("Stop Command File", QStyle.StandardPixmap.SP_MediaStop, self.stop_script, page)
 
         layout.addWidget(title)
         layout.addWidget(self._drawer_section("Saved Files", page))
         layout.addWidget(self.quick_file_sort_combo)
         layout.addWidget(self.quick_file_list, 1)
-        for row in ((send_file, add_file), (edit_file, delete_file), (import_files, export_files), (run, stop)):
-            line = QHBoxLayout()
-            line.setContentsMargins(0, 0, 0, 0)
-            line.setSpacing(8)
-            for button in row:
-                line.addWidget(button)
-            layout.addLayout(line)
-        return page
-
-    def _build_scripts_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(7)
-        title = self._drawer_title("Shortcuts", page)
-        connect = self._drawer_action("Connect / Disconnect", QStyle.StandardPixmap.SP_ComputerIcon, self.toggle_connection, page, role="drawerPrimary")
-        settings = self._drawer_action("Serial Settings", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.open_connection_settings(), page)
-        run = self._drawer_action("Run Command File...", QStyle.StandardPixmap.SP_MediaPlay, self.run_script, page)
-        stop = self._drawer_action("Stop Command File", QStyle.StandardPixmap.SP_MediaStop, self.stop_script, page)
-        log = self._drawer_action("Start / Stop Log", QStyle.StandardPixmap.SP_DialogSaveButton, self.toggle_logging, page)
-        clear = self._drawer_action("Clear Terminal", QStyle.StandardPixmap.SP_TrashIcon, self.clear_terminal, page, role="drawerDanger")
-        pause = self._drawer_action("Pause / Resume Output", QStyle.StandardPixmap.SP_MediaPause, self.toggle_pause, page)
-        save = self._drawer_action("Save Input to Quick Send", QStyle.StandardPixmap.SP_DialogSaveButton, self.save_current_input_as_quick_command, page)
-        layout.addWidget(title)
-        layout.addWidget(self._drawer_section("Session", page))
-        layout.addWidget(connect)
-        layout.addWidget(settings)
-        layout.addSpacing(5)
-        layout.addWidget(self._drawer_section("Scripts & Logs", page))
-        layout.addWidget(run)
-        layout.addWidget(stop)
-        layout.addWidget(log)
-        layout.addSpacing(5)
-        layout.addWidget(self._drawer_section("Terminal", page))
-        layout.addWidget(clear)
-        layout.addWidget(pause)
-        layout.addWidget(save)
+        layout.addWidget(self._drawer_section("Actions", page))
+        self._add_drawer_action_rows(
+            layout,
+            (
+                (send_file, add_file),
+                (edit_file, delete_file),
+                (import_files, export_files),
+            ),
+        )
         return page
 
     def _build_settings_page(self) -> QWidget:
@@ -1405,51 +1384,15 @@ class TerminalSessionWidget(QWidget):
             self.host.import_settings,
             page,
         )
-        export_quick = self._drawer_action(
-            "Export Quick Commands CSV",
-            QStyle.StandardPixmap.SP_DialogSaveButton,
-            self.host.export_quick_commands_csv,
-            page,
-        )
-        import_quick = self._drawer_action(
-            "Import Quick Commands CSV",
-            QStyle.StandardPixmap.SP_DialogOpenButton,
-            self.host.import_quick_commands_csv,
-            page,
-        )
-        export_files = self._drawer_action(
-            "Export Quick Files CSV",
-            QStyle.StandardPixmap.SP_DialogSaveButton,
-            self.host.export_quick_files_csv,
-            page,
-        )
-        import_files = self._drawer_action(
-            "Import Quick Files CSV",
-            QStyle.StandardPixmap.SP_DialogOpenButton,
-            self.host.import_quick_files_csv,
-            page,
-        )
         layout.addWidget(title)
         layout.addWidget(description)
         layout.addWidget(self._drawer_section("Settings Bundle", page))
-        layout.addWidget(export_settings)
-        layout.addWidget(import_settings)
-        layout.addSpacing(8)
-        layout.addWidget(self._drawer_section("Quick Commands", page))
-        line = QHBoxLayout()
-        line.setContentsMargins(0, 0, 0, 0)
-        line.setSpacing(8)
-        line.addWidget(export_quick)
-        line.addWidget(import_quick)
-        layout.addLayout(line)
-        layout.addSpacing(8)
-        layout.addWidget(self._drawer_section("Quick Files", page))
-        file_line = QHBoxLayout()
-        file_line.setContentsMargins(0, 0, 0, 0)
-        file_line.setSpacing(8)
-        file_line.addWidget(export_files)
-        file_line.addWidget(import_files)
-        layout.addLayout(file_line)
+        self._add_drawer_action_rows(
+            layout,
+            (
+                (export_settings, import_settings),
+            ),
+        )
         layout.addStretch(1)
         return page
 
@@ -2635,27 +2578,24 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.version_label)
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("File")
+        self.file_menu = file_menu = self.menuBar().addMenu("File")
         self._add_action(file_menu, "New Tab", "Ctrl+T", lambda: self.add_session(prompt_settings=True), icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
         self._add_action(file_menu, "Duplicate Tab", "Ctrl+Shift+T", self.duplicate_current_session, icon=QStyle.StandardPixmap.SP_FileIcon)
         self._add_action(file_menu, "Close Tab", "Ctrl+W", self.close_current_session, icon=QStyle.StandardPixmap.SP_DialogCloseButton)
-        file_menu.addSeparator()
-        self._add_action(file_menu, "Run Command File", "Ctrl+R", lambda: self.with_session(lambda s: s.run_script()), icon=QStyle.StandardPixmap.SP_MediaPlay)
-        self._add_action(file_menu, "Start / Stop Log", "Ctrl+L", lambda: self.with_session(lambda s: s.toggle_logging()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
         file_menu.addSeparator()
         self._add_action(file_menu, "Import Settings", "", self.import_settings, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         self._add_action(file_menu, "Export Settings", "", self.export_settings, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
         file_menu.addSeparator()
         self._add_action(file_menu, "Exit", "", self.close, icon=QStyle.StandardPixmap.SP_TitleBarCloseButton)
 
-        edit_menu = self.menuBar().addMenu("Edit")
+        self.edit_menu = edit_menu = self.menuBar().addMenu("Edit")
         self._add_action(edit_menu, "Copy", "Ctrl+Shift+C", lambda: self.with_session(lambda s: s.copy_selection()), icon=QStyle.StandardPixmap.SP_FileIcon)
         self._add_action(edit_menu, "Select All", "Ctrl+A", lambda: self.with_session(lambda s: s.select_all()), icon=QStyle.StandardPixmap.SP_FileDialogListView)
         edit_menu.addSeparator()
+        self._add_action(edit_menu, "Search Terminal", "Ctrl+F", lambda: self.with_session(lambda s: s.show_search()), icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
         self._add_action(edit_menu, "Clear Terminal", "Ctrl+K", lambda: self.with_session(lambda s: s.clear_terminal()), icon=QStyle.StandardPixmap.SP_TrashIcon)
-        self._add_action(edit_menu, "Search", "Ctrl+F", lambda: self.with_session(lambda s: s.show_search()), icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
 
-        view_menu = self.menuBar().addMenu("View")
+        self.view_menu = view_menu = self.menuBar().addMenu("View")
         self._add_action(view_menu, "Toggle Drawer", "Ctrl+B", self.toggle_drawer, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         view_menu.addSeparator()
         self._add_action(view_menu, "Increase Font", "Ctrl+=", lambda: self.change_font_size(1), icon=QStyle.StandardPixmap.SP_ArrowUp)
@@ -2667,7 +2607,7 @@ class MainWindow(QMainWindow):
         self.wrap_action = self._add_action(view_menu, "Line Wrap", "", self.toggle_line_wrap, checkable=True, icon=QStyle.StandardPixmap.SP_FileDialogListView)
         self.wrap_action.setChecked(self.settings.line_wrap_enabled)
         view_menu.addSeparator()
-        theme_menu = view_menu.addMenu("Theme")
+        self.theme_menu = theme_menu = view_menu.addMenu("Theme")
         self.theme_group = QActionGroup(self)
         self.theme_group.setExclusive(True)
         self.theme_actions: dict[str, QAction] = {}
@@ -2679,34 +2619,49 @@ class MainWindow(QMainWindow):
             theme_menu.addAction(action)
             self.theme_actions[theme_name] = action
 
-        session_menu = self.menuBar().addMenu("Session")
+        self.session_menu = session_menu = self.menuBar().addMenu("Session")
         self._add_action(session_menu, "Rename Tab", "F2", self.rename_current_session, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         session_menu.addSeparator()
-        self._add_action(session_menu, "Connect / Disconnect", "Ctrl+Enter", lambda: self.with_session(lambda s: s.toggle_connection()), icon=QStyle.StandardPixmap.SP_ComputerIcon)
         self._add_action(session_menu, "Pause / Resume Output", "Ctrl+P", lambda: self.with_session(lambda s: s.toggle_pause()), icon=QStyle.StandardPixmap.SP_MediaPause)
+        self._add_action(session_menu, "Start / Stop Log", "Ctrl+L", lambda: self.with_session(lambda s: s.toggle_logging()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
-        serial_menu = self.menuBar().addMenu("Serial")
+        self.serial_menu = serial_menu = self.menuBar().addMenu("Serial")
+        self._add_action(serial_menu, "Connect / Disconnect", "Ctrl+Enter", lambda: self.with_session(lambda s: s.toggle_connection()), icon=QStyle.StandardPixmap.SP_ComputerIcon)
         self._add_action(serial_menu, "Serial Settings", "Ctrl+,", lambda: self.with_session(lambda s: s.open_connection_settings()), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(serial_menu, "Refresh Ports", "F5", lambda: self.with_session(lambda s: s.refresh_ports()), icon=QStyle.StandardPixmap.SP_BrowserReload)
 
-        tools_menu = self.menuBar().addMenu("Tools")
+        self.tools_menu = tools_menu = self.menuBar().addMenu("Tools")
         self._add_action(tools_menu, "Command Palette", "Ctrl+Shift+P", self.show_command_palette, icon=QStyle.StandardPixmap.SP_CommandLink)
         tools_menu.addSeparator()
-        self._add_action(tools_menu, "Send Selected Quick Command", "", lambda: self.with_session(lambda s: s.send_selected_quick_command()), icon=QStyle.StandardPixmap.SP_ArrowForward)
-        tools_menu.addSeparator()
-        self._add_action(tools_menu, "Add Quick Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        self._add_action(tools_menu, "Edit Selected Quick Command", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        self._add_action(tools_menu, "Delete Selected Quick Command", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
-        tools_menu.addSeparator()
-        self._add_action(tools_menu, "Send Selected Quick File", "", lambda: self.with_session(lambda s: s.run_selected_quick_file()), icon=QStyle.StandardPixmap.SP_ArrowForward)
-        self._add_action(tools_menu, "Add Quick File", "", self.add_quick_file, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        tools_menu.addSeparator()
-        self._add_action(tools_menu, "Import Quick Commands from CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        self._add_action(tools_menu, "Export Quick Commands to CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
-        self._add_action(tools_menu, "Import Quick Files from CSV", "", self.import_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        self._add_action(tools_menu, "Export Quick Files to CSV", "", self.export_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
 
-        help_menu = self.menuBar().addMenu("Help")
+        self.command_files_menu = command_files_menu = tools_menu.addMenu("Command Files")
+        command_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_MediaPlay))
+        self._add_action(command_files_menu, "Run Command File", "Ctrl+R", lambda: self.with_session(lambda s: s.run_script()), icon=QStyle.StandardPixmap.SP_MediaPlay)
+        self._add_action(command_files_menu, "Stop Command File", "", lambda: self.with_session(lambda s: s.stop_script()), icon=QStyle.StandardPixmap.SP_MediaStop)
+
+        self.quick_commands_menu = quick_commands_menu = tools_menu.addMenu("Quick Commands")
+        quick_commands_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_CommandLink))
+        self._add_action(quick_commands_menu, "Send Selected", "", lambda: self.with_session(lambda s: s.send_selected_quick_command()), icon=QStyle.StandardPixmap.SP_ArrowForward)
+        self._add_action(quick_commands_menu, "Save Current Input", "", lambda: self.with_session(lambda s: s.save_current_input_as_quick_command()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        quick_commands_menu.addSeparator()
+        self._add_action(quick_commands_menu, "Add Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        self._add_action(quick_commands_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        self._add_action(quick_commands_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        quick_commands_menu.addSeparator()
+        self._add_action(quick_commands_menu, "Import CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
+        self._add_action(quick_commands_menu, "Export CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+
+        self.quick_files_menu = quick_files_menu = tools_menu.addMenu("Quick Files")
+        quick_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self._add_action(quick_files_menu, "Run Selected", "", lambda: self.with_session(lambda s: s.run_selected_quick_file()), icon=QStyle.StandardPixmap.SP_ArrowForward)
+        self._add_action(quick_files_menu, "Add File", "", self.add_quick_file, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        self._add_action(quick_files_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        self._add_action(quick_files_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        quick_files_menu.addSeparator()
+        self._add_action(quick_files_menu, "Import CSV", "", self.import_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
+        self._add_action(quick_files_menu, "Export CSV", "", self.export_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+
+        self.help_menu = help_menu = self.menuBar().addMenu("Help")
         self._add_action(help_menu, "About", "", self.show_about, icon=QStyle.StandardPixmap.SP_MessageBoxInformation)
 
     def _add_action(
@@ -2771,6 +2726,13 @@ class MainWindow(QMainWindow):
                 callback=lambda: self.with_session(lambda session: session.run_script()),
                 icon=QStyle.StandardPixmap.SP_MediaPlay,
                 keywords="script batch file",
+            ),
+            CommandPaletteEntry(
+                title="Stop Command File",
+                subtitle="Stop the running command file in the active tab",
+                callback=lambda: self.with_session(lambda session: session.stop_script()),
+                icon=QStyle.StandardPixmap.SP_MediaStop,
+                keywords="script batch file stop cancel",
             ),
             CommandPaletteEntry(
                 title="Send Selected Quick File",

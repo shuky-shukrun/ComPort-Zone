@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QPushButton, QToolButton
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProfile, TerminalSessionState
@@ -208,6 +208,12 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertIn("Import CSV", button_texts)
             self.assertIn("Export CSV", button_texts)
+            self.assertEqual(session.drawer_pages.count(), 3)
+            rail_tooltips = [
+                button.toolTip()
+                for button in session.drawer_rail.findChildren(QToolButton)
+            ]
+            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files", "Settings"])
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -553,6 +559,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Connect / Disconnect", titles)
             self.assertIn("Serial Settings", titles)
             self.assertIn("Run Command File", titles)
+            self.assertIn("Stop Command File", titles)
             self.assertIn("Send Selected Quick File", titles)
             self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
@@ -580,6 +587,48 @@ class AppSessionTests(unittest.TestCase):
             ]
             self.assertEqual(len(palette_actions), 1)
             self.assertEqual(palette_actions[0].shortcut().toString(), "Ctrl+Shift+P")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_top_menus_group_workflow_actions(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_top_menus.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            menu_bar = window.menuBar()
+            top_level = [action.text() for action in menu_bar.actions()]
+            self.assertEqual(top_level, ["File", "Edit", "View", "Session", "Serial", "Tools", "Help"])
+
+            tools_titles = [action.text() for action in window.tools_menu.actions()]
+            self.assertIn("Command Palette", tools_titles)
+            self.assertIn("Command Files", tools_titles)
+            self.assertIn("Quick Commands", tools_titles)
+            self.assertIn("Quick Files", tools_titles)
+
+            quick_command_titles = [action.text() for action in window.quick_commands_menu.actions()]
+            self.assertIn("Save Current Input", quick_command_titles)
+            self.assertIn("Import CSV", quick_command_titles)
+            self.assertIn("Export CSV", quick_command_titles)
+
+            quick_file_titles = [action.text() for action in window.quick_files_menu.actions()]
+            self.assertIn("Run Selected", quick_file_titles)
+            self.assertIn("Import CSV", quick_file_titles)
+            self.assertIn("Export CSV", quick_file_titles)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -644,7 +693,7 @@ class AppSessionTests(unittest.TestCase):
             session = window.current_session()
             session.batch_runner.start = lambda steps: started_steps.append(steps)
 
-            self.assertEqual(session.drawer_pages.count(), 4)
+            self.assertEqual(session.drawer_pages.count(), 3)
             session._select_drawer_page(1)
             self.assertEqual(session.drawer_pages.currentIndex(), 1)
 

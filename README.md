@@ -2,7 +2,7 @@
 
 ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows.
 
-The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick-send commands and shortcuts.
+The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick commands, quick files, and settings.
 
 ## Current Features
 
@@ -82,7 +82,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Force
 
 ## Batch Script Format
 
-Plain text files can be run from `File > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
+Plain text files can be run from `Tools > Command Files > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
 
 The parser also supports a small batch DSL:
 
@@ -122,7 +122,7 @@ HEX {{WAKE_BYTES=55 AA 01 0D}}
 
 ## Quick Commands CSV Format
 
-Quick commands can be exported from `Tools > Export Quick Commands to CSV` or imported from `Tools > Import Quick Commands from CSV`.
+Quick commands can be exported from `Tools > Quick Commands > Export CSV`, imported from `Tools > Quick Commands > Import CSV`, or managed directly from the Quick Send drawer actions.
 
 During import, choose whether to append incoming commands to the current list or replace the current list.
 The import dialog can also skip duplicates, where duplicates are matched by group, title, command text, and send mode.
@@ -148,7 +148,7 @@ Read ID,id?,Read factory identity string,Text,Factory,LF
 
 ## Quick Files CSV Format
 
-Quick files are saved command-file paths shown in the left drawer. They can be exported from `Tools > Export Quick Files to CSV` or imported from `Tools > Import Quick Files from CSV`.
+Quick files are saved command-file paths shown in the left drawer. They can be exported from `Tools > Quick Files > Export CSV`, imported from `Tools > Quick Files > Import CSV`, or managed directly from the Quick Files drawer actions.
 
 During import, choose whether to append incoming files to the current list or replace the current list.
 The import dialog can also skip duplicates, where duplicates are matched by file path.
