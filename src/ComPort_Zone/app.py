@@ -1278,6 +1278,8 @@ class TerminalSessionWidget(QWidget):
         delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_command(self.selected_quick_command_id()), page, role="drawerDanger")
         self.quick_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), page)
         self.quick_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1), page)
+        import_quick = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_commands_csv, page)
+        export_quick = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_commands_csv, page)
         layout.addWidget(title)
         layout.addWidget(self._drawer_section("Saved Commands", page))
         filter_line = QHBoxLayout()
@@ -1287,7 +1289,12 @@ class TerminalSessionWidget(QWidget):
         filter_line.addWidget(self.quick_group_button, 1)
         layout.addLayout(filter_line)
         layout.addWidget(self.quick_list, 1)
-        for row in ((send, add), (edit, delete), (self.quick_move_up_button, self.quick_move_down_button)):
+        for row in (
+            (send, add),
+            (edit, delete),
+            (self.quick_move_up_button, self.quick_move_down_button),
+            (import_quick, export_quick),
+        ):
             line = QHBoxLayout()
             line.setContentsMargins(0, 0, 0, 0)
             line.setSpacing(8)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProfile, TerminalSessionState
@@ -179,6 +179,35 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(sent, [("status", "LF")])
             self.assertEqual(session.command_input.text(), "")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_quick_command_sidebar_has_csv_import_export_actions(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_quick_command_sidebar_csv.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            quick_page = session.drawer_pages.widget(0)
+            button_texts = [button.text() for button in quick_page.findChildren(QPushButton)]
+
+            self.assertIn("Import CSV", button_texts)
+            self.assertIn("Export CSV", button_texts)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
