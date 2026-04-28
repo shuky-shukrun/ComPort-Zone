@@ -622,6 +622,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Send Selected Quick File", titles)
             self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
+            self.assertIn("Clear Command History", titles)
             self.assertIn("Search Terminal", titles)
             self.assertIn("Terminal Font Settings", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
@@ -630,8 +631,10 @@ class AppSessionTests(unittest.TestCase):
             self.assertNotIn("Export App Settings", titles)
             self.assertIn("Import Quick Commands from CSV", titles)
             self.assertIn("Export Quick Commands to CSV", titles)
+            self.assertIn("Delete All Quick Commands", titles)
             self.assertIn("Import Quick Files from CSV", titles)
             self.assertIn("Export Quick Files to CSV", titles)
+            self.assertIn("Delete All Quick Files", titles)
             self.assertTrue(any(title.startswith("Switch to Tab 1:") for title in titles))
             self.assertTrue(any(title == "Switch to Tab 2: Second" for title in titles))
 
@@ -682,13 +685,72 @@ class AppSessionTests(unittest.TestCase):
 
             quick_command_titles = [action.text() for action in window.quick_commands_menu.actions()]
             self.assertIn("Save Current Input", quick_command_titles)
+            self.assertIn("Delete All Quick Commands", quick_command_titles)
             self.assertIn("Import CSV", quick_command_titles)
             self.assertIn("Export CSV", quick_command_titles)
 
             quick_file_titles = [action.text() for action in window.quick_files_menu.actions()]
             self.assertIn("Run Selected", quick_file_titles)
+            self.assertIn("Delete All Quick Files", quick_file_titles)
             self.assertIn("Import CSV", quick_file_titles)
             self.assertIn("Export CSV", quick_file_titles)
+
+            edit_titles = [action.text() for action in window.edit_menu.actions()]
+            self.assertIn("Clear Command History", edit_titles)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_bulk_cleanup_actions_clear_history_quick_commands_and_files(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_bulk_cleanup.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            settings = AppSettings(
+                command_history=["status", "measure?"],
+                quick_commands=[
+                    QuickCommand(id="status-command", label="Status", command="status", group="General"),
+                    QuickCommand(id="reset-command", label="Reset", command="reset", group="Factory"),
+                ],
+                quick_command_hidden_groups=["Factory"],
+                quick_files=[
+                    QuickFile(id="bringup-file", label="Bring-up", path="C:/scripts/bringup.txt"),
+                ],
+            )
+            self.assertTrue(SettingsStore(settings_path).save(settings))
+            window = app_module.MainWindow()
+            session = window.current_session()
+
+            self.assertTrue(window.clear_command_history(confirm=False))
+            self.assertEqual(window.history_catalog.all_commands(), [])
+            self.assertEqual(session.history_store.all_commands(), [])
+
+            self.assertTrue(window.delete_all_quick_commands(confirm=False))
+            self.assertEqual(window.settings.quick_commands, [])
+            self.assertEqual(window.settings.quick_command_hidden_groups, [])
+            self.assertEqual(session.quick_list.count(), 0)
+
+            self.assertTrue(window.delete_all_quick_files(confirm=False))
+            self.assertEqual(window.settings.quick_files, [])
+            self.assertEqual(session.quick_file_list.count(), 0)
+
+            saved = SettingsStore(settings_path).load()
+            self.assertEqual(saved.command_history, [])
+            self.assertEqual(saved.quick_commands, [])
+            self.assertEqual(saved.quick_files, [])
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

@@ -42,6 +42,13 @@ class HistoryStore:
         self.reset_navigation()
         return True
 
+    def clear(self) -> None:
+        self._commands.clear()
+        self._counts.clear()
+        self._recency.clear()
+        self._tick = 0
+        self.reset_navigation()
+
     def all_commands(self) -> list[str]:
         return list(self._commands)
 

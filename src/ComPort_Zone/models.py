@@ -289,6 +289,7 @@ class AppSettings:
         if not data:
             return cls()
         serial_data = data.get("serial", data.get("serial_profile"))
+        quick_commands_present = "quick_commands" in data
         quick_commands_data = data.get("quick_commands")
         if quick_commands_data is None:
             quick_commands_data = data.get("quick_snippets", DEFAULT_SNIPPETS)
@@ -321,7 +322,8 @@ class AppSettings:
             ]
             or list(DEFAULT_SNIPPETS),
             quick_commands=quick_commands
-            or [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS],
+            if quick_commands_present
+            else quick_commands or [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS],
             quick_files=quick_files,
             quick_command_sort_mode=quick_command_sort_mode,
             quick_command_hidden_groups=[

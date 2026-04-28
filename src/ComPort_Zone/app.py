@@ -2700,6 +2700,8 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Search Terminal", "Ctrl+F", lambda: self.with_session(lambda s: s.show_search()), icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
         self._add_action(edit_menu, "Clear Terminal", "Ctrl+K", lambda: self.with_session(lambda s: s.clear_terminal()), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        edit_menu.addSeparator()
+        self._add_action(edit_menu, "Clear Command History", "", self.clear_command_history, icon=QStyle.StandardPixmap.SP_TrashIcon)
 
         self.view_menu = view_menu = self.menuBar().addMenu("View")
         self._add_action(view_menu, "Toggle Drawer", "Ctrl+B", self.toggle_drawer, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
@@ -2753,6 +2755,7 @@ class MainWindow(QMainWindow):
         self._add_action(quick_commands_menu, "Add Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
         self._add_action(quick_commands_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(quick_commands_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        self._add_action(quick_commands_menu, "Delete All Quick Commands", "", self.delete_all_quick_commands, icon=QStyle.StandardPixmap.SP_TrashIcon)
         quick_commands_menu.addSeparator()
         self._add_action(quick_commands_menu, "Import CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         self._add_action(quick_commands_menu, "Export CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
@@ -2763,6 +2766,7 @@ class MainWindow(QMainWindow):
         self._add_action(quick_files_menu, "Add File", "", self.add_quick_file, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
         self._add_action(quick_files_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(quick_files_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
+        self._add_action(quick_files_menu, "Delete All Quick Files", "", self.delete_all_quick_files, icon=QStyle.StandardPixmap.SP_TrashIcon)
         quick_files_menu.addSeparator()
         self._add_action(quick_files_menu, "Import CSV", "", self.import_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
         self._add_action(quick_files_menu, "Export CSV", "", self.export_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
@@ -2862,6 +2866,13 @@ class MainWindow(QMainWindow):
                 keywords="clean erase output",
             ),
             CommandPaletteEntry(
+                title="Clear Command History",
+                subtitle="Delete all remembered command input history",
+                callback=self.clear_command_history,
+                icon=QStyle.StandardPixmap.SP_TrashIcon,
+                keywords="history commands autocomplete delete cleanup",
+            ),
+            CommandPaletteEntry(
                 title="Search Terminal",
                 subtitle="Search output in the active tab",
                 callback=lambda: self.with_session(lambda session: session.show_search()),
@@ -2904,6 +2915,13 @@ class MainWindow(QMainWindow):
                 keywords="quick send snippets commands csv export",
             ),
             CommandPaletteEntry(
+                title="Delete All Quick Commands",
+                subtitle="Remove every saved quick command",
+                callback=self.delete_all_quick_commands,
+                icon=QStyle.StandardPixmap.SP_TrashIcon,
+                keywords="quick send snippets commands delete cleanup",
+            ),
+            CommandPaletteEntry(
                 title="Import Quick Files from CSV",
                 subtitle="Append saved command-file paths from a CSV file",
                 callback=self.import_quick_files_csv,
@@ -2916,6 +2934,13 @@ class MainWindow(QMainWindow):
                 callback=self.export_quick_files_csv,
                 icon=QStyle.StandardPixmap.SP_DialogSaveButton,
                 keywords="quick files command files scripts csv export",
+            ),
+            CommandPaletteEntry(
+                title="Delete All Quick Files",
+                subtitle="Remove every saved command-file shortcut",
+                callback=self.delete_all_quick_files,
+                icon=QStyle.StandardPixmap.SP_TrashIcon,
+                keywords="quick files command files scripts delete cleanup",
             ),
         ]
         for index in range(self.tabs.count()):
@@ -3815,6 +3840,76 @@ class MainWindow(QMainWindow):
         if removed:
             self.save_settings()
         return removed
+
+    def _confirm_bulk_delete(self, title: str, message: str, *, confirm: bool = True) -> bool:
+        if not confirm:
+            return True
+        return (
+            QMessageBox.question(
+                self,
+                title,
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def clear_command_history(self, *, confirm: bool = True) -> bool:
+        count = len(self.history_catalog.all_commands())
+        if count == 0:
+            self.set_status("Command history is already empty.")
+            return False
+        if not self._confirm_bulk_delete(
+            "Clear Command History",
+            f"Delete all {count} command history entr{'y' if count == 1 else 'ies'}?\n\n"
+            "Quick Commands are not affected.",
+            confirm=confirm,
+        ):
+            return False
+        self.history_catalog.clear()
+        for session in self.iter_sessions():
+            session.history_store.clear()
+            session._update_completion_model()
+        self.save_settings()
+        self.set_status(f"Cleared {count} command history entr{'y' if count == 1 else 'ies'}.")
+        return True
+
+    def delete_all_quick_commands(self, *, confirm: bool = True) -> bool:
+        count = len(self.settings.quick_commands)
+        if count == 0:
+            self.set_status("No quick commands to delete.")
+            return False
+        if not self._confirm_bulk_delete(
+            "Delete All Quick Commands",
+            f"Delete all {count} quick command{'s' if count != 1 else ''}?\n\n"
+            "Command history is not affected.",
+            confirm=confirm,
+        ):
+            return False
+        self.settings.quick_commands = []
+        self.settings.quick_command_hidden_groups = []
+        self.refresh_quick_commands_everywhere()
+        self.save_settings()
+        self.set_status(f"Deleted {count} quick command{'s' if count != 1 else ''}.")
+        return True
+
+    def delete_all_quick_files(self, *, confirm: bool = True) -> bool:
+        count = len(self.settings.quick_files)
+        if count == 0:
+            self.set_status("No quick files to delete.")
+            return False
+        if not self._confirm_bulk_delete(
+            "Delete All Quick Files",
+            f"Delete all {count} saved quick file{'s' if count != 1 else ''}?",
+            confirm=confirm,
+        ):
+            return False
+        self.settings.quick_files = []
+        self.refresh_quick_files_everywhere()
+        self.save_settings()
+        self.set_status(f"Deleted {count} quick file{'s' if count != 1 else ''}.")
+        return True
 
     def show_app_settings_transfer_dialog(self) -> None:
         dialog = AppSettingsTransferDialog(parent=self)
