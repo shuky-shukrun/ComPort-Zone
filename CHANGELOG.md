@@ -2,11 +2,21 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.2.0 - 2026-04-28
+
+### Added
+
+- Add built-in command file editor
+- Support of `EXPECT` assertions to batch command files
+- Refresh serial settings ports while dialog is open
+
+### Fixed
+
+- Fix command file `WAIT` timing on Windows
+
 ## 0.1.0 - 2026-04-26
 
 First public release candidate for ComPort Zone.
-
-Version `0.0.2` was used during development and was not formally released. This release is treated as the next formal release after `0.0.1`.
 
 Source range used for this changelog: commits after `f0a9a77` (`add version and set to v0.0.1`) through `780beff` (`update resources`).
 
