@@ -3,6 +3,5 @@ WAIT 100
 EXPECT 0,"No error"
 WAIT 1000
 
-
 // Comment line C style
 # Commnet line python style

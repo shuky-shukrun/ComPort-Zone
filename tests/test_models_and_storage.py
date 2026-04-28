@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 from ComPort_Zone.models import (
     AppSettings,
+    CommandFileTabState,
     QuickCommand,
     QuickFile,
     SerialProfile,
@@ -63,6 +64,13 @@ class ModelsAndStorageTests(unittest.TestCase):
                 ),
                 TerminalSessionState(title="DUT B"),
             ],
+            restored_command_files=[
+                CommandFileTabState(
+                    path="C:/scripts/bringup.txt",
+                    text="SEND *IDN?\n",
+                    dirty=True,
+                )
+            ],
             theme="Scope Amber",
             timestamps_enabled=False,
             terminal_font_size=13,
@@ -113,6 +121,10 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.restored_tabs[0].terminal_text, "boot ok")
         self.assertEqual(loaded.restored_tabs[0].command_draft, "55 AA")
         self.assertEqual(loaded.restored_tabs[0].send_mode, "Hex Bytes")
+        self.assertEqual(len(loaded.restored_command_files), 1)
+        self.assertEqual(loaded.restored_command_files[0].path, "C:/scripts/bringup.txt")
+        self.assertEqual(loaded.restored_command_files[0].text, "SEND *IDN?\n")
+        self.assertTrue(loaded.restored_command_files[0].dirty)
         self.assertEqual(loaded.theme, "Scope Amber")
         self.assertFalse(loaded.timestamps_enabled)
         self.assertEqual(loaded.terminal_font_size, 13)

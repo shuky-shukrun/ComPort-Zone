@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QToolButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProfile, TerminalSessionState
@@ -461,6 +461,93 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_command_file_opens_as_dirty_editor_tab(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_editor_tab.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            start_count = window.tabs.count()
+
+            editor = window.add_command_file_tab()
+            editor.setPlainText("SEND *IDN?\n")
+            self.qt.processEvents()
+
+            self.assertEqual(window.tabs.count(), start_count + 1)
+            self.assertIs(window.current_command_file_editor(), editor)
+            self.assertIn("Untitled", window.tabs.tabText(window.tabs.indexOf(editor)))
+            self.assertIn("*", window.tabs.tabText(window.tabs.indexOf(editor)))
+            self.assertIn("Command file", window.connection_status_label.text())
+            self.assertFalse(window.connection_action_button.isEnabled())
+            self.assertTrue(hasattr(editor, "quick_command_list"))
+            self.assertTrue(hasattr(editor, "quick_file_list"))
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_command_file_run_menu_targets_connected_terminal(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_editor_run.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+
+        class FakePort:
+            is_open = True
+
+            def close(self) -> None:
+                self.is_open = False
+
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.profile.port = "COM88"
+            session.serial_client._serial = FakePort()
+            started: list[tuple[str, object, object]] = []
+            session.run_script_text = lambda text, source_label="Editor buffer", source_path=None: started.append(
+                (text, source_label, source_path)
+            )
+            editor = window.add_command_file_tab()
+            editor.setPlainText("SEND *IDN?\n")
+
+            menu = QMenu(window)
+            window.populate_run_editor_menu(menu, editor)
+            actions = menu.actions()
+            editor.refresh_run_targets()
+
+            self.assertEqual(len(actions), 1)
+            self.assertIn("COM88", actions[0].text())
+            self.assertIn("COM88", editor.run_target_combo.currentText())
+            actions[0].trigger()
+            self.assertEqual(started, [("SEND *IDN?\n", "Untitled", None)])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_connection_settings_refreshes_ports_while_open(self) -> None:
         ports = [
             [{"device": "COM1", "description": "USB Serial A"}],
@@ -668,8 +755,11 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Connect / Disconnect", titles)
             self.assertIn("Serial Settings", titles)
             self.assertIn("Run Command File", titles)
+            self.assertIn("New Command File", titles)
+            self.assertIn("Open Command File Editor", titles)
             self.assertIn("Stop Command File", titles)
             self.assertIn("Send Selected Quick File", titles)
+            self.assertIn("Edit Selected Quick File", titles)
             self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
             self.assertIn("Clear Command History", titles)
@@ -733,6 +823,12 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Quick Commands", tools_titles)
             self.assertIn("Quick Files", tools_titles)
 
+            command_file_titles = [action.text() for action in window.command_files_menu.actions()]
+            self.assertIn("New Command File", command_file_titles)
+            self.assertIn("Open Command File Editor", command_file_titles)
+            self.assertIn("Run in Terminal", command_file_titles)
+            self.assertIn("Run Command File", command_file_titles)
+
             quick_command_titles = [action.text() for action in window.quick_commands_menu.actions()]
             self.assertIn("Save Current Input", quick_command_titles)
             self.assertIn("Delete All Quick Commands", quick_command_titles)
@@ -741,6 +837,7 @@ class AppSessionTests(unittest.TestCase):
 
             quick_file_titles = [action.text() for action in window.quick_files_menu.actions()]
             self.assertIn("Run Selected", quick_file_titles)
+            self.assertIn("Edit Selected File", quick_file_titles)
             self.assertIn("Delete All Quick Files", quick_file_titles)
             self.assertIn("Import CSV", quick_file_titles)
             self.assertIn("Export CSV", quick_file_titles)
@@ -851,14 +948,11 @@ class AppSessionTests(unittest.TestCase):
         old_config_path = app_module.default_config_path
         old_prompt_current = app_module.MainWindow.prompt_current_session_settings
         old_prompt_session = app_module.MainWindow.prompt_session_settings
-        old_load_batch_file = app_module.load_batch_file
-        loaded_paths: list[Path] = []
         started_steps: list[object] = []
         window = None
         app_module.default_config_path = lambda: settings_path
         app_module.MainWindow.prompt_current_session_settings = lambda self: None
         app_module.MainWindow.prompt_session_settings = lambda self, session: None
-        app_module.load_batch_file = lambda path: loaded_paths.append(Path(path)) or ["step"]
         try:
             script_path.write_text("SEND status\n", encoding="utf-8")
             window = app_module.MainWindow()
@@ -879,8 +973,9 @@ class AppSessionTests(unittest.TestCase):
 
             session.run_selected_quick_file()
 
-            self.assertEqual(loaded_paths, [script_path])
-            self.assertEqual(started_steps, [["step"]])
+            self.assertEqual(len(started_steps), 1)
+            self.assertEqual([step.kind for step in started_steps[0]], ["send"])
+            self.assertEqual([step.payload for step in started_steps[0]], ["status"])
             self.assertEqual(window.settings.last_script_path, str(script_path.parent))
 
             window.delete_quick_file(session.selected_quick_file_id())
@@ -889,7 +984,6 @@ class AppSessionTests(unittest.TestCase):
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
             app_module.MainWindow.prompt_session_settings = old_prompt_session
-            app_module.load_batch_file = old_load_batch_file
             if window is not None:
                 for active_session in window.iter_sessions():
                     active_session.shutdown()

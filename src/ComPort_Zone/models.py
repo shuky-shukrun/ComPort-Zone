@@ -226,6 +226,30 @@ class TerminalSessionState:
 
 
 @dataclass(slots=True)
+class CommandFileTabState:
+    path: str = ""
+    text: str = ""
+    dirty: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "text": self.text,
+            "dirty": self.dirty,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "CommandFileTabState":
+        if not data:
+            return cls()
+        return cls(
+            path=str(data.get("path", "")),
+            text=str(data.get("text", "")),
+            dirty=bool(data.get("dirty", False)),
+        )
+
+
+@dataclass(slots=True)
 class AppSettings:
     serial: SerialProfile = field(default_factory=SerialProfile)
     command_history: list[str] = field(default_factory=list)
@@ -238,6 +262,7 @@ class AppSettings:
     quick_command_hidden_groups: list[str] = field(default_factory=list)
     quick_file_sort_mode: str = "Custom"
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
+    restored_command_files: list[CommandFileTabState] = field(default_factory=list)
     theme: str = "VS Code Dark"
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
@@ -263,6 +288,7 @@ class AppSettings:
             "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
             "quick_file_sort_mode": self.quick_file_sort_mode,
             "restored_tabs": [session.to_dict() for session in self.restored_tabs],
+            "restored_command_files": [command_file.to_dict() for command_file in self.restored_command_files],
             "theme": self.theme,
             "timestamps_enabled": self.timestamps_enabled,
             "terminal_font_size": self.terminal_font_size,
@@ -335,6 +361,10 @@ class AppSettings:
             restored_tabs=[
                 TerminalSessionState.from_dict(item)
                 for item in data.get("restored_tabs", [])
+            ],
+            restored_command_files=[
+                CommandFileTabState.from_dict(item)
+                for item in data.get("restored_command_files", [])
             ],
             theme="VS Code Dark"
             if str(data.get("theme", "VS Code Dark")) == "Workshop Dark"

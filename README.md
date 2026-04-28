@@ -8,10 +8,11 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 
 - Terminal-first layout with minimal chrome and a VS Code dark default theme
 - Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
-- Tabs for independent serial sessions
+- Tabs for independent serial sessions and command-file editor documents
 - Foldable and resizable left drawer, collapsed by default
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
 - Separate quick-file drawer entry for saved command-file paths, with sorting, drag/manual reorder, double-click/send execution, Explorer reveal, and CSV import/export
+- Built-in command-file editor tabs with line numbers, autocomplete, syntax highlighting, unknown-command warnings, dirty-state tab indicators, file save/open, and explicit run targets
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
 - App settings import/export as JSON files instead of an internal profile list
 - App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences
@@ -26,7 +27,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - Clear, copy, select all, pause/resume output, terminal font settings, and line wrap controls
 - Per-tab command file execution with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
 - Per-tab logging to text files
-- Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, and restored tabs
+- Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, restored terminal tabs, and restored command-file tabs
 
 ## Install
 
@@ -83,6 +84,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Force
 ## Batch Script Format
 
 Plain text files can be run from `Tools > Command Files > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
+
+Use `Tools > Command Files > New Command File` or `Tools > Command Files > Open Command File Editor` to create and edit command files as workspace tabs inside ComPort Zone. Quick Files can also be opened in an editor tab from `Tools > Quick Files > Edit Selected File` or from the Quick Files right-click menu. The editor supports:
+
+- Autocomplete from batch keywords, comments, known commands, command history, quick commands, and words already used in the current command file
+- Quick-command suggestion filtering by group
+- Syntax highlighting for batch keywords, comments, parameters, and invalid command-file syntax
+- Optional unknown-command warnings, where the first command token is checked before arguments, so `SINK:CURR 4.5` validates against `SINK:CURR`
+- New, Open, Save, Save As, and Validate actions
+- Dirty tab indicators: unsaved files show `*`; validation errors color the tab as an error
+- Multiple command files open at the same time
+- Editor font zoom through the toolbar buttons or `Ctrl` + mouse wheel
+- Editor-side quick drawer remains visible while editing: quick commands insert at the cursor, and quick files open into the editor after a save/discard confirmation when needed
+- `Ctrl+S` saves the current command file, and `Ctrl+Shift+S` opens Save As
+- Bottom editor run bar with a connected-COM dropdown and Send button
+- Running unsaved editor content through the same command-file engine used by Quick Files
+- Explicit execution from `Run in Terminal > <connected COM port>`, available from the command-file menu and editor-tab context menu
 
 The parser also supports a small batch DSL:
 

@@ -54,15 +54,17 @@ from .batch import (
     BatchParseError,
     BatchRunner,
     find_batch_parameters,
-    load_batch_file,
+    parse_batch_script,
     parse_batch_template,
     parse_hex_payload,
     substitute_batch_parameters,
 )
+from .command_editor import CommandEditorSources, CommandFileEditorDialog
 from .history import HistoryStore
 from . import __version__
 from .models import (
     AppSettings,
+    CommandFileTabState,
     FLOW_CONTROL_OPTIONS,
     LINE_ENDINGS,
     QuickCommand,
@@ -1978,6 +1980,12 @@ class TerminalSessionWidget(QWidget):
             lambda quick_file_id=quick_file_id: self.host.show_quick_file_in_explorer(quick_file_id),
             icon=QStyle.StandardPixmap.SP_DirOpenIcon,
         )
+        self.host._add_context_action(
+            menu,
+            "Edit File",
+            lambda quick_file_id=quick_file_id: self.host.open_quick_file_editor(quick_file_id),
+            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+        )
         menu.addSeparator()
         self.host._add_context_action(
             menu,
@@ -2173,7 +2181,12 @@ class TerminalSessionWidget(QWidget):
         except OSError as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
             return
+        self.run_script_text(script_text, source_label=str(path), source_path=path)
 
+    def run_script_text(self, script_text: str, *, source_label: str = "Editor buffer", source_path: Path | None = None) -> None:
+        if not script_text.strip():
+            QMessageBox.information(self, "Run Command File", "Command file is empty.")
+            return
         parameter_occurrences = find_batch_parameters(script_text)
         if parameter_occurrences:
             parameter_sheet = self._collect_parameter_values(parameter_occurrences)
@@ -2191,20 +2204,22 @@ class TerminalSessionWidget(QWidget):
                     ignored_defaults,
                 )
 
-            self.host.settings.last_script_path = str(path.parent)
+            if source_path is not None:
+                self.host.settings.last_script_path = str(source_path.parent)
             self.batch_runner.start_template(template_steps, resolve_line)
-            self.host.set_status(f"Running command file: {path}")
+            self.host.set_status(f"Running command file: {source_label}")
             self.host.save_settings()
             return
 
         try:
-            steps = load_batch_file(path)
-        except (BatchParseError, OSError) as exc:
+            steps = parse_batch_script(script_text)
+        except BatchParseError as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
             return
-        self.host.settings.last_script_path = str(path.parent)
+        if source_path is not None:
+            self.host.settings.last_script_path = str(source_path.parent)
         self.batch_runner.start(steps)
-        self.host.set_status(f"Running command file: {path}")
+        self.host.set_status(f"Running command file: {source_label}")
         self.host.save_settings()
 
     def _collect_parameter_values(self, parameter_occurrences) -> tuple[dict[str, str], set[str]] | None:
@@ -2815,6 +2830,12 @@ class MainWindow(QMainWindow):
 
         self.command_files_menu = command_files_menu = tools_menu.addMenu("Command Files")
         command_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_MediaPlay))
+        self._add_action(command_files_menu, "New Command File", "", self.new_command_file_editor, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        self._add_action(command_files_menu, "Open Command File Editor", "", self.open_command_file_editor, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        self.run_editor_menu = command_files_menu.addMenu("Run in Terminal")
+        self.run_editor_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ArrowForward))
+        self.run_editor_menu.aboutToShow.connect(lambda menu=self.run_editor_menu: self.populate_run_editor_menu(menu))
+        command_files_menu.addSeparator()
         self._add_action(command_files_menu, "Run Command File", "Ctrl+R", lambda: self.with_session(lambda s: s.run_script()), icon=QStyle.StandardPixmap.SP_MediaPlay)
         self._add_action(command_files_menu, "Stop Command File", "", lambda: self.with_session(lambda s: s.stop_script()), icon=QStyle.StandardPixmap.SP_MediaStop)
 
@@ -2835,6 +2856,7 @@ class MainWindow(QMainWindow):
         quick_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self._add_action(quick_files_menu, "Run Selected", "", lambda: self.with_session(lambda s: s.run_selected_quick_file()), icon=QStyle.StandardPixmap.SP_ArrowForward)
         self._add_action(quick_files_menu, "Add File", "", self.add_quick_file, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
+        self._add_action(quick_files_menu, "Edit Selected File", "", self.edit_selected_quick_file_content, icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
         self._add_action(quick_files_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(quick_files_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
         self._add_action(quick_files_menu, "Delete All Quick Files", "", self.delete_all_quick_files, icon=QStyle.StandardPixmap.SP_TrashIcon)
@@ -2885,6 +2907,146 @@ class MainWindow(QMainWindow):
     def show_command_palette(self) -> None:
         CommandPaletteDialog(self).exec()
 
+    def command_editor_sources(self) -> CommandEditorSources:
+        return CommandEditorSources(
+            history_commands=self.history_catalog.all_commands(),
+            quick_commands=list(self.settings.quick_commands),
+        )
+
+    def editor_font(self) -> QFont:
+        return pick_mono_font(
+            max(TERMINAL_FONT_MIN, min(self.settings.terminal_font_size, TERMINAL_FONT_MAX)),
+            self.settings.terminal_font_family,
+        )
+
+    def new_command_file_editor(self) -> None:
+        self.add_command_file_tab()
+
+    def open_command_file_editor(self, path: Path | str | None = None) -> None:
+        if path is None:
+            start_dir = self.settings.last_script_path or str(Path.cwd())
+            selected, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open Command File Editor",
+                start_dir,
+                "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+            )
+            if not selected:
+                return
+            path = Path(selected)
+        elif isinstance(path, str):
+            path = Path(path)
+        self.add_command_file_tab(path=path)
+
+    def add_command_file_tab(self, path: Path | None = None, state: CommandFileTabState | None = None) -> CommandFileEditorDialog:
+        editor = CommandFileEditorDialog(
+            sources=self.command_editor_sources(),
+            path=path,
+            run_callback=None,
+            font_change_callback=self.change_font_size,
+            quick_files_supplier=lambda: list(self.settings.quick_files),
+            run_targets_supplier=self.command_file_run_targets,
+            run_target_callback=self.run_editor_in_terminal_by_id,
+            embedded=True,
+            show_run_button=False,
+            show_workspace_side_panel=True,
+            parent=self.tabs,
+        )
+        editor.apply_editor_font(self.editor_font())
+        if state is not None:
+            if state.text or state.dirty or not state.path:
+                editor.restore_text(state.text, dirty=state.dirty)
+            if state.path:
+                editor.path = Path(state.path)
+                editor.update_window_state()
+                editor.update_validation_status()
+        editor.stateChanged.connect(self.update_tab_titles)
+        editor.stateChanged.connect(self.sync_status_from_current_session)
+        index = self.tabs.addTab(
+            editor,
+            standard_icon(QStyle.StandardPixmap.SP_FileIcon),
+            editor.tab_title(),
+        )
+        self.attach_tab_close_button(index, editor)
+        self.tabs.setCurrentIndex(index)
+        self.update_tab_titles()
+        self.refresh_command_file_targets()
+        self.save_settings()
+        return editor
+
+    def run_command_editor_buffer(self, text: str, path: Path | None) -> None:
+        session = self.current_session()
+        if not session:
+            self.set_status("No active session to run command file.")
+            return
+        label = str(path) if path is not None else "editor buffer"
+        session.run_script_text(text, source_label=label, source_path=path)
+
+    def connected_terminal_sessions(self) -> list[TerminalSessionWidget]:
+        return [
+            session
+            for session in self.iter_sessions()
+            if session.serial_client.is_connected
+        ]
+
+    def command_file_run_targets(self) -> list[tuple[int, str]]:
+        return [
+            (session.session_id, session.connection_status_text())
+            for session in self.connected_terminal_sessions()
+        ]
+
+    def session_by_id(self, session_id: int) -> TerminalSessionWidget | None:
+        return next((session for session in self.iter_sessions() if session.session_id == session_id), None)
+
+    def run_editor_in_terminal_by_id(self, editor: CommandFileEditorDialog, session_id: int) -> None:
+        session = self.session_by_id(session_id)
+        if not session:
+            self.set_status("Selected terminal is no longer available.")
+            return
+        self.run_editor_in_terminal(editor, session)
+
+    def refresh_command_file_targets(self) -> None:
+        for editor in self.iter_command_file_editors():
+            editor.refresh_run_targets()
+
+    def populate_run_editor_menu(self, menu: QMenu, editor: CommandFileEditorDialog | None = None) -> None:
+        menu.clear()
+        editor = editor or self.current_command_file_editor()
+        if editor is None:
+            action = menu.addAction("Open a command-file tab first")
+            action.setEnabled(False)
+            return
+        if editor.validation_errors():
+            action = menu.addAction("Fix syntax errors before running")
+            action.setEnabled(False)
+            return
+        sessions = self.connected_terminal_sessions()
+        if not sessions:
+            action = menu.addAction("No connected terminals")
+            action.setEnabled(False)
+            return
+        for session in sessions:
+            label = session.connection_status_text()
+            action = QAction(label, self)
+            action.setIcon(standard_icon(QStyle.StandardPixmap.SP_ComputerIcon, 16, self.theme.rx))
+            action.triggered.connect(lambda _checked=False, target=session, source=editor: self.run_editor_in_terminal(source, target))
+            menu.addAction(action)
+
+    def run_editor_in_terminal(self, editor: CommandFileEditorDialog, session: TerminalSessionWidget) -> None:
+        if self.tabs.indexOf(editor) < 0 or self.tabs.indexOf(session) < 0:
+            self.set_status("Command-file tab or terminal tab is no longer available.")
+            return
+        if not session.serial_client.is_connected:
+            self.set_status(f"{session.tab_title} is not connected.")
+            return
+        if editor.validation_errors():
+            editor.update_validation_status()
+            self.set_status("Fix command-file syntax errors before running.")
+            return
+        label = str(editor.path) if editor.path else editor.display_name()
+        session.run_script_text(editor.text(), source_label=label, source_path=editor.path)
+        self.set_status(f"Running {editor.display_name()} in {session.tab_title}.")
+
     def command_palette_entries(self) -> list[CommandPaletteEntry]:
         entries = [
             CommandPaletteEntry(
@@ -2909,6 +3071,20 @@ class MainWindow(QMainWindow):
                 keywords="script batch file",
             ),
             CommandPaletteEntry(
+                title="New Command File",
+                subtitle="Create a command file in the built-in editor",
+                callback=self.new_command_file_editor,
+                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+                keywords="script batch file editor create",
+            ),
+            CommandPaletteEntry(
+                title="Open Command File Editor",
+                subtitle="Open or edit a command file with autocomplete and validation",
+                callback=self.open_command_file_editor,
+                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+                keywords="script batch file editor autocomplete validate",
+            ),
+            CommandPaletteEntry(
                 title="Stop Command File",
                 subtitle="Stop the running command file in the active tab",
                 callback=lambda: self.with_session(lambda session: session.stop_script()),
@@ -2921,6 +3097,13 @@ class MainWindow(QMainWindow):
                 callback=lambda: self.with_session(lambda session: session.run_selected_quick_file()),
                 icon=QStyle.StandardPixmap.SP_ArrowForward,
                 keywords="script batch file saved quick",
+            ),
+            CommandPaletteEntry(
+                title="Edit Selected Quick File",
+                subtitle="Open the selected saved command file in the built-in editor",
+                callback=self.edit_selected_quick_file_content,
+                icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+                keywords="script batch file saved quick edit",
             ),
             CommandPaletteEntry(
                 title="Add Quick File",
@@ -3016,16 +3199,23 @@ class MainWindow(QMainWindow):
         ]
         for index in range(self.tabs.count()):
             session = self.session_at(index)
-            title = session.tab_title if session else self.tabs.tabText(index)
+            editor = self.command_file_editor_at(index)
+            title = session.tab_title if session else editor.tab_title() if editor else self.tabs.tabText(index)
             port = session.profile.port if session and session.profile.port else "No port"
-            subtitle = session.connection_status_text() if session else port
+            subtitle = session.connection_status_text() if session else editor.status_summary() if editor else port
+            icon = QStyle.StandardPixmap.SP_ComputerIcon if session else QStyle.StandardPixmap.SP_FileIcon
+            keywords = (
+                f"switch tab terminal session {index + 1} {title} {port} {session.title}"
+                if session
+                else f"switch tab command file editor script {index + 1} {title}"
+            )
             entries.append(
                 CommandPaletteEntry(
                     title=f"Switch to Tab {index + 1}: {title}",
                     subtitle=subtitle,
                     callback=lambda tab_index=index: self.tabs.setCurrentIndex(tab_index),
-                    icon=QStyle.StandardPixmap.SP_ComputerIcon,
-                    keywords=f"switch tab terminal session {index + 1} {title} {port} {session.title if session else ''}",
+                    icon=icon,
+                    keywords=keywords,
                 )
             )
         return entries
@@ -3045,9 +3235,70 @@ class MainWindow(QMainWindow):
                 lambda: self.add_session(prompt_settings=True),
                 icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
             )
+            self._add_context_action(
+                menu,
+                "New Command File",
+                self.new_command_file_editor,
+                icon=QStyle.StandardPixmap.SP_FileIcon,
+            )
             return menu
 
         session = self.session_at(index)
+        editor = self.command_file_editor_at(index)
+        if editor:
+            menu.setTitle(editor.tab_title())
+            self._add_context_action(
+                menu,
+                "New Command File",
+                self.new_command_file_editor,
+                icon=QStyle.StandardPixmap.SP_FileIcon,
+            )
+            self._add_context_action(
+                menu,
+                "Save",
+                editor.save,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+                enabled=editor.is_dirty() or editor.path is None,
+            )
+            self._add_context_action(
+                menu,
+                "Save As",
+                editor.save_as,
+                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+            )
+            run_menu = menu.addMenu("Run in Terminal")
+            run_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ArrowForward))
+            run_menu.aboutToShow.connect(lambda menu=run_menu, source=editor: self.populate_run_editor_menu(menu, source))
+            if editor.path:
+                self._add_context_action(
+                    menu,
+                    "Show in Explorer",
+                    lambda source=editor: self.show_path_in_explorer(source.path),
+                    icon=QStyle.StandardPixmap.SP_DirOpenIcon,
+                )
+            menu.addSeparator()
+            self._add_context_action(
+                menu,
+                "Close Tab",
+                lambda tab_index=index: self.close_session(tab_index),
+                icon=QStyle.StandardPixmap.SP_DialogCloseButton,
+            )
+            self._add_context_action(
+                menu,
+                "Close Other Tabs",
+                lambda tab_index=index: self.close_other_sessions(tab_index),
+                icon=QStyle.StandardPixmap.SP_TitleBarCloseButton,
+                enabled=self.tabs.count() > 1,
+            )
+            self._add_context_action(
+                menu,
+                "Close Tabs to the Right",
+                lambda tab_index=index: self.close_sessions_to_right(tab_index),
+                icon=QStyle.StandardPixmap.SP_ArrowRight,
+                enabled=index < self.tabs.count() - 1,
+            )
+            return menu
+
         is_connected = bool(session and session.serial_client.is_connected)
         is_reconnecting = bool(session and session.serial_client.is_reconnecting)
         menu.setTitle(session.tab_title if session else self.tabs.tabText(index))
@@ -3130,9 +3381,12 @@ class MainWindow(QMainWindow):
             )
             if prompt_first_settings:
                 self.prompt_current_session_settings()
-            return
-        for state in states:
-            self.add_session(state, prompt_settings=False)
+        else:
+            for state in states:
+                self.add_session(state, prompt_settings=False)
+        for command_file_state in self.settings.restored_command_files:
+            path = Path(command_file_state.path) if command_file_state.path else None
+            self.add_command_file_tab(path=path, state=command_file_state)
         if self.tabs.count() == 0:
             self.add_session(prompt_settings=False)
 
@@ -3160,16 +3414,16 @@ class MainWindow(QMainWindow):
         session.serial_client.connect(session.profile)
         session._update_connection_ui(session.serial_client.is_connected)
 
-    def attach_tab_close_button(self, index: int, session: TerminalSessionWidget) -> None:
+    def attach_tab_close_button(self, index: int, widget: QWidget) -> None:
         close_button = QToolButton(self.tabs.tabBar())
         close_button.setObjectName("tabCloseButton")
         close_button.setAutoRaise(True)
         close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         close_button.setFixedSize(22, 22)
-        close_button.setToolTip(f"Close {session.tab_title}")
+        close_button.setToolTip(f"Close {self.tab_display_title(widget)}")
         set_button_icon(close_button, QStyle.StandardPixmap.SP_DialogCloseButton, 13)
         close_button.clicked.connect(
-            lambda _checked=False, target=session: self.close_session(self.tabs.indexOf(target))
+            lambda _checked=False, target=widget: self.close_session(self.tabs.indexOf(target))
         )
         self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
 
@@ -3213,26 +3467,51 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.close_session(index)
 
-    def close_session(self, index: int) -> None:
+    def close_session(self, index: int) -> bool:
         if index < 0 or index >= self.tabs.count():
-            return
-        session = self.tabs.widget(index)
-        if isinstance(session, TerminalSessionWidget):
-            session.shutdown()
+            return False
+        widget = self.tabs.widget(index)
+        if isinstance(widget, CommandFileEditorDialog) and not self.confirm_close_command_file_tab(widget):
+            return False
+        if isinstance(widget, TerminalSessionWidget):
+            widget.shutdown()
         self.tabs.removeTab(index)
-        if session:
-            session.deleteLater()
+        if widget:
+            widget.deleteLater()
         if self.tabs.count() == 0:
             self.add_session()
         self.save_settings()
+        return True
+
+    def confirm_close_command_file_tab(self, editor: CommandFileEditorDialog) -> bool:
+        if not editor.is_dirty():
+            return True
+        message = QMessageBox(self)
+        message.setWindowTitle("Close Command File")
+        message.setText(f"Save changes to {editor.display_name()} before closing?")
+        message.setIcon(QMessageBox.Icon.Warning)
+        save_button = message.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        discard_button = message.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
+        message.setDefaultButton(save_button)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is save_button:
+            return editor.save()
+        if clicked is discard_button:
+            editor._dirty = False
+            editor.update_window_state()
+            return True
+        return clicked is not cancel_button and False
 
     def close_other_sessions(self, index: int) -> None:
-        target = self.session_at(index)
+        target = self.tabs.widget(index) if 0 <= index < self.tabs.count() else None
         if not target:
             return
         for tab_index in range(self.tabs.count() - 1, -1, -1):
             if self.tabs.widget(tab_index) is not target:
-                self.close_session(tab_index)
+                if not self.close_session(tab_index):
+                    break
         current_index = self.tabs.indexOf(target)
         if current_index >= 0:
             self.tabs.setCurrentIndex(current_index)
@@ -3242,7 +3521,8 @@ class MainWindow(QMainWindow):
         if index < 0 or index >= self.tabs.count() - 1:
             return
         for tab_index in range(self.tabs.count() - 1, index, -1):
-            self.close_session(tab_index)
+            if not self.close_session(tab_index):
+                break
         self.tabs.setCurrentIndex(min(index, self.tabs.count() - 1))
         self.save_settings()
 
@@ -3265,9 +3545,17 @@ class MainWindow(QMainWindow):
         widget = self.tabs.currentWidget()
         return widget if isinstance(widget, TerminalSessionWidget) else None
 
+    def current_command_file_editor(self) -> CommandFileEditorDialog | None:
+        widget = self.tabs.currentWidget()
+        return widget if isinstance(widget, CommandFileEditorDialog) else None
+
     def session_at(self, index: int) -> TerminalSessionWidget | None:
         widget = self.tabs.widget(index)
         return widget if isinstance(widget, TerminalSessionWidget) else None
+
+    def command_file_editor_at(self, index: int) -> CommandFileEditorDialog | None:
+        widget = self.tabs.widget(index)
+        return widget if isinstance(widget, CommandFileEditorDialog) else None
 
     def open_session_settings(self, index: int) -> None:
         session = self.session_at(index)
@@ -3301,25 +3589,64 @@ class MainWindow(QMainWindow):
                 sessions.append(widget)
         return sessions
 
+    def iter_command_file_editors(self) -> list[CommandFileEditorDialog]:
+        editors: list[CommandFileEditorDialog] = []
+        for index in range(self.tabs.count()):
+            widget = self.tabs.widget(index)
+            if isinstance(widget, CommandFileEditorDialog):
+                editors.append(widget)
+        return editors
+
     def with_session(self, callback) -> None:
         session = self.current_session()
         if session:
             callback(session)
 
+    def tab_display_title(self, widget: QWidget | None) -> str:
+        if isinstance(widget, TerminalSessionWidget):
+            return widget.tab_title
+        if isinstance(widget, CommandFileEditorDialog):
+            return widget.tab_title()
+        return "Tab"
+
     def update_tab_titles(self) -> None:
-        for index, session in enumerate(self.iter_sessions()):
-            self.tabs.setTabText(index, session.tab_title)
-            state = session.connection_state()
-            color = self.connection_state_color(state)
-            icon = QStyle.StandardPixmap.SP_BrowserReload if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
-            self.tabs.setTabIcon(index, standard_icon(icon, 18, color))
-            self.tabs.setTabToolTip(index, session.connection_status_text())
-            self.tabs.tabBar().setTabTextColor(index, QColor(color))
+        for index in range(self.tabs.count()):
+            widget = self.tabs.widget(index)
+            if isinstance(widget, TerminalSessionWidget):
+                self.tabs.setTabText(index, widget.tab_title)
+                state = widget.connection_state()
+                color = self.connection_state_color(state)
+                icon = QStyle.StandardPixmap.SP_BrowserReload if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
+                self.tabs.setTabIcon(index, standard_icon(icon, 18, color))
+                self.tabs.setTabToolTip(index, widget.connection_status_text())
+                self.tabs.tabBar().setTabTextColor(index, QColor(color))
+            elif isinstance(widget, CommandFileEditorDialog):
+                color = self.theme.status if widget.is_dirty() else self.theme.text
+                if widget.validation_errors():
+                    color = self.theme.error
+                self.tabs.setTabText(index, widget.tab_title())
+                self.tabs.setTabIcon(index, standard_icon(QStyle.StandardPixmap.SP_FileIcon, 18, color))
+                self.tabs.setTabToolTip(index, widget.status_summary())
+                self.tabs.tabBar().setTabTextColor(index, QColor(color))
 
     def sync_status_from_current_session(self) -> None:
         session = self.current_session()
         if session:
             self.update_connection_status(session)
+            return
+        editor = self.current_command_file_editor()
+        if editor:
+            self.connection_status_label.setText(editor.status_summary())
+            self.connection_status_label.setToolTip("Command-file editor tab")
+            set_widget_state(self.connection_status_label, "no-port")
+            self.connection_action_button.setEnabled(False)
+            self.connection_action_button.setText("Terminal only")
+            set_button_icon(self.connection_action_button, QStyle.StandardPixmap.SP_FileIcon, 15)
+            set_button_role(self.connection_action_button, "no-port")
+            self.set_status(editor.status_summary())
+            return
+        self.connection_status_label.setText("No tab")
+        self.connection_action_button.setEnabled(False)
 
     def connection_state_color(self, state: str) -> str:
         if state == "connected":
@@ -3343,6 +3670,7 @@ class MainWindow(QMainWindow):
             session.open_connection_settings(connect_after_accept=True)
 
     def update_connection_status(self, session: TerminalSessionWidget | None = None) -> None:
+        self.refresh_command_file_targets()
         session = session or self.current_session()
         if not session:
             self.connection_status_label.setText("No session")
@@ -3406,6 +3734,8 @@ class MainWindow(QMainWindow):
     def apply_terminal_font_settings(self) -> None:
         for session in self.iter_sessions():
             session.apply_settings()
+        for editor in self.iter_command_file_editors():
+            editor.apply_editor_font(self.editor_font())
 
     def toggle_timestamps(self) -> None:
         self.settings.timestamps_enabled = self.timestamps_action.isChecked()
@@ -3445,6 +3775,8 @@ class MainWindow(QMainWindow):
             )
             session.refresh_quick_commands()
             session.refresh_quick_files()
+        for editor in self.iter_command_file_editors():
+            editor.apply_editor_font(self.editor_font())
         self.update_tab_titles()
         self.sync_status_from_current_session()
 
@@ -3626,6 +3958,11 @@ class MainWindow(QMainWindow):
         if not quick_file:
             return
         path = Path(quick_file.path)
+        self.show_path_in_explorer(path)
+
+    def show_path_in_explorer(self, path: Path | None) -> None:
+        if path is None:
+            return
         if not path.exists():
             QMessageBox.warning(self, "Quick File", f"File not found:\n{path}")
             return
@@ -3633,6 +3970,18 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["explorer", "/select,", str(path)])
         except OSError as exc:
             QMessageBox.warning(self, "Quick File", str(exc))
+
+    def open_quick_file_editor(self, quick_file_id: str) -> None:
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        self.open_command_file_editor(Path(quick_file.path))
+
+    def edit_selected_quick_file_content(self) -> None:
+        session = self.current_session()
+        if not session:
+            return
+        self.open_quick_file_editor(session.selected_quick_file_id())
 
     def import_quick_commands_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -3891,10 +4240,19 @@ class MainWindow(QMainWindow):
     def refresh_quick_commands_everywhere(self, selected_id: str | None = None) -> None:
         for session in self.iter_sessions():
             session.refresh_quick_commands(selected_id)
+        for editor in self.iter_command_file_editors():
+            editor.sources = self.command_editor_sources()
+            editor.highlighter.sources = editor.sources
+            editor._refresh_completion_model()
+            editor.highlighter.rehighlight()
+            editor.update_validation_status()
+            editor.refresh_workspace_side_panel()
 
     def refresh_quick_files_everywhere(self, selected_id: str | None = None) -> None:
         for session in self.iter_sessions():
             session.refresh_quick_files(selected_id)
+        for editor in self.iter_command_file_editors():
+            editor.refresh_workspace_side_panel()
 
     def record_command(self, command: str) -> None:
         self.history_catalog.add(command)
@@ -4237,6 +4595,10 @@ class MainWindow(QMainWindow):
         QFrame#drawerPanel {{
             background: {theme.window_alt};
         }}
+        QFrame#editorSidePanel {{
+            background: {theme.window_alt};
+            border-right: 1px solid {theme.border};
+        }}
         QLabel#drawerTitle {{
             font-weight: 650;
             color: {theme.text};
@@ -4292,6 +4654,17 @@ class MainWindow(QMainWindow):
             border-radius: 8px;
             padding: 7px 9px;
             selection-background-color: {theme.search_highlight};
+        }}
+        QPlainTextEdit#commandFileEditor {{
+            background: {terminal_background};
+            color: {theme.text};
+            border: 1px solid {theme.border};
+            border-radius: 0px;
+            selection-background-color: {theme.search_highlight};
+        }}
+        QLabel#editorPathLabel, QLabel#editorStatusLabel {{
+            color: {theme.muted};
+            padding: 4px 2px;
         }}
         QLineEdit:focus, QComboBox:focus, QListWidget:focus {{
             border-color: {theme.accent};
@@ -4478,10 +4851,22 @@ class MainWindow(QMainWindow):
         self.settings.window_width = self.width()
         self.settings.window_height = self.height()
         self.settings.restored_tabs = [session.to_state() for session in self.iter_sessions()]
+        self.settings.restored_command_files = [
+            CommandFileTabState(
+                path=str(editor.path) if editor.path else "",
+                text=editor.text() if editor.is_dirty() or editor.path is None else "",
+                dirty=editor.is_dirty(),
+            )
+            for editor in self.iter_command_file_editors()
+        ]
         if not self.settings_store.save(self.settings):
             self.set_status("Could not save settings to disk.")
 
     def closeEvent(self, event) -> None:
+        for editor in self.iter_command_file_editors():
+            if not self.confirm_close_command_file_tab(editor):
+                event.ignore()
+                return
         self.save_settings()
         for session in self.iter_sessions():
             session.shutdown()
