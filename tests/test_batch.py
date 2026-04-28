@@ -134,7 +134,7 @@ class BatchParserTests(unittest.TestCase):
         runner._stop_event = stop_event
 
         self.assertTrue(runner._sleep_interruptible(0.005))
-        self.assertLess(max(stop_event.wait_calls), 0.01)
+        self.assertEqual(stop_event.wait_calls, [])
 
 
 if __name__ == "__main__":

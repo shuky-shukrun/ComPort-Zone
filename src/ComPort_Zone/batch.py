@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 from threading import Event, Thread
-from time import monotonic
+from time import perf_counter
 
 from .serial_core import SerialEvent
 
@@ -14,6 +14,8 @@ WAIT_PATTERN = re.compile(r"^WAIT\s+(\d+)$", re.IGNORECASE)
 SEND_PATTERN = re.compile(r"^SEND\s+(.+)$", re.IGNORECASE)
 HEX_PATTERN = re.compile(r"^HEX\s+([0-9A-Fa-f\s]+)$", re.IGNORECASE)
 PARAMETER_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:=([^{}]*?))?\s*\}\}")
+HIGH_RES_WAIT_THRESHOLD_SECONDS = 0.020
+COARSE_WAIT_CHUNK_SECONDS = 0.050
 
 
 class BatchParseError(ValueError):
@@ -323,13 +325,25 @@ class BatchRunner:
     def _sleep_interruptible(self, seconds: float) -> bool:
         if seconds <= 0:
             return not self._stop_event.is_set()
-        deadline = monotonic() + seconds
+        deadline = perf_counter() + seconds
         while True:
-            remaining = deadline - monotonic()
+            remaining = deadline - perf_counter()
             if remaining <= 0:
                 return True
-            if self._stop_event.wait(min(remaining, 0.05)):
+            if self._stop_event.is_set():
                 return False
+            if remaining <= HIGH_RES_WAIT_THRESHOLD_SECONDS:
+                return self._sleep_high_resolution(deadline)
+            wait_time = min(remaining - HIGH_RES_WAIT_THRESHOLD_SECONDS, COARSE_WAIT_CHUNK_SECONDS)
+            if self._stop_event.wait(max(wait_time, 0)):
+                return False
+
+    def _sleep_high_resolution(self, deadline: float) -> bool:
+        while True:
+            if self._stop_event.is_set():
+                return False
+            if perf_counter() >= deadline:
+                return True
 
     def _emit(self, kind: str, message: str) -> None:
         self._event_queue.put(SerialEvent(kind=kind, message=message))
