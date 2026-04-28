@@ -92,6 +92,7 @@ Use `Tools > Command Files > New Command File` or `Tools > Command Files > Open 
 - Syntax highlighting for batch keywords, comments, parameters, and invalid command-file syntax
 - Optional unknown-command warnings, where the first command token is checked before arguments, so `SINK:CURR 4.5` validates against `SINK:CURR`
 - New, Open, Save, Save As, and Validate actions
+- Find and replace with `Ctrl+F`, `Ctrl+H`, next/previous navigation, case-sensitive search, replace current, and replace all
 - Dirty tab indicators: unsaved files show `*`; validation errors color the tab as an error
 - Multiple command files open at the same time
 - Editor font zoom through the toolbar buttons or `Ctrl` + mouse wheel

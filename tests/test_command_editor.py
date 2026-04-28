@@ -57,6 +57,7 @@ class CommandEditorTests(unittest.TestCase):
             dialog.editor.accept_current_completion()
             self.assertEqual(dialog.text(), "SINK:CURR")
         finally:
+            dialog._dirty = False
             dialog.close()
             dialog.deleteLater()
 
@@ -168,6 +169,68 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
             script_path.unlink(missing_ok=True)
+
+    def test_editor_find_bar_shortcut_highlights_and_navigates_matches(self) -> None:
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.show()
+            dialog.setPlainText("SEND VOLT?\nSEND CURR?\nSEND VOLT?\n")
+            dialog.editor.setFocus()
+
+            QTest.keyClick(dialog.editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
+            self.qt.processEvents()
+            self.assertTrue(dialog.find_replace_bar.isVisible())
+
+            dialog.search_input.setText("volt")
+            self.qt.processEvents()
+            self.assertEqual(dialog.search_count_label.text(), "1/2")
+            self.assertEqual(dialog.editor.textCursor().selectedText(), "VOLT")
+
+            dialog.find_next()
+            self.assertEqual(dialog.search_count_label.text(), "2/2")
+            self.assertEqual(dialog.editor.textCursor().selectedText(), "VOLT")
+
+            dialog.find_previous()
+            self.assertEqual(dialog.search_count_label.text(), "1/2")
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_replace_current_and_replace_all(self) -> None:
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.setPlainText("SEND VOLT?\nSEND CURR?\nSEND VOLT?\n")
+            dialog.show_replace_bar()
+            dialog.search_input.setText("SEND")
+            dialog.replace_input.setText("EXPECT")
+            self.qt.processEvents()
+
+            dialog.replace_current()
+            self.assertEqual(dialog.text(), "EXPECT VOLT?\nSEND CURR?\nSEND VOLT?\n")
+
+            dialog.replace_all()
+            self.assertEqual(dialog.text(), "EXPECT VOLT?\nEXPECT CURR?\nEXPECT VOLT?\n")
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_case_sensitive_find(self) -> None:
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.setPlainText("SEND volt?\nSEND VOLT?\n")
+            dialog.show_find_bar()
+            dialog.case_sensitive_check.setChecked(True)
+            dialog.search_input.setText("volt")
+            self.qt.processEvents()
+
+            self.assertEqual(dialog.search_count_label.text(), "1/1")
+            self.assertEqual(dialog.editor.textCursor().selectedText(), "volt")
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
 
 
 if __name__ == "__main__":

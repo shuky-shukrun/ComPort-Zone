@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
 
 from ComPort_Zone import app as app_module
@@ -548,6 +549,78 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_ctrl_f_routes_to_editor_find_bar_when_editor_tab_active(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_editor_find.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.show()
+            self.qt.processEvents()
+            editor = window.add_command_file_tab()
+            editor.setPlainText("SEND *IDN?\n")
+            editor.find_replace_bar.hide()
+            editor.editor.setFocus()
+            self.qt.processEvents()
+
+            QTest.keyClick(editor.editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
+            self.qt.processEvents()
+
+            self.assertTrue(editor.find_replace_bar.isVisible())
+            self.assertFalse(editor.replace_input.isVisible())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_ctrl_h_routes_to_editor_replace_bar_when_editor_tab_active(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_editor_replace.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.show()
+            self.qt.processEvents()
+            editor = window.add_command_file_tab()
+            editor.setPlainText("SEND *IDN?\n")
+            editor.find_replace_bar.hide()
+            editor.editor.setFocus()
+            self.qt.processEvents()
+
+            QTest.keyClick(editor.editor, Qt.Key.Key_H, Qt.KeyboardModifier.ControlModifier)
+            self.qt.processEvents()
+
+            self.assertTrue(editor.find_replace_bar.isVisible())
+            self.assertTrue(editor.replace_input.isVisible())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_connection_settings_refreshes_ports_while_open(self) -> None:
         ports = [
             [{"device": "COM1", "description": "USB Serial A"}],
@@ -763,7 +836,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
             self.assertIn("Clear Command History", titles)
-            self.assertIn("Search Terminal", titles)
+            self.assertIn("Find / Search", titles)
+            self.assertIn("Replace in Editor", titles)
             self.assertIn("Terminal Font Settings", titles)
             self.assertIn("Save Current Input as Quick Command", titles)
             self.assertIn("App Settings Import / Export", titles)
@@ -843,6 +917,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Export CSV", quick_file_titles)
 
             edit_titles = [action.text() for action in window.edit_menu.actions()]
+            self.assertIn("Find", edit_titles)
+            self.assertIn("Replace", edit_titles)
             self.assertIn("Clear Command History", edit_titles)
         finally:
             app_module.default_config_path = old_config_path

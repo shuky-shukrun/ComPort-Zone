@@ -2784,7 +2784,8 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "Copy", "Ctrl+Shift+C", lambda: self.with_session(lambda s: s.copy_selection()), icon=QStyle.StandardPixmap.SP_FileIcon)
         self._add_action(edit_menu, "Select All", "Ctrl+A", lambda: self.with_session(lambda s: s.select_all()), icon=QStyle.StandardPixmap.SP_FileDialogListView)
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Search Terminal", "Ctrl+F", lambda: self.with_session(lambda s: s.show_search()), icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
+        self._add_action(edit_menu, "Find", "Ctrl+F", self.show_find_in_current_tab, icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
+        self._add_action(edit_menu, "Replace", "Ctrl+H", self.show_replace_in_current_tab, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_action(edit_menu, "Clear Terminal", "Ctrl+K", lambda: self.with_session(lambda s: s.clear_terminal()), icon=QStyle.StandardPixmap.SP_TrashIcon)
         edit_menu.addSeparator()
         self._add_action(edit_menu, "Clear Command History", "", self.clear_command_history, icon=QStyle.StandardPixmap.SP_TrashIcon)
@@ -3047,6 +3048,24 @@ class MainWindow(QMainWindow):
         session.run_script_text(editor.text(), source_label=label, source_path=editor.path)
         self.set_status(f"Running {editor.display_name()} in {session.tab_title}.")
 
+    def show_find_in_current_tab(self) -> None:
+        editor = self.current_command_file_editor()
+        if editor:
+            editor.show_find_bar()
+            return
+        session = self.current_session()
+        if session:
+            session.show_search()
+            return
+        self.set_status("No active tab to search.")
+
+    def show_replace_in_current_tab(self) -> None:
+        editor = self.current_command_file_editor()
+        if editor:
+            editor.show_replace_bar()
+            return
+        self.set_status("Replace is available in command-file editor tabs.")
+
     def command_palette_entries(self) -> list[CommandPaletteEntry]:
         entries = [
             CommandPaletteEntry(
@@ -3127,11 +3146,18 @@ class MainWindow(QMainWindow):
                 keywords="history commands autocomplete delete cleanup",
             ),
             CommandPaletteEntry(
-                title="Search Terminal",
-                subtitle="Search output in the active tab",
-                callback=lambda: self.with_session(lambda session: session.show_search()),
+                title="Find / Search",
+                subtitle="Find in an editor tab or search terminal output in the active tab",
+                callback=self.show_find_in_current_tab,
                 icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
-                keywords="find current tab",
+                keywords="find search current tab terminal editor",
+            ),
+            CommandPaletteEntry(
+                title="Replace in Editor",
+                subtitle="Open find and replace for the active command-file editor tab",
+                callback=self.show_replace_in_current_tab,
+                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+                keywords="find replace command file editor",
             ),
             CommandPaletteEntry(
                 title="Terminal Font Settings",
