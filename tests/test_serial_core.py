@@ -16,6 +16,21 @@ class SerialCoreTests(unittest.TestCase):
     def test_format_hex_bytes(self) -> None:
         self.assertEqual(format_hex_bytes(b"\x00\x7f\xff"), "00 7F FF")
 
+    def test_event_subscribers_receive_copy_without_stealing_main_queue(self) -> None:
+        client = SerialClient()
+        subscriber = client.subscribe_events()
+
+        client._emit("rx", "OK", raw=b"OK")
+
+        self.assertEqual(client.events.get_nowait().message, "OK")
+        self.assertEqual(subscriber.get_nowait().message, "OK")
+
+        client.unsubscribe_events(subscriber)
+        client._emit("rx", "NEXT", raw=b"NEXT")
+
+        self.assertEqual(client.events.get_nowait().message, "NEXT")
+        self.assertTrue(subscriber.empty())
+
     def test_reconnect_state_reports_live_thread(self) -> None:
         class AliveThread:
             def __init__(self, alive: bool) -> None:

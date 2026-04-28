@@ -4,3 +4,13 @@ name = "GenPlusController"
 
 [setup]
 script = ""
+
+[[actions]]
+name = "Build"
+icon = "tool"
+command = ".\\build_exe.bat"
+
+[[actions]]
+name = "Run ComPort Zone"
+icon = "run"
+command = "python -m ComPort_Zone"

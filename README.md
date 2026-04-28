@@ -24,7 +24,7 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - RX, TX, status, and error coloring
 - Optional terminal timestamps
 - Clear, copy, select all, pause/resume output, terminal font settings, and line wrap controls
-- Per-tab command file execution
+- Per-tab command file execution with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
 - Per-tab logging to text files
 - Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, and restored tabs
 
@@ -91,6 +91,7 @@ The parser also supports a small batch DSL:
 // C-style comment
 SEND version
 WAIT 1000 // Pause one second
+EXPECT ComPort Zone // Require matching received text before continuing
 HEX 55 AA 01 0D // Send raw bytes
 reset // Bare command
 ```
@@ -98,8 +99,10 @@ reset // Bare command
 - `SEND <text>` sends text with the active line ending.
 - `WAIT <milliseconds>` pauses before the next step.
 - `HEX <bytes>` sends raw bytes without appending a line ending.
+- `EXPECT <text>` waits up to one second for received text containing `<text>`. If the text is not received, the command file stops with an error.
 - Bare lines are treated like `SEND`.
 - `//` starts a single-line comment. Everything after it is ignored until the next line.
+- `EXPECT` observes RX data without hiding it from the terminal, and it can match responses that arrive in multiple chunks.
 
 ### Command File Parameters
 
@@ -118,7 +121,7 @@ HEX {{WAKE_BYTES=55 AA 01 0D}}
 - Before a parameterized file starts, ComPort Zone lets you set or override parameter values.
 - If a value is left empty, or a prefilled default is deleted, ComPort Zone asks for that value when execution reaches the line.
 - Values are remembered for the current run. If `{{VOLT_VALUE}}` appears again later, the first entered value is reused automatically.
-- Parameters work in bare commands, `SEND`, `WAIT`, and `HEX` lines.
+- Parameters work in bare commands, `SEND`, `WAIT`, `HEX`, and `EXPECT` lines.
 
 ## Quick Commands CSV Format
 

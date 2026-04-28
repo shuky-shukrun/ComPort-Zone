@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from threading import Event, Thread
 from time import perf_counter
 
@@ -13,9 +13,11 @@ from .serial_core import SerialEvent
 WAIT_PATTERN = re.compile(r"^WAIT\s+(\d+)$", re.IGNORECASE)
 SEND_PATTERN = re.compile(r"^SEND\s+(.+)$", re.IGNORECASE)
 HEX_PATTERN = re.compile(r"^HEX\s+([0-9A-Fa-f\s]+)$", re.IGNORECASE)
+EXPECT_PATTERN = re.compile(r"^EXPECT\s+(.+)$", re.IGNORECASE)
 PARAMETER_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:=([^{}]*?))?\s*\}\}")
 HIGH_RES_WAIT_THRESHOLD_SECONDS = 0.020
 COARSE_WAIT_CHUNK_SECONDS = 0.050
+DEFAULT_EXPECT_TIMEOUT_MS = 1000
 
 
 class BatchParseError(ValueError):
@@ -54,6 +56,8 @@ class BatchParameterInputLine:
 
 BatchLineResolver = Callable[[str, int], str | None]
 BatchParameterPrompt = Callable[[str, int, str], str | None]
+EventQueueFactory = Callable[[], Queue[SerialEvent]]
+EventQueueDisposer = Callable[[Queue[SerialEvent]], None]
 
 
 def parse_hex_payload(text: str) -> bytes:
@@ -91,6 +95,12 @@ def parse_batch_line(line: str, line_number: int) -> BatchStep:
     wait_match = WAIT_PATTERN.match(stripped)
     if wait_match:
         return BatchStep("wait", int(wait_match.group(1)), line_number)
+    expect_match = EXPECT_PATTERN.match(stripped)
+    if expect_match:
+        expected = expect_match.group(1).strip()
+        if not expected:
+            raise BatchParseError("EXPECT requires text to match.", line_number)
+        return BatchStep("expect", expected, line_number)
     send_match = SEND_PATTERN.match(stripped)
     if send_match:
         return BatchStep("send", send_match.group(1), line_number)
@@ -198,11 +208,19 @@ class BatchRunner:
         send_text,
         send_bytes,
         connected_supplier,
+        event_queue_factory: EventQueueFactory | None = None,
+        event_queue_disposer: EventQueueDisposer | None = None,
+        expect_timeout_ms: int = DEFAULT_EXPECT_TIMEOUT_MS,
     ) -> None:
         self._event_queue = event_queue
         self._send_text = send_text
         self._send_bytes = send_bytes
         self._connected_supplier = connected_supplier
+        self._event_queue_factory = event_queue_factory
+        self._event_queue_disposer = event_queue_disposer
+        self._expect_timeout_ms = max(expect_timeout_ms, 1)
+        self._rx_event_queue: Queue[SerialEvent] | None = None
+        self._rx_buffer = ""
         self._thread: Thread | None = None
         self._stop_event = Event()
         self._resume_event = Event()
@@ -217,7 +235,12 @@ class BatchRunner:
         self._resume_event = Event()
         if self._connected_supplier():
             self._resume_event.set()
-        self._thread = Thread(target=self._run_steps, args=(steps,), daemon=True, name="batch-runner")
+        self._thread = Thread(
+            target=self._run_with_event_subscription,
+            args=(self._run_steps, steps),
+            daemon=True,
+            name="batch-runner",
+        )
         self._thread.start()
 
     def start_template(self, steps: list[BatchTemplateStep], resolve_line: BatchLineResolver) -> None:
@@ -226,7 +249,12 @@ class BatchRunner:
         self._resume_event = Event()
         if self._connected_supplier():
             self._resume_event.set()
-        self._thread = Thread(target=self._run_template_steps, args=(steps, resolve_line), daemon=True, name="batch-runner")
+        self._thread = Thread(
+            target=self._run_with_event_subscription,
+            args=(self._run_template_steps, steps, resolve_line),
+            daemon=True,
+            name="batch-runner",
+        )
         self._thread.start()
 
     def stop(self, emit_message: bool = True) -> None:
@@ -250,6 +278,19 @@ class BatchRunner:
             if self._resume_event.is_set():
                 self._emit("status", "Connection lost. Batch run paused.")
             self._resume_event.clear()
+
+    def _run_with_event_subscription(self, target, *args) -> None:
+        self._rx_buffer = ""
+        if self._event_queue_factory is not None:
+            self._rx_event_queue = self._event_queue_factory()
+        try:
+            target(*args)
+        finally:
+            queue = self._rx_event_queue
+            self._rx_event_queue = None
+            self._rx_buffer = ""
+            if queue is not None and self._event_queue_disposer is not None:
+                self._event_queue_disposer(queue)
 
     def _run_steps(self, steps: list[BatchStep]) -> None:
         self._emit("status", f"Batch run started with {len(steps)} step(s).")
@@ -304,17 +345,69 @@ class BatchRunner:
     def _run_step(self, step: BatchStep) -> bool:
         if step.kind == "wait":
             return self._sleep_interruptible(step.payload / 1000)
+        if step.kind == "expect":
+            if not self._wait_for_connection():
+                return False
+            return self._expect_text(str(step.payload), step.line_number)
         if not self._wait_for_connection():
             return False
         try:
             if step.kind == "send":
+                self._reset_expectation_buffer()
                 self._send_text(step.payload)
             elif step.kind == "hex":
+                self._reset_expectation_buffer()
                 self._send_bytes(step.payload)
         except Exception as exc:
             self._emit("error", f"Batch step on line {step.line_number} failed: {exc}")
             return False
         return True
+
+    def _expect_text(self, expected: str, line_number: int) -> bool:
+        if self._expected_text_available(expected):
+            self._emit("status", f"EXPECT matched on line {line_number}: {expected}")
+            return True
+        queue = self._rx_event_queue
+        if queue is None:
+            self._emit("error", "EXPECT is not available because RX events are not connected to the batch runner.")
+            return False
+        deadline = perf_counter() + (self._expect_timeout_ms / 1000)
+        while not self._stop_event.is_set():
+            remaining = deadline - perf_counter()
+            if remaining <= 0:
+                self._emit(
+                    "error",
+                    f"EXPECT timed out on line {line_number} after {self._expect_timeout_ms} ms: {expected}",
+                )
+                return False
+            try:
+                event = queue.get(timeout=min(remaining, 0.05))
+            except Empty:
+                continue
+            if event.kind == "rx":
+                self._rx_buffer += event.message
+                if self._expected_text_available(expected):
+                    self._emit("status", f"EXPECT matched on line {line_number}: {expected}")
+                    return True
+        return False
+
+    def _expected_text_available(self, expected: str) -> bool:
+        index = self._rx_buffer.find(expected)
+        if index < 0:
+            return False
+        self._rx_buffer = self._rx_buffer[index + len(expected):]
+        return True
+
+    def _reset_expectation_buffer(self) -> None:
+        self._rx_buffer = ""
+        queue = self._rx_event_queue
+        if queue is None:
+            return
+        while True:
+            try:
+                queue.get_nowait()
+            except Empty:
+                return
 
     def _wait_for_connection(self) -> bool:
         while not self._resume_event.is_set():

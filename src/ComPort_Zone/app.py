@@ -1124,6 +1124,8 @@ class TerminalSessionWidget(QWidget):
             send_text=self.serial_client.send_text,
             send_bytes=self.serial_client.send_bytes,
             connected_supplier=lambda: self.serial_client.is_connected,
+            event_queue_factory=self.serial_client.subscribe_events,
+            event_queue_disposer=self.serial_client.unsubscribe_events,
         )
         self.paused = False
         self.pending_events: list[SerialEvent] = []

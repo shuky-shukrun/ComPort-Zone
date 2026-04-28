@@ -12,6 +12,7 @@ from ComPort_Zone.batch import (
     parse_hex_payload,
     substitute_batch_parameters,
 )
+from ComPort_Zone.serial_core import SerialEvent
 
 
 class RecordingStopEvent:
@@ -35,16 +36,18 @@ class BatchParserTests(unittest.TestCase):
                     "// C-style comment",
                     "SEND version",
                     "WAIT 250 // pause before payload",
+                    "EXPECT ComPort Zone",
                     "HEX 55 AA 01 0D // wake bytes",
                     "reset // plain command",
                 ]
             )
         )
-        self.assertEqual([step.kind for step in steps], ["send", "wait", "hex", "send"])
+        self.assertEqual([step.kind for step in steps], ["send", "wait", "expect", "hex", "send"])
         self.assertEqual(steps[0].payload, "version")
         self.assertEqual(steps[1].payload, 250)
-        self.assertEqual(steps[2].payload, bytes.fromhex("55AA010D"))
-        self.assertEqual(steps[3].payload, "reset")
+        self.assertEqual(steps[2].payload, "ComPort Zone")
+        self.assertEqual(steps[3].payload, bytes.fromhex("55AA010D"))
+        self.assertEqual(steps[4].payload, "reset")
 
     def test_parse_batch_script_rejects_odd_hex_length(self) -> None:
         with self.assertRaises(BatchParseError) as context:
@@ -135,6 +138,50 @@ class BatchParserTests(unittest.TestCase):
 
         self.assertTrue(runner._sleep_interruptible(0.005))
         self.assertEqual(stop_event.wait_calls, [])
+
+    def test_expect_matches_fragmented_rx_without_consuming_ui_queue(self) -> None:
+        output_events: Queue = Queue()
+        rx_events: Queue = Queue()
+        sent: list[str] = []
+
+        def send_text(text: str) -> None:
+            sent.append(text)
+            rx_events.put_nowait(SerialEvent(kind="rx", message="Com"))
+            rx_events.put_nowait(SerialEvent(kind="rx", message="Port Zone"))
+
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=send_text,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: True,
+        )
+        runner._rx_event_queue = rx_events
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("SEND *IDN?\nEXPECT ComPort Zone"))
+
+        self.assertEqual(sent, ["*IDN?"])
+        messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
+        self.assertIn("EXPECT matched on line 2: ComPort Zone", messages)
+        self.assertIn("Batch run completed.", messages)
+
+    def test_expect_times_out_when_response_is_missing(self) -> None:
+        output_events: Queue = Queue()
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=lambda text: None,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: True,
+            expect_timeout_ms=1,
+        )
+        runner._rx_event_queue = Queue()
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("SEND *IDN?\nEXPECT missing"))
+
+        messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
+        self.assertTrue(any(message.startswith("EXPECT timed out on line 2") for message in messages))
+        self.assertNotIn("Batch run completed.", messages)
 
 
 if __name__ == "__main__":

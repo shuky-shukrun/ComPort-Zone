@@ -43,6 +43,7 @@ class SerialClient:
     def __init__(self) -> None:
         self.events: Queue[SerialEvent] = Queue()
         self._lock = Lock()
+        self._event_subscribers: list[Queue[SerialEvent]] = []
         self._serial: serial.Serial | None = None
         self._profile: SerialProfile | None = None
         self._desired_profile: SerialProfile | None = None
@@ -79,6 +80,20 @@ class SerialClient:
             )
         ports.sort(key=lambda item: item["device"])
         return ports
+
+    def subscribe_events(self) -> Queue[SerialEvent]:
+        queue: Queue[SerialEvent] = Queue()
+        with self._lock:
+            self._event_subscribers.append(queue)
+        return queue
+
+    def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
+        with self._lock:
+            self._event_subscribers = [
+                subscriber
+                for subscriber in self._event_subscribers
+                if subscriber is not queue
+            ]
 
     def connect(self, profile: SerialProfile) -> bool:
         self._desired_profile = deepcopy(profile)
@@ -242,4 +257,9 @@ class SerialClient:
                 self._emit("error" if unexpected else "status", reason)
 
     def _emit(self, kind: str, message: str, *, raw: bytes = b"") -> None:
-        self.events.put(SerialEvent(kind=kind, message=message, raw=raw))
+        event = SerialEvent(kind=kind, message=message, raw=raw)
+        self.events.put(event)
+        with self._lock:
+            subscribers = list(self._event_subscribers)
+        for subscriber in subscribers:
+            subscriber.put(event)
