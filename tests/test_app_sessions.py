@@ -461,6 +461,56 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_connection_settings_refreshes_ports_while_open(self) -> None:
+        ports = [
+            [{"device": "COM1", "description": "USB Serial A"}],
+        ]
+
+        def list_ports() -> list[dict[str, str]]:
+            return [dict(port) for port in ports[-1]]
+
+        dialog = app_module.ConnectionSettingsDialog(
+            SerialProfile(port="COM1"),
+            list_ports(),
+            ports_supplier=list_ports,
+        )
+        try:
+            self.assertTrue(dialog.port_refresh_timer.isActive())
+            self.assertEqual(dialog.port_refresh_timer.interval(), 1000)
+            self.assertEqual(
+                [dialog.port_combo.itemData(index) for index in range(dialog.port_combo.count())],
+                ["COM1"],
+            )
+
+            ports.append(
+                [
+                    {"device": "COM1", "description": "USB Serial A"},
+                    {"device": "COM2", "description": "USB Serial B"},
+                ]
+            )
+            self.assertTrue(dialog.refresh_ports())
+            self.assertEqual(
+                [dialog.port_combo.itemData(index) for index in range(dialog.port_combo.count())],
+                ["COM1", "COM2"],
+            )
+            self.assertEqual(dialog.profile().port, "COM1")
+
+            dialog.port_combo.setEditText("COM99")
+            ports.append(
+                [
+                    {"device": "COM1", "description": "USB Serial A"},
+                    {"device": "COM2", "description": "USB Serial B"},
+                    {"device": "COM3", "description": "USB Serial C"},
+                ]
+            )
+            self.assertTrue(dialog.refresh_ports())
+            self.assertEqual(dialog.port_combo.currentText(), "COM99")
+            self.assertEqual(dialog.profile().port, "COM99")
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+            self.qt.processEvents()
+
     def test_rx_text_chunks_stream_without_extra_line_breaks(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_rx_stream.json")
         settings_path.unlink(missing_ok=True)

@@ -525,21 +525,23 @@ class ConnectionStatusLabel(QLabel):
 
 
 class ConnectionSettingsDialog(QDialog):
-    def __init__(self, profile: SerialProfile, ports: list[dict[str, str]], parent=None) -> None:
+    def __init__(
+        self,
+        profile: SerialProfile,
+        ports: list[dict[str, str]],
+        parent=None,
+        *,
+        ports_supplier: Callable[[], list[dict[str, str]]] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Serial Settings")
         self.setMinimumWidth(420)
+        self._ports_supplier = ports_supplier
+        self._port_signature: tuple[tuple[str, str], ...] | None = None
 
         self.port_combo = ChevronComboBox(self)
         self.port_combo.setEditable(True)
-        for port in ports:
-            self.port_combo.addItem(f"{port['device']} - {port['description']}", port["device"])
-        if profile.port:
-            index = self.port_combo.findData(profile.port)
-            if index >= 0:
-                self.port_combo.setCurrentIndex(index)
-            else:
-                self.port_combo.setEditText(profile.port)
+        self._set_ports(ports, preferred_port=profile.port)
 
         self.baud_combo = ChevronComboBox(self)
         self.baud_combo.setEditable(True)
@@ -593,9 +595,66 @@ class ConnectionSettingsDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
+        self.port_refresh_timer = QTimer(self)
+        self.port_refresh_timer.setInterval(1000)
+        self.port_refresh_timer.timeout.connect(self.refresh_ports)
+        if self._ports_supplier is not None:
+            self.port_refresh_timer.start()
+        self.finished.connect(lambda *_: self.port_refresh_timer.stop())
+
+    def _port_label(self, port: dict[str, str]) -> str:
+        device = str(port.get("device", "")).strip()
+        description = str(port.get("description", "")).strip() or device
+        return f"{device} - {description}" if description and description != device else device
+
+    def _ports_signature_for(self, ports: list[dict[str, str]]) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (
+                str(port.get("device", "")).strip(),
+                str(port.get("description", "")).strip(),
+            )
+            for port in ports
+        )
+
+    def _current_port_text(self) -> str:
+        return self.port_combo.currentText().split(" - ", 1)[0].strip()
+
+    def _set_ports(self, ports: list[dict[str, str]], *, preferred_port: str = "") -> bool:
+        signature = self._ports_signature_for(ports)
+        if signature == self._port_signature and not preferred_port:
+            return False
+        self._port_signature = signature
+        selected_port = preferred_port or self._current_port_text()
+        popup_was_open = self.port_combo.view().isVisible()
+        self.port_combo.blockSignals(True)
+        self.port_combo.clear()
+        for port in ports:
+            device = str(port.get("device", "")).strip()
+            if device:
+                self.port_combo.addItem(self._port_label(port), device)
+        if selected_port:
+            index = self.port_combo.findData(selected_port)
+            if index >= 0:
+                self.port_combo.setCurrentIndex(index)
+            else:
+                self.port_combo.setEditText(selected_port)
+        self.port_combo.blockSignals(False)
+        if popup_was_open and self.isVisible():
+            QTimer.singleShot(0, self.port_combo.showPopup)
+        return True
+
+    def refresh_ports(self) -> bool:
+        if self._ports_supplier is None:
+            return False
+        try:
+            ports = self._ports_supplier()
+        except Exception:
+            return False
+        return self._set_ports(ports)
+
     def profile(self) -> SerialProfile:
         port_value = self.port_combo.currentData()
-        port = str(port_value or self.port_combo.currentText()).split(" - ", 1)[0].strip()
+        port = self._current_port_text() or str(port_value or "").strip()
         return SerialProfile(
             port=port,
             baudrate=int(self.baud_combo.currentText()),
@@ -1996,12 +2055,22 @@ class TerminalSessionWidget(QWidget):
         self.run_script_path(Path(quick_file.path))
 
     def refresh_ports(self) -> None:
-        self._ports = self.serial_client.list_ports()
+        self._ports = self.list_ports_snapshot()
         self.host.set_status(f"{len(self._ports)} serial port(s) detected.")
         self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
 
+    def list_ports_snapshot(self) -> list[dict[str, str]]:
+        self._ports = self.serial_client.list_ports()
+        self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
+        return self._ports
+
     def open_connection_settings(self, *, connect_after_accept: bool = True) -> bool:
-        dialog = ConnectionSettingsDialog(self.profile, self.serial_client.list_ports(), self)
+        dialog = ConnectionSettingsDialog(
+            self.profile,
+            self.list_ports_snapshot(),
+            self,
+            ports_supplier=self.list_ports_snapshot,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
         try:
