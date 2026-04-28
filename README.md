@@ -71,7 +71,7 @@ release\ComPort_Zone-X.Y.Z-win64.zip
 The generated executable is also available at:
 
 ```text
-dist\ComPort Zone vX.Y.Z.exe
+dist\ComPort Zone.exe
 ```
 
 After the first setup, later builds skip dependency installation when the `.venv` build environment is already ready. To force a dependency refresh, run:

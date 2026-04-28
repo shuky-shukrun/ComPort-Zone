@@ -33,7 +33,7 @@ if ($Version -notmatch $SemVerPattern) {
 $VersionMajor = [int]$Matches[1]
 $VersionMinor = [int]$Matches[2]
 $VersionPatch = [int]$Matches[3]
-$ExeBaseName = "$AppName v$Version"
+$ExeBaseName = $AppName
 $ExeFileName = "$ExeBaseName.exe"
 $PublishDir = Join-Path $ReleaseRoot "$($AppName.Replace(' ', '_'))-$Version-win64"
 $ZipPath = Join-Path $ReleaseRoot "$($AppName.Replace(' ', '_'))-$Version-win64.zip"
