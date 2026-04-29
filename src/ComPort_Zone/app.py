@@ -12,7 +12,7 @@ from threading import Event
 from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QStringListModel, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -83,6 +83,7 @@ from .serial_core import SerialClient, SerialEvent, decode_serial_bytes, format_
 from .settings_service import SettingsService
 from .storage import SettingsStore, default_config_path
 from .terminal_session_controller import TerminalSessionController
+from .terminal_view import TerminalView
 from .themes import THEMES, ThemePalette
 from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .widgets import ChevronComboBox, HistoryLineEdit
@@ -919,6 +920,7 @@ class TerminalSessionWidget(QWidget):
         self.terminal.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.terminal.customContextMenuRequested.connect(self.show_terminal_context_menu)
+        self.terminal_view = TerminalView(self.terminal, self.search_count)
 
         self.command_bar = QFrame(terminal_column)
         self.command_bar.setObjectName("commandBar")
@@ -1877,33 +1879,10 @@ class TerminalSessionWidget(QWidget):
         dialog.exec()
 
     def _find_in_terminal(self, *, backward: bool) -> None:
-        query = self.search_input.text().strip()
-        if not query:
-            return
-        flags = QTextDocument.FindFlag.FindBackward if backward else QTextDocument.FindFlag(0)
-        if self.terminal.find(query, flags):
-            return
-        cursor = self.terminal.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End if backward else QTextCursor.MoveOperation.Start)
-        self.terminal.setTextCursor(cursor)
-        self.terminal.find(query, flags)
+        self.terminal_view.find(self.search_input.text(), backward=backward)
 
     def _refresh_search_highlights(self, text: str) -> None:
-        query = text.strip()
-        selections: list[QTextEdit.ExtraSelection] = []
-        if query:
-            cursor = self.terminal.document().find(query)
-            while not cursor.isNull():
-                selection = QTextEdit.ExtraSelection()
-                selection.cursor = cursor
-                fmt = QTextCharFormat()
-                fmt.setBackground(QColor(self.host.theme.search_highlight))
-                fmt.setForeground(QColor("#ffffff"))
-                selection.format = fmt
-                selections.append(selection)
-                cursor = self.terminal.document().find(query, cursor)
-        self.terminal.setExtraSelections(selections)
-        self.search_count.setText(str(len(selections)))
+        self.terminal_view.refresh_search_highlights(text, self.host.theme.search_highlight)
 
     def _navigate_history(self, direction: int) -> None:
         text = self.history_store.navigate(direction, self.command_input.text())
@@ -1968,70 +1947,20 @@ class TerminalSessionWidget(QWidget):
 
     def _render_event(self, event: SerialEvent) -> None:
         plan = self.controller.render_plan(event, self.host.settings.receive_display_mode)
-        colors = {
-            "rx": self.host.theme.rx,
-            "tx": self.host.theme.tx,
-            "status": self.host.theme.status,
-            "error": self.host.theme.error,
-            "default": "#d4d4d4",
-        }
-        if plan.stream_text:
-            self._render_rx_text_plan(plan)
-            return
-        if plan.ensure_line_break:
-            self._ensure_terminal_line_break()
-        message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
-        if self.host.settings.timestamps_enabled:
-            stamp = event.timestamp.astimezone().strftime("%H:%M:%S.%f")[:-3]
-            rendered = "".join(f"[{stamp}] {plan.prefix}{line}\n" for line in message.split("\n") if line != "")
-        else:
-            rendered = "".join(f"{plan.prefix}{line}\n" for line in message.split("\n") if line != "")
-        cursor = self.terminal.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(colors.get(plan.color_role, colors["default"])))
-        cursor.insertText(rendered, fmt)
-        self.terminal.setTextCursor(cursor)
-        self.terminal.ensureCursorVisible()
-        if self.search_bar.isVisible():
-            self._refresh_search_highlights(self.search_input.text())
-
-    def _render_rx_text_plan(self, plan) -> None:
-        message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
-        if not message:
-            return
-        rendered = self._timestamp_rx_stream(message, plan.event) if self.host.settings.timestamps_enabled else message
-        self._insert_terminal_text(rendered, self.host.theme.rx)
-
-    def _timestamp_rx_stream(self, message: str, event: SerialEvent) -> str:
-        stamp = f"[{event.timestamp.astimezone().strftime('%H:%M:%S.%f')[:-3]}] "
-        rendered: list[str] = []
-        at_line_start = self._terminal_at_line_start()
-        for chunk in message.splitlines(keepends=True):
-            if at_line_start and chunk != "\n":
-                rendered.append(stamp)
-            rendered.append(chunk)
-            at_line_start = chunk.endswith("\n")
-        return "".join(rendered)
-
-    def _insert_terminal_text(self, text: str, color: str) -> None:
-        cursor = self.terminal.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-        cursor.insertText(text, fmt)
-        self.terminal.setTextCursor(cursor)
-        self.terminal.ensureCursorVisible()
-        if self.search_bar.isVisible():
-            self._refresh_search_highlights(self.search_input.text())
-
-    def _terminal_at_line_start(self) -> bool:
-        text = self.terminal.toPlainText()
-        return not text or text.endswith("\n")
-
-    def _ensure_terminal_line_break(self) -> None:
-        if not self._terminal_at_line_start():
-            self._insert_terminal_text("\n", self.host.theme.text)
+        self.terminal_view.render_plan(
+            plan,
+            colors={
+                "rx": self.host.theme.rx,
+                "tx": self.host.theme.tx,
+                "status": self.host.theme.status,
+                "error": self.host.theme.error,
+                "default": self.host.theme.text,
+            },
+            timestamps_enabled=self.host.settings.timestamps_enabled,
+            search_visible=self.search_bar.isVisible(),
+            search_text=self.search_input.text(),
+            search_highlight=self.host.theme.search_highlight,
+        )
 
     def display_message_for_event(self, event: SerialEvent) -> str:
         return self.controller.display_message_for_event(event, self.host.settings.receive_display_mode)
