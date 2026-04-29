@@ -169,6 +169,33 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(settings.serial.port, "COM12")
         self.assertEqual(settings.quick_commands[0].command, "version")
 
+    def test_settings_accept_generic_serial_transport_profile(self) -> None:
+        settings = AppSettings.from_dict(
+            {
+                "transport_kind": "serial",
+                "transport_profile": {"port": "COM33", "baudrate": 57600},
+            }
+        )
+
+        self.assertEqual(settings.transport_kind, "serial")
+        self.assertEqual(settings.serial.port, "COM33")
+        self.assertEqual(settings.serial.baudrate, 57600)
+        self.assertEqual(settings.to_dict()["transport_profile"]["port"], "COM33")
+
+    def test_restored_tab_accepts_generic_serial_transport_profile(self) -> None:
+        state = TerminalSessionState.from_dict(
+            {
+                "title": "DUT",
+                "transport_kind": "serial",
+                "transport_profile": {"port": "COM44", "baudrate": 230400},
+            }
+        )
+
+        self.assertEqual(state.transport_kind, "serial")
+        self.assertEqual(state.serial.port, "COM44")
+        self.assertEqual(state.serial.baudrate, 230400)
+        self.assertEqual(state.to_dict()["transport_profile"]["port"], "COM44")
+
     def test_settings_bundle_captures_all_preferences(self) -> None:
         settings = AppSettings(
             serial=SerialProfile(port="COM4", baudrate=230400),

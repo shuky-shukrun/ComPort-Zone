@@ -181,6 +181,8 @@ class QuickFile:
 class TerminalSessionState:
     title: str = "Terminal"
     title_is_custom: bool = False
+    transport_kind: str = "serial"
+    transport_profile: dict[str, Any] = field(default_factory=dict)
     serial: SerialProfile | None = None
     connected_on_launch: bool = False
     terminal_text: str = ""
@@ -191,13 +193,20 @@ class TerminalSessionState:
         payload = {
             "title": self.title,
             "title_is_custom": self.title_is_custom,
+            "transport_kind": self.transport_kind or "serial",
+            "transport_profile": dict(self.transport_profile),
             "connected_on_launch": self.connected_on_launch,
             "terminal_text": self.terminal_text,
             "command_draft": self.command_draft,
             "send_mode": self.send_mode,
         }
-        if self.serial is not None:
-            payload["serial"] = self.serial.to_dict()
+        serial_profile = self.serial
+        if serial_profile is None and (self.transport_kind or "serial") == "serial":
+            serial_profile = SerialProfile.from_dict(self.transport_profile)
+        if serial_profile is not None:
+            payload["serial"] = serial_profile.to_dict()
+            if not payload["transport_profile"]:
+                payload["transport_profile"] = serial_profile.to_dict()
         return payload
 
     @classmethod
@@ -207,8 +216,13 @@ class TerminalSessionState:
         send_mode = str(data.get("send_mode", "Text"))
         if send_mode not in {"Text", "Hex Bytes"}:
             send_mode = "Text"
+        transport_kind = str(data.get("transport_kind", "serial")) or "serial"
+        transport_profile = data.get("transport_profile")
         serial_data = data.get("serial", data.get("serial_profile"))
+        if serial_data is None and transport_kind == "serial":
+            serial_data = transport_profile
         title = str(data.get("title", "Terminal")) or "Terminal"
+        serial = SerialProfile.from_dict(serial_data) if serial_data else None
         return cls(
             title=title,
             title_is_custom=bool(
@@ -217,7 +231,9 @@ class TerminalSessionState:
                     not title.startswith("Terminal") and title != "No port",
                 )
             ),
-            serial=SerialProfile.from_dict(serial_data) if serial_data else None,
+            transport_kind=transport_kind,
+            transport_profile=dict(transport_profile or (serial.to_dict() if serial else {})),
+            serial=serial,
             connected_on_launch=bool(data.get("connected_on_launch", False)),
             terminal_text=str(data.get("terminal_text", "")),
             command_draft=str(data.get("command_draft", "")),
@@ -251,6 +267,8 @@ class CommandFileTabState:
 
 @dataclass(slots=True)
 class AppSettings:
+    transport_kind: str = "serial"
+    transport_profile: dict[str, Any] = field(default_factory=dict)
     serial: SerialProfile = field(default_factory=SerialProfile)
     command_history: list[str] = field(default_factory=list)
     quick_snippets: list[str] = field(default_factory=lambda: list(DEFAULT_SNIPPETS))
@@ -279,6 +297,8 @@ class AppSettings:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "transport_kind": self.transport_kind or "serial",
+            "transport_profile": dict(self.transport_profile or self.serial.to_dict()),
             "serial": self.serial.to_dict(),
             "command_history": list(self.command_history),
             "quick_snippets": list(self.quick_snippets),
@@ -314,7 +334,12 @@ class AppSettings:
     def from_dict(cls, data: dict[str, Any] | None) -> "AppSettings":
         if not data:
             return cls()
+        transport_kind = str(data.get("transport_kind", "serial")) or "serial"
+        transport_profile = data.get("transport_profile")
         serial_data = data.get("serial", data.get("serial_profile"))
+        if serial_data is None and transport_kind == "serial":
+            serial_data = transport_profile
+        serial = SerialProfile.from_dict(serial_data)
         quick_commands_present = "quick_commands" in data
         quick_commands_data = data.get("quick_commands")
         if quick_commands_data is None:
@@ -339,7 +364,9 @@ class AppSettings:
         if quick_file_sort_mode not in QUICK_FILE_SORT_MODES:
             quick_file_sort_mode = "Custom"
         settings = cls(
-            serial=SerialProfile.from_dict(serial_data),
+            transport_kind=transport_kind,
+            transport_profile=dict(transport_profile or serial.to_dict()),
+            serial=serial,
             command_history=[str(item) for item in data.get("command_history", [])],
             quick_snippets=[
                 str(item).strip()

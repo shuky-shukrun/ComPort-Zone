@@ -77,23 +77,16 @@ from .models import (
     THEME_OPTIONS,
     utc_now_iso,
 )
+from . import quick_actions as _quick_actions
 from .serial_core import SerialClient, SerialEvent, decode_serial_bytes, format_hex_bytes
 from .session_log import SessionLogger
+from .settings_service import SettingsService
 from .storage import SettingsStore, default_config_path
 from .themes import THEMES, ThemePalette
+from .transports import SerialTransportAdapter
 from .widgets import ChevronComboBox, HistoryLineEdit
 
 COMMON_BAUD_RATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
-SEND_MODES = ("Text", "Hex Bytes")
-QUICK_COMMAND_CSV_FIELDS = (
-    "label",
-    "command",
-    "description",
-    "send_mode",
-    "group",
-    "line_ending_override",
-)
-QUICK_FILE_CSV_FIELDS = ("label", "path")
 TERMINAL_FONT_MIN = 8
 TERMINAL_FONT_MAX = 24
 DRAWER_COLLAPSED_WIDTH = 48
@@ -267,190 +260,28 @@ def short_label(text: str, limit: int = 40) -> str:
     return text if len(text) <= limit else f"{text[: limit - 3]}..."
 
 
-def quick_group_name(group: str) -> str:
-    return group.strip() or "General"
-
-
-def quick_command_csv_row(command: QuickCommand) -> dict[str, str]:
-    return {
-        "label": command.label,
-        "command": command.command,
-        "description": command.description,
-        "send_mode": command.send_mode,
-        "group": quick_group_name(command.group),
-        "line_ending_override": command.line_ending_override,
-    }
-
-
-def quick_command_from_csv_row(row: dict[str, str]) -> QuickCommand | None:
-    command_text = str(row.get("command") or row.get("text") or "").strip()
-    if not command_text:
-        return None
-    send_mode = str(row.get("send_mode") or row.get("mode") or "Text").strip() or "Text"
-    if send_mode not in SEND_MODES:
-        send_mode = "Text"
-    line_ending = str(row.get("line_ending_override") or row.get("line_ending") or "").strip()
-    if line_ending and line_ending not in LINE_ENDINGS:
-        line_ending = ""
-    return QuickCommand(
-        label=str(row.get("label") or row.get("title") or "").strip() or command_text,
-        command=command_text,
-        description=str(row.get("description") or row.get("notes") or "").strip(),
-        send_mode=send_mode,
-        group=quick_group_name(str(row.get("group", ""))),
-        line_ending_override=line_ending,
-    )
-
-
-def quick_file_display_text(quick_file: QuickFile) -> str:
-    label = quick_file.display_label()
-    if label:
-        return label
-    return Path(quick_file.path).name or quick_file.path
-
-
-def quick_file_csv_row(quick_file: QuickFile) -> dict[str, str]:
-    return {
-        "label": quick_file.label,
-        "path": quick_file.path,
-    }
-
-
-def quick_file_from_csv_row(row: dict[str, str]) -> QuickFile | None:
-    path = str(
-        row.get("path")
-        or row.get("file")
-        or row.get("command_file")
-        or row.get("script")
-        or ""
-    ).strip()
-    if not path:
-        return None
-    label = str(row.get("label") or row.get("title") or "").strip()
-    return QuickFile(label=label or Path(path).name, path=path)
-
-
-@dataclass(slots=True)
-class QuickCommandImportOptions:
-    replace_existing: bool = False
-    skip_duplicates: bool = True
-
-
-@dataclass(slots=True)
-class QuickCommandImportResult:
-    imported_count: int = 0
-    skipped_count: int = 0
-
-    def status_suffix(self) -> str:
-        if self.skipped_count:
-            return f", skipped {self.skipped_count} duplicate(s)"
-        return ""
-
-
-@dataclass(slots=True)
-class QuickFileImportOptions:
-    replace_existing: bool = False
-    skip_duplicates: bool = True
-
-
-@dataclass(slots=True)
-class QuickFileImportResult:
-    imported_count: int = 0
-    skipped_count: int = 0
-
-    def status_suffix(self) -> str:
-        if self.skipped_count:
-            return f", skipped {self.skipped_count} duplicate(s)"
-        return ""
-
-
-def quick_command_duplicate_key(command: QuickCommand) -> tuple[str, str, str, str]:
-    return (
-        quick_group_name(command.group).casefold(),
-        command.display_label().strip().casefold(),
-        command.command.strip(),
-        command.send_mode.strip().casefold(),
-    )
-
-
-def clone_quick_command(command: QuickCommand, *, preserve_id: bool) -> QuickCommand:
-    fields = {
-        "label": command.label,
-        "command": command.command,
-        "description": command.description,
-        "send_mode": command.send_mode,
-        "group": command.group,
-        "line_ending_override": command.line_ending_override,
-        "created_at": command.created_at,
-        "updated_at": command.updated_at,
-    }
-    if preserve_id:
-        fields["id"] = command.id
-    return QuickCommand(**fields)
-
-
-def quick_file_duplicate_key(quick_file: QuickFile) -> str:
-    return quick_file.path.strip().replace("\\", "/").casefold()
-
-
-def clone_quick_file(quick_file: QuickFile, *, preserve_id: bool) -> QuickFile:
-    fields = {
-        "label": quick_file.label,
-        "path": quick_file.path,
-        "created_at": quick_file.created_at,
-        "updated_at": quick_file.updated_at,
-    }
-    if preserve_id:
-        fields["id"] = quick_file.id
-    return QuickFile(**fields)
-
-
-def merge_quick_commands(
-    existing: list[QuickCommand],
-    imported: list[QuickCommand],
-    options: QuickCommandImportOptions,
-) -> tuple[list[QuickCommand], QuickCommandImportResult]:
-    merged = [] if options.replace_existing else [
-        clone_quick_command(command, preserve_id=True)
-        for command in existing
-    ]
-    seen = {quick_command_duplicate_key(command) for command in merged}
-    result = QuickCommandImportResult()
-    for command in imported:
-        if not command.command.strip():
-            continue
-        key = quick_command_duplicate_key(command)
-        if options.skip_duplicates and key in seen:
-            result.skipped_count += 1
-            continue
-        merged.append(clone_quick_command(command, preserve_id=options.replace_existing))
-        seen.add(key)
-        result.imported_count += 1
-    return merged, result
-
-
-def merge_quick_files(
-    existing: list[QuickFile],
-    imported: list[QuickFile],
-    options: QuickFileImportOptions,
-) -> tuple[list[QuickFile], QuickFileImportResult]:
-    merged = [] if options.replace_existing else [
-        clone_quick_file(quick_file, preserve_id=True)
-        for quick_file in existing
-    ]
-    seen = {quick_file_duplicate_key(quick_file) for quick_file in merged}
-    result = QuickFileImportResult()
-    for quick_file in imported:
-        if not quick_file.path.strip():
-            continue
-        key = quick_file_duplicate_key(quick_file)
-        if options.skip_duplicates and key in seen:
-            result.skipped_count += 1
-            continue
-        merged.append(clone_quick_file(quick_file, preserve_id=options.replace_existing))
-        seen.add(key)
-        result.imported_count += 1
-    return merged, result
+# Compatibility: older tests and plugin code import these helpers from app.py.
+# Keep the names here, but delegate ownership to quick_actions.py.
+SEND_MODES = _quick_actions.SEND_MODES
+QUICK_COMMAND_CSV_FIELDS = _quick_actions.QUICK_COMMAND_CSV_FIELDS
+QUICK_FILE_CSV_FIELDS = _quick_actions.QUICK_FILE_CSV_FIELDS
+QuickActionLibrary = _quick_actions.QuickActionLibrary
+QuickCommandImportOptions = _quick_actions.QuickCommandImportOptions
+QuickCommandImportResult = _quick_actions.QuickCommandImportResult
+QuickFileImportOptions = _quick_actions.QuickFileImportOptions
+QuickFileImportResult = _quick_actions.QuickFileImportResult
+quick_group_name = _quick_actions.quick_group_name
+quick_command_csv_row = _quick_actions.quick_command_csv_row
+quick_command_from_csv_row = _quick_actions.quick_command_from_csv_row
+quick_file_display_text = _quick_actions.quick_file_display_text
+quick_file_csv_row = _quick_actions.quick_file_csv_row
+quick_file_from_csv_row = _quick_actions.quick_file_from_csv_row
+quick_command_duplicate_key = _quick_actions.quick_command_duplicate_key
+quick_file_duplicate_key = _quick_actions.quick_file_duplicate_key
+clone_quick_command = _quick_actions.clone_quick_command
+clone_quick_file = _quick_actions.clone_quick_file
+merge_quick_commands = _quick_actions.merge_quick_commands
+merge_quick_files = _quick_actions.merge_quick_files
 
 
 @dataclass(slots=True)
@@ -1117,7 +948,8 @@ class TerminalSessionWidget(QWidget):
             and self.title != "No port"
         )
         self.profile = clone_profile(state.serial) if state.serial is not None else host.default_serial_profile()
-        self.serial_client = SerialClient()
+        self.transport = SerialTransportAdapter()
+        self.serial_client = self.transport.client
         self.history_store = HistoryStore(host.history_catalog.all_commands())
         self.logger = SessionLogger()
         self.parameter_prompt_bridge = BatchParameterPromptBridge(self)
@@ -1167,6 +999,8 @@ class TerminalSessionWidget(QWidget):
         return TerminalSessionState(
             title=self.title,
             title_is_custom=self.title_is_custom,
+            transport_kind="serial",
+            transport_profile=self.profile.to_dict(),
             serial=clone_profile(self.profile),
             connected_on_launch=self._connected or self.serial_client.is_connected,
             terminal_text=self.terminal.toPlainText(),
@@ -1563,56 +1397,21 @@ class TerminalSessionWidget(QWidget):
             self.host.set_quick_file_sort_mode(str(mode))
 
     def quick_command_groups(self) -> list[str]:
-        groups: list[str] = []
-        seen: set[str] = set()
-        for command in self.host.settings.quick_commands:
-            group = quick_group_name(command.group)
-            key = group.casefold()
-            if key not in seen:
-                groups.append(group)
-                seen.add(key)
-        return sorted(groups, key=str.casefold)
+        self.host._refresh_quick_actions_from_settings()
+        return self.host.quick_actions.command_group_names()
 
     def visible_quick_commands(self) -> list[QuickCommand]:
-        hidden = {group.casefold() for group in self.host.settings.quick_command_hidden_groups}
-        commands = [
-            command
-            for command in self.host.settings.quick_commands
-            if quick_group_name(command.group).casefold() not in hidden
-        ]
-        mode = self.host.settings.quick_command_sort_mode
-        if mode == "Title":
-            return sorted(
-                commands,
-                key=lambda command: (
-                    command.display_label().casefold(),
-                    quick_group_name(command.group).casefold(),
-                    command.command.casefold(),
-                ),
-            )
-        if mode == "Group":
-            return sorted(
-                commands,
-                key=lambda command: (
-                    quick_group_name(command.group).casefold(),
-                    command.display_label().casefold(),
-                    command.command.casefold(),
-                ),
-            )
-        return commands
+        self.host._refresh_quick_actions_from_settings()
+        return self.host.quick_actions.visible_commands()
 
     def can_manually_reorder_quick_commands(self) -> bool:
-        groups = {group.casefold() for group in self.quick_command_groups()}
-        hidden_active = any(
-            group.casefold() in groups
-            for group in self.host.settings.quick_command_hidden_groups
-        )
-        return self.host.settings.quick_command_sort_mode == "Custom" and not hidden_active
+        self.host._refresh_quick_actions_from_settings()
+        return self.host.quick_actions.can_manually_reorder_commands()
 
     def refresh_quick_command_controls(self) -> None:
         mode = (
-            self.host.settings.quick_command_sort_mode
-            if self.host.settings.quick_command_sort_mode in QUICK_COMMAND_SORT_MODES
+            self.host.quick_actions.command_sort_mode
+            if self.host.quick_actions.command_sort_mode in QUICK_COMMAND_SORT_MODES
             else "Custom"
         )
         self.quick_sort_combo.blockSignals(True)
@@ -1622,7 +1421,7 @@ class TerminalSessionWidget(QWidget):
         self.quick_sort_combo.blockSignals(False)
 
         groups = self.quick_command_groups()
-        hidden = {group.casefold() for group in self.host.settings.quick_command_hidden_groups}
+        hidden = {group.casefold() for group in self.host.quick_actions.command_hidden_groups}
         visible_count = sum(1 for group in groups if group.casefold() not in hidden)
         total_count = len(groups)
         if total_count == 0:
@@ -1685,32 +1484,15 @@ class TerminalSessionWidget(QWidget):
             self.quick_list.setToolTip("Reorder is available only in Custom order with all groups visible.")
 
     def visible_quick_files(self) -> list[QuickFile]:
-        quick_files = list(self.host.settings.quick_files)
-        mode = self.host.settings.quick_file_sort_mode
-        if mode == "Title":
-            return sorted(
-                quick_files,
-                key=lambda quick_file: (
-                    quick_file_display_text(quick_file).casefold(),
-                    quick_file.path.casefold(),
-                ),
-            )
-        if mode == "Path":
-            return sorted(
-                quick_files,
-                key=lambda quick_file: (
-                    quick_file.path.casefold(),
-                    quick_file_display_text(quick_file).casefold(),
-                ),
-            )
-        return quick_files
+        self.host._refresh_quick_actions_from_settings()
+        return self.host.quick_actions.visible_files()
 
     def refresh_quick_file_controls(self) -> None:
         if not hasattr(self, "quick_file_sort_combo"):
             return
         mode = (
-            self.host.settings.quick_file_sort_mode
-            if self.host.settings.quick_file_sort_mode in QUICK_FILE_SORT_MODES
+            self.host.quick_actions.file_sort_mode
+            if self.host.quick_actions.file_sort_mode in QUICK_FILE_SORT_MODES
             else "Custom"
         )
         self.quick_file_sort_combo.blockSignals(True)
@@ -1785,7 +1567,7 @@ class TerminalSessionWidget(QWidget):
                 "Export to CSV",
                 self.host.export_quick_commands_csv,
                 icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                enabled=bool(self.host.settings.quick_commands),
+                enabled=bool(self.host.quick_actions.quick_commands),
             )
             return menu
 
@@ -1841,7 +1623,7 @@ class TerminalSessionWidget(QWidget):
             "Export to CSV",
             self.host.export_quick_commands_csv,
             icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-            enabled=bool(self.host.settings.quick_commands),
+            enabled=bool(self.host.quick_actions.quick_commands),
         )
         menu.addSeparator()
         self.host._add_context_action(
@@ -1962,7 +1744,7 @@ class TerminalSessionWidget(QWidget):
                 "Export to CSV",
                 self.host.export_quick_files_csv,
                 icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                enabled=bool(self.host.settings.quick_files),
+                enabled=bool(self.host.quick_actions.quick_files),
             )
             return menu
 
@@ -2032,7 +1814,7 @@ class TerminalSessionWidget(QWidget):
             "Export to CSV",
             self.host.export_quick_files_csv,
             icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-            enabled=bool(self.host.settings.quick_files),
+            enabled=bool(self.host.quick_actions.quick_files),
         )
         return menu
 
@@ -2070,7 +1852,7 @@ class TerminalSessionWidget(QWidget):
         self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
 
     def list_ports_snapshot(self) -> list[dict[str, str]]:
-        self._ports = self.serial_client.list_ports()
+        self._ports = self.transport.list_ports()
         self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
         return self._ports
 
@@ -2505,7 +2287,7 @@ class TerminalSessionWidget(QWidget):
         suggestions = self.history_store.suggestions(text)
         suggestions.extend(
             command.command
-            for command in self.host.settings.quick_commands
+            for command in self.host.quick_actions.quick_commands
             if command.command not in suggestions and text.casefold() in command.command.casefold()
         )
         self.completion_model.setStringList(suggestions[:30])
@@ -2722,7 +2504,9 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.settings_store = SettingsStore(default_config_path())
-        self.settings = self.settings_store.load()
+        self.settings_service = SettingsService(self.settings_store)
+        self.settings = self.settings_service.load()
+        self.quick_actions = self._quick_action_library_from_settings()
         self.history_catalog = HistoryStore(self.settings.command_history)
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
         self._session_counter = 0
@@ -2905,13 +2689,33 @@ class MainWindow(QMainWindow):
         menu.addAction(action)
         return action
 
+    def _quick_action_library_from_settings(self) -> QuickActionLibrary:
+        return QuickActionLibrary(
+            quick_commands=self.settings.quick_commands,
+            quick_files=self.settings.quick_files,
+            command_sort_mode=self.settings.quick_command_sort_mode,
+            command_hidden_groups=self.settings.quick_command_hidden_groups,
+            file_sort_mode=self.settings.quick_file_sort_mode,
+        )
+
+    def _sync_quick_actions_to_settings(self) -> None:
+        self.settings.quick_commands = list(self.quick_actions.quick_commands)
+        self.settings.quick_files = list(self.quick_actions.quick_files)
+        self.settings.quick_command_sort_mode = self.quick_actions.command_sort_mode
+        self.settings.quick_command_hidden_groups = list(self.quick_actions.command_hidden_groups)
+        self.settings.quick_file_sort_mode = self.quick_actions.file_sort_mode
+
+    def _refresh_quick_actions_from_settings(self) -> None:
+        self.quick_actions = self._quick_action_library_from_settings()
+
     def show_command_palette(self) -> None:
         CommandPaletteDialog(self).exec()
 
     def command_editor_sources(self) -> CommandEditorSources:
+        self._refresh_quick_actions_from_settings()
         return CommandEditorSources(
             history_commands=self.history_catalog.all_commands(),
-            quick_commands=list(self.settings.quick_commands),
+            quick_commands=list(self.quick_actions.quick_commands),
         )
 
     def editor_font(self) -> QFont:
@@ -2945,7 +2749,7 @@ class MainWindow(QMainWindow):
             path=path,
             run_callback=None,
             font_change_callback=self.change_font_size,
-            quick_files_supplier=lambda: list(self.settings.quick_files),
+            quick_files_supplier=lambda: list(self.quick_actions.quick_files),
             run_targets_supplier=self.command_file_run_targets,
             run_target_callback=self.run_editor_in_terminal_by_id,
             embedded=True,
@@ -3807,75 +3611,74 @@ class MainWindow(QMainWindow):
         self.sync_status_from_current_session()
 
     def quick_command_by_id(self, command_id: str) -> QuickCommand | None:
-        return next((command for command in self.settings.quick_commands if command.id == command_id), None)
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.command_by_id(command_id)
 
     def quick_file_by_id(self, quick_file_id: str) -> QuickFile | None:
-        return next((quick_file for quick_file in self.settings.quick_files if quick_file.id == quick_file_id), None)
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.file_by_id(quick_file_id)
 
     def quick_command_group_names(self) -> list[str]:
-        groups: list[str] = []
-        seen: set[str] = set()
-        for command in self.settings.quick_commands:
-            group = quick_group_name(command.group)
-            key = group.casefold()
-            if key not in seen:
-                groups.append(group)
-                seen.add(key)
-        return sorted(groups, key=str.casefold)
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.command_group_names()
 
     def set_quick_command_sort_mode(self, mode: str) -> None:
+        self._refresh_quick_actions_from_settings()
         if mode not in QUICK_COMMAND_SORT_MODES:
             mode = "Custom"
-        if self.settings.quick_command_sort_mode == mode:
+        if self.quick_actions.command_sort_mode == mode:
             return
-        self.settings.quick_command_sort_mode = mode
+        self.quick_actions.set_command_sort_mode(mode)
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
     def set_quick_file_sort_mode(self, mode: str) -> None:
+        self._refresh_quick_actions_from_settings()
         if mode not in QUICK_FILE_SORT_MODES:
             mode = "Custom"
-        if self.settings.quick_file_sort_mode == mode:
+        if self.quick_actions.file_sort_mode == mode:
             return
-        self.settings.quick_file_sort_mode = mode
+        self.quick_actions.set_file_sort_mode(mode)
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere()
         self.save_settings()
 
     def set_quick_command_group_visible(self, group: str, visible: bool) -> None:
+        self._refresh_quick_actions_from_settings()
         group = quick_group_name(group)
-        hidden = [
-            hidden_group
-            for hidden_group in self.settings.quick_command_hidden_groups
-            if hidden_group.casefold() != group.casefold()
-        ]
-        if not visible:
-            hidden.append(group)
-        if [item.casefold() for item in hidden] == [
-            item.casefold() for item in self.settings.quick_command_hidden_groups
-        ]:
+        before = [item.casefold() for item in self.quick_actions.command_hidden_groups]
+        self.quick_actions.set_command_group_visible(group, visible)
+        after = [item.casefold() for item in self.quick_actions.command_hidden_groups]
+        if before == after:
             return
-        self.settings.quick_command_hidden_groups = hidden
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
     def show_all_quick_command_groups(self) -> None:
-        if not self.settings.quick_command_hidden_groups:
+        self._refresh_quick_actions_from_settings()
+        if not self.quick_actions.command_hidden_groups:
             return
-        self.settings.quick_command_hidden_groups = []
+        self.quick_actions.command_hidden_groups = []
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
     def hide_all_quick_command_groups(self) -> None:
+        self._refresh_quick_actions_from_settings()
         groups = self.quick_command_group_names()
         if [group.casefold() for group in groups] == [
-            group.casefold() for group in self.settings.quick_command_hidden_groups
+            group.casefold() for group in self.quick_actions.command_hidden_groups
         ]:
             return
-        self.settings.quick_command_hidden_groups = groups
+        self.quick_actions.command_hidden_groups = groups
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
     def add_quick_command(self, command: QuickCommand | None = None) -> None:
+        self._refresh_quick_actions_from_settings()
         if command is None or isinstance(command, bool):
             dialog = QuickCommandDialog(parent=self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3883,7 +3686,8 @@ class MainWindow(QMainWindow):
             command = dialog.quick_command()
         if not command.command:
             return
-        self.settings.quick_commands.append(command)
+        self.quick_actions.quick_commands.append(command)
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
@@ -3895,10 +3699,11 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         updated = dialog.quick_command()
-        for index, existing in enumerate(self.settings.quick_commands):
+        for index, existing in enumerate(self.quick_actions.quick_commands):
             if existing.id == updated.id:
-                self.settings.quick_commands[index] = updated
+                self.quick_actions.quick_commands[index] = updated
                 break
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
@@ -3918,17 +3723,24 @@ class MainWindow(QMainWindow):
             updated_at=now,
         )
         source_index = next(
-            (index for index, existing in enumerate(self.settings.quick_commands) if existing.id == command_id),
-            len(self.settings.quick_commands) - 1,
+            (index for index, existing in enumerate(self.quick_actions.quick_commands) if existing.id == command_id),
+            len(self.quick_actions.quick_commands) - 1,
         )
-        self.settings.quick_commands.insert(source_index + 1, duplicate)
+        self.quick_actions.quick_commands.insert(source_index + 1, duplicate)
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere(duplicate.id)
         self.save_settings()
 
     def delete_quick_command(self, command_id: str) -> None:
+        self._refresh_quick_actions_from_settings()
         if not command_id:
             return
-        self.settings.quick_commands = [command for command in self.settings.quick_commands if command.id != command_id]
+        self.quick_actions.quick_commands = [
+            command
+            for command in self.quick_actions.quick_commands
+            if command.id != command_id
+        ]
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
 
@@ -3940,6 +3752,7 @@ class MainWindow(QMainWindow):
         self.set_status(f"Copied quick command: {short_label(command.display_label(), 32)}")
 
     def add_quick_file(self, quick_file: QuickFile | None = None) -> None:
+        self._refresh_quick_actions_from_settings()
         if quick_file is None or isinstance(quick_file, bool):
             dialog = QuickFileDialog(parent=self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -3947,7 +3760,8 @@ class MainWindow(QMainWindow):
             quick_file = dialog.quick_file()
         if not quick_file.path:
             return
-        self.settings.quick_files.append(quick_file)
+        self.quick_actions.quick_files.append(quick_file)
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere(quick_file.id)
         self.save_settings()
 
@@ -3961,21 +3775,24 @@ class MainWindow(QMainWindow):
         updated = dialog.quick_file()
         if not updated.path:
             return
-        for index, existing in enumerate(self.settings.quick_files):
+        for index, existing in enumerate(self.quick_actions.quick_files):
             if existing.id == updated.id:
-                self.settings.quick_files[index] = updated
+                self.quick_actions.quick_files[index] = updated
                 break
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere(updated.id)
         self.save_settings()
 
     def delete_quick_file(self, quick_file_id: str) -> None:
+        self._refresh_quick_actions_from_settings()
         if not quick_file_id:
             return
-        self.settings.quick_files = [
+        self.quick_actions.quick_files = [
             quick_file
-            for quick_file in self.settings.quick_files
+            for quick_file in self.quick_actions.quick_files
             if quick_file.id != quick_file_id
         ]
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere()
         self.save_settings()
 
@@ -4112,43 +3929,17 @@ class MainWindow(QMainWindow):
         *,
         options: QuickCommandImportOptions | None = None,
     ) -> QuickCommandImportResult:
-        options = options or QuickCommandImportOptions()
-        with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
-            reader = csv.DictReader(csv_file)
-            if reader.fieldnames is None:
-                raise ValueError("CSV file is empty.")
-            normalized_names = {name.strip().casefold() for name in reader.fieldnames if name}
-            if "command" not in normalized_names and "text" not in normalized_names:
-                raise ValueError("CSV must include a 'command' column.")
-            imported: list[QuickCommand] = []
-            for row in reader:
-                normalized_row = {
-                    str(key).strip().casefold(): str(value or "")
-                    for key, value in row.items()
-                    if key is not None
-                }
-                quick_command = quick_command_from_csv_row(normalized_row)
-                if quick_command:
-                    imported.append(quick_command)
-        if not imported:
-            return QuickCommandImportResult()
-        self.settings.quick_commands, result = merge_quick_commands(
-            self.settings.quick_commands,
-            imported,
-            options,
-        )
-        selected_id = self.settings.quick_commands[-1].id if self.settings.quick_commands else ""
+        self._refresh_quick_actions_from_settings()
+        result = self.quick_actions.import_commands_from_csv(path, options=options)
+        self._sync_quick_actions_to_settings()
+        selected_id = self.quick_actions.quick_commands[-1].id if self.quick_actions.quick_commands else ""
         self.refresh_quick_commands_everywhere(selected_id)
         self.save_settings()
         return result
 
     def export_quick_commands_to_csv(self, path: Path) -> int:
-        with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=QUICK_COMMAND_CSV_FIELDS)
-            writer.writeheader()
-            for command in self.settings.quick_commands:
-                writer.writerow(quick_command_csv_row(command))
-        return len(self.settings.quick_commands)
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.export_commands_to_csv(path)
 
     def import_quick_files_from_csv(
         self,
@@ -4156,80 +3947,47 @@ class MainWindow(QMainWindow):
         *,
         options: QuickFileImportOptions | None = None,
     ) -> QuickFileImportResult:
-        options = options or QuickFileImportOptions()
-        with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
-            reader = csv.DictReader(csv_file)
-            if reader.fieldnames is None:
-                raise ValueError("CSV file is empty.")
-            normalized_names = {name.strip().casefold() for name in reader.fieldnames if name}
-            if not normalized_names.intersection({"path", "file", "command_file", "script"}):
-                raise ValueError("CSV must include a 'path' column.")
-            imported: list[QuickFile] = []
-            for row in reader:
-                normalized_row = {
-                    str(key).strip().casefold(): str(value or "")
-                    for key, value in row.items()
-                    if key is not None
-                }
-                quick_file = quick_file_from_csv_row(normalized_row)
-                if quick_file:
-                    imported.append(quick_file)
-        if not imported:
-            return QuickFileImportResult()
-        self.settings.quick_files, result = merge_quick_files(
-            self.settings.quick_files,
-            imported,
-            options,
-        )
-        selected_id = self.settings.quick_files[-1].id if self.settings.quick_files else ""
+        self._refresh_quick_actions_from_settings()
+        result = self.quick_actions.import_files_from_csv(path, options=options)
+        self._sync_quick_actions_to_settings()
+        selected_id = self.quick_actions.quick_files[-1].id if self.quick_actions.quick_files else ""
         self.refresh_quick_files_everywhere(selected_id)
         self.save_settings()
         return result
 
     def export_quick_files_to_csv(self, path: Path) -> int:
-        with path.open("w", encoding="utf-8-sig", newline="") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=QUICK_FILE_CSV_FIELDS)
-            writer.writeheader()
-            for quick_file in self.settings.quick_files:
-                writer.writerow(quick_file_csv_row(quick_file))
-        return len(self.settings.quick_files)
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.export_files_to_csv(path)
 
     def move_quick_command(self, command_id: str, direction: int) -> None:
-        commands = self.settings.quick_commands
+        self._refresh_quick_actions_from_settings()
+        commands = self.quick_actions.quick_commands
         index = next((i for i, command in enumerate(commands) if command.id == command_id), -1)
         target = index + direction
         if index < 0 or target < 0 or target >= len(commands):
             return
         commands[index], commands[target] = commands[target], commands[index]
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere(command_id)
         self.save_settings()
 
     def move_quick_file(self, quick_file_id: str, direction: int) -> None:
-        quick_files = self.settings.quick_files
+        self._refresh_quick_actions_from_settings()
+        quick_files = self.quick_actions.quick_files
         index = next((i for i, quick_file in enumerate(quick_files) if quick_file.id == quick_file_id), -1)
         target = index + direction
         if index < 0 or target < 0 or target >= len(quick_files):
             return
         quick_files[index], quick_files[target] = quick_files[target], quick_files[index]
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere(quick_file_id)
         self.save_settings()
 
     def reorder_quick_commands(self, command_ids: list[str], *, selected_id: str = "") -> None:
-        existing_ids = [command.id for command in self.settings.quick_commands]
-        if command_ids == existing_ids:
+        self._refresh_quick_actions_from_settings()
+        if not self.quick_actions.reorder_commands(command_ids):
             return
-        commands_by_id = {command.id: command for command in self.settings.quick_commands}
-        seen: set[str] = set()
-        reordered: list[QuickCommand] = []
-        for command_id in command_ids:
-            command = commands_by_id.get(command_id)
-            if command and command_id not in seen:
-                reordered.append(command)
-                seen.add(command_id)
-        reordered.extend(command for command in self.settings.quick_commands if command.id not in seen)
-        if [command.id for command in reordered] == existing_ids:
-            return
-        self.settings.quick_commands = reordered
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere(selected_id)
         self.save_settings()
 
@@ -4240,26 +3998,10 @@ class MainWindow(QMainWindow):
         selected_id: str = "",
         force_custom: bool = False,
     ) -> None:
-        existing_ids = [quick_file.id for quick_file in self.settings.quick_files]
-        mode_changed = force_custom and self.settings.quick_file_sort_mode != "Custom"
-        if quick_file_ids == existing_ids and not mode_changed:
+        self._refresh_quick_actions_from_settings()
+        if not self.quick_actions.reorder_files(quick_file_ids, force_custom=force_custom):
             return
-        quick_files_by_id = {quick_file.id: quick_file for quick_file in self.settings.quick_files}
-        seen: set[str] = set()
-        reordered: list[QuickFile] = []
-        for quick_file_id in quick_file_ids:
-            quick_file = quick_files_by_id.get(quick_file_id)
-            if quick_file and quick_file_id not in seen:
-                reordered.append(quick_file)
-                seen.add(quick_file_id)
-        reordered.extend(quick_file for quick_file in self.settings.quick_files if quick_file.id not in seen)
-        order_changed = [quick_file.id for quick_file in reordered] != existing_ids
-        if not order_changed and not mode_changed:
-            return
-        if force_custom:
-            self.settings.quick_file_sort_mode = "Custom"
-        if order_changed:
-            self.settings.quick_files = reordered
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere(selected_id)
         self.save_settings()
 
@@ -4331,7 +4073,8 @@ class MainWindow(QMainWindow):
         return True
 
     def delete_all_quick_commands(self, *, confirm: bool = True) -> bool:
-        count = len(self.settings.quick_commands)
+        self._refresh_quick_actions_from_settings()
+        count = len(self.quick_actions.quick_commands)
         if count == 0:
             self.set_status("No quick commands to delete.")
             return False
@@ -4342,15 +4085,17 @@ class MainWindow(QMainWindow):
             confirm=confirm,
         ):
             return False
-        self.settings.quick_commands = []
-        self.settings.quick_command_hidden_groups = []
+        self.quick_actions.quick_commands = []
+        self.quick_actions.command_hidden_groups = []
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_commands_everywhere()
         self.save_settings()
         self.set_status(f"Deleted {count} quick command{'s' if count != 1 else ''}.")
         return True
 
     def delete_all_quick_files(self, *, confirm: bool = True) -> bool:
-        count = len(self.settings.quick_files)
+        self._refresh_quick_actions_from_settings()
+        count = len(self.quick_actions.quick_files)
         if count == 0:
             self.set_status("No quick files to delete.")
             return False
@@ -4360,7 +4105,8 @@ class MainWindow(QMainWindow):
             confirm=confirm,
         ):
             return False
-        self.settings.quick_files = []
+        self.quick_actions.quick_files = []
+        self._sync_quick_actions_to_settings()
         self.refresh_quick_files_everywhere()
         self.save_settings()
         self.set_status(f"Deleted {count} quick file{'s' if count != 1 else ''}.")
@@ -4419,7 +4165,7 @@ class MainWindow(QMainWindow):
             self._hide_busy_message(busy)
             QMessageBox.warning(self, "Import App Settings", str(exc))
             return
-        saved = self.settings_store.save(self.settings)
+        saved = self.settings_service.save(self.settings)
         self._hide_busy_message(busy)
         if not saved:
             self.set_status("Could not save imported app settings to disk.")
@@ -4454,30 +4200,18 @@ class MainWindow(QMainWindow):
         self.set_status(f"Exported app settings to {path}")
 
     def load_settings_from_json(self, path: Path) -> AppSettings:
-        return AppSettings.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return self.settings_service.load_from_json(path)
 
     def export_settings_to_json(self, path: Path) -> None:
-        path.write_text(
-            json.dumps(self.settings.to_app_settings_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        self.settings_service.export_to_json(self.settings, path)
 
     def apply_imported_settings(
         self,
         settings: AppSettings,
     ) -> None:
-        current_quick_snippets = list(self.settings.quick_snippets)
-        current_quick_commands = list(self.settings.quick_commands)
-        current_quick_files = list(self.settings.quick_files)
-        current_quick_command_sort_mode = self.settings.quick_command_sort_mode
-        current_quick_command_hidden_groups = list(self.settings.quick_command_hidden_groups)
-        current_quick_file_sort_mode = self.settings.quick_file_sort_mode
-        settings.quick_snippets = current_quick_snippets
-        settings.quick_commands = current_quick_commands
-        settings.quick_files = current_quick_files
-        settings.quick_command_sort_mode = current_quick_command_sort_mode
-        settings.quick_command_hidden_groups = current_quick_command_hidden_groups
-        settings.quick_file_sort_mode = current_quick_file_sort_mode
+        self._refresh_quick_actions_from_settings()
+        self._sync_quick_actions_to_settings()
+        settings = self.settings_service.preserve_quick_actions(settings, self.settings)
         for index in range(self.tabs.count() - 1, -1, -1):
             session = self.session_at(index)
             if session:
@@ -4489,6 +4223,7 @@ class MainWindow(QMainWindow):
         previous_loading = self._loading
         self._loading = True
         self.settings = settings
+        self.quick_actions = self._quick_action_library_from_settings()
         self.history_catalog = HistoryStore(self.settings.command_history)
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
         self.resize(self.settings.window_width, self.settings.window_height)
@@ -4870,9 +4605,13 @@ class MainWindow(QMainWindow):
     def save_settings(self) -> None:
         if self._loading:
             return
+        self._refresh_quick_actions_from_settings()
+        self._sync_quick_actions_to_settings()
         session = self.current_session()
         if session:
             self.settings.serial = clone_profile(session.profile)
+            self.settings.transport_kind = "serial"
+            self.settings.transport_profile = self.settings.serial.to_dict()
         self.settings.command_history = self.history_catalog.all_commands()
         self.settings.window_width = self.width()
         self.settings.window_height = self.height()
@@ -4885,7 +4624,7 @@ class MainWindow(QMainWindow):
             )
             for editor in self.iter_command_file_editors()
         ]
-        if not self.settings_store.save(self.settings):
+        if not self.settings_service.save(self.settings):
             self.set_status("Could not save settings to disk.")
 
     def closeEvent(self, event) -> None:
