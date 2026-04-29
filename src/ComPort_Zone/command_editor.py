@@ -58,6 +58,7 @@ from .command_run_targets import (
     CommandRunRequest,
     CommandRunTargetService,
 )
+from .command_search import CommandSearchState, find_search_matches, replace_all_matches
 from .icons import standard_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES, QuickCommand, QuickFile
 from .quick_actions import quick_file_display_text, quick_group_name
@@ -494,8 +495,7 @@ class CommandFileEditorDialog(QDialog):
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
         self._dirty = False
-        self.search_matches: list[tuple[int, int]] = []
-        self.current_match_index = -1
+        self.search_state = CommandSearchState()
         if self.embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle("Command File Editor")
@@ -1059,10 +1059,10 @@ class CommandFileEditorDialog(QDialog):
         previous_button.clicked.connect(self.find_previous)
         next_button = QPushButton("Next", self.find_replace_bar)
         next_button.clicked.connect(self.find_next)
-        replace_button = QPushButton("Replace", self.find_replace_bar)
-        replace_button.clicked.connect(self.replace_current)
-        replace_all_button = QPushButton("Replace All", self.find_replace_bar)
-        replace_all_button.clicked.connect(self.replace_all)
+        self.replace_button = QPushButton("Replace", self.find_replace_bar)
+        self.replace_button.clicked.connect(self.replace_current)
+        self.replace_all_button = QPushButton("Replace All", self.find_replace_bar)
+        self.replace_all_button.clicked.connect(self.replace_all)
         close_button = QToolButton(self.find_replace_bar)
         close_button.setText("X")
         close_button.clicked.connect(self.hide_find_replace_bar)
@@ -1073,8 +1073,8 @@ class CommandFileEditorDialog(QDialog):
         layout.addWidget(self.case_sensitive_check)
         layout.addWidget(previous_button)
         layout.addWidget(next_button)
-        layout.addWidget(replace_button)
-        layout.addWidget(replace_all_button)
+        layout.addWidget(self.replace_button)
+        layout.addWidget(self.replace_all_button)
         layout.addWidget(self.search_count_label)
         layout.addWidget(close_button)
         self.find_replace_bar.hide()
@@ -1265,6 +1265,8 @@ class CommandFileEditorDialog(QDialog):
         if selection:
             self.search_input.setText(selection)
         self.replace_input.setVisible(show_replace)
+        self.replace_button.setVisible(show_replace)
+        self.replace_all_button.setVisible(show_replace)
         self.find_replace_bar.show()
         self.refresh_search_matches(reset=True)
         self.search_input.setFocus()
@@ -1272,98 +1274,68 @@ class CommandFileEditorDialog(QDialog):
 
     def hide_find_replace_bar(self) -> None:
         self.find_replace_bar.hide()
-        self.search_matches = []
-        self.current_match_index = -1
+        self.search_state.clear()
         self.editor.set_search_highlights([])
         self.editor.setFocus()
-
-    def _search_text_pair(self) -> tuple[str, str]:
-        needle = self.search_input.text()
-        haystack = self.text()
-        if self.case_sensitive_check.isChecked():
-            return haystack, needle
-        return haystack.casefold(), needle.casefold()
-
-    def _find_search_matches(self) -> list[tuple[int, int]]:
-        needle = self.search_input.text()
-        if not needle:
-            return []
-        haystack, search_needle = self._search_text_pair()
-        matches: list[tuple[int, int]] = []
-        start = 0
-        step = max(1, len(search_needle))
-        while start <= len(haystack):
-            index = haystack.find(search_needle, start)
-            if index < 0:
-                break
-            matches.append((index, index + len(needle)))
-            start = index + step
-        return matches
 
     def refresh_search_matches(self, *, reset: bool) -> None:
         if not hasattr(self, "search_input"):
             return
-        old_start = -1
-        if 0 <= self.current_match_index < len(self.search_matches):
-            old_start = self.search_matches[self.current_match_index][0]
         cursor_position = self.editor.textCursor().selectionStart()
-        self.search_matches = self._find_search_matches()
-        if not self.search_matches:
-            self.current_match_index = -1
+        match = self.search_state.refresh(
+            self.text(),
+            self.search_input.text(),
+            case_sensitive=self.case_sensitive_check.isChecked(),
+            cursor_position=cursor_position,
+            reset=reset,
+        )
+        if match is None:
             self.search_count_label.setText("0/0")
             self.editor.set_search_highlights([])
             return
-        if reset:
-            self.current_match_index = next(
-                (index for index, (start, _end) in enumerate(self.search_matches) if start >= cursor_position),
-                0,
-            )
-        else:
-            self.current_match_index = next(
-                (index for index, (start, _end) in enumerate(self.search_matches) if start >= old_start),
-                min(max(self.current_match_index, 0), len(self.search_matches) - 1),
-            )
         self._select_current_search_match()
 
     def _select_current_search_match(self) -> None:
-        if not (0 <= self.current_match_index < len(self.search_matches)):
+        match = self.search_state.current_match
+        if match is None:
             self.search_count_label.setText("0/0")
-            self.editor.set_search_highlights(self.search_matches, self.current_match_index)
+            self.editor.set_search_highlights(self.search_state.matches, self.search_state.current_index)
             return
-        start, end = self.search_matches[self.current_match_index]
+        start, end = match
         cursor = self.editor.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         self.editor.setTextCursor(cursor)
         self.editor.ensureCursorVisible()
-        self.search_count_label.setText(f"{self.current_match_index + 1}/{len(self.search_matches)}")
-        self.editor.set_search_highlights(self.search_matches, self.current_match_index)
+        self.search_count_label.setText(self.search_state.count_label)
+        self.editor.set_search_highlights(self.search_state.matches, self.search_state.current_index)
 
     def find_next(self) -> None:
-        if not self.search_matches:
+        if not self.search_state.matches:
             self.refresh_search_matches(reset=True)
-        if not self.search_matches:
+        if not self.search_state.matches:
             QApplication.beep()
             return
-        self.current_match_index = (self.current_match_index + 1) % len(self.search_matches)
+        self.search_state.move_next()
         self._select_current_search_match()
 
     def find_previous(self) -> None:
-        if not self.search_matches:
+        if not self.search_state.matches:
             self.refresh_search_matches(reset=True)
-        if not self.search_matches:
+        if not self.search_state.matches:
             QApplication.beep()
             return
-        self.current_match_index = (self.current_match_index - 1) % len(self.search_matches)
+        self.search_state.move_previous()
         self._select_current_search_match()
 
     def replace_current(self) -> None:
-        if not self.search_matches:
+        if not self.search_state.matches:
             self.refresh_search_matches(reset=True)
-        if not (0 <= self.current_match_index < len(self.search_matches)):
+        match = self.search_state.current_match
+        if match is None:
             QApplication.beep()
             return
-        start, end = self.search_matches[self.current_match_index]
+        start, end = match
         cursor = self.editor.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
@@ -1372,22 +1344,17 @@ class CommandFileEditorDialog(QDialog):
         self.refresh_search_matches(reset=True)
 
     def replace_all(self) -> None:
-        matches = self._find_search_matches()
+        matches = find_search_matches(
+            self.text(),
+            self.search_input.text(),
+            case_sensitive=self.case_sensitive_check.isChecked(),
+        )
         if not matches:
             QApplication.beep()
             return
         replacement = self.replace_input.text()
-        original = self.text()
-        pieces: list[str] = []
-        cursor = 0
-        for start, end in matches:
-            pieces.append(original[cursor:start])
-            pieces.append(replacement)
-            cursor = end
-        pieces.append(original[cursor:])
-        self.editor.setPlainText("".join(pieces))
-        self.search_matches = []
-        self.current_match_index = -1
+        self.editor.setPlainText(replace_all_matches(self.text(), matches, replacement))
+        self.search_state.clear()
         self.refresh_search_matches(reset=True)
         self.status_label.setText(f"Replaced {len(matches)} match(es).")
 

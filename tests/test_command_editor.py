@@ -201,6 +201,9 @@ class CommandEditorTests(unittest.TestCase):
             QTest.keyClick(dialog.editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
             self.qt.processEvents()
             self.assertTrue(dialog.find_replace_bar.isVisible())
+            self.assertFalse(dialog.replace_input.isVisible())
+            self.assertFalse(dialog.replace_button.isVisible())
+            self.assertFalse(dialog.replace_all_button.isVisible())
 
             dialog.search_input.setText("volt")
             self.qt.processEvents()
@@ -221,8 +224,16 @@ class CommandEditorTests(unittest.TestCase):
     def test_editor_replace_current_and_replace_all(self) -> None:
         dialog = CommandFileEditorDialog(sources=CommandEditorSources())
         try:
+            dialog.show()
             dialog.setPlainText("SEND VOLT?\nSEND CURR?\nSEND VOLT?\n")
+            dialog.show_find_bar()
+            self.qt.processEvents()
+            self.assertFalse(dialog.replace_button.isVisible())
             dialog.show_replace_bar()
+            self.qt.processEvents()
+            self.assertTrue(dialog.replace_input.isVisible())
+            self.assertTrue(dialog.replace_button.isVisible())
+            self.assertTrue(dialog.replace_all_button.isVisible())
             dialog.search_input.setText("SEND")
             dialog.replace_input.setText("EXPECT")
             self.qt.processEvents()
