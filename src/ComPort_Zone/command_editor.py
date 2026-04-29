@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .command_file_service import COMMAND_FILE_FILTER, CommandFileService
 from .command_editor_core import (
     BATCH_KEYWORDS,
     COMMENT_SNIPPETS,
@@ -465,6 +466,7 @@ class CommandFileEditorDialog(QDialog):
         font_change_callback: Callable[[int], None] | None = None,
         quick_files_supplier: Callable[[], list[QuickFile]] | None = None,
         quick_action_callbacks: CommandEditorQuickActionCallbacks | None = None,
+        file_service: CommandFileService | None = None,
         run_targets_supplier: Callable[[], list[tuple[int, str]]] | None = None,
         run_target_callback: Callable[["CommandFileEditorDialog", int], None] | None = None,
         embedded: bool = False,
@@ -479,6 +481,7 @@ class CommandFileEditorDialog(QDialog):
         self.font_change_callback = font_change_callback
         self.quick_files_supplier = quick_files_supplier
         self.quick_action_callbacks = quick_action_callbacks or CommandEditorQuickActionCallbacks()
+        self.file_service = file_service or CommandFileService()
         self.run_targets_supplier = run_targets_supplier
         self.run_target_callback = run_target_callback
         self.embedded = embedded
@@ -1444,19 +1447,19 @@ class CommandFileEditorDialog(QDialog):
     def open_file(self) -> None:
         if not self.confirm_save_or_discard_if_dirty():
             return
-        start_dir = str(self.path.parent if self.path else Path.cwd())
+        start_dir = str(self.file_service.default_open_dir(self.path))
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Command File",
             start_dir,
-            "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+            COMMAND_FILE_FILTER,
         )
         if path:
             self.load_path(Path(path))
 
     def load_path(self, path: Path) -> bool:
         try:
-            text = path.read_text(encoding="utf-8")
+            text = self.file_service.load_text(path)
         except OSError as exc:
             QMessageBox.warning(self, "Open Command File", str(exc))
             return False
@@ -1471,8 +1474,7 @@ class CommandFileEditorDialog(QDialog):
         if self.path is None:
             return self.save_as()
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(self.text(), encoding="utf-8")
+            self.file_service.save_text(self.path, self.text())
         except OSError as exc:
             QMessageBox.warning(self, "Save Command File", str(exc))
             return False
@@ -1482,12 +1484,12 @@ class CommandFileEditorDialog(QDialog):
         return True
 
     def save_as(self) -> bool:
-        start = str(self.path if self.path else Path.cwd() / "command-file.txt")
+        start = str(self.file_service.default_save_path(self.path))
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Command File",
             start,
-            "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+            COMMAND_FILE_FILTER,
         )
         if not path:
             return False
