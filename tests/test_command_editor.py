@@ -6,7 +6,8 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from ComPort_Zone.command_editor import CommandEditorSources, CommandFileEditorDialog
+from ComPort_Zone.command_editor import CommandFileEditorDialog
+from ComPort_Zone.command_editor_core import CommandEditorSources
 from ComPort_Zone.models import QuickCommand, QuickFile
 
 
