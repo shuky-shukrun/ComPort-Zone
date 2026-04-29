@@ -26,13 +26,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QLineEdit,
     QPushButton,
-    QSizePolicy,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -41,6 +38,12 @@ from PySide6.QtWidgets import (
 
 from .batch import BatchParseError, parse_batch_line, strip_c_style_comment
 from .models import QuickCommand, QuickFile
+from .quick_actions_panel import (
+    QuickActionsPanel,
+    populate_quick_command_list,
+    populate_quick_file_list,
+    selected_item_id,
+)
 from .widgets import ChevronComboBox
 
 BATCH_KEYWORDS = ("SEND", "WAIT", "HEX", "EXPECT")
@@ -709,39 +712,16 @@ class CommandFileEditorDialog(QDialog):
         self.refresh_run_targets()
 
     def _build_workspace_side_panel(self) -> QWidget:
-        panel = QFrame(self)
-        panel.setObjectName("editorSidePanel")
-        panel.setMinimumWidth(230)
-        panel.setMaximumWidth(340)
-        panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(7)
-
-        command_title = QLabel("Quick Commands", panel)
-        command_title.setObjectName("drawerTitle")
-        self.quick_command_list = QListWidget(panel)
-        self.quick_command_list.setObjectName("quickCommandList")
-        self.quick_command_list.setToolTip("Double-click or press Insert to add a command at the editor cursor.")
-        self.quick_command_list.itemDoubleClicked.connect(lambda _: self.insert_selected_quick_command())
-        insert_command = QPushButton("Insert", panel)
-        insert_command.clicked.connect(self.insert_selected_quick_command)
-
-        file_title = QLabel("Quick Files", panel)
-        file_title.setObjectName("drawerTitle")
-        self.quick_file_list = QListWidget(panel)
-        self.quick_file_list.setObjectName("quickFileList")
-        self.quick_file_list.setToolTip("Double-click or press Open to load the saved file into this editor.")
-        self.quick_file_list.itemDoubleClicked.connect(lambda _: self.open_selected_quick_file())
-        open_file = QPushButton("Open", panel)
-        open_file.clicked.connect(self.open_selected_quick_file)
-
-        layout.addWidget(command_title)
-        layout.addWidget(self.quick_command_list, 1)
-        layout.addWidget(insert_command)
-        layout.addWidget(file_title)
-        layout.addWidget(self.quick_file_list, 1)
-        layout.addWidget(open_file)
+        panel = QuickActionsPanel(
+            command_action_text="Insert",
+            command_action=self.insert_selected_quick_command,
+            file_action_text="Open",
+            file_action=self.open_selected_quick_file,
+            parent=self,
+        )
+        self.quick_actions_panel = panel
+        self.quick_command_list = panel.quick_command_list
+        self.quick_file_list = panel.quick_file_list
         return panel
 
     def _build_run_bar(self) -> QWidget:
@@ -878,32 +858,19 @@ class CommandFileEditorDialog(QDialog):
         if not hasattr(self, "quick_command_list"):
             return
         selected_command_id = self.selected_quick_command_id()
-        self.quick_command_list.clear()
-        for command in self.sources.quick_commands:
-            if not command.command:
-                continue
-            label = command.display_label()
-            group = quick_command_group(command)
-            item_text = label if group.casefold() == "general" else f"{group}: {label}"
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.ItemDataRole.UserRole, command.id)
-            item.setToolTip(command.description.strip() or f"{group} | {command.command}")
-            self.quick_command_list.addItem(item)
-            if command.id == selected_command_id:
-                self.quick_command_list.setCurrentItem(item)
+        populate_quick_command_list(
+            self.quick_command_list,
+            self.sources.quick_commands,
+            selected_id=selected_command_id,
+        )
 
         selected_file_id = self.selected_quick_file_id()
-        self.quick_file_list.clear()
         quick_files = self.quick_files_supplier() if self.quick_files_supplier else []
-        for quick_file in quick_files:
-            if not quick_file.path:
-                continue
-            item = QListWidgetItem(quick_file.display_label() or Path(quick_file.path).name or quick_file.path)
-            item.setData(Qt.ItemDataRole.UserRole, quick_file.id)
-            item.setToolTip(quick_file.path)
-            self.quick_file_list.addItem(item)
-            if quick_file.id == selected_file_id:
-                self.quick_file_list.setCurrentItem(item)
+        populate_quick_file_list(
+            self.quick_file_list,
+            quick_files,
+            selected_id=selected_file_id,
+        )
 
     def refresh_run_targets(self) -> None:
         if not hasattr(self, "run_target_combo"):
@@ -926,12 +893,10 @@ class CommandFileEditorDialog(QDialog):
         self.run_target_combo.blockSignals(False)
 
     def selected_quick_command_id(self) -> str:
-        item = self.quick_command_list.currentItem() if hasattr(self, "quick_command_list") else None
-        return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
+        return selected_item_id(self.quick_command_list) if hasattr(self, "quick_command_list") else ""
 
     def selected_quick_file_id(self) -> str:
-        item = self.quick_file_list.currentItem() if hasattr(self, "quick_file_list") else None
-        return str(item.data(Qt.ItemDataRole.UserRole)) if item else ""
+        return selected_item_id(self.quick_file_list) if hasattr(self, "quick_file_list") else ""
 
     def selected_quick_command(self) -> QuickCommand | None:
         command_id = self.selected_quick_command_id()
