@@ -45,6 +45,21 @@ class CommandEditorTests(unittest.TestCase):
         self.assertNotIn("PO", sources.suggestions("PO", "PO", exclude="PO"))
         self.assertEqual(sources.suggestions("")[:4], ["SEND", "WAIT", "HEX", "EXPECT"])
 
+    def test_editor_suggestions_follow_active_quick_command_group_visibility(self) -> None:
+        sources = CommandEditorSources(
+            quick_commands=[
+                QuickCommand(label="Source power", command="POW 100", group="Source"),
+                QuickCommand(label="Sink power", command="SINK:POW 50", group="Sink"),
+            ],
+            quick_command_hidden_groups=["Source"],
+        )
+
+        suggestions = sources.suggestions("", "PO")
+
+        self.assertIn("SINK:POW 50", suggestions)
+        self.assertNotIn("POW 100", suggestions)
+        self.assertEqual(sources.validation_issues("POW 100"), [])
+
     def test_editor_autocomplete_excludes_active_token_and_accepts_current_completion(self) -> None:
         dialog = CommandFileEditorDialog(sources=CommandEditorSources())
         try:

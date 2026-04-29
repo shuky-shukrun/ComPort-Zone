@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
@@ -13,12 +14,18 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
+    QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .models import QuickCommand, QuickFile
+from .icons import set_button_icon
 from .quick_actions import quick_file_display_text, quick_group_name
+
+QUICK_ACTION_ITEM_HEIGHT = 32
 
 
 def short_list_label(text: str, limit: int | None = None) -> str:
@@ -123,7 +130,7 @@ def populate_quick_command_list(
     selected_id: str = "",
     label_limit: int | None = None,
     group_limit: int | None = None,
-    item_height: int | None = None,
+    item_height: int | None = QUICK_ACTION_ITEM_HEIGHT,
     draggable: bool = False,
 ) -> int:
     quick_list.clear()
@@ -159,7 +166,7 @@ def populate_quick_file_list(
     *,
     selected_id: str = "",
     label_limit: int | None = None,
-    item_height: int | None = None,
+    item_height: int | None = QUICK_ACTION_ITEM_HEIGHT,
     draggable: bool = False,
 ) -> int:
     quick_list.clear()
@@ -238,3 +245,70 @@ def add_action_rows(
         for button in row:
             line.addWidget(button)
         layout.addLayout(line)
+
+
+@dataclass(frozen=True, slots=True)
+class QuickActionsDrawerPage:
+    icon: QStyle.StandardPixmap
+    tooltip: str
+    widget: QWidget
+
+
+class QuickActionsDrawer(QFrame):
+    def __init__(
+        self,
+        *,
+        pages: Iterable[QuickActionsDrawerPage],
+        on_page_requested: Callable[[int], None] | None = None,
+        rail_width: int = 48,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("drawer")
+        self.on_page_requested = on_page_requested
+        self.rail_buttons: list[QToolButton] = []
+
+        drawer_layout = QHBoxLayout(self)
+        drawer_layout.setContentsMargins(0, 0, 0, 0)
+        drawer_layout.setSpacing(0)
+
+        self.rail = QFrame(self)
+        self.rail.setObjectName("drawerRail")
+        self.rail.setFixedWidth(rail_width)
+        rail_layout = QVBoxLayout(self.rail)
+        rail_layout.setContentsMargins(6, 6, 6, 6)
+        rail_layout.setSpacing(8)
+
+        self.panel = QFrame(self)
+        self.panel.setObjectName("drawerPanel")
+        panel_layout = QVBoxLayout(self.panel)
+        panel_layout.setContentsMargins(10, 8, 10, 8)
+        panel_layout.setSpacing(8)
+
+        self.pages = QStackedWidget(self.panel)
+        for index, page in enumerate(pages):
+            button = QToolButton(self.rail)
+            button.setObjectName("railButton")
+            button.setFixedSize(36, 36)
+            set_button_icon(button, page.icon, 18)
+            button.setToolTip(page.tooltip)
+            button.clicked.connect(lambda _checked=False, page_index=index: self._request_page(page_index))
+            rail_layout.addWidget(button)
+            self.rail_buttons.append(button)
+            self.pages.addWidget(page.widget)
+        rail_layout.addStretch(1)
+
+        panel_layout.addWidget(self.pages, 1)
+        drawer_layout.addWidget(self.rail)
+        drawer_layout.addWidget(self.panel, 1)
+
+    def _request_page(self, index: int) -> None:
+        if self.on_page_requested is not None:
+            self.on_page_requested(index)
+            return
+        self.select_page(index)
+
+    def select_page(self, index: int) -> None:
+        if self.pages.count() == 0:
+            return
+        self.pages.setCurrentIndex(max(0, min(index, self.pages.count() - 1)))

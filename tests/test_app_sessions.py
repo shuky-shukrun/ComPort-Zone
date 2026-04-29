@@ -503,8 +503,28 @@ class AppSessionTests(unittest.TestCase):
                 button.text()
                 for button in editor.workspace_drawer_pages.widget(1).findChildren(QPushButton)
             ]
-            self.assertEqual(command_buttons, ["Insert"])
-            self.assertEqual(file_buttons, ["Open"])
+            self.assertEqual(
+                drawer_action_rows(editor.workspace_drawer_pages.widget(0)),
+                [
+                    ["Insert", "Add Command"],
+                    ["Edit", "Delete"],
+                    ["Move Up", "Move Down"],
+                    ["Import CSV", "Export CSV"],
+                ],
+            )
+            self.assertEqual(
+                drawer_action_rows(editor.workspace_drawer_pages.widget(1)),
+                [
+                    ["Open", "Add File"],
+                    ["Edit", "Delete"],
+                    ["Move Up", "Move Down"],
+                    ["Import CSV", "Export CSV"],
+                ],
+            )
+            self.assertIn("Insert", command_buttons)
+            self.assertIn("Open", file_buttons)
+            self.assertNotIn("Validate", [button.text() for button in editor.findChildren(QPushButton)])
+            self.assertNotIn("Quick command suggestions", [label.text() for label in editor.findChildren(QLabel)])
             editor._select_workspace_drawer_page(1)
             self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
         finally:

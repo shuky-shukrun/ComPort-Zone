@@ -11,7 +11,7 @@ from pathlib import Path
 from queue import Empty
 from threading import Event
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, Qt, QStringListModel, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QSpinBox,
     QSplashScreen,
-    QStackedWidget,
     QTabBar,
     QTabWidget,
     QTextEdit,
@@ -48,7 +47,6 @@ from PySide6.QtWidgets import (
     QWidget,
     QCompleter,
 )
-from PySide6.QtSvg import QSvgRenderer
 
 from .batch import (
     BatchParseError,
@@ -59,8 +57,9 @@ from .batch import (
     parse_hex_payload,
     substitute_batch_parameters,
 )
-from .command_editor import CommandEditorSources, CommandFileEditorDialog
+from .command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from .history import HistoryStore
+from .icons import STYLE_ICON_MAP, TABLER_ICON_PATHS, set_button_icon, standard_icon
 from . import __version__
 from .models import (
     AppSettings,
@@ -79,6 +78,8 @@ from .models import (
 )
 from . import quick_actions as _quick_actions
 from .quick_actions_panel import (
+    QuickActionsDrawer,
+    QuickActionsDrawerPage,
     QuickActionsPanel,
     create_quick_command_list,
     create_quick_file_list,
@@ -110,68 +111,6 @@ APP_SETTINGS_EXPLANATION = (
     "CSV import/export actions from the Quick Send and Quick Files drawer pages."
 )
 
-TABLER_ICON_PATHS = {
-    "arrow-left": '<path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" />',
-    "arrow-right": '<path d="M5 12l14 0" /><path d="M13 18l6 -6" /><path d="M13 6l6 6" />',
-    "check": '<path d="M5 12l5 5l10 -10" />',
-    "chevron-down": '<path d="M6 9l6 6l6 -6" />',
-    "chevron-up": '<path d="M6 15l6 -6l6 6" />',
-    "clock": '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 7v5l3 3" />',
-    "clipboard-list": '<path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" /><path d="M9 5a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2" /><path d="M9 12l.01 0" /><path d="M13 12l2 0" /><path d="M9 16l.01 0" /><path d="M13 16l2 0" />',
-    "command": '<path d="M7 9a2 2 0 1 1 2 -2v10a2 2 0 1 1 -2 -2h10a2 2 0 1 1 -2 2v-10a2 2 0 1 1 2 2h-10" />',
-    "copy": '<path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" /><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />',
-    "database": '<path d="M4 6a8 3 0 1 0 16 0a8 3 0 1 0 -16 0" /><path d="M4 6v6a8 3 0 0 0 16 0v-6" /><path d="M4 12v6a8 3 0 0 0 16 0v-6" />',
-    "device-floppy": '<path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" /><path d="M10 14a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M14 4l0 4l-6 0l0 -4" />',
-    "file-export": '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M11.5 21h-4.5a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v5m-5 6h7m-3 -3l3 3l-3 3" />',
-    "file-import": '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 13v-8a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2h-5.5m-9.5 -2h7m-3 -3l3 3l-3 3" />',
-    "folder-open": '<path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2" />',
-    "info-circle": '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 9h.01" /><path d="M11 12h1v4h1" />',
-    "list": '<path d="M9 6l11 0" /><path d="M9 12l11 0" /><path d="M9 18l11 0" /><path d="M5 6l0 .01" /><path d="M5 12l0 .01" /><path d="M5 18l0 .01" />',
-    "pencil": '<path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" />',
-    "player-pause": '<path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" />',
-    "player-play": '<path d="M7 4v16l13 -8l-13 -8" />',
-    "player-stop": '<path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10" />',
-    "plus": '<path d="M12 5l0 14" /><path d="M5 12l14 0" />',
-    "refresh": '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />',
-    "search": '<path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" />',
-    "send": '<path d="M10 14l11 -11" /><path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5" />',
-    "settings": '<path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" /><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />',
-    "terminal-2": '<path d="M8 9l3 3l-3 3" /><path d="M13 15l3 0" /><path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />',
-    "trash": '<path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />',
-    "x": '<path d="M18 6l-12 12" /><path d="M6 6l12 12" />',
-}
-
-STYLE_ICON_MAP = {
-    QStyle.StandardPixmap.SP_ArrowBack: "arrow-left",
-    QStyle.StandardPixmap.SP_ArrowDown: "chevron-down",
-    QStyle.StandardPixmap.SP_ArrowForward: "arrow-right",
-    QStyle.StandardPixmap.SP_ArrowLeft: "arrow-left",
-    QStyle.StandardPixmap.SP_ArrowRight: "arrow-right",
-    QStyle.StandardPixmap.SP_ArrowUp: "chevron-up",
-    QStyle.StandardPixmap.SP_BrowserReload: "refresh",
-    QStyle.StandardPixmap.SP_CommandLink: "command",
-    QStyle.StandardPixmap.SP_ComputerIcon: "terminal-2",
-    QStyle.StandardPixmap.SP_DialogApplyButton: "check",
-    QStyle.StandardPixmap.SP_DialogCloseButton: "x",
-    QStyle.StandardPixmap.SP_DialogOpenButton: "file-import",
-    QStyle.StandardPixmap.SP_DialogSaveButton: "device-floppy",
-    QStyle.StandardPixmap.SP_DirOpenIcon: "folder-open",
-    QStyle.StandardPixmap.SP_DriveHDIcon: "database",
-    QStyle.StandardPixmap.SP_FileDialogContentsView: "search",
-    QStyle.StandardPixmap.SP_FileDialogDetailedView: "settings",
-    QStyle.StandardPixmap.SP_FileDialogInfoView: "clock",
-    QStyle.StandardPixmap.SP_FileDialogListView: "list",
-    QStyle.StandardPixmap.SP_FileDialogNewFolder: "plus",
-    QStyle.StandardPixmap.SP_FileIcon: "copy",
-    QStyle.StandardPixmap.SP_MediaPause: "player-pause",
-    QStyle.StandardPixmap.SP_MediaPlay: "player-play",
-    QStyle.StandardPixmap.SP_MediaStop: "player-stop",
-    QStyle.StandardPixmap.SP_MessageBoxInformation: "info-circle",
-    QStyle.StandardPixmap.SP_TitleBarCloseButton: "x",
-    QStyle.StandardPixmap.SP_TrashIcon: "trash",
-}
-
-
 def clone_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
 
@@ -188,32 +127,6 @@ def set_widget_state(widget: QWidget, state: str) -> None:
     widget.style().unpolish(widget)
     widget.style().polish(widget)
     widget.update()
-
-
-def standard_icon(
-    pixmap: QStyle.StandardPixmap,
-    size: int = 18,
-    color: str = "#d4d4d4",
-) -> QIcon:
-    icon_name = STYLE_ICON_MAP.get(pixmap, "info-circle")
-    svg = f"""
-    <svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-        {TABLER_ICON_PATHS[icon_name]}
-    </svg>
-    """
-    pixmap_icon = QPixmap(size, size)
-    pixmap_icon.fill(Qt.GlobalColor.transparent)
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-    painter = QPainter(pixmap_icon)
-    renderer.render(painter)
-    painter.end()
-    return QIcon(pixmap_icon)
-
-
-def set_button_icon(button, pixmap: QStyle.StandardPixmap, size: int = 16) -> None:
-    button.setIcon(standard_icon(pixmap, size))
-    button.setIconSize(QSize(size, size))
 
 
 def app_icon() -> QIcon:
@@ -1028,45 +941,26 @@ class TerminalSessionWidget(QWidget):
         self.splitter.setHandleWidth(3)
         self.splitter.splitterMoved.connect(self._drawer_resized)
 
-        self.drawer = QFrame(self)
-        self.drawer.setObjectName("drawer")
-        drawer_layout = QHBoxLayout(self.drawer)
-        drawer_layout.setContentsMargins(0, 0, 0, 0)
-        drawer_layout.setSpacing(0)
-
-        self.drawer_rail = QFrame(self.drawer)
-        self.drawer_rail.setObjectName("drawerRail")
-        self.drawer_rail.setFixedWidth(DRAWER_COLLAPSED_WIDTH)
-        rail_layout = QVBoxLayout(self.drawer_rail)
-        rail_layout.setContentsMargins(6, 6, 6, 6)
-        rail_layout.setSpacing(8)
-
-        for icon, tooltip, callback in (
-            (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", lambda: self._select_drawer_page(0)),
-            (QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", lambda: self._select_drawer_page(1)),
-        ):
-            button = QToolButton(self.drawer_rail)
-            button.setObjectName("railButton")
-            button.setFixedSize(36, 36)
-            set_button_icon(button, icon, 18)
-            button.setToolTip(tooltip)
-            button.clicked.connect(callback)
-            rail_layout.addWidget(button)
-        rail_layout.addStretch(1)
-
-        self.drawer_panel = QFrame(self.drawer)
-        self.drawer_panel.setObjectName("drawerPanel")
-        panel_layout = QVBoxLayout(self.drawer_panel)
-        panel_layout.setContentsMargins(10, 8, 10, 8)
-        panel_layout.setSpacing(8)
-
-        self.drawer_pages = QStackedWidget(self.drawer_panel)
-        self.drawer_pages.addWidget(self._build_quick_page())
-        self.drawer_pages.addWidget(self._build_quick_files_page())
-        panel_layout.addWidget(self.drawer_pages, 1)
-
-        drawer_layout.addWidget(self.drawer_rail)
-        drawer_layout.addWidget(self.drawer_panel, 1)
+        self.drawer = QuickActionsDrawer(
+            pages=(
+                QuickActionsDrawerPage(
+                    QStyle.StandardPixmap.SP_CommandLink,
+                    "Quick commands",
+                    self._build_quick_page(),
+                ),
+                QuickActionsDrawerPage(
+                    QStyle.StandardPixmap.SP_DirOpenIcon,
+                    "Quick files",
+                    self._build_quick_files_page(),
+                ),
+            ),
+            on_page_requested=self._select_drawer_page,
+            rail_width=DRAWER_COLLAPSED_WIDTH,
+            parent=self,
+        )
+        self.drawer_rail = self.drawer.rail
+        self.drawer_panel = self.drawer.panel
+        self.drawer_pages = self.drawer.pages
 
         terminal_column = QFrame(self)
         terminal_column.setObjectName("terminalColumn")
@@ -1287,22 +1181,19 @@ class TerminalSessionWidget(QWidget):
             parent=self,
         )
 
-    def _select_drawer_page(self, index: int, focus_widget: QWidget | None = None) -> None:
+    def _select_drawer_page(self, index: int) -> None:
         if self.drawer_pages.count() == 0:
             return
         index = max(0, min(index, self.drawer_pages.count() - 1))
         if (
             not self.host.settings.drawer_collapsed
             and self.drawer_pages.currentIndex() == index
-            and focus_widget is None
         ):
             self.host.set_drawer_collapsed(True)
             return
         self.drawer_pages.setCurrentIndex(index)
         if self.host.settings.drawer_collapsed:
             self.host.set_drawer_collapsed(False)
-        if focus_widget is not None:
-            QTimer.singleShot(0, focus_widget.setFocus)
 
     def apply_settings(self) -> None:
         self.terminal.document().setMaximumBlockCount(max(self.host.settings.scrollback_size, 1000))
@@ -1611,7 +1502,6 @@ class TerminalSessionWidget(QWidget):
             selected_id=selected_id,
             label_limit=30,
             group_limit=10,
-            item_height=24,
             draggable=True,
         )
         self._quick_list_refreshing = False
@@ -1772,7 +1662,6 @@ class TerminalSessionWidget(QWidget):
             self.visible_quick_files(),
             selected_id=selected_id,
             label_limit=32,
-            item_height=24,
             draggable=True,
         )
         self._quick_file_list_refreshing = False
@@ -2653,7 +2542,36 @@ class MainWindow(QMainWindow):
         return CommandEditorSources(
             history_commands=self.history_catalog.all_commands(),
             quick_commands=list(self.quick_actions.quick_commands),
+            quick_command_hidden_groups=list(self.quick_actions.command_hidden_groups),
         )
+
+    def quick_commands_snapshot(self) -> list[QuickCommand]:
+        self._refresh_quick_actions_from_settings()
+        return list(self.quick_actions.quick_commands)
+
+    def visible_quick_commands_snapshot(self) -> list[QuickCommand]:
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.visible_commands()
+
+    def quick_files_snapshot(self) -> list[QuickFile]:
+        self._refresh_quick_actions_from_settings()
+        return list(self.quick_actions.quick_files)
+
+    def visible_quick_files_snapshot(self) -> list[QuickFile]:
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.visible_files()
+
+    def quick_command_hidden_groups_snapshot(self) -> list[str]:
+        self._refresh_quick_actions_from_settings()
+        return list(self.quick_actions.command_hidden_groups)
+
+    def quick_command_sort_mode_snapshot(self) -> str:
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.command_sort_mode
+
+    def quick_file_sort_mode_snapshot(self) -> str:
+        self._refresh_quick_actions_from_settings()
+        return self.quick_actions.file_sort_mode
 
     def editor_font(self) -> QFont:
         return pick_mono_font(
@@ -2686,7 +2604,43 @@ class MainWindow(QMainWindow):
             path=path,
             run_callback=None,
             font_change_callback=self.change_font_size,
-            quick_files_supplier=lambda: list(self.quick_actions.quick_files),
+            quick_files_supplier=self.quick_files_snapshot,
+            quick_action_callbacks=CommandEditorQuickActionCallbacks(
+                quick_commands_supplier=self.quick_commands_snapshot,
+                visible_quick_commands_supplier=self.visible_quick_commands_snapshot,
+                quick_command_groups_supplier=self.quick_command_group_names,
+                quick_command_hidden_groups_supplier=self.quick_command_hidden_groups_snapshot,
+                quick_command_sort_mode_supplier=self.quick_command_sort_mode_snapshot,
+                set_quick_command_sort_mode=self.set_quick_command_sort_mode,
+                set_quick_command_group_visible=self.set_quick_command_group_visible,
+                show_all_quick_command_groups=self.show_all_quick_command_groups,
+                hide_all_quick_command_groups=self.hide_all_quick_command_groups,
+                add_quick_command=self.add_quick_command,
+                edit_quick_command=self.edit_quick_command,
+                delete_quick_command=self.delete_quick_command,
+                move_quick_command=self.move_quick_command,
+                reorder_quick_commands=lambda command_ids, selected_id="": self.reorder_quick_commands(
+                    command_ids,
+                    selected_id=selected_id,
+                ),
+                import_quick_commands_csv=self.import_quick_commands_csv,
+                export_quick_commands_csv=self.export_quick_commands_csv,
+                quick_files_supplier=self.quick_files_snapshot,
+                visible_quick_files_supplier=self.visible_quick_files_snapshot,
+                quick_file_sort_mode_supplier=self.quick_file_sort_mode_snapshot,
+                set_quick_file_sort_mode=self.set_quick_file_sort_mode,
+                add_quick_file=self.add_quick_file,
+                edit_quick_file=self.edit_quick_file,
+                delete_quick_file=self.delete_quick_file,
+                move_quick_file=self.move_quick_file,
+                reorder_quick_files=lambda quick_file_ids, selected_id="", force_custom=False: self.reorder_quick_files(
+                    quick_file_ids,
+                    selected_id=selected_id,
+                    force_custom=force_custom,
+                ),
+                import_quick_files_csv=self.import_quick_files_csv,
+                export_quick_files_csv=self.export_quick_files_csv,
+            ),
             run_targets_supplier=self.command_file_run_targets,
             run_target_callback=self.run_editor_in_terminal_by_id,
             embedded=True,

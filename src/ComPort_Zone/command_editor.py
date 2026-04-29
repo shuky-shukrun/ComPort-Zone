@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QStringListModel, Signal
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import (
+    QAction,
     QColor,
     QFont,
     QKeySequence,
@@ -18,6 +19,7 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QCompleter,
@@ -26,11 +28,11 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QLineEdit,
     QPushButton,
-    QStackedWidget,
     QStyle,
     QTextEdit,
     QToolButton,
@@ -39,18 +41,22 @@ from PySide6.QtWidgets import (
 )
 
 from .batch import BatchParseError, parse_batch_line, strip_c_style_comment
-from .models import QuickCommand, QuickFile
+from .icons import set_button_icon, standard_icon
+from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES, QuickCommand, QuickFile
+from .quick_actions import quick_file_display_text, quick_group_name
 from .quick_actions_panel import (
+    QuickActionsDrawer,
+    QuickActionsDrawerPage,
     QuickActionsPanel,
     create_quick_command_list,
     create_quick_file_list,
+    item_ids_in_order,
     populate_quick_command_list,
     populate_quick_file_list,
     selected_item_id,
 )
 from .widgets import ChevronComboBox
 
-WORKSPACE_DRAWER_RAIL_WIDTH = 48
 BATCH_KEYWORDS = ("SEND", "WAIT", "HEX", "EXPECT")
 COMMENT_SNIPPETS = ("// ", "# ")
 COMPLETION_NAVIGATION_KEYS = {
@@ -103,8 +109,7 @@ class CommandValidationIssue:
 
 
 def quick_command_group(command: QuickCommand) -> str:
-    group = command.group.strip()
-    return group or "General"
+    return quick_group_name(command.group)
 
 
 def command_token(text: str) -> str:
@@ -134,6 +139,7 @@ class CommandEditorSources:
     quick_commands: list[QuickCommand] = field(default_factory=list)
     known_commands: list[str] = field(default_factory=lambda: list(DEFAULT_KNOWN_COMMANDS))
     quick_group_filter: str = "All"
+    quick_command_hidden_groups: list[str] = field(default_factory=list)
 
     def groups(self) -> list[str]:
         names = {quick_command_group(command) for command in self.quick_commands}
@@ -141,11 +147,13 @@ class CommandEditorSources:
 
     def quick_command_texts(self) -> list[str]:
         selected = self.quick_group_filter.casefold()
+        hidden = {group.casefold() for group in self.quick_command_hidden_groups}
         return [
             command.command
             for command in self.quick_commands
             if command.command
             and (selected == "all" or quick_command_group(command).casefold() == selected)
+            and quick_command_group(command).casefold() not in hidden
         ]
 
     def known_command_tokens(self) -> set[str]:
@@ -227,6 +235,37 @@ class CommandEditorSources:
                     )
                 )
         return issues
+
+
+@dataclass(slots=True)
+class CommandEditorQuickActionCallbacks:
+    quick_commands_supplier: Callable[[], list[QuickCommand]] | None = None
+    visible_quick_commands_supplier: Callable[[], list[QuickCommand]] | None = None
+    quick_command_groups_supplier: Callable[[], list[str]] | None = None
+    quick_command_hidden_groups_supplier: Callable[[], list[str]] | None = None
+    quick_command_sort_mode_supplier: Callable[[], str] | None = None
+    set_quick_command_sort_mode: Callable[[str], None] | None = None
+    set_quick_command_group_visible: Callable[[str, bool], None] | None = None
+    show_all_quick_command_groups: Callable[[], None] | None = None
+    hide_all_quick_command_groups: Callable[[], None] | None = None
+    add_quick_command: Callable[[], None] | None = None
+    edit_quick_command: Callable[[str], None] | None = None
+    delete_quick_command: Callable[[str], None] | None = None
+    move_quick_command: Callable[[str, int], None] | None = None
+    reorder_quick_commands: Callable[[list[str], str], None] | None = None
+    import_quick_commands_csv: Callable[[], None] | None = None
+    export_quick_commands_csv: Callable[[], None] | None = None
+    quick_files_supplier: Callable[[], list[QuickFile]] | None = None
+    visible_quick_files_supplier: Callable[[], list[QuickFile]] | None = None
+    quick_file_sort_mode_supplier: Callable[[], str] | None = None
+    set_quick_file_sort_mode: Callable[[str], None] | None = None
+    add_quick_file: Callable[[], None] | None = None
+    edit_quick_file: Callable[[str], None] | None = None
+    delete_quick_file: Callable[[str], None] | None = None
+    move_quick_file: Callable[[str, int], None] | None = None
+    reorder_quick_files: Callable[[list[str], str, bool], None] | None = None
+    import_quick_files_csv: Callable[[], None] | None = None
+    export_quick_files_csv: Callable[[], None] | None = None
 
 
 class LineNumberArea(QWidget):
@@ -581,6 +620,7 @@ class CommandFileEditorDialog(QDialog):
         run_callback: Callable[[str, Path | None], None] | None = None,
         font_change_callback: Callable[[int], None] | None = None,
         quick_files_supplier: Callable[[], list[QuickFile]] | None = None,
+        quick_action_callbacks: CommandEditorQuickActionCallbacks | None = None,
         run_targets_supplier: Callable[[], list[tuple[int, str]]] | None = None,
         run_target_callback: Callable[["CommandFileEditorDialog", int], None] | None = None,
         embedded: bool = False,
@@ -594,10 +634,15 @@ class CommandFileEditorDialog(QDialog):
         self.run_callback = run_callback
         self.font_change_callback = font_change_callback
         self.quick_files_supplier = quick_files_supplier
+        self.quick_action_callbacks = quick_action_callbacks or CommandEditorQuickActionCallbacks()
         self.run_targets_supplier = run_targets_supplier
         self.run_target_callback = run_target_callback
         self.embedded = embedded
         self.show_workspace_side_panel = show_workspace_side_panel
+        self._local_quick_command_sort_mode = "Custom"
+        self._local_quick_file_sort_mode = "Custom"
+        self._quick_list_refreshing = False
+        self._quick_file_list_refreshing = False
         self._dirty = False
         self.search_matches: list[tuple[int, int]] = []
         self.current_match_index = -1
@@ -618,12 +663,6 @@ class CommandFileEditorDialog(QDialog):
         self.shortcut_find.activated.connect(self.show_find_bar)
         self.shortcut_replace = QShortcut(QKeySequence("Ctrl+H"), self)
         self.shortcut_replace.activated.connect(self.show_replace_bar)
-
-        self.group_combo = ChevronComboBox(self)
-        self.group_combo.addItem("All quick command groups", "All")
-        for group in self.sources.groups():
-            self.group_combo.addItem(group, group)
-        self.group_combo.currentIndexChanged.connect(self._quick_group_changed)
 
         self.warn_unknown = QCheckBox("Warn unknown commands", self)
         self.warn_unknown.setChecked(True)
@@ -652,7 +691,6 @@ class CommandFileEditorDialog(QDialog):
             ("Save As", self.save_as),
             ("Find", self.show_find_bar),
             ("Replace", self.show_replace_bar),
-            ("Validate", self.update_validation_status),
         ):
             button = QPushButton(label, self)
             button.clicked.connect(callback)
@@ -662,8 +700,6 @@ class CommandFileEditorDialog(QDialog):
             button.clicked.connect(self.run_buffer)
             toolbar.addWidget(button)
         toolbar.addStretch(1)
-        toolbar.addWidget(QLabel("Quick command suggestions", self))
-        toolbar.addWidget(self.group_combo)
         toolbar.addWidget(self.warn_unknown)
         if self.font_change_callback:
             font_down = QToolButton(self)
@@ -723,10 +759,6 @@ class CommandFileEditorDialog(QDialog):
         self.refresh_workspace_side_panel()
         self.refresh_run_targets()
 
-    def _set_standard_icon(self, button, pixmap: QStyle.StandardPixmap, size: int = 16) -> None:
-        button.setIcon(self.style().standardIcon(pixmap))
-        button.setIconSize(QSize(size, size))
-
     def _drawer_action(
         self,
         text: str,
@@ -738,98 +770,481 @@ class CommandFileEditorDialog(QDialog):
         button = QPushButton(text, self)
         button.setObjectName("drawerActionButton")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._set_standard_icon(button, icon)
+        set_button_icon(button, icon)
         set_button_role(button, role)
         button.clicked.connect(callback)
         return button
 
     def _select_workspace_drawer_page(self, index: int) -> None:
-        if not hasattr(self, "workspace_drawer_pages") or self.workspace_drawer_pages.count() == 0:
+        if not hasattr(self, "workspace_drawer"):
             return
-        index = max(0, min(index, self.workspace_drawer_pages.count() - 1))
-        self.workspace_drawer_pages.setCurrentIndex(index)
+        self.workspace_drawer.select_page(index)
+
+    def _quick_action_callback(self, name: str) -> Callable | None:
+        return getattr(self.quick_action_callbacks, name, None)
+
+    def _quick_commands(self) -> list[QuickCommand]:
+        supplier = self._quick_action_callback("quick_commands_supplier")
+        return list(supplier()) if supplier else list(self.sources.quick_commands)
+
+    def _quick_files(self) -> list[QuickFile]:
+        supplier = self._quick_action_callback("quick_files_supplier") or self.quick_files_supplier
+        return list(supplier()) if supplier else []
+
+    def _quick_command_sort_mode(self) -> str:
+        supplier = self._quick_action_callback("quick_command_sort_mode_supplier")
+        mode = str(supplier()) if supplier else self._local_quick_command_sort_mode
+        return mode if mode in QUICK_COMMAND_SORT_MODES else "Custom"
+
+    def _quick_file_sort_mode(self) -> str:
+        supplier = self._quick_action_callback("quick_file_sort_mode_supplier")
+        mode = str(supplier()) if supplier else self._local_quick_file_sort_mode
+        return mode if mode in QUICK_FILE_SORT_MODES else "Custom"
+
+    def _quick_command_groups(self) -> list[str]:
+        supplier = self._quick_action_callback("quick_command_groups_supplier")
+        if supplier:
+            return list(supplier())
+        names = {quick_group_name(command.group) for command in self._quick_commands()}
+        return sorted(names, key=str.casefold)
+
+    def _quick_command_hidden_groups(self) -> list[str]:
+        supplier = self._quick_action_callback("quick_command_hidden_groups_supplier")
+        if supplier:
+            return list(supplier())
+        return list(self.sources.quick_command_hidden_groups)
+
+    def _visible_quick_commands(self) -> list[QuickCommand]:
+        supplier = self._quick_action_callback("visible_quick_commands_supplier")
+        if supplier:
+            return list(supplier())
+        hidden = {group.casefold() for group in self._quick_command_hidden_groups()}
+        commands = [
+            command
+            for command in self._quick_commands()
+            if quick_group_name(command.group).casefold() not in hidden
+        ]
+        mode = self._quick_command_sort_mode()
+        if mode == "Title":
+            return sorted(
+                commands,
+                key=lambda command: (
+                    command.display_label().casefold(),
+                    quick_group_name(command.group).casefold(),
+                    command.command.casefold(),
+                ),
+            )
+        if mode == "Group":
+            return sorted(
+                commands,
+                key=lambda command: (
+                    quick_group_name(command.group).casefold(),
+                    command.display_label().casefold(),
+                    command.command.casefold(),
+                ),
+            )
+        return commands
+
+    def _visible_quick_files(self) -> list[QuickFile]:
+        supplier = self._quick_action_callback("visible_quick_files_supplier")
+        quick_files = list(supplier()) if supplier else self._quick_files()
+        if supplier:
+            return quick_files
+        mode = self._quick_file_sort_mode()
+        if mode == "Title":
+            return sorted(
+                quick_files,
+                key=lambda quick_file: (
+                    quick_file_display_text(quick_file).casefold(),
+                    quick_file.path.casefold(),
+                ),
+            )
+        if mode == "Path":
+            return sorted(
+                quick_files,
+                key=lambda quick_file: (
+                    quick_file.path.casefold(),
+                    quick_file_display_text(quick_file).casefold(),
+                ),
+            )
+        return quick_files
+
+    def _can_manually_reorder_quick_commands(self) -> bool:
+        hidden = {group.casefold() for group in self._quick_command_hidden_groups()}
+        group_names = {group.casefold() for group in self._quick_command_groups()}
+        hidden_active = any(group in group_names for group in hidden)
+        return (
+            self._quick_command_sort_mode() == "Custom"
+            and not hidden_active
+            and self._quick_action_callback("reorder_quick_commands") is not None
+        )
+
+    def _set_quick_command_group_visible(self, group: str, visible: bool) -> None:
+        callback = self._quick_action_callback("set_quick_command_group_visible")
+        if callback:
+            callback(group, visible)
+            return
+        group = quick_group_name(group)
+        hidden = [
+            hidden_group
+            for hidden_group in self.sources.quick_command_hidden_groups
+            if hidden_group.casefold() != group.casefold()
+        ]
+        if not visible:
+            hidden.append(group)
+        self.sources.quick_command_hidden_groups = hidden
+        self.refresh_workspace_side_panel()
+        self._refresh_completion_model()
+
+    def _show_all_quick_command_groups(self) -> None:
+        callback = self._quick_action_callback("show_all_quick_command_groups")
+        if callback:
+            callback()
+            return
+        self.sources.quick_command_hidden_groups = []
+        self.refresh_workspace_side_panel()
+        self._refresh_completion_model()
+
+    def _hide_all_quick_command_groups(self) -> None:
+        callback = self._quick_action_callback("hide_all_quick_command_groups")
+        if callback:
+            callback()
+            return
+        self.sources.quick_command_hidden_groups = self._quick_command_groups()
+        self.refresh_workspace_side_panel()
+        self._refresh_completion_model()
+
+    def _quick_sort_changed(self) -> None:
+        mode = self.quick_sort_combo.currentData()
+        if not mode:
+            return
+        callback = self._quick_action_callback("set_quick_command_sort_mode")
+        if callback:
+            callback(str(mode))
+            return
+        self._local_quick_command_sort_mode = str(mode)
+        self.refresh_workspace_side_panel()
+
+    def _quick_file_sort_changed(self) -> None:
+        mode = self.quick_file_sort_combo.currentData()
+        if not mode:
+            return
+        callback = self._quick_action_callback("set_quick_file_sort_mode")
+        if callback:
+            callback(str(mode))
+            return
+        self._local_quick_file_sort_mode = str(mode)
+        self.refresh_workspace_side_panel()
+
+    def _add_menu_action(
+        self,
+        menu: QMenu,
+        text: str,
+        callback: Callable[[], None],
+        *,
+        icon: QStyle.StandardPixmap | None = None,
+        enabled: bool = True,
+    ) -> QAction:
+        action = QAction(text, menu)
+        if icon is not None:
+            action.setIcon(standard_icon(icon))
+        action.setEnabled(enabled)
+        action.triggered.connect(lambda _checked=False, callback=callback: callback())
+        menu.addAction(action)
+        return action
+
+    def _refresh_quick_command_controls(self) -> None:
+        if not hasattr(self, "quick_sort_combo"):
+            return
+        mode = self._quick_command_sort_mode()
+        self.quick_sort_combo.blockSignals(True)
+        index = self.quick_sort_combo.findData(mode)
+        if index >= 0:
+            self.quick_sort_combo.setCurrentIndex(index)
+        self.quick_sort_combo.blockSignals(False)
+
+        groups = self._quick_command_groups()
+        hidden = {group.casefold() for group in self._quick_command_hidden_groups()}
+        visible_count = sum(1 for group in groups if group.casefold() not in hidden)
+        total_count = len(groups)
+        if total_count == 0:
+            group_text = "Groups: None"
+        elif visible_count == total_count:
+            group_text = "Groups: All"
+        elif visible_count == 0:
+            group_text = "Groups: Hidden"
+        else:
+            group_text = f"Groups: {visible_count}/{total_count}"
+        self.quick_group_button.setText(group_text)
+
+        old_menu = self.quick_group_button.menu()
+        if old_menu is not None:
+            old_menu.deleteLater()
+        menu = QMenu(self.quick_group_button)
+        self._add_menu_action(
+            menu,
+            "Show All Groups",
+            self._show_all_quick_command_groups,
+            icon=QStyle.StandardPixmap.SP_DialogApplyButton,
+            enabled=total_count > 0 and visible_count < total_count,
+        )
+        self._add_menu_action(
+            menu,
+            "Hide All Groups",
+            self._hide_all_quick_command_groups,
+            icon=QStyle.StandardPixmap.SP_TrashIcon,
+            enabled=total_count > 0 and visible_count > 0,
+        )
+        if groups:
+            menu.addSeparator()
+            for group in groups:
+                action = QAction(group, menu)
+                action.setCheckable(True)
+                action.setChecked(group.casefold() not in hidden)
+                action.toggled.connect(lambda checked, group=group: self._set_quick_command_group_visible(group, checked))
+                menu.addAction(action)
+        else:
+            action = QAction("No groups yet", menu)
+            action.setEnabled(False)
+            menu.addAction(action)
+        self.quick_group_button.setMenu(menu)
+
+        can_reorder = self._can_manually_reorder_quick_commands()
+        self.quick_command_list.setDragEnabled(can_reorder)
+        self.quick_command_list.setAcceptDrops(can_reorder)
+        self.quick_command_list.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove
+            if can_reorder
+            else QAbstractItemView.DragDropMode.NoDragDrop
+        )
+        self.quick_command_move_up_button.setEnabled(can_reorder and self.selected_quick_command_id() != "")
+        self.quick_command_move_down_button.setEnabled(can_reorder and self.selected_quick_command_id() != "")
+        if can_reorder:
+            self.quick_command_list.setToolTip("Right-click a saved command for actions. Press and drag to reorder.")
+        else:
+            self.quick_command_list.setToolTip("Reorder is available only in Custom order with all groups visible.")
+
+    def _refresh_quick_file_controls(self) -> None:
+        if not hasattr(self, "quick_file_sort_combo"):
+            return
+        mode = self._quick_file_sort_mode()
+        self.quick_file_sort_combo.blockSignals(True)
+        index = self.quick_file_sort_combo.findData(mode)
+        if index >= 0:
+            self.quick_file_sort_combo.setCurrentIndex(index)
+        self.quick_file_sort_combo.blockSignals(False)
+
+        can_reorder = self._quick_action_callback("reorder_quick_files") is not None
+        self.quick_file_list.setDragEnabled(can_reorder)
+        self.quick_file_list.setAcceptDrops(can_reorder)
+        self.quick_file_list.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove
+            if can_reorder
+            else QAbstractItemView.DragDropMode.NoDragDrop
+        )
+        self.quick_file_move_up_button.setEnabled(can_reorder and self.selected_quick_file_id() != "")
+        self.quick_file_move_down_button.setEnabled(can_reorder and self.selected_quick_file_id() != "")
+        if can_reorder and mode == "Custom":
+            self.quick_file_list.setToolTip("Double-click a saved command file to open it. Press and drag to reorder.")
+        elif can_reorder:
+            self.quick_file_list.setToolTip("Double-click to open. Dragging or moving a file switches this list to Custom order.")
+        else:
+            self.quick_file_list.setToolTip("Double-click or press Open to load the saved file into this editor.")
+
+    def _refresh_quick_action_buttons(self) -> None:
+        command_id = self.selected_quick_command_id()
+        command_count = len(self._quick_commands())
+        self.insert_quick_command_button.setEnabled(bool(command_id))
+        self.add_quick_command_button.setEnabled(self._quick_action_callback("add_quick_command") is not None)
+        self.edit_quick_command_button.setEnabled(bool(command_id) and self._quick_action_callback("edit_quick_command") is not None)
+        self.delete_quick_command_button.setEnabled(bool(command_id) and self._quick_action_callback("delete_quick_command") is not None)
+        self.import_quick_commands_button.setEnabled(self._quick_action_callback("import_quick_commands_csv") is not None)
+        self.export_quick_commands_button.setEnabled(command_count > 0 and self._quick_action_callback("export_quick_commands_csv") is not None)
+
+        file_id = self.selected_quick_file_id()
+        file_count = len(self._quick_files())
+        self.open_quick_file_button.setEnabled(bool(file_id))
+        self.add_quick_file_button.setEnabled(self._quick_action_callback("add_quick_file") is not None)
+        self.edit_quick_file_button.setEnabled(bool(file_id) and self._quick_action_callback("edit_quick_file") is not None)
+        self.delete_quick_file_button.setEnabled(bool(file_id) and self._quick_action_callback("delete_quick_file") is not None)
+        self.import_quick_files_button.setEnabled(self._quick_action_callback("import_quick_files_csv") is not None)
+        self.export_quick_files_button.setEnabled(file_count > 0 and self._quick_action_callback("export_quick_files_csv") is not None)
+        self._refresh_quick_command_controls()
+        self._refresh_quick_file_controls()
+
+    def _run_optional_quick_action(self, name: str, *args) -> None:
+        callback = self._quick_action_callback(name)
+        if callback:
+            callback(*args)
+
+    def _edit_selected_quick_command(self) -> None:
+        command_id = self.selected_quick_command_id()
+        if command_id:
+            self._run_optional_quick_action("edit_quick_command", command_id)
+
+    def _delete_selected_quick_command(self) -> None:
+        command_id = self.selected_quick_command_id()
+        if command_id:
+            self._run_optional_quick_action("delete_quick_command", command_id)
+
+    def _move_selected_quick_command(self, direction: int) -> None:
+        command_id = self.selected_quick_command_id()
+        if command_id:
+            self._run_optional_quick_action("move_quick_command", command_id, direction)
+
+    def _edit_selected_quick_file(self) -> None:
+        quick_file_id = self.selected_quick_file_id()
+        if quick_file_id:
+            self._run_optional_quick_action("edit_quick_file", quick_file_id)
+
+    def _delete_selected_quick_file(self) -> None:
+        quick_file_id = self.selected_quick_file_id()
+        if quick_file_id:
+            self._run_optional_quick_action("delete_quick_file", quick_file_id)
+
+    def _move_selected_quick_file(self, direction: int) -> None:
+        quick_file_id = self.selected_quick_file_id()
+        if not quick_file_id:
+            return
+        reorder = self._quick_action_callback("reorder_quick_files")
+        if reorder:
+            reorder(item_ids_in_order(self.quick_file_list), quick_file_id, True)
+        self._run_optional_quick_action("move_quick_file", quick_file_id, direction)
+
+    def _persist_quick_command_order(self) -> None:
+        if self._quick_list_refreshing or not self._can_manually_reorder_quick_commands():
+            return
+        callback = self._quick_action_callback("reorder_quick_commands")
+        if callback:
+            callback(item_ids_in_order(self.quick_command_list), self.selected_quick_command_id())
+
+    def _persist_quick_file_order(self) -> None:
+        if self._quick_file_list_refreshing:
+            return
+        callback = self._quick_action_callback("reorder_quick_files")
+        if callback:
+            callback(item_ids_in_order(self.quick_file_list), self.selected_quick_file_id(), True)
 
     def _build_workspace_side_panel(self) -> QWidget:
-        drawer = QFrame(self)
-        drawer.setObjectName("drawer")
-        drawer_layout = QHBoxLayout(drawer)
-        drawer_layout.setContentsMargins(0, 0, 0, 0)
-        drawer_layout.setSpacing(0)
-
-        rail = QFrame(drawer)
-        rail.setObjectName("drawerRail")
-        rail.setFixedWidth(WORKSPACE_DRAWER_RAIL_WIDTH)
-        rail_layout = QVBoxLayout(rail)
-        rail_layout.setContentsMargins(6, 6, 6, 6)
-        rail_layout.setSpacing(8)
-
-        for icon, tooltip, index in (
-            (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", 0),
-            (QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", 1),
-        ):
-            button = QToolButton(rail)
-            button.setObjectName("railButton")
-            button.setFixedSize(36, 36)
-            self._set_standard_icon(button, icon, 18)
-            button.setToolTip(tooltip)
-            button.clicked.connect(lambda _checked=False, page_index=index: self._select_workspace_drawer_page(page_index))
-            rail_layout.addWidget(button)
-        rail_layout.addStretch(1)
-
-        panel = QFrame(drawer)
-        panel.setObjectName("drawerPanel")
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(10, 8, 10, 8)
-        panel_layout.setSpacing(8)
-
-        self.workspace_drawer_pages = QStackedWidget(panel)
         self.quick_command_list = create_quick_command_list(
             self,
-            tooltip="Double-click or press Insert to add a command at the editor cursor.",
+            tooltip="Right-click a saved command for actions. Press and drag to reorder.",
             double_clicked=self.insert_selected_quick_command,
+            drag_drop=True,
         )
-        insert = self._drawer_action(
+        self.quick_command_list.currentItemChanged.connect(lambda *_: self._refresh_quick_action_buttons())
+        self.quick_command_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._persist_quick_command_order))
+        self.quick_command_list.model().rowsInserted.connect(lambda *_: QTimer.singleShot(0, self._persist_quick_command_order))
+        self.quick_command_list.model().rowsRemoved.connect(lambda *_: QTimer.singleShot(0, self._persist_quick_command_order))
+        self.quick_sort_combo = ChevronComboBox(self)
+        self.quick_sort_combo.setObjectName("quickSortCombo")
+        for mode in QUICK_COMMAND_SORT_MODES:
+            label = "Custom order" if mode == "Custom" else mode
+            self.quick_sort_combo.addItem(label, mode)
+        self.quick_sort_combo.setToolTip("Sort quick commands")
+        self.quick_sort_combo.currentIndexChanged.connect(self._quick_sort_changed)
+        self.quick_group_button = QToolButton(self)
+        self.quick_group_button.setObjectName("drawerMenuButton")
+        self.quick_group_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quick_group_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.quick_group_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.quick_group_button.setToolTip("Show or hide quick command groups")
+        set_button_icon(self.quick_group_button, QStyle.StandardPixmap.SP_FileDialogListView)
+
+        command_controls = QWidget(self)
+        command_control_layout = QHBoxLayout(command_controls)
+        command_control_layout.setContentsMargins(0, 0, 0, 0)
+        command_control_layout.setSpacing(8)
+        command_control_layout.addWidget(self.quick_sort_combo, 1)
+        command_control_layout.addWidget(self.quick_group_button, 1)
+
+        self.insert_quick_command_button = self._drawer_action(
             "Insert",
             QStyle.StandardPixmap.SP_ArrowForward,
             self.insert_selected_quick_command,
             role="drawerPrimary",
         )
-        self.workspace_drawer_pages.addWidget(
-            QuickActionsPanel(
-                title="Quick Commands",
-                section_title="Saved Commands",
-                quick_list=self.quick_command_list,
-                action_rows=((insert,),),
-                parent=self,
-            )
+        self.add_quick_command_button = self._drawer_action("Add Command", QStyle.StandardPixmap.SP_FileDialogNewFolder, lambda: self._run_optional_quick_action("add_quick_command"))
+        self.edit_quick_command_button = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, self._edit_selected_quick_command)
+        self.delete_quick_command_button = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, self._delete_selected_quick_command, role="drawerDanger")
+        self.quick_command_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self._move_selected_quick_command(-1))
+        self.quick_command_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self._move_selected_quick_command(1))
+        self.import_quick_commands_button = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, lambda: self._run_optional_quick_action("import_quick_commands_csv"))
+        self.export_quick_commands_button = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, lambda: self._run_optional_quick_action("export_quick_commands_csv"))
+        command_page = QuickActionsPanel(
+            title="Quick Send",
+            section_title="Saved Commands",
+            quick_list=self.quick_command_list,
+            controls=command_controls,
+            action_rows=(
+                (self.insert_quick_command_button, self.add_quick_command_button),
+                (self.edit_quick_command_button, self.delete_quick_command_button),
+                (self.quick_command_move_up_button, self.quick_command_move_down_button),
+                (self.import_quick_commands_button, self.export_quick_commands_button),
+            ),
+            parent=self,
         )
 
+        self.quick_file_sort_combo = ChevronComboBox(self)
+        self.quick_file_sort_combo.setObjectName("quickFileSortCombo")
+        for mode in QUICK_FILE_SORT_MODES:
+            label = "Custom order" if mode == "Custom" else mode
+            self.quick_file_sort_combo.addItem(label, mode)
+        self.quick_file_sort_combo.setToolTip("Sort quick files")
+        self.quick_file_sort_combo.currentIndexChanged.connect(self._quick_file_sort_changed)
         self.quick_file_list = create_quick_file_list(
             self,
-            tooltip="Double-click or press Open to load the saved file into this editor.",
+            tooltip="Double-click a saved command file to open it. Press and drag to reorder.",
             double_clicked=self.open_selected_quick_file,
+            drag_drop=True,
         )
-        open_file = self._drawer_action(
+        self.quick_file_list.currentItemChanged.connect(lambda *_: self._refresh_quick_action_buttons())
+        self.quick_file_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._persist_quick_file_order))
+        self.open_quick_file_button = self._drawer_action(
             "Open",
-            QStyle.StandardPixmap.SP_DirOpenIcon,
+            QStyle.StandardPixmap.SP_ArrowForward,
             self.open_selected_quick_file,
             role="drawerPrimary",
         )
-        self.workspace_drawer_pages.addWidget(
-            QuickActionsPanel(
-                title="Quick Files",
-                section_title="Saved Files",
-                quick_list=self.quick_file_list,
-                action_rows=((open_file,),),
-                parent=self,
-            )
+        self.add_quick_file_button = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, lambda: self._run_optional_quick_action("add_quick_file"))
+        self.edit_quick_file_button = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, self._edit_selected_quick_file)
+        self.delete_quick_file_button = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, self._delete_selected_quick_file, role="drawerDanger")
+        self.quick_file_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self._move_selected_quick_file(-1))
+        self.quick_file_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self._move_selected_quick_file(1))
+        self.import_quick_files_button = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, lambda: self._run_optional_quick_action("import_quick_files_csv"))
+        self.export_quick_files_button = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, lambda: self._run_optional_quick_action("export_quick_files_csv"))
+        file_page = QuickActionsPanel(
+            title="Quick Files",
+            section_title="Saved Files",
+            quick_list=self.quick_file_list,
+            controls=self.quick_file_sort_combo,
+            action_rows=(
+                (self.open_quick_file_button, self.add_quick_file_button),
+                (self.edit_quick_file_button, self.delete_quick_file_button),
+                (self.quick_file_move_up_button, self.quick_file_move_down_button),
+                (self.import_quick_files_button, self.export_quick_files_button),
+            ),
+            parent=self,
         )
-        panel_layout.addWidget(self.workspace_drawer_pages, 1)
-
-        drawer_layout.addWidget(rail)
-        drawer_layout.addWidget(panel, 1)
+        drawer = QuickActionsDrawer(
+            pages=(
+                QuickActionsDrawerPage(
+                    QStyle.StandardPixmap.SP_CommandLink,
+                    "Quick commands",
+                    command_page,
+                ),
+                QuickActionsDrawerPage(
+                    QStyle.StandardPixmap.SP_DirOpenIcon,
+                    "Quick files",
+                    file_page,
+                ),
+            ),
+            parent=self,
+        )
+        self.workspace_drawer = drawer
+        self.workspace_drawer_pages = drawer.pages
+        self.workspace_drawer_rail = drawer.rail
         self.quick_actions_panel = drawer
-        self.workspace_drawer_rail = rail
         return drawer
 
     def _build_run_bar(self) -> QWidget:
@@ -942,12 +1357,6 @@ class CommandFileEditorDialog(QDialog):
         self.update_window_state()
         self.update_validation_status()
 
-    def _quick_group_changed(self) -> None:
-        self.sources.quick_group_filter = str(self.group_combo.currentData() or "All")
-        self._refresh_completion_model()
-        self.highlighter.rehighlight()
-        self.update_validation_status()
-
     def _warn_unknown_changed(self, checked: bool) -> None:
         self.highlighter.set_warn_unknown(checked)
         self.update_validation_status()
@@ -965,20 +1374,35 @@ class CommandFileEditorDialog(QDialog):
     def refresh_workspace_side_panel(self) -> None:
         if not hasattr(self, "quick_command_list"):
             return
+        self.sources.quick_commands = self._quick_commands()
+        self.sources.quick_command_hidden_groups = self._quick_command_hidden_groups()
         selected_command_id = self.selected_quick_command_id()
+        self._quick_list_refreshing = True
+        self._refresh_quick_command_controls()
         populate_quick_command_list(
             self.quick_command_list,
-            self.sources.quick_commands,
+            self._visible_quick_commands(),
             selected_id=selected_command_id,
+            label_limit=30,
+            group_limit=10,
+            draggable=self._can_manually_reorder_quick_commands(),
         )
+        self._quick_list_refreshing = False
 
         selected_file_id = self.selected_quick_file_id()
-        quick_files = self.quick_files_supplier() if self.quick_files_supplier else []
+        quick_files = self._visible_quick_files()
+        self._quick_file_list_refreshing = True
+        self._refresh_quick_file_controls()
         populate_quick_file_list(
             self.quick_file_list,
             quick_files,
             selected_id=selected_file_id,
+            label_limit=32,
+            draggable=self._quick_action_callback("reorder_quick_files") is not None,
         )
+        self._quick_file_list_refreshing = False
+        self._refresh_quick_action_buttons()
+        self._refresh_completion_model()
 
     def refresh_run_targets(self) -> None:
         if not hasattr(self, "run_target_combo"):
@@ -1008,12 +1432,11 @@ class CommandFileEditorDialog(QDialog):
 
     def selected_quick_command(self) -> QuickCommand | None:
         command_id = self.selected_quick_command_id()
-        return next((command for command in self.sources.quick_commands if command.id == command_id), None)
+        return next((command for command in self._quick_commands() if command.id == command_id), None)
 
     def selected_quick_file(self) -> QuickFile | None:
         quick_file_id = self.selected_quick_file_id()
-        quick_files = self.quick_files_supplier() if self.quick_files_supplier else []
-        return next((quick_file for quick_file in quick_files if quick_file.id == quick_file_id), None)
+        return next((quick_file for quick_file in self._quick_files() if quick_file.id == quick_file_id), None)
 
     def insert_selected_quick_command(self) -> None:
         command = self.selected_quick_command()
