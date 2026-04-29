@@ -47,12 +47,7 @@ from PySide6.QtWidgets import (
 
 from .batch import (
     BatchParseError,
-    BatchRunner,
-    find_batch_parameters,
-    parse_batch_script,
-    parse_batch_template,
     parse_hex_payload,
-    substitute_batch_parameters,
 )
 from .command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from .command_registry import CommandPaletteEntry, CommandRegistry
@@ -85,11 +80,10 @@ from .quick_actions_panel import (
 )
 from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from .serial_core import SerialClient, SerialEvent, decode_serial_bytes, format_hex_bytes
-from .session_log import SessionLogger
 from .settings_service import SettingsService
 from .storage import SettingsStore, default_config_path
+from .terminal_session_controller import TerminalSessionController
 from .themes import THEMES, ThemePalette
-from .transports import SerialTransportAdapter
 from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .widgets import ChevronComboBox, HistoryLineEdit
 from .workspace_state import WorkspaceStateService
@@ -803,19 +797,17 @@ class TerminalSessionWidget(QWidget):
             and self.title != "No port"
         )
         self.profile = clone_profile(state.serial) if state.serial is not None else host.default_serial_profile()
-        self.transport = SerialTransportAdapter()
-        self.serial_client = self.transport.client
-        self.history_store = HistoryStore(host.history_catalog.all_commands())
-        self.logger = SessionLogger()
         self.parameter_prompt_bridge = BatchParameterPromptBridge(self)
-        self.batch_runner = BatchRunner(
-            event_queue=self.serial_client.events,
-            send_text=self.serial_client.send_text,
-            send_bytes=self.serial_client.send_bytes,
-            connected_supplier=lambda: self.serial_client.is_connected,
-            event_queue_factory=self.serial_client.subscribe_events,
-            event_queue_disposer=self.serial_client.unsubscribe_events,
+        self.controller = TerminalSessionController(
+            self.profile,
+            history_commands=host.history_catalog.all_commands(),
+            parameter_prompt=self.parameter_prompt_bridge.prompt,
         )
+        self.transport = self.controller.transport
+        self.serial_client = self.controller.serial_client
+        self.history_store = self.controller.history_store
+        self.logger = self.controller.logger
+        self.batch_runner = self.controller.batch_runner
         self.paused = False
         self.pending_events: list[SerialEvent] = []
         self._connected = False
@@ -1547,6 +1539,7 @@ class TerminalSessionWidget(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "Serial Settings", str(exc))
             return False
+        self.controller.profile = self.profile
         self._update_line_ending_label()
         self._update_connection_ui(self.serial_client.is_connected)
         if connect_after_accept and self.profile.port:
@@ -1559,59 +1552,41 @@ class TerminalSessionWidget(QWidget):
         return True
 
     def toggle_connection(self) -> None:
-        retrying = self.serial_client.is_reconnecting
-        if self.serial_client.is_connected or retrying:
-            self.serial_client.disconnect()
-            if retrying:
-                self._append_status("Auto-reconnect stopped.")
-            self._update_connection_ui(False)
-            self.host.save_settings()
-            return
-        if not self.profile.port:
-            self.open_connection_settings(connect_after_accept=True)
-            return
-        self.host.set_status(f"Connecting to {self.profile.port}...")
-        self.serial_client.connect(self.profile)
-        self._update_connection_ui(self.serial_client.is_connected)
-        self.host.save_settings()
+        self.controller.profile = self.profile
+        self.controller.toggle_connection(
+            open_connection_settings=self.open_connection_settings,
+            set_status=self.host.set_status,
+            update_connection_ui=self._update_connection_ui,
+            append_status=self._append_status,
+            save_settings=self.host.save_settings,
+        )
 
     def send_from_input(self) -> None:
         raw = self.command_input.text()
-        if not raw.strip():
-            return
         try:
-            self._send_payload(raw, self.mode_combo.currentText())
+            sent = self.controller.send_input(
+                raw,
+                self.mode_combo.currentText(),
+                record_command=self.host.record_command,
+            )
         except Exception as exc:
             QMessageBox.warning(self, "Send", str(exc))
             return
-        self.host.record_command(raw.strip())
-        self._clear_command_input_after_send()
+        if sent:
+            self._clear_command_input_after_send()
 
     def _send_payload(self, raw: str, mode: str) -> None:
-        if mode == "Hex Bytes":
-            self.serial_client.send_bytes(parse_hex_payload(raw))
-            return
-        lines = raw.splitlines() if "\n" in raw or "\r" in raw else [raw]
-        for line in lines:
-            if line.strip():
-                self.serial_client.send_text(line.strip())
+        self.controller.send_payload(raw, mode)
 
     def send_selected_quick_command(self) -> None:
         command = self.host.quick_command_by_id(self.selected_quick_command_id())
         if not command:
             return
         try:
-            if command.send_mode == "Hex Bytes":
-                self.serial_client.send_bytes(parse_hex_payload(command.command))
-            else:
-                self.serial_client.send_text(
-                    command.command,
-                    command.line_ending_override or None,
-                )
+            self.controller.send_quick_command(command, record_command=self.host.record_command)
         except Exception as exc:
             QMessageBox.warning(self, "Quick Send", str(exc))
             return
-        self.host.record_command(command.command)
         self._clear_command_input_after_send()
 
     def _clear_command_input_after_send(self) -> None:
@@ -1643,42 +1618,24 @@ class TerminalSessionWidget(QWidget):
         self.run_script_text(script_text, source_label=str(path), source_path=path)
 
     def run_script_text(self, script_text: str, *, source_label: str = "Editor buffer", source_path: Path | None = None) -> None:
-        if not script_text.strip():
-            QMessageBox.information(self, "Run Command File", "Command file is empty.")
-            return
-        parameter_occurrences = find_batch_parameters(script_text)
-        if parameter_occurrences:
-            parameter_sheet = self._collect_parameter_values(parameter_occurrences)
-            if parameter_sheet is None:
-                return
-            parameter_values, ignored_defaults = parameter_sheet
-            template_steps = parse_batch_template(script_text)
-
-            def resolve_line(line: str, line_number: int) -> str | None:
-                return substitute_batch_parameters(
-                    line,
-                    parameter_values,
-                    self.parameter_prompt_bridge.prompt,
-                    line_number,
-                    ignored_defaults,
-                )
-
-            if source_path is not None:
-                self.host.settings.last_script_path = str(source_path.parent)
-            self.batch_runner.start_template(template_steps, resolve_line)
-            self.host.set_status(f"Running command file: {source_label}")
-            self.host.save_settings()
-            return
-
         try:
-            steps = parse_batch_script(script_text)
+            result = self.controller.run_script_text(
+                script_text,
+                source_label=source_label,
+                source_path=source_path,
+                collect_parameter_values=self._collect_parameter_values,
+                parameter_prompt=self.parameter_prompt_bridge.prompt,
+                set_last_script_path=lambda path: setattr(self.host.settings, "last_script_path", str(path)),
+            )
         except BatchParseError as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
             return
-        if source_path is not None:
-            self.host.settings.last_script_path = str(source_path.parent)
-        self.batch_runner.start(steps)
-        self.host.set_status(f"Running command file: {source_label}")
+        if result.empty:
+            QMessageBox.information(self, "Run Command File", "Command file is empty.")
+            return
+        if not result.started:
+            return
+        self.host.set_status(result.status_text)
         self.host.save_settings()
 
     def _collect_parameter_values(self, parameter_occurrences) -> tuple[dict[str, str], set[str]] | None:
@@ -1770,12 +1727,11 @@ class TerminalSessionWidget(QWidget):
         return values, ignored_defaults
 
     def stop_script(self) -> None:
-        self.batch_runner.stop()
+        self.controller.stop_script()
 
     def toggle_logging(self) -> None:
         if self.logger.enabled:
-            path = self.logger.path
-            self.logger.close()
+            path = self.controller.stop_logging()
             self.log_label.setText("Log off")
             self.host.update_connection_status(self)
             self._append_status(f"Logging stopped: {path}" if path else "Logging stopped.")
@@ -1785,7 +1741,7 @@ class TerminalSessionWidget(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Choose Log File", str(default_dir / default_name), "Log Files (*.log *.txt);;All Files (*)")
         if not path:
             return
-        self.logger.open(path)
+        self.controller.start_logging(path)
         self.host.settings.log_path = path
         self.log_label.setText("Logging")
         self.host.update_connection_status(self)
@@ -3092,7 +3048,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "wrap_action"):
             self.wrap_action.setChecked(self.settings.line_wrap_enabled)
         for session in self.iter_sessions():
-            session.history_store = HistoryStore(self.history_catalog.all_commands())
+            session.controller.replace_history(self.history_catalog.all_commands())
+            session.history_store = session.controller.history_store
             session.apply_settings()
             session.apply_drawer_state(
                 self.settings.drawer_collapsed,
