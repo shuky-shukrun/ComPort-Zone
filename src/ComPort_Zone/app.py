@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from queue import Empty
 from threading import Event
+from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCharFormat, QTextCursor, QTextDocument
@@ -92,6 +93,7 @@ from .settings_service import SettingsService
 from .storage import SettingsStore, default_config_path
 from .themes import THEMES, ThemePalette
 from .transports import SerialTransportAdapter
+from .ui.tab_workspace import TabWorkspaceController
 from .widgets import ChevronComboBox, HistoryLineEdit
 from .workspace_state import WorkspaceStateService
 
@@ -2261,6 +2263,14 @@ class MainWindow(QMainWindow):
         self.setFont(pick_ui_font())
         self.resize(self.settings.window_width, self.settings.window_height)
         self._build_ui()
+        self.tab_workspace = TabWorkspaceController(
+            self.tabs,
+            terminal_type=TerminalSessionWidget,
+            command_file_type=CommandFileEditorDialog,
+            add_session=self.add_session,
+            confirm_close_command_file_tab=self.confirm_close_command_file_tab,
+            save_settings=self.save_settings,
+        )
         self._build_menus()
         self.apply_theme(self.theme.name)
         self.restore_sessions()
@@ -3084,46 +3094,16 @@ class MainWindow(QMainWindow):
         session.open_connection_settings(connect_after_accept=True)
 
     def duplicate_current_session(self) -> None:
-        self.duplicate_session(self.tabs.currentIndex())
+        self.tab_workspace.duplicate_current_session()
 
     def duplicate_session(self, index: int) -> None:
-        session = self.session_at(index)
-        if not session:
-            self.add_session()
-            return
-        self.add_session(
-            TerminalSessionState(
-                title=f"{session.tab_title} Copy",
-                title_is_custom=True,
-                serial=clone_profile(session.profile),
-                connected_on_launch=False,
-                terminal_text=session.terminal.toPlainText(),
-                command_draft=session.command_input.text(),
-                send_mode=session.mode_combo.currentText(),
-            ),
-            prompt_settings=False,
-        )
+        self.tab_workspace.duplicate_session(index)
 
     def close_current_session(self) -> None:
-        index = self.tabs.currentIndex()
-        if index >= 0:
-            self.close_session(index)
+        self.tab_workspace.close_current_session()
 
     def close_session(self, index: int) -> bool:
-        if index < 0 or index >= self.tabs.count():
-            return False
-        widget = self.tabs.widget(index)
-        if isinstance(widget, CommandFileEditorDialog) and not self.confirm_close_command_file_tab(widget):
-            return False
-        if isinstance(widget, TerminalSessionWidget):
-            widget.shutdown()
-        self.tabs.removeTab(index)
-        if widget:
-            widget.deleteLater()
-        if self.tabs.count() == 0:
-            self.add_session()
-        self.save_settings()
-        return True
+        return self.tab_workspace.close_session(index)
 
     def confirm_close_command_file_tab(self, editor: CommandFileEditorDialog) -> bool:
         if not editor.is_dirty():
@@ -3147,26 +3127,10 @@ class MainWindow(QMainWindow):
         return clicked is not cancel_button and False
 
     def close_other_sessions(self, index: int) -> None:
-        target = self.tabs.widget(index) if 0 <= index < self.tabs.count() else None
-        if not target:
-            return
-        for tab_index in range(self.tabs.count() - 1, -1, -1):
-            if self.tabs.widget(tab_index) is not target:
-                if not self.close_session(tab_index):
-                    break
-        current_index = self.tabs.indexOf(target)
-        if current_index >= 0:
-            self.tabs.setCurrentIndex(current_index)
-        self.save_settings()
+        self.tab_workspace.close_other_sessions(index)
 
     def close_sessions_to_right(self, index: int) -> None:
-        if index < 0 or index >= self.tabs.count() - 1:
-            return
-        for tab_index in range(self.tabs.count() - 1, index, -1):
-            if not self.close_session(tab_index):
-                break
-        self.tabs.setCurrentIndex(min(index, self.tabs.count() - 1))
-        self.save_settings()
+        self.tab_workspace.close_sessions_to_right(index)
 
     def rename_current_session(self) -> None:
         self.rename_session(self.tabs.currentIndex())
@@ -3184,20 +3148,16 @@ class MainWindow(QMainWindow):
             self.save_settings()
 
     def current_session(self) -> TerminalSessionWidget | None:
-        widget = self.tabs.currentWidget()
-        return widget if isinstance(widget, TerminalSessionWidget) else None
+        return cast(TerminalSessionWidget | None, self.tab_workspace.current_session())
 
     def current_command_file_editor(self) -> CommandFileEditorDialog | None:
-        widget = self.tabs.currentWidget()
-        return widget if isinstance(widget, CommandFileEditorDialog) else None
+        return cast(CommandFileEditorDialog | None, self.tab_workspace.current_command_file_editor())
 
     def session_at(self, index: int) -> TerminalSessionWidget | None:
-        widget = self.tabs.widget(index)
-        return widget if isinstance(widget, TerminalSessionWidget) else None
+        return cast(TerminalSessionWidget | None, self.tab_workspace.session_at(index))
 
     def command_file_editor_at(self, index: int) -> CommandFileEditorDialog | None:
-        widget = self.tabs.widget(index)
-        return widget if isinstance(widget, CommandFileEditorDialog) else None
+        return cast(CommandFileEditorDialog | None, self.tab_workspace.command_file_editor_at(index))
 
     def open_session_settings(self, index: int) -> None:
         session = self.session_at(index)
@@ -3224,23 +3184,13 @@ class MainWindow(QMainWindow):
             session.clear_terminal()
 
     def iter_sessions(self) -> list[TerminalSessionWidget]:
-        sessions: list[TerminalSessionWidget] = []
-        for index in range(self.tabs.count()):
-            widget = self.tabs.widget(index)
-            if isinstance(widget, TerminalSessionWidget):
-                sessions.append(widget)
-        return sessions
+        return cast(list[TerminalSessionWidget], self.tab_workspace.iter_sessions())
 
     def iter_command_file_editors(self) -> list[CommandFileEditorDialog]:
-        editors: list[CommandFileEditorDialog] = []
-        for index in range(self.tabs.count()):
-            widget = self.tabs.widget(index)
-            if isinstance(widget, CommandFileEditorDialog):
-                editors.append(widget)
-        return editors
+        return cast(list[CommandFileEditorDialog], self.tab_workspace.iter_command_file_editors())
 
     def workspace_tab_count(self) -> int:
-        return self.tabs.count()
+        return self.tab_workspace.workspace_tab_count()
 
     def with_session(self, callback) -> None:
         session = self.current_session()
