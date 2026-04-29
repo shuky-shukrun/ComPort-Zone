@@ -79,6 +79,7 @@ from .models import (
 )
 from . import quick_actions as _quick_actions
 from .quick_actions_panel import (
+    QuickActionsPanel,
     create_quick_command_list,
     create_quick_file_list,
     item_ids_in_order,
@@ -1174,16 +1175,6 @@ class TerminalSessionWidget(QWidget):
         self.splitter.setStretchFactor(1, 1)
         root.addWidget(self.splitter)
 
-    def _drawer_title(self, text: str, parent: QWidget) -> QLabel:
-        title = QLabel(text, parent)
-        title.setObjectName("drawerTitle")
-        return title
-
-    def _drawer_section(self, text: str, parent: QWidget) -> QLabel:
-        section = QLabel(text.upper(), parent)
-        section.setObjectName("drawerSection")
-        return section
-
     def _drawer_action(
         self,
         text: str,
@@ -1201,27 +1192,9 @@ class TerminalSessionWidget(QWidget):
         button.clicked.connect(callback)
         return button
 
-    def _add_drawer_action_rows(
-        self,
-        layout: QVBoxLayout,
-        rows: tuple[tuple[QPushButton, ...], ...],
-    ) -> None:
-        for row in rows:
-            line = QHBoxLayout()
-            line.setContentsMargins(0, 0, 0, 0)
-            line.setSpacing(8)
-            for button in row:
-                line.addWidget(button)
-            layout.addLayout(line)
-
     def _build_quick_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        title = self._drawer_title("Quick Send", page)
         self.quick_list = create_quick_command_list(
-            page,
+            self,
             tooltip="Right-click a saved command for actions. Press and drag to reorder.",
             double_clicked=self.send_selected_quick_command,
             context_menu_requested=self.show_quick_command_context_menu,
@@ -1230,56 +1203,53 @@ class TerminalSessionWidget(QWidget):
         self.quick_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
         self.quick_list.model().rowsInserted.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
         self.quick_list.model().rowsRemoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_command_order))
-        self.quick_sort_combo = ChevronComboBox(page)
+        self.quick_sort_combo = ChevronComboBox(self)
         self.quick_sort_combo.setObjectName("quickSortCombo")
         for mode in QUICK_COMMAND_SORT_MODES:
             label = "Custom order" if mode == "Custom" else mode
             self.quick_sort_combo.addItem(label, mode)
         self.quick_sort_combo.setToolTip("Sort quick commands")
         self.quick_sort_combo.currentIndexChanged.connect(self._quick_sort_changed)
-        self.quick_group_button = QToolButton(page)
+        self.quick_group_button = QToolButton(self)
         self.quick_group_button.setObjectName("drawerMenuButton")
         self.quick_group_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.quick_group_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.quick_group_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.quick_group_button.setToolTip("Show or hide quick command groups")
         set_button_icon(self.quick_group_button, QStyle.StandardPixmap.SP_FileDialogListView)
-        send = self._drawer_action("Send", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, page, role="drawerPrimary")
-        add = self._drawer_action("Add Command", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, page)
-        edit = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_command(self.selected_quick_command_id()), page)
-        delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_command(self.selected_quick_command_id()), page, role="drawerDanger")
-        self.quick_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), page)
-        self.quick_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1), page)
-        import_quick = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_commands_csv, page)
-        export_quick = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_commands_csv, page)
-        layout.addWidget(title)
-        layout.addWidget(self._drawer_section("Saved Commands", page))
+        send = self._drawer_action("Send", QStyle.StandardPixmap.SP_ArrowForward, self.send_selected_quick_command, self, role="drawerPrimary")
+        add = self._drawer_action("Add Command", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_command, self)
+        edit = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_command(self.selected_quick_command_id()), self)
+        delete = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_command(self.selected_quick_command_id()), self, role="drawerDanger")
+        self.quick_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.host.move_quick_command(self.selected_quick_command_id(), -1), self)
+        self.quick_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.host.move_quick_command(self.selected_quick_command_id(), 1), self)
+        import_quick = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_commands_csv, self)
+        export_quick = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_commands_csv, self)
+
+        command_controls = QWidget(self)
         filter_line = QHBoxLayout()
         filter_line.setContentsMargins(0, 0, 0, 0)
         filter_line.setSpacing(8)
         filter_line.addWidget(self.quick_sort_combo, 1)
         filter_line.addWidget(self.quick_group_button, 1)
-        layout.addLayout(filter_line)
-        layout.addWidget(self.quick_list, 1)
-        layout.addWidget(self._drawer_section("Actions", page))
-        self._add_drawer_action_rows(
-            layout,
-            (
+        command_controls.setLayout(filter_line)
+
+        return QuickActionsPanel(
+            title="Quick Send",
+            section_title="Saved Commands",
+            quick_list=self.quick_list,
+            controls=command_controls,
+            action_rows=(
                 (send, add),
                 (edit, delete),
                 (self.quick_move_up_button, self.quick_move_down_button),
                 (import_quick, export_quick),
             ),
+            parent=self,
         )
-        return page
 
     def _build_quick_files_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(7)
-        title = self._drawer_title("Quick Files", page)
-        self.quick_file_sort_combo = ChevronComboBox(page)
+        self.quick_file_sort_combo = ChevronComboBox(self)
         self.quick_file_sort_combo.setObjectName("quickFileSortCombo")
         for mode in QUICK_FILE_SORT_MODES:
             label = "Custom order" if mode == "Custom" else mode
@@ -1287,48 +1257,52 @@ class TerminalSessionWidget(QWidget):
         self.quick_file_sort_combo.setToolTip("Sort quick files")
         self.quick_file_sort_combo.currentIndexChanged.connect(self._quick_file_sort_changed)
         self.quick_file_list = create_quick_file_list(
-            page,
+            self,
             tooltip="Double-click a saved command file to run it. Press and drag to reorder.",
             double_clicked=self.run_selected_quick_file,
             context_menu_requested=self.show_quick_file_context_menu,
             drag_drop=True,
         )
         self.quick_file_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self.persist_quick_file_order))
-        send_file = self._drawer_action("Run", QStyle.StandardPixmap.SP_ArrowForward, self.run_selected_quick_file, page, role="drawerPrimary")
-        add_file = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_file, page)
-        edit_file = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_file(self.selected_quick_file_id()), page)
-        delete_file = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_file(self.selected_quick_file_id()), page, role="drawerDanger")
-        self.quick_file_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.move_selected_quick_file(-1), page)
-        self.quick_file_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.move_selected_quick_file(1), page)
-        import_files = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_files_csv, page)
-        export_files = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_files_csv, page)
+        send_file = self._drawer_action("Run", QStyle.StandardPixmap.SP_ArrowForward, self.run_selected_quick_file, self, role="drawerPrimary")
+        add_file = self._drawer_action("Add File", QStyle.StandardPixmap.SP_FileDialogNewFolder, self.host.add_quick_file, self)
+        edit_file = self._drawer_action("Edit", QStyle.StandardPixmap.SP_FileDialogDetailedView, lambda: self.host.edit_quick_file(self.selected_quick_file_id()), self)
+        delete_file = self._drawer_action("Delete", QStyle.StandardPixmap.SP_TrashIcon, lambda: self.host.delete_quick_file(self.selected_quick_file_id()), self, role="drawerDanger")
+        self.quick_file_move_up_button = self._drawer_action("Move Up", QStyle.StandardPixmap.SP_ArrowUp, lambda: self.move_selected_quick_file(-1), self)
+        self.quick_file_move_down_button = self._drawer_action("Move Down", QStyle.StandardPixmap.SP_ArrowDown, lambda: self.move_selected_quick_file(1), self)
+        import_files = self._drawer_action("Import CSV", QStyle.StandardPixmap.SP_DialogOpenButton, self.host.import_quick_files_csv, self)
+        export_files = self._drawer_action("Export CSV", QStyle.StandardPixmap.SP_DialogSaveButton, self.host.export_quick_files_csv, self)
 
-        layout.addWidget(title)
-        layout.addWidget(self._drawer_section("Saved Files", page))
-        layout.addWidget(self.quick_file_sort_combo)
-        layout.addWidget(self.quick_file_list, 1)
-        layout.addWidget(self._drawer_section("Actions", page))
-        self._add_drawer_action_rows(
-            layout,
-            (
+        return QuickActionsPanel(
+            title="Quick Files",
+            section_title="Saved Files",
+            quick_list=self.quick_file_list,
+            controls=self.quick_file_sort_combo,
+            action_rows=(
                 (send_file, add_file),
                 (edit_file, delete_file),
                 (self.quick_file_move_up_button, self.quick_file_move_down_button),
                 (import_files, export_files),
             ),
+            parent=self,
         )
-        return page
 
-    def _select_drawer_page(self, index: int) -> None:
+    def _select_drawer_page(self, index: int, focus_widget: QWidget | None = None) -> None:
+        if self.drawer_pages.count() == 0:
+            return
+        index = max(0, min(index, self.drawer_pages.count() - 1))
         if (
             not self.host.settings.drawer_collapsed
             and self.drawer_pages.currentIndex() == index
+            and focus_widget is None
         ):
             self.host.set_drawer_collapsed(True)
             return
         self.drawer_pages.setCurrentIndex(index)
         if self.host.settings.drawer_collapsed:
             self.host.set_drawer_collapsed(False)
+        if focus_widget is not None:
+            QTimer.singleShot(0, focus_widget.setFocus)
 
     def apply_settings(self) -> None:
         self.terminal.document().setMaximumBlockCount(max(self.host.settings.scrollback_size, 1000))

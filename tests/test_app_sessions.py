@@ -488,6 +488,25 @@ class AppSessionTests(unittest.TestCase):
             self.assertFalse(window.connection_action_button.isEnabled())
             self.assertTrue(hasattr(editor, "quick_command_list"))
             self.assertTrue(hasattr(editor, "quick_file_list"))
+            self.assertEqual(editor.workspace_drawer_pages.count(), 2)
+            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 0)
+            rail_tooltips = [
+                button.toolTip()
+                for button in editor.workspace_drawer_rail.findChildren(QToolButton)
+            ]
+            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files"])
+            command_buttons = [
+                button.text()
+                for button in editor.workspace_drawer_pages.widget(0).findChildren(QPushButton)
+            ]
+            file_buttons = [
+                button.text()
+                for button in editor.workspace_drawer_pages.widget(1).findChildren(QPushButton)
+            ]
+            self.assertEqual(command_buttons, ["Insert"])
+            self.assertEqual(file_buttons, ["Open"])
+            editor._select_workspace_drawer_page(1)
+            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

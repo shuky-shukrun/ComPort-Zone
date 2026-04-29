@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QLineEdit,
     QPushButton,
+    QStackedWidget,
+    QStyle,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -40,12 +42,15 @@ from .batch import BatchParseError, parse_batch_line, strip_c_style_comment
 from .models import QuickCommand, QuickFile
 from .quick_actions_panel import (
     QuickActionsPanel,
+    create_quick_command_list,
+    create_quick_file_list,
     populate_quick_command_list,
     populate_quick_file_list,
     selected_item_id,
 )
 from .widgets import ChevronComboBox
 
+WORKSPACE_DRAWER_RAIL_WIDTH = 48
 BATCH_KEYWORDS = ("SEND", "WAIT", "HEX", "EXPECT")
 COMMENT_SNIPPETS = ("// ", "# ")
 COMPLETION_NAVIGATION_KEYS = {
@@ -79,6 +84,13 @@ DEFAULT_KNOWN_COMMANDS = (
 )
 COMMAND_TOKEN_PATTERN = re.compile(r"^[^\s]+")
 COMPLETION_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:*?.-")
+
+
+def set_button_role(button: QPushButton, role: str) -> None:
+    button.setProperty("role", role)
+    button.style().unpolish(button)
+    button.style().polish(button)
+    button.update()
 
 
 @dataclass(slots=True)
@@ -711,18 +723,114 @@ class CommandFileEditorDialog(QDialog):
         self.refresh_workspace_side_panel()
         self.refresh_run_targets()
 
+    def _set_standard_icon(self, button, pixmap: QStyle.StandardPixmap, size: int = 16) -> None:
+        button.setIcon(self.style().standardIcon(pixmap))
+        button.setIconSize(QSize(size, size))
+
+    def _drawer_action(
+        self,
+        text: str,
+        icon: QStyle.StandardPixmap,
+        callback: Callable[[], None],
+        *,
+        role: str = "drawerAction",
+    ) -> QPushButton:
+        button = QPushButton(text, self)
+        button.setObjectName("drawerActionButton")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._set_standard_icon(button, icon)
+        set_button_role(button, role)
+        button.clicked.connect(callback)
+        return button
+
+    def _select_workspace_drawer_page(self, index: int) -> None:
+        if not hasattr(self, "workspace_drawer_pages") or self.workspace_drawer_pages.count() == 0:
+            return
+        index = max(0, min(index, self.workspace_drawer_pages.count() - 1))
+        self.workspace_drawer_pages.setCurrentIndex(index)
+
     def _build_workspace_side_panel(self) -> QWidget:
-        panel = QuickActionsPanel(
-            command_action_text="Insert",
-            command_action=self.insert_selected_quick_command,
-            file_action_text="Open",
-            file_action=self.open_selected_quick_file,
-            parent=self,
+        drawer = QFrame(self)
+        drawer.setObjectName("drawer")
+        drawer_layout = QHBoxLayout(drawer)
+        drawer_layout.setContentsMargins(0, 0, 0, 0)
+        drawer_layout.setSpacing(0)
+
+        rail = QFrame(drawer)
+        rail.setObjectName("drawerRail")
+        rail.setFixedWidth(WORKSPACE_DRAWER_RAIL_WIDTH)
+        rail_layout = QVBoxLayout(rail)
+        rail_layout.setContentsMargins(6, 6, 6, 6)
+        rail_layout.setSpacing(8)
+
+        for icon, tooltip, index in (
+            (QStyle.StandardPixmap.SP_CommandLink, "Quick commands", 0),
+            (QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", 1),
+        ):
+            button = QToolButton(rail)
+            button.setObjectName("railButton")
+            button.setFixedSize(36, 36)
+            self._set_standard_icon(button, icon, 18)
+            button.setToolTip(tooltip)
+            button.clicked.connect(lambda _checked=False, page_index=index: self._select_workspace_drawer_page(page_index))
+            rail_layout.addWidget(button)
+        rail_layout.addStretch(1)
+
+        panel = QFrame(drawer)
+        panel.setObjectName("drawerPanel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(10, 8, 10, 8)
+        panel_layout.setSpacing(8)
+
+        self.workspace_drawer_pages = QStackedWidget(panel)
+        self.quick_command_list = create_quick_command_list(
+            self,
+            tooltip="Double-click or press Insert to add a command at the editor cursor.",
+            double_clicked=self.insert_selected_quick_command,
         )
-        self.quick_actions_panel = panel
-        self.quick_command_list = panel.quick_command_list
-        self.quick_file_list = panel.quick_file_list
-        return panel
+        insert = self._drawer_action(
+            "Insert",
+            QStyle.StandardPixmap.SP_ArrowForward,
+            self.insert_selected_quick_command,
+            role="drawerPrimary",
+        )
+        self.workspace_drawer_pages.addWidget(
+            QuickActionsPanel(
+                title="Quick Commands",
+                section_title="Saved Commands",
+                quick_list=self.quick_command_list,
+                action_rows=((insert,),),
+                parent=self,
+            )
+        )
+
+        self.quick_file_list = create_quick_file_list(
+            self,
+            tooltip="Double-click or press Open to load the saved file into this editor.",
+            double_clicked=self.open_selected_quick_file,
+        )
+        open_file = self._drawer_action(
+            "Open",
+            QStyle.StandardPixmap.SP_DirOpenIcon,
+            self.open_selected_quick_file,
+            role="drawerPrimary",
+        )
+        self.workspace_drawer_pages.addWidget(
+            QuickActionsPanel(
+                title="Quick Files",
+                section_title="Saved Files",
+                quick_list=self.quick_file_list,
+                action_rows=((open_file,),),
+                parent=self,
+            )
+        )
+        panel_layout.addWidget(self.workspace_drawer_pages, 1)
+
+        drawer_layout.addWidget(rail)
+        drawer_layout.addWidget(panel, 1)
+        self.quick_actions_panel = drawer
+        self.workspace_drawer_rail = rail
+        return drawer
 
     def _build_run_bar(self) -> QWidget:
         bar = QFrame(self)

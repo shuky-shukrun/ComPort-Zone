@@ -1,11 +1,12 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.quick_actions_panel import (
     QuickActionsPanel,
     create_quick_command_list,
+    create_quick_file_list,
     item_ids_in_order,
     populate_quick_command_list,
     populate_quick_file_list,
@@ -28,25 +29,35 @@ class QuickActionsPanelTests(unittest.TestCase):
         ]
         parent = QWidget()
         standalone_commands = create_quick_command_list(parent, tooltip="Commands")
+        panel_commands = create_quick_command_list(parent, tooltip="Commands")
+        panel_files = create_quick_file_list(parent, tooltip="Files")
         panel = QuickActionsPanel(
-            command_action_text="Insert",
-            command_action=lambda: None,
-            file_action_text="Open",
-            file_action=lambda: None,
+            title="Quick Commands",
+            section_title="Saved Commands",
+            quick_list=panel_commands,
+            action_rows=((QPushButton("Insert", parent),),),
+            parent=parent,
+        )
+        file_panel = QuickActionsPanel(
+            title="Quick Files",
+            section_title="Saved Files",
+            quick_list=panel_files,
+            action_rows=((QPushButton("Open", parent),),),
             parent=parent,
         )
         try:
             populate_quick_command_list(standalone_commands, commands, selected_id="cmd-2")
-            populate_quick_command_list(panel.quick_command_list, commands, selected_id="cmd-2")
-            populate_quick_file_list(panel.quick_file_list, quick_files, selected_id="file-1")
+            populate_quick_command_list(panel.quick_list, commands, selected_id="cmd-2")
+            populate_quick_file_list(file_panel.quick_list, quick_files, selected_id="file-1")
 
             self.assertEqual(item_ids_in_order(standalone_commands), ["cmd-1", "cmd-2"])
-            self.assertEqual(item_ids_in_order(panel.quick_command_list), ["cmd-1", "cmd-2"])
+            self.assertEqual(item_ids_in_order(panel.quick_list), ["cmd-1", "cmd-2"])
             self.assertEqual(standalone_commands.item(1).text(), "Boot: Wake")
-            self.assertEqual(panel.quick_command_list.item(1).toolTip(), "Boot | 55 AA")
-            self.assertEqual(selected_item_id(panel.quick_command_list), "cmd-2")
-            self.assertEqual(selected_item_id(panel.quick_file_list), "file-1")
+            self.assertEqual(panel.quick_list.item(1).toolTip(), "Boot | 55 AA")
+            self.assertEqual(selected_item_id(panel.quick_list), "cmd-2")
+            self.assertEqual(selected_item_id(file_panel.quick_list), "file-1")
         finally:
+            file_panel.deleteLater()
             panel.deleteLater()
             parent.deleteLater()
 

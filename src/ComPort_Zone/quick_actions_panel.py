@@ -7,6 +7,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -186,45 +187,54 @@ class QuickActionsPanel(QFrame):
     def __init__(
         self,
         *,
-        command_action_text: str,
-        command_action: Callable[[], None],
-        file_action_text: str,
-        file_action: Callable[[], None],
+        title: str,
+        section_title: str,
+        quick_list: QListWidget,
+        controls: QWidget | None = None,
+        action_title: str | None = "Actions",
+        action_rows: tuple[tuple[QPushButton, ...], ...] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("editorSidePanel")
+        self.setObjectName("quickActionPage")
         self.setMinimumWidth(230)
         self.setMaximumWidth(340)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.quick_list = quick_list
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(7)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
-        command_title = QLabel("Quick Commands", self)
-        command_title.setObjectName("drawerTitle")
-        self.quick_command_list = create_quick_command_list(
-            self,
-            tooltip="Double-click or press Insert to add a command at the editor cursor.",
-            double_clicked=command_action,
-        )
-        self.command_action_button = QPushButton(command_action_text, self)
-        self.command_action_button.clicked.connect(command_action)
+        title_label = QLabel(title, self)
+        title_label.setObjectName("drawerTitle")
+        section_label = _section_label(section_title, self)
 
-        file_title = QLabel("Quick Files", self)
-        file_title.setObjectName("drawerTitle")
-        self.quick_file_list = create_quick_file_list(
-            self,
-            tooltip="Double-click or press Open to load the saved file into this editor.",
-            double_clicked=file_action,
-        )
-        self.file_action_button = QPushButton(file_action_text, self)
-        self.file_action_button.clicked.connect(file_action)
+        layout.addWidget(title_label)
+        layout.addWidget(section_label)
+        if controls is not None:
+            layout.addWidget(controls)
+        layout.addWidget(self.quick_list, 1)
+        if action_rows:
+            if action_title:
+                layout.addWidget(_section_label(action_title, self))
+            add_action_rows(layout, action_rows)
 
-        layout.addWidget(command_title)
-        layout.addWidget(self.quick_command_list, 1)
-        layout.addWidget(self.command_action_button)
-        layout.addWidget(file_title)
-        layout.addWidget(self.quick_file_list, 1)
-        layout.addWidget(self.file_action_button)
+
+def _section_label(text: str, parent: QWidget) -> QLabel:
+    section = QLabel(text.upper(), parent)
+    section.setObjectName("drawerSection")
+    return section
+
+
+def add_action_rows(
+    layout: QVBoxLayout,
+    rows: tuple[tuple[QPushButton, ...], ...],
+) -> None:
+    for row in rows:
+        line = QHBoxLayout()
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        for button in row:
+            line.addWidget(button)
+        layout.addLayout(line)
