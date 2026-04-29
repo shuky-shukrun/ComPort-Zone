@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from queue import Empty
@@ -56,6 +55,7 @@ from .batch import (
     substitute_batch_parameters,
 )
 from .command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
+from .command_registry import CommandPaletteEntry, CommandRegistry
 from .history import HistoryStore
 from .icons import STYLE_ICON_MAP, TABLER_ICON_PATHS, set_button_icon, standard_icon
 from .command_run_targets import CommandRunRequest, CommandRunTarget, CommandRunTargetService
@@ -202,18 +202,6 @@ clone_quick_command = _quick_actions.clone_quick_command
 clone_quick_file = _quick_actions.clone_quick_file
 merge_quick_commands = _quick_actions.merge_quick_commands
 merge_quick_files = _quick_actions.merge_quick_files
-
-
-@dataclass(slots=True)
-class CommandPaletteEntry:
-    title: str
-    subtitle: str
-    callback: Callable[[], None]
-    icon: QStyle.StandardPixmap | None = None
-    keywords: str = ""
-
-    def searchable_text(self) -> str:
-        return f"{self.title} {self.subtitle} {self.keywords}".casefold()
 
 
 class ConnectionStatusLabel(QLabel):
@@ -2196,6 +2184,7 @@ class MainWindow(QMainWindow):
         self.settings_service = SettingsService(self.settings_store)
         self.settings = self.settings_service.load()
         self.workspace_state_service = WorkspaceStateService()
+        self.command_registry = CommandRegistry(self)
         self.quick_actions = self._quick_action_library_from_settings()
         self.history_catalog = HistoryStore(self.settings.command_history)
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
@@ -2254,34 +2243,16 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self) -> None:
         self.file_menu = file_menu = self.menuBar().addMenu("File")
-        self._add_action(file_menu, "New Tab", "Ctrl+T", lambda: self.add_session(prompt_settings=True), icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        self._add_action(file_menu, "Duplicate Tab", "Ctrl+Shift+T", self.duplicate_current_session, icon=QStyle.StandardPixmap.SP_FileIcon)
-        self._add_action(file_menu, "Close Tab", "Ctrl+W", self.close_current_session, icon=QStyle.StandardPixmap.SP_DialogCloseButton)
-        file_menu.addSeparator()
-        self._add_action(file_menu, "App Settings Import / Export...", "", self.show_app_settings_transfer_dialog, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        file_menu.addSeparator()
-        self._add_action(file_menu, "Exit", "", self.close, icon=QStyle.StandardPixmap.SP_TitleBarCloseButton)
+        self._add_registered_menu_section(file_menu, "file")
 
         self.edit_menu = edit_menu = self.menuBar().addMenu("Edit")
-        self._add_action(edit_menu, "Copy", "Ctrl+Shift+C", lambda: self.with_session(lambda s: s.copy_selection()), icon=QStyle.StandardPixmap.SP_FileIcon)
-        self._add_action(edit_menu, "Select All", "Ctrl+A", lambda: self.with_session(lambda s: s.select_all()), icon=QStyle.StandardPixmap.SP_FileDialogListView)
-        edit_menu.addSeparator()
-        self._add_action(edit_menu, "Find", "Ctrl+F", self.show_find_in_current_tab, icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
-        self._add_action(edit_menu, "Replace", "Ctrl+H", self.show_replace_in_current_tab, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        self._add_action(edit_menu, "Clear Terminal", "Ctrl+K", lambda: self.with_session(lambda s: s.clear_terminal()), icon=QStyle.StandardPixmap.SP_TrashIcon)
-        edit_menu.addSeparator()
-        self._add_action(edit_menu, "Clear Command History", "", self.clear_command_history, icon=QStyle.StandardPixmap.SP_TrashIcon)
+        self._add_registered_menu_section(edit_menu, "edit")
 
         self.view_menu = view_menu = self.menuBar().addMenu("View")
-        self._add_action(view_menu, "Toggle Drawer", "Ctrl+B", self.toggle_drawer, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        view_menu.addSeparator()
-        self._add_action(view_menu, "Increase Font", "Ctrl+=", lambda: self.change_font_size(1), icon=QStyle.StandardPixmap.SP_ArrowUp)
-        self._add_action(view_menu, "Decrease Font", "Ctrl+-", lambda: self.change_font_size(-1), icon=QStyle.StandardPixmap.SP_ArrowDown)
-        self._add_action(view_menu, "Terminal Font Settings", "", self.show_terminal_font_settings, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        view_menu.addSeparator()
-        self.timestamps_action = self._add_action(view_menu, "Show Timestamps", "", self.toggle_timestamps, checkable=True, icon=QStyle.StandardPixmap.SP_FileDialogInfoView)
+        view_actions = self._add_registered_menu_section(view_menu, "view")
+        self.timestamps_action = view_actions["view.show_timestamps"]
         self.timestamps_action.setChecked(self.settings.timestamps_enabled)
-        self.wrap_action = self._add_action(view_menu, "Line Wrap", "", self.toggle_line_wrap, checkable=True, icon=QStyle.StandardPixmap.SP_FileDialogListView)
+        self.wrap_action = view_actions["view.line_wrap"]
         self.wrap_action.setChecked(self.settings.line_wrap_enabled)
         view_menu.addSeparator()
         self.theme_menu = theme_menu = view_menu.addMenu("Theme")
@@ -2297,58 +2268,56 @@ class MainWindow(QMainWindow):
             self.theme_actions[theme_name] = action
 
         self.session_menu = session_menu = self.menuBar().addMenu("Session")
-        self._add_action(session_menu, "Rename Tab", "F2", self.rename_current_session, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        session_menu.addSeparator()
-        self._add_action(session_menu, "Pause / Resume Output", "Ctrl+P", lambda: self.with_session(lambda s: s.toggle_pause()), icon=QStyle.StandardPixmap.SP_MediaPause)
-        self._add_action(session_menu, "Start / Stop Log", "Ctrl+L", lambda: self.with_session(lambda s: s.toggle_logging()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        self._add_registered_menu_section(session_menu, "session")
 
         self.serial_menu = serial_menu = self.menuBar().addMenu("Serial")
-        self._add_action(serial_menu, "Connect / Disconnect", "Ctrl+Enter", lambda: self.with_session(lambda s: s.toggle_connection()), icon=QStyle.StandardPixmap.SP_ComputerIcon)
-        self._add_action(serial_menu, "Serial Settings", "Ctrl+,", lambda: self.with_session(lambda s: s.open_connection_settings()), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        self._add_action(serial_menu, "Refresh Ports", "F5", lambda: self.with_session(lambda s: s.refresh_ports()), icon=QStyle.StandardPixmap.SP_BrowserReload)
+        self._add_registered_menu_section(serial_menu, "serial")
 
         self.tools_menu = tools_menu = self.menuBar().addMenu("Tools")
-        self._add_action(tools_menu, "Command Palette", "Ctrl+Shift+P", self.show_command_palette, icon=QStyle.StandardPixmap.SP_CommandLink)
+        self._add_registered_action(tools_menu, "tools.command_palette")
         tools_menu.addSeparator()
 
         self.command_files_menu = command_files_menu = tools_menu.addMenu("Command Files")
         command_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_MediaPlay))
-        self._add_action(command_files_menu, "New Command File", "", self.new_command_file_editor, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        self._add_action(command_files_menu, "Open Command File Editor", "", self.open_command_file_editor, icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        self._add_registered_action(command_files_menu, "command_file.new")
+        self._add_registered_action(command_files_menu, "command_file.open_editor")
         self.run_editor_menu = command_files_menu.addMenu("Run in Terminal")
         self.run_editor_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ArrowForward))
         self.run_editor_menu.aboutToShow.connect(lambda menu=self.run_editor_menu: self.populate_run_editor_menu(menu))
         command_files_menu.addSeparator()
-        self._add_action(command_files_menu, "Run Command File", "Ctrl+R", lambda: self.with_session(lambda s: s.run_script()), icon=QStyle.StandardPixmap.SP_MediaPlay)
-        self._add_action(command_files_menu, "Stop Command File", "", lambda: self.with_session(lambda s: s.stop_script()), icon=QStyle.StandardPixmap.SP_MediaStop)
+        self._add_registered_action(command_files_menu, "command_file.run")
+        self._add_registered_action(command_files_menu, "command_file.stop")
 
         self.quick_commands_menu = quick_commands_menu = tools_menu.addMenu("Quick Commands")
         quick_commands_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_CommandLink))
-        self._add_action(quick_commands_menu, "Send Selected", "", lambda: self.with_session(lambda s: s.send_selected_quick_command()), icon=QStyle.StandardPixmap.SP_ArrowForward)
-        self._add_action(quick_commands_menu, "Save Current Input", "", lambda: self.with_session(lambda s: s.save_current_input_as_quick_command()), icon=QStyle.StandardPixmap.SP_DialogSaveButton)
-        quick_commands_menu.addSeparator()
-        self._add_action(quick_commands_menu, "Add Command", "", self.add_quick_command, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        self._add_action(quick_commands_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        self._add_action(quick_commands_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_command(s.selected_quick_command_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
-        self._add_action(quick_commands_menu, "Delete All Quick Commands", "", self.delete_all_quick_commands, icon=QStyle.StandardPixmap.SP_TrashIcon)
-        quick_commands_menu.addSeparator()
-        self._add_action(quick_commands_menu, "Import CSV", "", self.import_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        self._add_action(quick_commands_menu, "Export CSV", "", self.export_quick_commands_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        self._add_registered_menu_section(quick_commands_menu, "quick_commands")
 
         self.quick_files_menu = quick_files_menu = tools_menu.addMenu("Quick Files")
         quick_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_DirOpenIcon))
-        self._add_action(quick_files_menu, "Run Selected", "", lambda: self.with_session(lambda s: s.run_selected_quick_file()), icon=QStyle.StandardPixmap.SP_ArrowForward)
-        self._add_action(quick_files_menu, "Add File", "", self.add_quick_file, icon=QStyle.StandardPixmap.SP_FileDialogNewFolder)
-        self._add_action(quick_files_menu, "Edit Selected File", "", self.edit_selected_quick_file_content, icon=QStyle.StandardPixmap.SP_FileDialogContentsView)
-        self._add_action(quick_files_menu, "Edit Selected", "", lambda: self.with_session(lambda s: self.edit_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        self._add_action(quick_files_menu, "Delete Selected", "", lambda: self.with_session(lambda s: self.delete_quick_file(s.selected_quick_file_id())), icon=QStyle.StandardPixmap.SP_TrashIcon)
-        self._add_action(quick_files_menu, "Delete All Quick Files", "", self.delete_all_quick_files, icon=QStyle.StandardPixmap.SP_TrashIcon)
-        quick_files_menu.addSeparator()
-        self._add_action(quick_files_menu, "Import CSV", "", self.import_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogOpenButton)
-        self._add_action(quick_files_menu, "Export CSV", "", self.export_quick_files_csv, icon=QStyle.StandardPixmap.SP_DialogSaveButton)
+        self._add_registered_menu_section(quick_files_menu, "quick_files")
 
         self.help_menu = help_menu = self.menuBar().addMenu("Help")
-        self._add_action(help_menu, "About", "", self.show_about, icon=QStyle.StandardPixmap.SP_MessageBoxInformation)
+        self._add_registered_menu_section(help_menu, "help")
+
+    def _add_registered_menu_section(self, menu, menu_key: str) -> dict[str, QAction]:
+        actions: dict[str, QAction] = {}
+        for command_id in self.command_registry.menu_items(menu_key):
+            if command_id is None:
+                menu.addSeparator()
+                continue
+            actions[command_id] = self._add_registered_action(menu, command_id)
+        return actions
+
+    def _add_registered_action(self, menu, command_id: str) -> QAction:
+        spec = self.command_registry.spec(command_id)
+        return self._add_action(
+            menu,
+            spec.menu_label(),
+            spec.shortcut,
+            spec.callback(self),
+            checkable=spec.checkable,
+            icon=spec.icon,
+        )
 
     def _add_action(
         self,
@@ -2386,6 +2355,24 @@ class MainWindow(QMainWindow):
         action.triggered.connect(lambda _checked=False: callback())
         menu.addAction(action)
         return action
+
+    def _add_context_command_action(
+        self,
+        menu: QMenu,
+        command_id: str,
+        callback=None,
+        *,
+        text: str | None = None,
+        enabled: bool = True,
+    ) -> QAction:
+        spec = self.command_registry.spec(command_id)
+        return self._add_context_action(
+            menu,
+            text or spec.menu_label(),
+            callback or spec.callback(self),
+            icon=spec.icon,
+            enabled=enabled,
+        )
 
     def _quick_action_library_from_settings(self) -> QuickActionLibrary:
         return QuickActionLibrary(
@@ -2648,162 +2635,7 @@ class MainWindow(QMainWindow):
         self.set_status("Replace is available in command-file editor tabs.")
 
     def command_palette_entries(self) -> list[CommandPaletteEntry]:
-        entries = [
-            CommandPaletteEntry(
-                title="Connect / Disconnect",
-                subtitle="Connect, disconnect, or stop auto-reconnect for the active tab",
-                callback=lambda: self.with_session(lambda session: session.toggle_connection()),
-                icon=QStyle.StandardPixmap.SP_ComputerIcon,
-                keywords="serial port open close reconnect stop retry",
-            ),
-            CommandPaletteEntry(
-                title="Serial Settings",
-                subtitle="Open COM port, baud rate, line ending, DTR, and RTS settings",
-                callback=lambda: self.with_session(lambda session: session.open_connection_settings()),
-                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-                keywords="settings port baud parity stop bits flow control",
-            ),
-            CommandPaletteEntry(
-                title="Run Command File",
-                subtitle="Run a SEND / WAIT / HEX command script in the active tab",
-                callback=lambda: self.with_session(lambda session: session.run_script()),
-                icon=QStyle.StandardPixmap.SP_MediaPlay,
-                keywords="script batch file",
-            ),
-            CommandPaletteEntry(
-                title="New Command File",
-                subtitle="Create a command file in the built-in editor",
-                callback=self.new_command_file_editor,
-                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
-                keywords="script batch file editor create",
-            ),
-            CommandPaletteEntry(
-                title="Open Command File Editor",
-                subtitle="Open or edit a command file with autocomplete and validation",
-                callback=self.open_command_file_editor,
-                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-                keywords="script batch file editor autocomplete validate",
-            ),
-            CommandPaletteEntry(
-                title="Stop Command File",
-                subtitle="Stop the running command file in the active tab",
-                callback=lambda: self.with_session(lambda session: session.stop_script()),
-                icon=QStyle.StandardPixmap.SP_MediaStop,
-                keywords="script batch file stop cancel",
-            ),
-            CommandPaletteEntry(
-                title="Send Selected Quick File",
-                subtitle="Run the saved command file selected in the left drawer",
-                callback=lambda: self.with_session(lambda session: session.run_selected_quick_file()),
-                icon=QStyle.StandardPixmap.SP_ArrowForward,
-                keywords="script batch file saved quick",
-            ),
-            CommandPaletteEntry(
-                title="Edit Selected Quick File",
-                subtitle="Open the selected saved command file in the built-in editor",
-                callback=self.edit_selected_quick_file_content,
-                icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
-                keywords="script batch file saved quick edit",
-            ),
-            CommandPaletteEntry(
-                title="Add Quick File",
-                subtitle="Save a command file path in the left drawer",
-                callback=self.add_quick_file,
-                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
-                keywords="script batch file save shortcut",
-            ),
-            CommandPaletteEntry(
-                title="Clear Terminal",
-                subtitle="Clear output in the active tab",
-                callback=lambda: self.with_session(lambda session: session.clear_terminal()),
-                icon=QStyle.StandardPixmap.SP_TrashIcon,
-                keywords="clean erase output",
-            ),
-            CommandPaletteEntry(
-                title="Clear Command History",
-                subtitle="Delete all remembered command input history",
-                callback=self.clear_command_history,
-                icon=QStyle.StandardPixmap.SP_TrashIcon,
-                keywords="history commands autocomplete delete cleanup",
-            ),
-            CommandPaletteEntry(
-                title="Find / Search",
-                subtitle="Find in an editor tab or search terminal output in the active tab",
-                callback=self.show_find_in_current_tab,
-                icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
-                keywords="find search current tab terminal editor",
-            ),
-            CommandPaletteEntry(
-                title="Replace in Editor",
-                subtitle="Open find and replace for the active command-file editor tab",
-                callback=self.show_replace_in_current_tab,
-                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-                keywords="find replace command file editor",
-            ),
-            CommandPaletteEntry(
-                title="Terminal Font Settings",
-                subtitle="Choose terminal font family and size",
-                callback=self.show_terminal_font_settings,
-                icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-                keywords="font family size monospace terminal",
-            ),
-            CommandPaletteEntry(
-                title="Save Current Input as Quick Command",
-                subtitle="Save the command input from the active tab into Quick Send",
-                callback=lambda: self.with_session(lambda session: session.save_current_input_as_quick_command()),
-                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                keywords="snippet quick send shortcut",
-            ),
-            CommandPaletteEntry(
-                title="App Settings Import / Export",
-                subtitle="Import or export app preferences as JSON",
-                callback=self.show_app_settings_transfer_dialog,
-                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-                keywords="settings json import export restore backup preferences",
-            ),
-            CommandPaletteEntry(
-                title="Import Quick Commands from CSV",
-                subtitle="Append quick commands from a CSV file",
-                callback=self.import_quick_commands_csv,
-                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-                keywords="quick send snippets commands csv import",
-            ),
-            CommandPaletteEntry(
-                title="Export Quick Commands to CSV",
-                subtitle="Save all quick commands to a CSV file",
-                callback=self.export_quick_commands_csv,
-                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                keywords="quick send snippets commands csv export",
-            ),
-            CommandPaletteEntry(
-                title="Delete All Quick Commands",
-                subtitle="Remove every saved quick command",
-                callback=self.delete_all_quick_commands,
-                icon=QStyle.StandardPixmap.SP_TrashIcon,
-                keywords="quick send snippets commands delete cleanup",
-            ),
-            CommandPaletteEntry(
-                title="Import Quick Files from CSV",
-                subtitle="Append saved command-file paths from a CSV file",
-                callback=self.import_quick_files_csv,
-                icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-                keywords="quick files command files scripts csv import",
-            ),
-            CommandPaletteEntry(
-                title="Export Quick Files to CSV",
-                subtitle="Save all saved command-file paths to a CSV file",
-                callback=self.export_quick_files_csv,
-                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                keywords="quick files command files scripts csv export",
-            ),
-            CommandPaletteEntry(
-                title="Delete All Quick Files",
-                subtitle="Remove every saved command-file shortcut",
-                callback=self.delete_all_quick_files,
-                icon=QStyle.StandardPixmap.SP_TrashIcon,
-                keywords="quick files command files scripts delete cleanup",
-            ),
-        ]
+        entries = self.command_registry.palette_entries()
         for index in range(self.tabs.count()):
             session = self.session_at(index)
             editor = self.command_file_editor_at(index)
@@ -2836,30 +2668,15 @@ class MainWindow(QMainWindow):
     def build_tab_context_menu(self, index: int) -> QMenu:
         menu = QMenu(self)
         if index < 0:
-            self._add_context_action(
-                menu,
-                "New Tab",
-                lambda: self.add_session(prompt_settings=True),
-                icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
-            )
-            self._add_context_action(
-                menu,
-                "New Command File",
-                self.new_command_file_editor,
-                icon=QStyle.StandardPixmap.SP_FileIcon,
-            )
+            self._add_context_command_action(menu, "file.new_tab")
+            self._add_context_command_action(menu, "command_file.new")
             return menu
 
         session = self.session_at(index)
         editor = self.command_file_editor_at(index)
         if editor:
             menu.setTitle(editor.tab_title())
-            self._add_context_action(
-                menu,
-                "New Command File",
-                self.new_command_file_editor,
-                icon=QStyle.StandardPixmap.SP_FileIcon,
-            )
+            self._add_context_command_action(menu, "command_file.new")
             self._add_context_action(
                 menu,
                 "Save",
@@ -2884,11 +2701,10 @@ class MainWindow(QMainWindow):
                     icon=QStyle.StandardPixmap.SP_DirOpenIcon,
                 )
             menu.addSeparator()
-            self._add_context_action(
+            self._add_context_command_action(
                 menu,
-                "Close Tab",
+                "file.close_tab",
                 lambda tab_index=index: self.close_session(tab_index),
-                icon=QStyle.StandardPixmap.SP_DialogCloseButton,
             )
             self._add_context_action(
                 menu,
@@ -2909,30 +2725,22 @@ class MainWindow(QMainWindow):
         is_connected = bool(session and session.serial_client.is_connected)
         is_reconnecting = bool(session and session.serial_client.is_reconnecting)
         menu.setTitle(session.tab_title if session else self.tabs.tabText(index))
-        self._add_context_action(
+        self._add_context_command_action(menu, "file.new_tab")
+        self._add_context_command_action(
             menu,
-            "New Tab",
-            lambda: self.add_session(prompt_settings=True),
-            icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
-        )
-        self._add_context_action(
-            menu,
-            "Duplicate Tab",
+            "file.duplicate_tab",
             lambda tab_index=index: self.duplicate_session(tab_index),
-            icon=QStyle.StandardPixmap.SP_FileIcon,
         )
-        self._add_context_action(
+        self._add_context_command_action(
             menu,
-            "Rename Tab",
+            "session.rename_tab",
             lambda tab_index=index: self.rename_session(tab_index),
-            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
         )
         menu.addSeparator()
-        self._add_context_action(
+        self._add_context_command_action(
             menu,
-            "Serial Settings",
+            "serial.settings",
             lambda tab_index=index: self.open_session_settings(tab_index),
-            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
             enabled=session is not None,
         )
         self._add_context_action(
@@ -2942,26 +2750,24 @@ class MainWindow(QMainWindow):
             icon=QStyle.StandardPixmap.SP_ComputerIcon,
             enabled=session is not None,
         )
-        self._add_context_action(
+        self._add_context_command_action(
             menu,
-            "Search",
+            "edit.find",
             lambda tab_index=index: self.show_session_search(tab_index),
-            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+            text="Search",
             enabled=session is not None,
         )
-        self._add_context_action(
+        self._add_context_command_action(
             menu,
-            "Clear Terminal",
+            "edit.clear_terminal",
             lambda tab_index=index: self.clear_session_terminal(tab_index),
-            icon=QStyle.StandardPixmap.SP_TrashIcon,
             enabled=session is not None,
         )
         menu.addSeparator()
-        self._add_context_action(
+        self._add_context_command_action(
             menu,
-            "Close Tab",
+            "file.close_tab",
             lambda tab_index=index: self.close_session(tab_index),
-            icon=QStyle.StandardPixmap.SP_DialogCloseButton,
         )
         self._add_context_action(
             menu,
