@@ -3026,22 +3026,11 @@ class MainWindow(QMainWindow):
         return menu
 
     def restore_sessions(self, *, prompt_first_settings: bool = True) -> None:
-        states = self.settings.restored_tabs
-        if not states:
-            self.add_session(
-                TerminalSessionState(title="Terminal 1"),
-                prompt_settings=False,
-            )
-            if prompt_first_settings:
-                self.prompt_current_session_settings()
-        else:
-            for state in states:
-                self.add_session(state, prompt_settings=False)
-        for command_file_state in self.settings.restored_command_files:
-            path = Path(command_file_state.path) if command_file_state.path else None
-            self.add_command_file_tab(path=path, state=command_file_state)
-        if self.tabs.count() == 0:
-            self.add_session(prompt_settings=False)
+        self.workspace_state_service.restore_from_settings(
+            self.settings,
+            self,
+            prompt_first_settings=prompt_first_settings,
+        )
 
     def add_session(self, state: TerminalSessionState | None = None, *, prompt_settings: bool = True) -> None:
         self._session_counter += 1
@@ -3249,6 +3238,9 @@ class MainWindow(QMainWindow):
             if isinstance(widget, CommandFileEditorDialog):
                 editors.append(widget)
         return editors
+
+    def workspace_tab_count(self) -> int:
+        return self.tabs.count()
 
     def with_session(self, callback) -> None:
         session = self.current_session()

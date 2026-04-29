@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from ComPort_Zone.models import AppSettings, SerialProfile, TerminalSessionState
+from ComPort_Zone.models import AppSettings, CommandFileTabState, SerialProfile, TerminalSessionState
 from ComPort_Zone.workspace_state import WorkspaceStateService
 
 
@@ -25,6 +25,39 @@ class FakeCommandFileEditor:
 
     def is_dirty(self) -> bool:
         return self._dirty
+
+
+class FakeRestoreTarget:
+    def __init__(self, *, count_additions: bool = True) -> None:
+        self.count_additions = count_additions
+        self.sessions: list[tuple[TerminalSessionState | None, bool]] = []
+        self.command_files: list[tuple[Path | None, CommandFileTabState | None]] = []
+        self.prompt_count = 0
+
+    def add_session(
+        self,
+        state: TerminalSessionState | None = None,
+        *,
+        prompt_settings: bool = True,
+    ) -> object:
+        self.sessions.append((state, prompt_settings))
+        return object()
+
+    def add_command_file_tab(
+        self,
+        path: Path | None = None,
+        state: CommandFileTabState | None = None,
+    ) -> object:
+        self.command_files.append((path, state))
+        return object()
+
+    def prompt_current_session_settings(self) -> None:
+        self.prompt_count += 1
+
+    def workspace_tab_count(self) -> int:
+        if not self.count_additions:
+            return 0
+        return len(self.sessions) + len(self.command_files)
 
 
 class WorkspaceStateServiceTests(unittest.TestCase):
@@ -98,6 +131,68 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual(settings.window_height, 700)
         self.assertEqual(settings.restored_tabs, [])
         self.assertEqual(settings.restored_command_files, [])
+
+    def test_restore_adds_default_terminal_and_prompt_when_no_terminal_state(self) -> None:
+        service = WorkspaceStateService()
+        settings = AppSettings()
+        target = FakeRestoreTarget()
+
+        service.restore_from_settings(settings, target, prompt_first_settings=True)
+
+        self.assertEqual(len(target.sessions), 1)
+        state, prompt_settings = target.sessions[0]
+        self.assertEqual(state.title, "Terminal 1")
+        self.assertFalse(prompt_settings)
+        self.assertEqual(target.prompt_count, 1)
+        self.assertEqual(target.command_files, [])
+
+    def test_restore_recreates_terminal_and_command_file_tabs(self) -> None:
+        service = WorkspaceStateService()
+        command_file = CommandFileTabState(
+            path="C:/scripts/bringup.txt",
+            text="SEND *IDN?\n",
+            dirty=True,
+        )
+        settings = AppSettings(
+            restored_tabs=[
+                TerminalSessionState(title="DUT", serial=SerialProfile(port="COM7")),
+                TerminalSessionState(title="Monitor", serial=SerialProfile(port="COM8")),
+            ],
+            restored_command_files=[command_file],
+        )
+        target = FakeRestoreTarget()
+
+        service.restore_from_settings(settings, target, prompt_first_settings=True)
+
+        self.assertEqual([state.title for state, _ in target.sessions if state], ["DUT", "Monitor"])
+        self.assertEqual([prompt for _, prompt in target.sessions], [False, False])
+        self.assertEqual(target.prompt_count, 0)
+        self.assertEqual(len(target.command_files), 1)
+        path, state = target.command_files[0]
+        self.assertEqual(path, Path(command_file.path))
+        self.assertIs(state, command_file)
+
+    def test_restore_can_suppress_default_prompt(self) -> None:
+        service = WorkspaceStateService()
+        target = FakeRestoreTarget()
+
+        service.restore_from_settings(AppSettings(), target, prompt_first_settings=False)
+
+        self.assertEqual(len(target.sessions), 1)
+        self.assertEqual(target.prompt_count, 0)
+
+    def test_restore_guarantees_at_least_one_tab(self) -> None:
+        service = WorkspaceStateService()
+        target = FakeRestoreTarget(count_additions=False)
+
+        service.restore_from_settings(
+            AppSettings(restored_tabs=[TerminalSessionState(title="Ignored by count")]),
+            target,
+            prompt_first_settings=False,
+        )
+
+        self.assertEqual(len(target.sessions), 2)
+        self.assertEqual(target.sessions[-1], (None, False))
 
 
 if __name__ == "__main__":

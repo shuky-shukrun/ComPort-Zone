@@ -24,6 +24,29 @@ class CommandFileStateSource(Protocol):
         ...
 
 
+class WorkspaceRestoreTarget(Protocol):
+    def add_session(
+        self,
+        state: TerminalSessionState | None = None,
+        *,
+        prompt_settings: bool = True,
+    ) -> object:
+        ...
+
+    def add_command_file_tab(
+        self,
+        path: Path | None = None,
+        state: CommandFileTabState | None = None,
+    ) -> object:
+        ...
+
+    def prompt_current_session_settings(self) -> None:
+        ...
+
+    def workspace_tab_count(self) -> int:
+        ...
+
+
 def clone_serial_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
 
@@ -65,3 +88,27 @@ class WorkspaceStateService:
             text=editor.text() if dirty or path is None else "",
             dirty=dirty,
         )
+
+    def restore_from_settings(
+        self,
+        settings: AppSettings,
+        target: WorkspaceRestoreTarget,
+        *,
+        prompt_first_settings: bool = True,
+    ) -> None:
+        terminal_states = list(settings.restored_tabs)
+        if not terminal_states:
+            target.add_session(
+                TerminalSessionState(title="Terminal 1"),
+                prompt_settings=False,
+            )
+            if prompt_first_settings:
+                target.prompt_current_session_settings()
+        else:
+            for state in terminal_states:
+                target.add_session(state, prompt_settings=False)
+        for command_file_state in settings.restored_command_files:
+            path = Path(command_file_state.path) if command_file_state.path else None
+            target.add_command_file_tab(path=path, state=command_file_state)
+        if target.workspace_tab_count() == 0:
+            target.add_session(prompt_settings=False)
