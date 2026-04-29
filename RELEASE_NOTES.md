@@ -1,3 +1,70 @@
+# ComPort Zone v0.2.1 Release Notes
+
+Release date: 2026-04-29
+
+ComPort Zone v0.2.1 is a behavior-compatible modular redesign release. It keeps the PySide6 Windows-first serial workflow intact while moving important pieces out of the large UI classes and into focused, reusable modules.
+
+## Highlights
+
+- Terminal tabs and command-file editor tabs now share the same quick-action sidebar component.
+- The editor sidebar matches the terminal sidebar layout: users view either quick commands or quick files, with the same filter, sort, group, and action controls.
+- Mode-specific sidebar actions remain clear: terminal quick commands send to serial, editor quick commands insert into the file, terminal quick files run, and editor quick files open.
+- Command-file quick command suggestions now come from the active quick-command filter/group state.
+- Command editor behavior is split into focused modules for validation/completion, file I/O, run target selection, search/replace, and syntax highlighting.
+- A transport abstraction foundation is now in place while serial remains the only concrete transport.
+
+## What's New
+
+### Shared Quick Actions
+
+- Added a shared quick-actions sidebar used by both terminal and command-file editor tabs.
+- Preserved quick command and quick file CSV formats.
+- Preserved append/replace import behavior and duplicate handling.
+- Preserved sorting, filtering, grouping, manual reorder, and drag reorder behavior.
+- Normalized quick-action row sizing so terminal and editor sidebars feel consistent.
+
+### Command-File Editor
+
+- Moved command-file validation, autocomplete source collection, and known-command handling into `command_editor_core.py`.
+- Moved command-file load/save/default-path behavior into `command_file_service.py`.
+- Moved command-file execution target modeling into `command_run_targets.py`.
+- Moved editor find/replace behavior into `command_search.py`.
+- Moved syntax highlighting into `command_editor_highlighting.py`.
+- Removed the explicit Validate toolbar button; validation and unknown-command warnings now run in the background when enabled.
+- Cleaned up Find mode so replace-only controls are hidden unless Replace mode is active.
+
+### Architecture
+
+- Added `transports.py` with transport protocol types, endpoint/profile/event data, and a `SerialTransportAdapter` around the current serial client.
+- Added generic transport fields to settings while preserving current serial settings compatibility.
+- Continued extracting UI helpers and settings coordination out of the main application module.
+
+## Compatibility
+
+- Existing settings remain compatible, including `%LOCALAPPDATA%\ComPortZone\settings.json`.
+- Existing quick-command CSV files remain compatible.
+- Existing quick-file CSV files remain compatible.
+- Existing command-file syntax remains compatible, including `SEND`, `WAIT`, `HEX`, `EXPECT`, comments, and runtime parameters.
+- PySide6 and the current Windows packaging flow remain unchanged.
+
+## Validation
+
+- The unit test suite was expanded during the redesign work and passes with:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -q
+```
+
+Current coverage includes quick actions, shared sidebar behavior, command editor services, command search/replace, syntax highlighting, transport contracts, settings transfer behavior, batch parsing, and serial core behavior.
+
+## Notes For This Release
+
+- This release is intentionally not a visual redesign. The main user-visible change is sidebar alignment between terminal and editor tabs.
+- Serial communication remains the only implemented transport. The new transport layer is preparation for future communication types.
+- The largest remaining design work is to keep slimming the main window/session code into focused controllers and tab modules.
+
+---
+
 # ComPort Zone v0.1.0 Release Notes
 
 Release date: 2026-04-26

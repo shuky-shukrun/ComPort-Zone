@@ -91,12 +91,12 @@ Use `Tools > Command Files > New Command File` or `Tools > Command Files > Open 
 - Quick-command suggestion filtering by group
 - Syntax highlighting for batch keywords, comments, parameters, and invalid command-file syntax
 - Optional unknown-command warnings, where the first command token is checked before arguments, so `SINK:CURR 4.5` validates against `SINK:CURR`
-- New, Open, Save, Save As, and Validate actions
+- New, Open, Save, and Save As actions, with validation running in the background
 - Find and replace with `Ctrl+F`, `Ctrl+H`, next/previous navigation, case-sensitive search, replace current, and replace all
 - Dirty tab indicators: unsaved files show `*`; validation errors color the tab as an error
 - Multiple command files open at the same time
 - Editor font zoom through the toolbar buttons or `Ctrl` + mouse wheel
-- Editor-side quick drawer remains visible while editing: quick commands insert at the cursor, and quick files open into the editor after a save/discard confirmation when needed
+- Editor-side quick drawer matches the terminal quick drawer: quick commands insert at the cursor, quick files open into the editor, and quick-command suggestions follow the active quick-command filter
 - `Ctrl+S` saves the current command file, and `Ctrl+Shift+S` opens Save As
 - Bottom editor run bar with a connected-COM dropdown and Send button
 - Running unsaved editor content through the same command-file engine used by Quick Files

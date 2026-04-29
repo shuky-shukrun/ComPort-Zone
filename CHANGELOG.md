@@ -2,6 +2,31 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.2.1 - 2026-04-29
+
+### Added
+
+- Add shared quick-action sidebar infrastructure for terminal tabs and command-file editor tabs.
+- Add transport abstraction foundations with a serial transport adapter, generic transport profile data, endpoint metadata, and transport events.
+- Add focused command-editor modules for validation/completion sources, file I/O, run targets, search/replace state, and syntax highlighting.
+
+### Changed
+
+- Align the command-file editor quick sidebar with the terminal quick sidebar while keeping mode-specific actions: Send/Run in terminal tabs and Insert/Open in editor tabs.
+- Make command-file quick command suggestions follow the active quick-command group visibility/filter state.
+- Move quick command/file state operations into the quick-action library so CSV import/export, filtering, sorting, duplicate detection, and reorder behavior have one owner.
+- Split app styling/icon helpers and settings import/export coordination into smaller reusable services.
+- Hide replace-only controls in editor Find mode; show them only in Replace mode.
+- Remove the explicit editor Validate toolbar button because unknown-command warnings and syntax validation run in the background.
+
+### Fixed
+
+- Normalize quick-action row sizing between terminal and editor sidebars.
+
+### Tests
+
+- Expanded the unit test suite to cover quick-action library behavior, the shared sidebar, command editor services, transport contracts, settings transfer behavior, command search/replace, and syntax highlighting.
+
 ## 0.2.0 - 2026-04-28
 
 ### Added
