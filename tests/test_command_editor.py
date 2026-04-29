@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from ComPort_Zone.command_editor import CommandFileEditorDialog
 from ComPort_Zone.command_editor_core import CommandEditorSources
+from ComPort_Zone.command_run_targets import CommandRunTarget, CommandRunTargetService
 from ComPort_Zone.models import QuickCommand, QuickFile
 
 
@@ -147,11 +148,15 @@ class CommandEditorTests(unittest.TestCase):
             script_path.unlink(missing_ok=True)
 
     def test_editor_send_target_bar_runs_selected_connected_port(self) -> None:
-        calls: list[tuple[object, int]] = []
+        calls: list[tuple[str, int, object, str]] = []
         dialog = CommandFileEditorDialog(
             sources=CommandEditorSources(),
-            run_targets_supplier=lambda: [(42, "Connected | COM42 | 115200 8N1")],
-            run_target_callback=lambda editor, target_id: calls.append((editor.text(), target_id)),
+            run_target_service=CommandRunTargetService(
+                targets_supplier=lambda: [CommandRunTarget(42, "Connected | COM42 | 115200 8N1")],
+                run_callback=lambda request, target_id: calls.append(
+                    (request.text, target_id, request.path, request.display_name)
+                ),
+            ),
         )
         try:
             dialog.setPlainText("SEND *IDN?")
@@ -160,7 +165,7 @@ class CommandEditorTests(unittest.TestCase):
 
             dialog.send_to_selected_target()
 
-            self.assertEqual(calls, [("SEND *IDN?", 42)])
+            self.assertEqual(calls, [("SEND *IDN?", 42, None, "Untitled")])
         finally:
             dialog.close()
             dialog.deleteLater()

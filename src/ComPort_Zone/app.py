@@ -60,6 +60,7 @@ from .batch import (
 from .command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from .history import HistoryStore
 from .icons import STYLE_ICON_MAP, TABLER_ICON_PATHS, set_button_icon, standard_icon
+from .command_run_targets import CommandRunRequest, CommandRunTarget, CommandRunTargetService
 from . import __version__
 from .models import (
     AppSettings,
@@ -2556,8 +2557,10 @@ class MainWindow(QMainWindow):
                 import_quick_files_csv=self.import_quick_files_csv,
                 export_quick_files_csv=self.export_quick_files_csv,
             ),
-            run_targets_supplier=self.command_file_run_targets,
-            run_target_callback=self.run_editor_in_terminal_by_id,
+            run_target_service=CommandRunTargetService(
+                targets_supplier=self.command_file_run_targets,
+                run_callback=self.run_command_file_request_in_terminal_by_id,
+            ),
             embedded=True,
             show_run_button=False,
             show_workspace_side_panel=True,
@@ -2600,14 +2603,26 @@ class MainWindow(QMainWindow):
             if session.serial_client.is_connected
         ]
 
-    def command_file_run_targets(self) -> list[tuple[int, str]]:
+    def command_file_run_targets(self) -> list[CommandRunTarget]:
         return [
-            (session.session_id, session.connection_status_text())
+            CommandRunTarget(session.session_id, session.connection_status_text())
             for session in self.connected_terminal_sessions()
         ]
 
     def session_by_id(self, session_id: int) -> TerminalSessionWidget | None:
         return next((session for session in self.iter_sessions() if session.session_id == session_id), None)
+
+    def run_command_file_request_in_terminal_by_id(self, request: CommandRunRequest, session_id: int) -> bool:
+        session = self.session_by_id(session_id)
+        if not session:
+            self.set_status("Selected terminal is no longer available.")
+            return False
+        if not session.serial_client.is_connected:
+            self.set_status(f"{session.tab_title} is not connected.")
+            return False
+        session.run_script_text(request.text, source_label=request.source_label, source_path=request.path)
+        self.set_status(f"Running {request.display_name} in {session.tab_title}.")
+        return True
 
     def run_editor_in_terminal_by_id(self, editor: CommandFileEditorDialog, session_id: int) -> None:
         session = self.session_by_id(session_id)

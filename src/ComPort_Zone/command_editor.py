@@ -53,6 +53,11 @@ from .command_editor_core import (
     has_parameter,
     quick_command_group,
 )
+from .command_run_targets import (
+    NO_RUN_TARGET_LABEL,
+    CommandRunRequest,
+    CommandRunTargetService,
+)
 from .icons import standard_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES, QuickCommand, QuickFile
 from .quick_actions import quick_file_display_text, quick_group_name
@@ -467,8 +472,7 @@ class CommandFileEditorDialog(QDialog):
         quick_files_supplier: Callable[[], list[QuickFile]] | None = None,
         quick_action_callbacks: CommandEditorQuickActionCallbacks | None = None,
         file_service: CommandFileService | None = None,
-        run_targets_supplier: Callable[[], list[tuple[int, str]]] | None = None,
-        run_target_callback: Callable[["CommandFileEditorDialog", int], None] | None = None,
+        run_target_service: CommandRunTargetService | None = None,
         embedded: bool = False,
         show_run_button: bool = True,
         show_workspace_side_panel: bool = False,
@@ -482,8 +486,7 @@ class CommandFileEditorDialog(QDialog):
         self.quick_files_supplier = quick_files_supplier
         self.quick_action_callbacks = quick_action_callbacks or CommandEditorQuickActionCallbacks()
         self.file_service = file_service or CommandFileService()
-        self.run_targets_supplier = run_targets_supplier
-        self.run_target_callback = run_target_callback
+        self.run_target_service = run_target_service
         self.embedded = embedded
         self.show_workspace_side_panel = show_workspace_side_panel
         self._local_quick_command_sort_mode = "Custom"
@@ -582,7 +585,7 @@ class CommandFileEditorDialog(QDialog):
         editor_layout.addWidget(line)
         editor_layout.addWidget(self.editor, 1)
         editor_layout.addWidget(self.status_label)
-        if self.run_targets_supplier and self.run_target_callback:
+        if self.run_target_service and self.run_target_service.is_configured():
             editor_layout.addWidget(self._build_run_bar())
 
         if self.show_workspace_side_panel:
@@ -1180,16 +1183,16 @@ class CommandFileEditorDialog(QDialog):
         selected_id = self.run_target_combo.currentData()
         self.run_target_combo.blockSignals(True)
         self.run_target_combo.clear()
-        targets = self.run_targets_supplier() if self.run_targets_supplier else []
-        for target_id, label in targets:
-            self.run_target_combo.addItem(label, target_id)
+        targets = self.run_target_service.targets() if self.run_target_service else []
+        for target in targets:
+            self.run_target_combo.addItem(target.label, target.id)
         if selected_id is not None:
             index = self.run_target_combo.findData(selected_id)
             if index >= 0:
                 self.run_target_combo.setCurrentIndex(index)
         has_targets = self.run_target_combo.count() > 0
         if not has_targets:
-            self.run_target_combo.addItem("No connected COM ports", None)
+            self.run_target_combo.addItem(NO_RUN_TARGET_LABEL, None)
         self.run_target_combo.setEnabled(has_targets)
         self.send_to_target_button.setEnabled(has_targets)
         self.run_target_combo.blockSignals(False)
@@ -1231,7 +1234,7 @@ class CommandFileEditorDialog(QDialog):
             self.load_path(Path(quick_file.path))
 
     def send_to_selected_target(self) -> None:
-        if not self.run_target_callback:
+        if not self.run_target_service:
             return
         self.refresh_run_targets()
         target_id = self.run_target_combo.currentData() if hasattr(self, "run_target_combo") else None
@@ -1243,7 +1246,13 @@ class CommandFileEditorDialog(QDialog):
             self.update_validation_status()
             QApplication.beep()
             return
-        self.run_target_callback(self, int(target_id))
+        request = CommandRunRequest(
+            text=self.text(),
+            path=self.path,
+            display_name=self.display_name(),
+        )
+        if not self.run_target_service.run(request, int(target_id)):
+            QApplication.beep()
 
     def show_find_bar(self) -> None:
         self._show_find_replace_bar(show_replace=False)
