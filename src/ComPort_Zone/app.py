@@ -93,6 +93,7 @@ from .storage import SettingsStore, default_config_path
 from .themes import THEMES, ThemePalette
 from .transports import SerialTransportAdapter
 from .widgets import ChevronComboBox, HistoryLineEdit
+from .workspace_state import WorkspaceStateService
 
 COMMON_BAUD_RATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 TERMINAL_FONT_MIN = 8
@@ -2248,6 +2249,7 @@ class MainWindow(QMainWindow):
         self.settings_store = SettingsStore(default_config_path())
         self.settings_service = SettingsService(self.settings_store)
         self.settings = self.settings_service.load()
+        self.workspace_state_service = WorkspaceStateService()
         self.quick_actions = self._quick_action_library_from_settings()
         self.history_catalog = HistoryStore(self.settings.command_history)
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
@@ -4428,23 +4430,15 @@ class MainWindow(QMainWindow):
             return
         self._refresh_quick_actions_from_settings()
         self._sync_quick_actions_to_settings()
-        session = self.current_session()
-        if session:
-            self.settings.serial = clone_profile(session.profile)
-            self.settings.transport_kind = "serial"
-            self.settings.transport_profile = self.settings.serial.to_dict()
-        self.settings.command_history = self.history_catalog.all_commands()
-        self.settings.window_width = self.width()
-        self.settings.window_height = self.height()
-        self.settings.restored_tabs = [session.to_state() for session in self.iter_sessions()]
-        self.settings.restored_command_files = [
-            CommandFileTabState(
-                path=str(editor.path) if editor.path else "",
-                text=editor.text() if editor.is_dirty() or editor.path is None else "",
-                dirty=editor.is_dirty(),
-            )
-            for editor in self.iter_command_file_editors()
-        ]
+        self.workspace_state_service.capture_into_settings(
+            self.settings,
+            active_session=self.current_session(),
+            terminal_sessions=self.iter_sessions(),
+            command_file_editors=self.iter_command_file_editors(),
+            command_history=self.history_catalog.all_commands(),
+            window_width=self.width(),
+            window_height=self.height(),
+        )
         if not self.settings_service.save(self.settings):
             self.set_status("Could not save settings to disk.")
 
