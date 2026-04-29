@@ -39,10 +39,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QSpinBox,
     QSplashScreen,
-    QTabBar,
-    QTabWidget,
     QTextEdit,
-    QToolButton,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -93,7 +90,7 @@ from .settings_service import SettingsService
 from .storage import SettingsStore, default_config_path
 from .themes import THEMES, ThemePalette
 from .transports import SerialTransportAdapter
-from .ui.tab_workspace import TabWorkspaceController
+from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .widgets import ChevronComboBox, HistoryLineEdit
 from .workspace_state import WorkspaceStateService
 
@@ -217,59 +214,6 @@ class CommandPaletteEntry:
 
     def searchable_text(self) -> str:
         return f"{self.title} {self.subtitle} {self.keywords}".casefold()
-
-
-class TerminalTabWidget(QTabWidget):
-    newTabRequested = Signal()
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.new_tab_button = QToolButton(self.tabBar())
-        self.new_tab_button.setObjectName("newTabButton")
-        set_button_icon(self.new_tab_button, QStyle.StandardPixmap.SP_FileDialogNewFolder, 17)
-        self.new_tab_button.setToolTip("New tab")
-        self.new_tab_button.setAutoRaise(True)
-        self.new_tab_button.setFixedSize(32, 28)
-        self.new_tab_button.clicked.connect(self.newTabRequested.emit)
-        self.tabBar().installEventFilter(self)
-        self.currentChanged.connect(lambda _: self._schedule_new_tab_button_position())
-
-    def tabInserted(self, index: int) -> None:
-        super().tabInserted(index)
-        self._schedule_new_tab_button_position()
-
-    def tabRemoved(self, index: int) -> None:
-        super().tabRemoved(index)
-        self._schedule_new_tab_button_position()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._position_new_tab_button()
-
-    def eventFilter(self, watched, event) -> bool:
-        if watched is self.tabBar() and event.type() in {
-            QEvent.Type.Resize,
-            QEvent.Type.LayoutRequest,
-            QEvent.Type.Show,
-            QEvent.Type.Move,
-        }:
-            self._schedule_new_tab_button_position()
-        return super().eventFilter(watched, event)
-
-    def _schedule_new_tab_button_position(self) -> None:
-        QTimer.singleShot(0, self._position_new_tab_button)
-
-    def _position_new_tab_button(self) -> None:
-        bar = self.tabBar()
-        if self.count() == 0:
-            x = 6
-        else:
-            right_edge = max(bar.tabRect(index).right() for index in range(self.count()))
-            x = right_edge + 8
-        x = max(4, min(x, bar.width() - self.new_tab_button.width() - 4))
-        y = max(2, int((bar.height() - self.new_tab_button.height()) / 2))
-        self.new_tab_button.move(x, y)
-        self.new_tab_button.raise_()
 
 
 class ConnectionStatusLabel(QLabel):
@@ -2593,7 +2537,7 @@ class MainWindow(QMainWindow):
             standard_icon(QStyle.StandardPixmap.SP_FileIcon),
             editor.tab_title(),
         )
-        self.attach_tab_close_button(index, editor)
+        self.tab_workspace.attach_tab_close_button(index, editor)
         self.tabs.setCurrentIndex(index)
         self.update_tab_titles()
         self.refresh_command_file_targets()
@@ -3051,7 +2995,7 @@ class MainWindow(QMainWindow):
             standard_icon(QStyle.StandardPixmap.SP_ComputerIcon),
             session.tab_title,
         )
-        self.attach_tab_close_button(index, session)
+        self.tab_workspace.attach_tab_close_button(index, session)
         self.tabs.setCurrentIndex(index)
         self.update_tab_titles()
         if prompt_settings:
@@ -3065,19 +3009,6 @@ class MainWindow(QMainWindow):
         self.set_status(f"Connecting to {session.profile.port}...")
         session.serial_client.connect(session.profile)
         session._update_connection_ui(session.serial_client.is_connected)
-
-    def attach_tab_close_button(self, index: int, widget: QWidget) -> None:
-        close_button = QToolButton(self.tabs.tabBar())
-        close_button.setObjectName("tabCloseButton")
-        close_button.setAutoRaise(True)
-        close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_button.setFixedSize(22, 22)
-        close_button.setToolTip(f"Close {self.tab_display_title(widget)}")
-        set_button_icon(close_button, QStyle.StandardPixmap.SP_DialogCloseButton, 13)
-        close_button.clicked.connect(
-            lambda _checked=False, target=widget: self.close_session(self.tabs.indexOf(target))
-        )
-        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
 
     def prompt_current_session_settings(self) -> None:
         session = self.current_session()
@@ -3196,13 +3127,6 @@ class MainWindow(QMainWindow):
         session = self.current_session()
         if session:
             callback(session)
-
-    def tab_display_title(self, widget: QWidget | None) -> str:
-        if isinstance(widget, TerminalSessionWidget):
-            return widget.tab_title
-        if isinstance(widget, CommandFileEditorDialog):
-            return widget.tab_title()
-        return "Tab"
 
     def update_tab_titles(self) -> None:
         for index in range(self.tabs.count()):

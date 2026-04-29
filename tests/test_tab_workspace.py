@@ -1,9 +1,9 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication, QTabWidget, QWidget
+from PySide6.QtWidgets import QApplication, QTabBar, QTabWidget, QWidget
 
 from ComPort_Zone.models import SerialProfile, TerminalSessionState
-from ComPort_Zone.ui.tab_workspace import TabWorkspaceController
+from ComPort_Zone.ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 
 
 class FakeTextBuffer:
@@ -107,6 +107,40 @@ class TabWorkspaceControllerTests(unittest.TestCase):
         tabs.deleteLater()
         terminal.deleteLater()
         editor.deleteLater()
+
+    def test_terminal_tab_widget_owns_new_tab_button(self) -> None:
+        tabs = TerminalTabWidget()
+        emitted: list[str] = []
+        tabs.newTabRequested.connect(lambda: emitted.append("new"))
+
+        self.assertEqual(tabs.new_tab_button.objectName(), "newTabButton")
+        self.assertEqual(tabs.new_tab_button.toolTip(), "New tab")
+
+        tabs.new_tab_button.click()
+
+        self.assertEqual(emitted, ["new"])
+        tabs.deleteLater()
+
+    def test_attach_tab_close_button_owns_close_button_ui(self) -> None:
+        tabs = QTabWidget()
+        controller, _, save_calls, _ = self.make_controller(tabs)
+        terminal = FakeTerminalTab("DUT")
+        index = tabs.addTab(terminal, "Terminal")
+
+        controller.attach_tab_close_button(index, terminal)
+        close_button = tabs.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide)
+
+        self.assertIsNotNone(close_button)
+        self.assertEqual(close_button.objectName(), "tabCloseButton")
+        self.assertEqual(close_button.toolTip(), "Close DUT")
+
+        close_button.click()
+
+        self.assertTrue(terminal.shutdown_called)
+        self.assertEqual(tabs.count(), 0)
+        self.assertEqual(save_calls, ["save"])
+        tabs.deleteLater()
+        terminal.deleteLater()
 
     def test_duplicate_session_uses_terminal_snapshot(self) -> None:
         tabs = QTabWidget()
