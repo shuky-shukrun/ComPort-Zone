@@ -15,6 +15,7 @@ from .batch import (
 )
 from .history import HistoryStore
 from .models import QuickCommand, SerialProfile
+from .serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
 from .session_log import SessionLogger
 from .transports import SerialTransportAdapter, TransportAdapter
 
@@ -31,6 +32,25 @@ class ScriptRunResult:
     empty: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class TerminalEventDecision:
+    event_to_render: SerialEvent | None = None
+    connection_state: bool | None = None
+    connection_update_footer: bool = True
+    status_message: str = ""
+    paused_count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalRenderPlan:
+    event: SerialEvent
+    message: str
+    prefix: str = ""
+    color_role: str = "default"
+    stream_text: bool = False
+    ensure_line_break: bool = False
+
+
 class TerminalSessionController:
     def __init__(
         self,
@@ -45,6 +65,8 @@ class TerminalSessionController:
         self.serial_client = getattr(self.transport, "client", self.transport)
         self.history_store = HistoryStore(history_commands)
         self.logger = SessionLogger()
+        self.paused = False
+        self.pending_events: list[SerialEvent] = []
         self.batch_runner = BatchRunner(
             event_queue=self.transport.events,
             send_text=self.transport.send_text,
@@ -56,6 +78,64 @@ class TerminalSessionController:
 
     def replace_history(self, commands: Iterable[str]) -> None:
         self.history_store = HistoryStore(commands)
+
+    def handle_event(self, event: SerialEvent) -> TerminalEventDecision:
+        if event.kind == "connection":
+            if self.logger.enabled:
+                self.logger.log_event(event)
+            connected = event.message == "connected"
+            self.batch_runner.notify_connection_state(connected)
+            return TerminalEventDecision(connection_state=connected)
+
+        if self.paused and event.kind == "rx":
+            self.pending_events.append(event)
+            return TerminalEventDecision(paused_count=len(self.pending_events))
+
+        if self.logger.enabled:
+            self.logger.log_event(event)
+
+        if event.kind in {"status", "error"}:
+            return TerminalEventDecision(
+                event_to_render=event,
+                connection_state=self.transport.is_connected,
+                connection_update_footer=False,
+                status_message=event.message,
+            )
+
+        return TerminalEventDecision(event_to_render=event)
+
+    def toggle_pause(self) -> tuple[bool, list[SerialEvent]]:
+        self.paused = not self.paused
+        if self.paused:
+            return True, []
+        pending = list(self.pending_events)
+        self.pending_events.clear()
+        return False, pending
+
+    def render_plan(self, event: SerialEvent, receive_display_mode: str) -> TerminalRenderPlan:
+        message = self.display_message_for_event(event, receive_display_mode)
+        return TerminalRenderPlan(
+            event=event,
+            message=message,
+            prefix={
+                "rx": "",
+                "tx": "TX> ",
+                "status": "SYS ",
+                "error": "ERR ",
+            }.get(event.kind, ""),
+            color_role=event.kind if event.kind in {"rx", "tx", "status", "error"} else "default",
+            stream_text=event.kind == "rx" and receive_display_mode == "Text",
+            ensure_line_break=event.kind != "rx",
+        )
+
+    def display_message_for_event(self, event: SerialEvent, receive_display_mode: str) -> str:
+        if event.kind != "rx" or not event.raw:
+            return event.message
+        if receive_display_mode == "Hex":
+            return format_hex_bytes(event.raw)
+        if receive_display_mode == "Text + Hex":
+            return f"{decode_serial_bytes(event.raw)}\nHEX {format_hex_bytes(event.raw)}"
+        return decode_serial_bytes(event.raw)
 
     def toggle_connection(
         self,

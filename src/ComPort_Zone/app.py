@@ -808,8 +808,6 @@ class TerminalSessionWidget(QWidget):
         self.history_store = self.controller.history_store
         self.logger = self.controller.logger
         self.batch_runner = self.controller.batch_runner
-        self.paused = False
-        self.pending_events: list[SerialEvent] = []
         self._connected = False
         self._status_text = "Disconnected"
         self._quick_list_refreshing = False
@@ -841,6 +839,18 @@ class TerminalSessionWidget(QWidget):
         if self.profile.port:
             return self.profile.port
         return "No port"
+
+    @property
+    def paused(self) -> bool:
+        return self.controller.paused
+
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        self.controller.paused = value
+
+    @property
+    def pending_events(self) -> list[SerialEvent]:
+        return self.controller.pending_events
 
     def to_state(self) -> TerminalSessionState:
         return TerminalSessionState(
@@ -1749,12 +1759,11 @@ class TerminalSessionWidget(QWidget):
         self.host.save_settings()
 
     def toggle_pause(self) -> None:
-        self.paused = not self.paused
-        self.pause_label.setText("Paused" if self.paused else "")
-        if not self.paused:
-            for event in self.pending_events:
+        paused, pending_events = self.controller.toggle_pause()
+        self.pause_label.setText("Paused" if paused else "")
+        if not paused:
+            for event in pending_events:
                 self._render_event(event)
-            self.pending_events.clear()
 
     def clear_terminal(self) -> None:
         self.terminal.clear()
@@ -1943,64 +1952,56 @@ class TerminalSessionWidget(QWidget):
             self._handle_event(event)
 
     def _handle_event(self, event: SerialEvent) -> None:
-        if event.kind == "connection":
-            if self.logger.enabled:
-                self.logger.log_event(event)
-            connected = event.message == "connected"
-            self._update_connection_ui(connected)
-            self.batch_runner.notify_connection_state(connected)
+        decision = self.controller.handle_event(event)
+        if decision.paused_count is not None:
+            self.pause_label.setText(f"Paused ({decision.paused_count})")
             return
-        if self.paused and event.kind == "rx":
-            self.pending_events.append(event)
-            self.pause_label.setText(f"Paused ({len(self.pending_events)})")
-            return
-        self._render_event(event)
-        if event.kind in {"status", "error"}:
-            self.host.set_status(event.message)
-            self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
-        if self.logger.enabled:
-            self.logger.log_event(event)
+        if decision.event_to_render is not None:
+            self._render_event(decision.event_to_render)
+        if decision.status_message:
+            self.host.set_status(decision.status_message)
+        if decision.connection_state is not None:
+            self._update_connection_ui(
+                decision.connection_state,
+                update_footer=decision.connection_update_footer,
+            )
 
     def _render_event(self, event: SerialEvent) -> None:
+        plan = self.controller.render_plan(event, self.host.settings.receive_display_mode)
         colors = {
             "rx": self.host.theme.rx,
             "tx": self.host.theme.tx,
             "status": self.host.theme.status,
             "error": self.host.theme.error,
+            "default": "#d4d4d4",
         }
-        prefixes = {
-            "rx": "",
-            "tx": "TX> ",
-            "status": "SYS ",
-            "error": "ERR ",
-        }
-        if event.kind == "rx" and self.host.settings.receive_display_mode == "Text":
-            self._render_rx_text_event(event, colors["rx"])
+        if plan.stream_text:
+            self._render_rx_text_plan(plan)
             return
-        if event.kind != "rx":
+        if plan.ensure_line_break:
             self._ensure_terminal_line_break()
-        message = self.display_message_for_event(event).replace("\r\n", "\n").replace("\r", "\n")
+        message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
         if self.host.settings.timestamps_enabled:
             stamp = event.timestamp.astimezone().strftime("%H:%M:%S.%f")[:-3]
-            rendered = "".join(f"[{stamp}] {prefixes.get(event.kind, '')}{line}\n" for line in message.split("\n") if line != "")
+            rendered = "".join(f"[{stamp}] {plan.prefix}{line}\n" for line in message.split("\n") if line != "")
         else:
-            rendered = "".join(f"{prefixes.get(event.kind, '')}{line}\n" for line in message.split("\n") if line != "")
+            rendered = "".join(f"{plan.prefix}{line}\n" for line in message.split("\n") if line != "")
         cursor = self.terminal.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(colors.get(event.kind, "#d4d4d4")))
+        fmt.setForeground(QColor(colors.get(plan.color_role, colors["default"])))
         cursor.insertText(rendered, fmt)
         self.terminal.setTextCursor(cursor)
         self.terminal.ensureCursorVisible()
         if self.search_bar.isVisible():
             self._refresh_search_highlights(self.search_input.text())
 
-    def _render_rx_text_event(self, event: SerialEvent, color: str) -> None:
-        message = self.display_message_for_event(event).replace("\r\n", "\n").replace("\r", "\n")
+    def _render_rx_text_plan(self, plan) -> None:
+        message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
         if not message:
             return
-        rendered = self._timestamp_rx_stream(message, event) if self.host.settings.timestamps_enabled else message
-        self._insert_terminal_text(rendered, color)
+        rendered = self._timestamp_rx_stream(message, plan.event) if self.host.settings.timestamps_enabled else message
+        self._insert_terminal_text(rendered, self.host.theme.rx)
 
     def _timestamp_rx_stream(self, message: str, event: SerialEvent) -> str:
         stamp = f"[{event.timestamp.astimezone().strftime('%H:%M:%S.%f')[:-3]}] "
@@ -2033,14 +2034,7 @@ class TerminalSessionWidget(QWidget):
             self._insert_terminal_text("\n", self.host.theme.text)
 
     def display_message_for_event(self, event: SerialEvent) -> str:
-        if event.kind != "rx" or not event.raw:
-            return event.message
-        mode = self.host.settings.receive_display_mode
-        if mode == "Hex":
-            return format_hex_bytes(event.raw)
-        if mode == "Text + Hex":
-            return f"{decode_serial_bytes(event.raw)}\nHEX {format_hex_bytes(event.raw)}"
-        return decode_serial_bytes(event.raw)
+        return self.controller.display_message_for_event(event, self.host.settings.receive_display_mode)
 
     def _append_status(self, message: str) -> None:
         self._render_event(SerialEvent(kind="status", message=message))

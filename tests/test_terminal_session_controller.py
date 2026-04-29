@@ -135,6 +135,62 @@ class TerminalSessionControllerTests(unittest.TestCase):
         self.assertEqual(appended, ["Auto-reconnect stopped."])
         self.assertEqual(updates[-1], False)
 
+    def test_handle_event_buffers_rx_while_paused_and_flushes_on_resume(self) -> None:
+        controller = make_controller()
+        rx_event = SerialEvent(kind="rx", message="OK", raw=b"OK")
+
+        paused, pending = controller.toggle_pause()
+        decision = controller.handle_event(rx_event)
+        resumed, flushed = controller.toggle_pause()
+
+        self.assertTrue(paused)
+        self.assertEqual(pending, [])
+        self.assertIsNone(decision.event_to_render)
+        self.assertEqual(decision.paused_count, 1)
+        self.assertFalse(resumed)
+        self.assertEqual(flushed, [rx_event])
+        self.assertEqual(controller.pending_events, [])
+
+    def test_handle_event_reports_status_and_connection_refresh(self) -> None:
+        transport = FakeTransport()
+        transport.connected = True
+        controller = make_controller(transport)
+        event = SerialEvent(kind="error", message="Port failed")
+
+        decision = controller.handle_event(event)
+
+        self.assertIs(decision.event_to_render, event)
+        self.assertEqual(decision.status_message, "Port failed")
+        self.assertTrue(decision.connection_state)
+        self.assertFalse(decision.connection_update_footer)
+
+    def test_handle_connection_event_notifies_batch_runner(self) -> None:
+        controller = make_controller()
+        notified: list[bool] = []
+        controller.batch_runner.notify_connection_state = notified.append  # type: ignore[method-assign]
+
+        decision = controller.handle_event(SerialEvent(kind="connection", message="connected"))
+
+        self.assertTrue(decision.connection_state)
+        self.assertEqual(notified, [True])
+        self.assertIsNone(decision.event_to_render)
+
+    def test_render_plan_formats_rx_display_modes(self) -> None:
+        controller = make_controller()
+        event = SerialEvent(kind="rx", message="fallback", raw=b"\xffOK")
+
+        text_plan = controller.render_plan(event, "Text")
+        hex_plan = controller.render_plan(event, "Hex")
+        combined_plan = controller.render_plan(event, "Text + Hex")
+        tx_plan = controller.render_plan(SerialEvent(kind="tx", message="*IDN?"), "Text")
+
+        self.assertTrue(text_plan.stream_text)
+        self.assertEqual(text_plan.message, "\ufffdOK")
+        self.assertEqual(hex_plan.message, "FF 4F 4B")
+        self.assertEqual(combined_plan.message, "\ufffdOK\nHEX FF 4F 4B")
+        self.assertEqual(tx_plan.prefix, "TX> ")
+        self.assertTrue(tx_plan.ensure_line_break)
+
     def test_run_script_text_starts_plain_script_and_updates_last_path(self) -> None:
         controller = make_controller()
         started_steps: list[object] = []
