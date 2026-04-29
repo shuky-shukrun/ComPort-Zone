@@ -8,7 +8,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
 
 from ComPort_Zone import app as app_module
-from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SerialProfile, TerminalSessionState
+from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SETTINGS_SCHEMA_VERSION, SerialProfile, TerminalSessionState
+from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
 
 
@@ -39,7 +40,7 @@ class AppSessionTests(unittest.TestCase):
         settings_path.unlink(missing_ok=True)
         try:
             self.assertTrue(
-                SettingsStore(settings_path).save(
+                SettingsService(SettingsStore(settings_path)).save(
                     AppSettings(
                         restored_tabs=[
                             TerminalSessionState(
@@ -764,7 +765,7 @@ class AppSessionTests(unittest.TestCase):
                 ]
             )
             self.assertTrue(
-                SettingsStore(settings_path).save(settings)
+                SettingsService(SettingsStore(settings_path)).save(settings)
             )
             old_config_path = app_module.default_config_path
             old_prompt_current = app_module.MainWindow.prompt_current_session_settings
@@ -808,7 +809,7 @@ class AppSessionTests(unittest.TestCase):
                 quick_command_sort_mode="Group",
                 quick_command_hidden_groups=["Hidden"],
             )
-            self.assertTrue(SettingsStore(settings_path).save(settings))
+            self.assertTrue(SettingsService(SettingsStore(settings_path)).save(settings))
             old_config_path = app_module.default_config_path
             old_prompt_current = app_module.MainWindow.prompt_current_session_settings
             old_prompt_session = app_module.MainWindow.prompt_session_settings
@@ -992,7 +993,7 @@ class AppSessionTests(unittest.TestCase):
                     QuickFile(id="bringup-file", label="Bring-up", path="C:/scripts/bringup.txt"),
                 ],
             )
-            self.assertTrue(SettingsStore(settings_path).save(settings))
+            self.assertTrue(SettingsService(SettingsStore(settings_path)).save(settings))
             window = app_module.MainWindow()
             session = window.current_session()
 
@@ -1009,7 +1010,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.settings.quick_files, [])
             self.assertEqual(session.quick_file_list.count(), 0)
 
-            saved = SettingsStore(settings_path).load()
+            saved = SettingsService(SettingsStore(settings_path)).load()
             self.assertEqual(saved.command_history, [])
             self.assertEqual(saved.quick_commands, [])
             self.assertEqual(saved.quick_files, [])
@@ -1160,7 +1161,7 @@ class AppSessionTests(unittest.TestCase):
                 ],
                 quick_file_sort_mode="Title",
             )
-            self.assertTrue(SettingsStore(settings_path).save(settings))
+            self.assertTrue(SettingsService(SettingsStore(settings_path)).save(settings))
             old_config_path = app_module.default_config_path
             old_prompt_current = app_module.MainWindow.prompt_current_session_settings
             old_prompt_session = app_module.MainWindow.prompt_session_settings
@@ -1506,15 +1507,10 @@ class AppSessionTests(unittest.TestCase):
             window.export_settings_to_json(export_path)
 
             payload = json.loads(export_path.read_text(encoding="utf-8"))
-            for key in (
-                "quick_snippets",
-                "quick_commands",
-                "quick_files",
-                "quick_command_sort_mode",
-                "quick_command_hidden_groups",
-                "quick_file_sort_mode",
-            ):
-                self.assertNotIn(key, payload)
+            self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+            self.assertNotIn("libraries", payload)
+            self.assertEqual(payload["transport"]["profile"]["port"], "COM44")
+            self.assertEqual(payload["workspace"]["terminal_tabs"][0]["title"], "Imported DUT")
 
             loaded = window.load_settings_from_json(export_path)
             self.assertEqual(loaded.serial.port, "COM44")

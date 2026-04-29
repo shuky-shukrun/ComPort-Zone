@@ -36,12 +36,13 @@ ComPort Zone v0.2.1 is a behavior-compatible modular redesign release. It keeps 
 ### Architecture
 
 - Added `transports.py` with transport protocol types, endpoint/profile/event data, and a `SerialTransportAdapter` around the current serial client.
-- Added generic transport fields to settings while preserving current serial settings compatibility.
+- Replaced the flat app-settings JSON with `schema_version` 2 nested sections for transport, app preferences, history, action libraries, and restored workspace state.
+- Moved settings payload validation and conversion into `SettingsService`; raw storage now only reads and writes JSON payloads.
 - Continued extracting UI helpers and settings coordination out of the main application module.
 
 ## Compatibility
 
-- Existing settings remain compatible, including `%LOCALAPPDATA%\ComPortZone\settings.json`.
+- Older flat app-settings JSON files are not migrated. If `%LOCALAPPDATA%\ComPortZone\settings.json` uses the old schema, the app starts with defaults and writes the new schema on save.
 - Existing quick-command CSV files remain compatible.
 - Existing quick-file CSV files remain compatible.
 - Existing command-file syntax remains compatible, including `SEND`, `WAIT`, `HEX`, `EXPECT`, comments, and runtime parameters.

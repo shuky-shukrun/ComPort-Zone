@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-
-from .models import AppSettings
+from typing import Any
 
 
 def default_config_path() -> Path:
@@ -15,21 +14,21 @@ class SettingsStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_config_path()
 
-    def load(self) -> AppSettings:
+    def load_payload(self) -> dict[str, Any] | None:
         load_path = self.path
         if not load_path.exists():
-            return AppSettings()
+            return None
         try:
             payload = json.loads(load_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            return AppSettings()
-        return AppSettings.from_dict(payload)
+            return None
+        return payload if isinstance(payload, dict) else None
 
-    def save(self, settings: AppSettings) -> bool:
+    def save_payload(self, payload: dict[str, Any]) -> bool:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(
-                json.dumps(settings.to_dict(), indent=2, sort_keys=True),
+                json.dumps(payload, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
         except OSError:

@@ -201,6 +201,8 @@ The app autosaves the current setup to:
 
 Use `File > App Settings Import / Export...` to open the App Settings dialog, then choose whether to import or export a JSON app-settings file. This replaces the older idea of managing named profiles inside the app.
 
+App settings JSON is versioned with `schema_version: 2` and grouped into `transport`, `app`, `history`, `libraries`, and `workspace` sections. Older flat app-settings JSON is not migrated.
+
 Quick Commands and Quick Files are intentionally not included in app-settings JSON import/export. They are action libraries, so they use their own CSV import/export flows from the matching sidebar pages or `Tools > Quick Commands` and `Tools > Quick Files`.
 
 The local autosaved `%LOCALAPPDATA%\ComPortZone\settings.json` still stores Quick Commands and Quick Files so they persist after restart.

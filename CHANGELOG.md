@@ -16,6 +16,8 @@ All notable changes to ComPort Zone are documented here.
 - Make command-file quick command suggestions follow the active quick-command group visibility/filter state.
 - Move quick command/file state operations into the quick-action library so CSV import/export, filtering, sorting, duplicate detection, and reorder behavior have one owner.
 - Split app styling/icon helpers and settings import/export coordination into smaller reusable services.
+- Replace the flat app-settings JSON with `schema_version` 2 nested sections for transport, app preferences, history, action libraries, and restored workspace state.
+- Make `SettingsService` the settings payload owner; raw storage now only reads and writes JSON payloads.
 - Hide replace-only controls in editor Find mode; show them only in Replace mode.
 - Remove the explicit editor Validate toolbar button because unknown-command warnings and syntax validation run in the background.
 

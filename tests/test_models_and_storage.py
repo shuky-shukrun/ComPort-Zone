@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import Mock
 
@@ -7,9 +8,11 @@ from ComPort_Zone.models import (
     QuickCommand,
     QuickFile,
     SerialProfile,
+    SETTINGS_SCHEMA_VERSION,
     TerminalSessionState,
     apply_line_ending,
 )
+from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
 
 
@@ -35,7 +38,6 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings(
             serial=SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
             command_history=["status", "reset"],
-            quick_snippets=["status", "reboot"],
             quick_commands=[
                 QuickCommand(
                     id="cmd-1",
@@ -91,18 +93,25 @@ class ModelsAndStorageTests(unittest.TestCase):
         )
         fake_path.read_text.side_effect = lambda encoding="utf-8": payload["json"]
 
-        store = SettingsStore(fake_path)
-        store.save(settings)
-        loaded = store.load()
+        service = SettingsService(SettingsStore(fake_path))
+        service.save(settings)
+        saved_payload = json.loads(payload["json"])
+        loaded = service.load()
 
         fake_parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
         fake_path.write_text.assert_called_once()
         fake_path.read_text.assert_called_once()
+        self.assertEqual(saved_payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertNotIn("serial", saved_payload)
+        self.assertEqual(saved_payload["transport"]["profile"]["port"], "COM7")
+        self.assertEqual(saved_payload["app"]["terminal_font"]["size"], 13)
+        self.assertEqual(saved_payload["app"]["drawer"]["width"], 340)
+        self.assertEqual(saved_payload["libraries"]["quick_commands"][0]["label"], "Read ID")
+        self.assertEqual(saved_payload["workspace"]["terminal_tabs"][0]["title"], "DUT A")
         self.assertEqual(loaded.serial.port, "COM7")
         self.assertEqual(loaded.serial.baudrate, 57600)
         self.assertEqual(loaded.serial.line_ending, "LF")
         self.assertEqual(loaded.command_history, ["status", "reset"])
-        self.assertEqual(loaded.quick_snippets, ["status", "reboot"])
         self.assertEqual(len(loaded.quick_commands), 1)
         self.assertEqual(loaded.quick_commands[0].label, "Read ID")
         self.assertEqual(loaded.quick_commands[0].description, "Read the factory identity string.")
@@ -135,31 +144,28 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertFalse(loaded.drawer_collapsed)
         self.assertEqual(loaded.drawer_width, 340)
 
-    def test_legacy_quick_snippets_become_quick_commands(self) -> None:
-        settings = AppSettings.from_dict({"quick_snippets": ["status", "reset"]})
-
-        self.assertEqual([command.command for command in settings.quick_commands], ["status", "reset"])
-        self.assertEqual([command.label for command in settings.quick_commands], ["status", "reset"])
-
-    def test_legacy_workshop_theme_maps_to_vs_code_dark(self) -> None:
-        settings = AppSettings.from_dict({"theme": "Workshop Dark"})
-
-        self.assertEqual(settings.theme, "VS Code Dark")
-
-    def test_settings_file_uses_top_level_preferences(self) -> None:
+    def test_settings_file_uses_nested_schema_sections(self) -> None:
         settings = AppSettings.from_dict(
             {
-                "serial": {"port": "COM12", "baudrate": 9600},
-                "theme": "Scope Amber",
-                "terminal_font_size": 15,
-                "receive_display_mode": "Hex",
-                "quick_commands": [
-                    {
-                        "id": "cmd-2",
-                        "label": "Version",
-                        "command": "version",
-                    }
-                ],
+                "schema_version": SETTINGS_SCHEMA_VERSION,
+                "transport": {
+                    "kind": "serial",
+                    "profile": {"port": "COM12", "baudrate": 9600},
+                },
+                "app": {
+                    "theme": "Scope Amber",
+                    "terminal_font": {"size": 15},
+                    "receive_display_mode": "Hex",
+                },
+                "libraries": {
+                    "quick_commands": [
+                        {
+                            "id": "cmd-2",
+                            "label": "Version",
+                            "command": "version",
+                        }
+                    ],
+                },
             }
         )
 
@@ -172,29 +178,40 @@ class ModelsAndStorageTests(unittest.TestCase):
     def test_settings_accept_generic_serial_transport_profile(self) -> None:
         settings = AppSettings.from_dict(
             {
-                "transport_kind": "serial",
-                "transport_profile": {"port": "COM33", "baudrate": 57600},
+                "schema_version": SETTINGS_SCHEMA_VERSION,
+                "transport": {
+                    "kind": "serial",
+                    "profile": {"port": "COM33", "baudrate": 57600},
+                },
             }
         )
 
         self.assertEqual(settings.transport_kind, "serial")
         self.assertEqual(settings.serial.port, "COM33")
         self.assertEqual(settings.serial.baudrate, 57600)
-        self.assertEqual(settings.to_dict()["transport_profile"]["port"], "COM33")
+        self.assertEqual(settings.to_dict()["transport"]["profile"]["port"], "COM33")
 
     def test_restored_tab_accepts_generic_serial_transport_profile(self) -> None:
         state = TerminalSessionState.from_dict(
             {
                 "title": "DUT",
-                "transport_kind": "serial",
-                "transport_profile": {"port": "COM44", "baudrate": 230400},
+                "transport": {
+                    "kind": "serial",
+                    "profile": {"port": "COM44", "baudrate": 230400},
+                },
             }
         )
 
         self.assertEqual(state.transport_kind, "serial")
         self.assertEqual(state.serial.port, "COM44")
         self.assertEqual(state.serial.baudrate, 230400)
-        self.assertEqual(state.to_dict()["transport_profile"]["port"], "COM44")
+        self.assertEqual(state.to_dict()["transport"]["profile"]["port"], "COM44")
+
+    def test_settings_service_rejects_non_current_schema(self) -> None:
+        service = SettingsService()
+
+        with self.assertRaises(ValueError):
+            service.settings_from_payload({"serial": {"port": "COM1"}})
 
     def test_settings_bundle_captures_all_preferences(self) -> None:
         settings = AppSettings(
