@@ -11,6 +11,7 @@ from ComPort_Zone import app as app_module
 from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SETTINGS_SCHEMA_VERSION, SerialProfile, TerminalSessionState
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
+from ComPort_Zone.ui import main_window as main_window_module
 
 
 def drawer_action_rows(page) -> list[list[str]]:
@@ -165,6 +166,55 @@ class AppSessionTests(unittest.TestCase):
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
             app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_rename_tab_updates_title(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_rename.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        old_input_dialog = main_window_module.QInputDialog
+        window = None
+        calls: list[tuple[str, str, str]] = []
+
+        class FakeInputDialog:
+            @staticmethod
+            def getText(parent, title, label, *, text=""):
+                calls.append((title, label, text))
+                return "Renamed DUT", True
+
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        main_window_module.QInputDialog = FakeInputDialog
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            self.assertIsNotNone(session)
+            session.profile = SerialProfile(port="COM22")
+            session.title = "Terminal 1"
+            session.title_is_custom = False
+            window.update_tab_titles()
+            visible_title = window.tabs.tabText(window.tabs.currentIndex())
+
+            window.rename_current_session()
+
+            self.assertEqual(visible_title, "COM22")
+            self.assertEqual(calls, [("Rename Tab", "Tab name", visible_title)])
+            self.assertEqual(session.title, "Renamed DUT")
+            self.assertTrue(session.title_is_custom)
+            self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "Renamed DUT")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            main_window_module.QInputDialog = old_input_dialog
             if window is not None:
                 for active_session in window.iter_sessions():
                     active_session.shutdown()

@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import ClassVar, cast
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QFont, QIcon
+from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -34,7 +35,6 @@ from ..models import (
     RECEIVE_DISPLAY_MODES,
     SerialProfile,
     TerminalSessionState,
-    THEME_OPTIONS,
 )
 from ..quick_action_controller import QuickActionController
 from ..settings_service import SettingsService
@@ -46,6 +46,7 @@ from .command_file_targets import CommandFileRunCoordinator
 from .command_palette_entries import workspace_tab_palette_entries
 from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
+from .main_window_menus import MainWindowMenuBuilder
 from .tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .terminal_tab import TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
             set_status=self.set_status,
         )
         self.command_registry = CommandRegistry(self)
+        self.menu_builder = MainWindowMenuBuilder(self, self.command_registry)
         self.quick_actions = self._quick_action_library_from_settings()
         self.quick_action_controller = QuickActionController(
             parent=self,
@@ -195,82 +197,13 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.version_label)
 
     def _build_menus(self) -> None:
-        self.file_menu = file_menu = self.menuBar().addMenu("File")
-        self._add_registered_menu_section(file_menu, "file")
-
-        self.edit_menu = edit_menu = self.menuBar().addMenu("Edit")
-        self._add_registered_menu_section(edit_menu, "edit")
-
-        self.view_menu = view_menu = self.menuBar().addMenu("View")
-        view_actions = self._add_registered_menu_section(view_menu, "view")
-        self.timestamps_action = view_actions["view.show_timestamps"]
-        self.timestamps_action.setChecked(self.settings.timestamps_enabled)
-        self.wrap_action = view_actions["view.line_wrap"]
-        self.wrap_action.setChecked(self.settings.line_wrap_enabled)
-        view_menu.addSeparator()
-        self.theme_menu = theme_menu = view_menu.addMenu("Theme")
-        self.theme_group = QActionGroup(self)
-        self.theme_group.setExclusive(True)
-        self.theme_actions: dict[str, QAction] = {}
-        for theme_name in THEME_OPTIONS:
-            action = QAction(theme_name, self)
-            action.setCheckable(True)
-            action.triggered.connect(lambda _checked=False, name=theme_name: self.apply_theme(name))
-            self.theme_group.addAction(action)
-            theme_menu.addAction(action)
-            self.theme_actions[theme_name] = action
-
-        self.session_menu = session_menu = self.menuBar().addMenu("Session")
-        self._add_registered_menu_section(session_menu, "session")
-
-        self.serial_menu = serial_menu = self.menuBar().addMenu("Serial")
-        self._add_registered_menu_section(serial_menu, "serial")
-
-        self.tools_menu = tools_menu = self.menuBar().addMenu("Tools")
-        self._add_registered_action(tools_menu, "tools.command_palette")
-        tools_menu.addSeparator()
-
-        self.command_files_menu = command_files_menu = tools_menu.addMenu("Command Files")
-        command_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_MediaPlay))
-        self._add_registered_action(command_files_menu, "command_file.new")
-        self._add_registered_action(command_files_menu, "command_file.open_editor")
-        self.run_editor_menu = command_files_menu.addMenu("Run in Terminal")
-        self.run_editor_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ArrowForward))
-        self.run_editor_menu.aboutToShow.connect(lambda menu=self.run_editor_menu: self.populate_run_editor_menu(menu))
-        command_files_menu.addSeparator()
-        self._add_registered_action(command_files_menu, "command_file.run")
-        self._add_registered_action(command_files_menu, "command_file.stop")
-
-        self.quick_commands_menu = quick_commands_menu = tools_menu.addMenu("Quick Commands")
-        quick_commands_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_CommandLink))
-        self._add_registered_menu_section(quick_commands_menu, "quick_commands")
-
-        self.quick_files_menu = quick_files_menu = tools_menu.addMenu("Quick Files")
-        quick_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_DirOpenIcon))
-        self._add_registered_menu_section(quick_files_menu, "quick_files")
-
-        self.help_menu = help_menu = self.menuBar().addMenu("Help")
-        self._add_registered_menu_section(help_menu, "help")
+        self.menu_builder.build().install_on(self)
 
     def _add_registered_menu_section(self, menu, menu_key: str) -> dict[str, QAction]:
-        actions: dict[str, QAction] = {}
-        for command_id in self.command_registry.menu_items(menu_key):
-            if command_id is None:
-                menu.addSeparator()
-                continue
-            actions[command_id] = self._add_registered_action(menu, command_id)
-        return actions
+        return self.menu_builder.add_registered_menu_section(menu, menu_key)
 
     def _add_registered_action(self, menu, command_id: str) -> QAction:
-        spec = self.command_registry.spec(command_id)
-        return self._add_action(
-            menu,
-            spec.menu_label(),
-            spec.shortcut,
-            spec.callback(self),
-            checkable=spec.checkable,
-            icon=spec.icon,
-        )
+        return self.menu_builder.add_registered_action(menu, command_id)
 
     def _add_action(
         self,
@@ -282,15 +215,14 @@ class MainWindow(QMainWindow):
         checkable: bool = False,
         icon: QStyle.StandardPixmap | None = None,
     ) -> QAction:
-        action = QAction(text, self)
-        if icon is not None:
-            action.setIcon(standard_icon(icon))
-        if shortcut:
-            action.setShortcut(shortcut)
-        action.setCheckable(checkable)
-        action.triggered.connect(lambda _checked=False: callback())
-        menu.addAction(action)
-        return action
+        return self.menu_builder.add_action(
+            menu,
+            text,
+            shortcut,
+            callback,
+            checkable=checkable,
+            icon=icon,
+        )
 
     def _add_context_action(
         self,
@@ -301,13 +233,13 @@ class MainWindow(QMainWindow):
         icon: QStyle.StandardPixmap | None = None,
         enabled: bool = True,
     ) -> QAction:
-        action = QAction(text, self)
-        if icon is not None:
-            action.setIcon(standard_icon(icon))
-        action.setEnabled(enabled)
-        action.triggered.connect(lambda _checked=False: callback())
-        menu.addAction(action)
-        return action
+        return self.menu_builder.add_context_action(
+            menu,
+            text,
+            callback,
+            icon=icon,
+            enabled=enabled,
+        )
 
     def _add_context_command_action(
         self,
@@ -318,12 +250,11 @@ class MainWindow(QMainWindow):
         text: str | None = None,
         enabled: bool = True,
     ) -> QAction:
-        spec = self.command_registry.spec(command_id)
-        return self._add_context_action(
+        return self.menu_builder.add_context_command_action(
             menu,
-            text or spec.menu_label(),
-            callback or spec.callback(self),
-            icon=spec.icon,
+            command_id,
+            callback,
+            text=text,
             enabled=enabled,
         )
 
@@ -754,7 +685,8 @@ class MainWindow(QMainWindow):
         if not session:
             return
         self.tabs.setCurrentIndex(index)
-        title, accepted = QInputDialog.getText(self, "Rename Tab", "Tab name", text=session.title)
+        current_title = self.tabs.tabText(index).strip() or session.tab_title
+        title, accepted = QInputDialog.getText(self, "Rename Tab", "Tab name", text=current_title)
         if accepted and title.strip():
             session.title = title.strip()
             session.title_is_custom = True

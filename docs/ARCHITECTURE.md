@@ -69,6 +69,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Quick actions workflow | `quick_action_controller.py` | `quick_action_controller.py` | Done foundation | Owns add/edit/delete/import/export/reorder coordination around `QuickActionLibrary`; `MainWindow` keeps compatibility delegates. |
 | Quick actions UI | `quick_actions_panel.py`, `quick_actions_sidebar.py` | Same | Done | Shared terminal/editor sidebar behavior. |
 | Command registry | `command_registry.py` | `command_registry.py` | Done | Menus and command palette share command specs. |
+| Main menu/action wiring | `ui/main_window_menus.py` | Same | Done | Top menu construction and shared QAction helpers are outside `MainWindow`. |
 | Command palette workspace entries | `ui/command_palette_entries.py` | Same | Done | Dynamic tab-switch entries are built outside `MainWindow`. |
 | Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
@@ -130,6 +131,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | Terminal tab module-location extraction | `TerminalSessionWidget` now lives in `ui/terminal_tab.py`; `app.py` keeps a compatibility import. |
 | Done | Command-file parameter dialog extraction | Parameter review and per-line summary UI moved from `TerminalSessionWidget` into `ui/dialogs/command_file_parameters.py`. |
 | Done | MainWindow module-location extraction | `MainWindow` now lives in `ui/main_window.py`; `app.py` keeps startup, splash, and compatibility re-exports. |
+| Done | MainWindow menu/action extraction | `ui/main_window_menus.py` owns top menu construction, registered QAction creation, and shared context-action helpers. |
 | Next | Slim `ui/main_window.py` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module location for the command-file tab | Terminal tab moved; command-file tab still needs the same treatment once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
