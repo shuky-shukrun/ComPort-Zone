@@ -21,7 +21,7 @@ ComPort Zone should settle into these layers:
 
 | Layer | Responsibility | Target Examples |
 | --- | --- | --- |
-| App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
+| App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, `ui/main_window.py` |
 | Workspace UI | Tabs, status presentation, command-palette workspace entries, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_palette_entries.py`, `ui/command_file_targets.py`, `ui/terminal_tab.py`, `terminal_view.py`, future `ui/command_file_tab.py` |
 | Dialog UI | Focused modal dialogs with limited business logic | `ui/dialogs/*` |
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, `app_settings_controller.py`, `workspace_settings_controller.py`, future command-file/workspace controllers |
@@ -46,7 +46,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 ## Current State Snapshot
 
-The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,000 lines, and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
+The project is in an incremental redesign. `src/ComPort_Zone/app.py` is now a thin startup and compatibility module, while `src/ComPort_Zone/ui/main_window.py` owns the main window shell. The main window module is still large and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
 
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
@@ -58,11 +58,11 @@ The current test suite is built around `unittest` and has focused coverage for e
 
 | Subsystem | Current Owner | Ideal Owner | Status | Notes |
 | --- | --- | --- | --- | --- |
-| App shell and main window assembly | `app.py` | Thin `app.py` plus future `ui/main_window.py` | In Progress | Still large; should become orchestration only. |
+| App shell and main window assembly | `app.py`, `ui/main_window.py` | Thin `app.py` plus `ui/main_window.py` shell | In Progress | `app.py` is thin; `ui/main_window.py` should continue shrinking toward orchestration only. |
 | Terminal tab UI | `ui/terminal_tab.py` | `ui/terminal_tab.py` | In Progress | Module location is extracted; the widget still has more UI workflow code to slim. |
 | Terminal behavior | `terminal_session_controller.py` | `terminal_session_controller.py` | Done | Owns transport, send, logging, batch runner, event decisions, pause buffering. |
 | Terminal text rendering/search | `terminal_view.py` | `terminal_view.py` | Done | Owns QTextEdit insertion, stream rendering, search highlighting. |
-| Command-file editor UI | `command_editor.py` plus parts of `app.py` | future `ui/command_file_tab.py` | In Progress | Core services are extracted; final UI location still open. |
+| Command-file editor UI | `command_editor.py` plus coordination in `ui/main_window.py` | future `ui/command_file_tab.py` | In Progress | Core services are extracted; final UI location still open. |
 | Command-file parsing/running support | `batch.py`, `command_file_service.py`, `command_run_targets.py`, `ui/command_file_targets.py` | Same | Done foundation | `ui/command_file_targets.py` owns run-target menu population, editor target refresh, and editor-to-terminal dispatch. |
 | Command editor core/search/highlighting | `command_editor_core.py`, `command_search.py`, `command_editor_highlighting.py` | Same | Done | Focused modules with tests. |
 | Quick actions domain | `quick_actions.py` | `quick_actions.py` | Done | Owns CSV, filtering, sorting, lookup, duplicate/reorder behavior. |
@@ -83,7 +83,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 
 ### Launch and Workspace Restore
 
-`app.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for serial settings.
+`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for serial settings.
 
 ### Terminal Send
 
@@ -129,7 +129,8 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | Command-palette workspace entry extraction | Dynamic tab-switch entries now live in `ui/command_palette_entries.py`. |
 | Done | Terminal tab module-location extraction | `TerminalSessionWidget` now lives in `ui/terminal_tab.py`; `app.py` keeps a compatibility import. |
 | Done | Command-file parameter dialog extraction | Parameter review and per-line summary UI moved from `TerminalSessionWidget` into `ui/dialogs/command_file_parameters.py`. |
-| Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
+| Done | MainWindow module-location extraction | `MainWindow` now lives in `ui/main_window.py`; `app.py` keeps startup, splash, and compatibility re-exports. |
+| Next | Slim `ui/main_window.py` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module location for the command-file tab | Terminal tab moved; command-file tab still needs the same treatment once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
 | Later | Broaden command registry use in context menus | Use registry metadata for shared actions; keep selection-specific logic local. |
@@ -149,7 +150,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 
 - Every extracted pure/domain module should have focused unit tests.
 - Every extracted Qt helper or presenter should have lightweight QApplication-backed tests when practical.
-- `app.py` behavior should continue to be protected by app-session regression tests for high-value workflows.
+- Startup and main-window behavior should continue to be protected by app-session regression tests for high-value workflows.
 - Transport work should use fake adapters/clients for contract tests.
 - Settings changes should include serialization/import/export tests and restored workspace tests.
 - Command registry changes should verify menus and command palette expose shared actions consistently.
