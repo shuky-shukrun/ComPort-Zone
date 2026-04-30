@@ -1056,6 +1056,40 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_terminal_font_controls_are_visible_and_described(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_terminal_font_controls.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            labels = session.command_bar.findChildren(QLabel, "terminalFontControlsLabel")
+            buttons = session.command_bar.findChildren(QPushButton, "terminalFontSizeButton")
+
+            self.assertEqual([label.text() for label in labels], ["Font"])
+            self.assertEqual([button.text() for button in buttons], ["-", "+"])
+            self.assertTrue(all(button.width() >= 38 for button in buttons))
+            self.assertEqual(buttons[0].toolTip(), "Decrease terminal font size")
+            self.assertEqual(buttons[1].toolTip(), "Increase terminal font size")
+            self.assertEqual(buttons[0].accessibleName(), "Decrease terminal font size")
+            self.assertEqual(buttons[1].accessibleName(), "Increase terminal font size")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_quick_file_list_runs_selected_file(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_files.json")
         script_path = Path(__file__).with_name("_tmp_quick_file.txt")

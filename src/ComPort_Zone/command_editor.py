@@ -439,6 +439,7 @@ class CommandFileEditorDialog(QDialog):
         self.quick_action_callbacks = quick_action_callbacks or CommandEditorQuickActionCallbacks()
         self.file_service = file_service or CommandFileService()
         self.run_target_service = run_target_service
+        self._show_run_bar = self.run_target_service is not None and self.run_target_service.is_configured()
         self.embedded = embedded
         self.show_workspace_side_panel = show_workspace_side_panel
         self._local_quick_command_sort_mode = "Custom"
@@ -502,17 +503,8 @@ class CommandFileEditorDialog(QDialog):
             toolbar.addWidget(button)
         toolbar.addStretch(1)
         toolbar.addWidget(self.warn_unknown)
-        if self.font_change_callback:
-            font_down = QToolButton(self)
-            font_down.setText("-")
-            font_down.setToolTip("Decrease editor font")
-            font_down.clicked.connect(lambda: self.font_change_callback(-1))
-            font_up = QToolButton(self)
-            font_up.setText("+")
-            font_up.setToolTip("Increase editor font")
-            font_up.clicked.connect(lambda: self.font_change_callback(1))
-            toolbar.addWidget(font_down)
-            toolbar.addWidget(font_up)
+        if self.font_change_callback and not self._show_run_bar:
+            self._add_font_controls(toolbar, self)
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
@@ -536,7 +528,7 @@ class CommandFileEditorDialog(QDialog):
         editor_layout.addWidget(line)
         editor_layout.addWidget(self.editor, 1)
         editor_layout.addWidget(self.status_label)
-        if self.run_target_service and self.run_target_service.is_configured():
+        if self._show_run_bar:
             editor_layout.addWidget(self._build_run_bar())
 
         if self.show_workspace_side_panel:
@@ -988,7 +980,29 @@ class CommandFileEditorDialog(QDialog):
         layout.addWidget(label)
         layout.addWidget(self.run_target_combo)
         layout.addWidget(self.send_to_target_button)
+        if self.font_change_callback:
+            self._add_font_controls(layout, bar)
         return bar
+
+    def _add_font_controls(self, layout: QHBoxLayout, parent: QWidget) -> None:
+        font_label = QLabel("Font", parent)
+        font_label.setObjectName("editorFontControlsLabel")
+        font_label.setToolTip("Editor font size")
+        font_down = QPushButton("-", parent)
+        font_down.setObjectName("editorFontSizeButton")
+        font_down.setFixedSize(QSize(38, 34))
+        font_down.setAccessibleName("Decrease editor font size")
+        font_down.setToolTip("Decrease editor font size")
+        font_down.clicked.connect(lambda: self.font_change_callback(-1) if self.font_change_callback else None)
+        font_up = QPushButton("+", parent)
+        font_up.setObjectName("editorFontSizeButton")
+        font_up.setFixedSize(QSize(38, 34))
+        font_up.setAccessibleName("Increase editor font size")
+        font_up.setToolTip("Increase editor font size")
+        font_up.clicked.connect(lambda: self.font_change_callback(1) if self.font_change_callback else None)
+        layout.addWidget(font_label)
+        layout.addWidget(font_down)
+        layout.addWidget(font_up)
 
     def _build_find_replace_bar(self) -> QWidget:
         self.find_replace_bar = QFrame(self)

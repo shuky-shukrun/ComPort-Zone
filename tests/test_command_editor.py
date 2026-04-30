@@ -4,7 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from ComPort_Zone.command_editor import CommandFileEditorDialog
 from ComPort_Zone.command_editor_core import CommandEditorSources
@@ -261,6 +261,46 @@ class CommandEditorTests(unittest.TestCase):
             self.assertEqual(dialog.editor.textCursor().selectedText(), "volt")
         finally:
             dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_font_controls_are_visible_and_described(self) -> None:
+        changes: list[int] = []
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(),
+            font_change_callback=changes.append,
+            run_target_service=CommandRunTargetService(
+                targets_supplier=lambda: [CommandRunTarget(42, "Connected | COM42 | 115200 8N1")],
+                run_callback=lambda request, target_id: True,
+            ),
+        )
+        try:
+            run_bar = dialog.send_to_target_button.parentWidget()
+            labels = run_bar.findChildren(QLabel, "editorFontControlsLabel")
+            buttons = run_bar.findChildren(QPushButton, "editorFontSizeButton")
+            run_bar_widgets = [
+                run_bar.layout().itemAt(index).widget()
+                for index in range(run_bar.layout().count())
+                if run_bar.layout().itemAt(index).widget() is not None
+            ]
+            send_index = run_bar_widgets.index(dialog.send_to_target_button)
+
+            self.assertEqual([label.text() for label in labels], ["Font"])
+            self.assertEqual([button.text() for button in buttons], ["-", "+"])
+            self.assertEqual(run_bar_widgets[send_index + 1], labels[0])
+            self.assertEqual(run_bar_widgets[send_index + 2], buttons[0])
+            self.assertEqual(run_bar_widgets[send_index + 3], buttons[1])
+            self.assertTrue(all(button.width() >= 38 for button in buttons))
+            self.assertEqual(buttons[0].toolTip(), "Decrease editor font size")
+            self.assertEqual(buttons[1].toolTip(), "Increase editor font size")
+            self.assertEqual(buttons[0].accessibleName(), "Decrease editor font size")
+            self.assertEqual(buttons[1].accessibleName(), "Increase editor font size")
+
+            buttons[0].click()
+            buttons[1].click()
+
+            self.assertEqual(changes, [-1, 1])
+        finally:
             dialog.close()
             dialog.deleteLater()
 
