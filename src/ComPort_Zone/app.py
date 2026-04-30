@@ -327,7 +327,7 @@ class TerminalSessionWidget(QWidget):
         next_button = QPushButton("Next", self.search_bar)
         set_button_icon(next_button, QStyle.StandardPixmap.SP_ArrowForward)
         next_button.clicked.connect(self.find_next)
-        close_search = QPushButton("X", self.search_bar)
+        close_search = QPushButton("", self.search_bar)
         set_button_icon(close_search, QStyle.StandardPixmap.SP_DialogCloseButton)
         close_search.clicked.connect(self.hide_search)
         self.search_count = QLabel("0", self.search_bar)
