@@ -22,7 +22,7 @@ ComPort Zone should settle into these layers:
 | Layer | Responsibility | Target Examples |
 | --- | --- | --- |
 | App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
-| Workspace UI | Tabs, status presentation, command-palette workspace entries, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_palette_entries.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
+| Workspace UI | Tabs, status presentation, command-palette workspace entries, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_palette_entries.py`, `ui/command_file_targets.py`, `ui/terminal_tab.py`, `terminal_view.py`, future `ui/command_file_tab.py` |
 | Dialog UI | Focused modal dialogs with limited business logic | `ui/dialogs/*` |
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, `app_settings_controller.py`, `workspace_settings_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
@@ -59,7 +59,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Subsystem | Current Owner | Ideal Owner | Status | Notes |
 | --- | --- | --- | --- | --- |
 | App shell and main window assembly | `app.py` | Thin `app.py` plus future `ui/main_window.py` | In Progress | Still large; should become orchestration only. |
-| Terminal tab UI | `TerminalSessionWidget` in `app.py` | future `ui/terminal_tab.py` | In Progress | Widget is slimmer, but still in `app.py`. |
+| Terminal tab UI | `ui/terminal_tab.py` | `ui/terminal_tab.py` | In Progress | Module location is extracted; the widget still has more UI workflow code to slim. |
 | Terminal behavior | `terminal_session_controller.py` | `terminal_session_controller.py` | Done | Owns transport, send, logging, batch runner, event decisions, pause buffering. |
 | Terminal text rendering/search | `terminal_view.py` | `terminal_view.py` | Done | Owns QTextEdit insertion, stream rendering, search highlighting. |
 | Command-file editor UI | `command_editor.py` plus parts of `app.py` | future `ui/command_file_tab.py` | In Progress | Core services are extracted; final UI location still open. |
@@ -127,8 +127,9 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | AppSettingsController workflow extraction | MainWindow delegates app-settings import/export UI workflow to the controller while keeping live workspace application local. |
 | Done | WorkspaceSettingsController save/apply extraction | MainWindow delegates settings capture/save and imported-settings live workspace application coordination. |
 | Done | Command-palette workspace entry extraction | Dynamic tab-switch entries now live in `ui/command_palette_entries.py`. |
+| Done | Terminal tab module-location extraction | `TerminalSessionWidget` now lives in `ui/terminal_tab.py`; `app.py` keeps a compatibility import. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
-| Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |
+| Next | Decide final module location for the command-file tab | Terminal tab moved; command-file tab still needs the same treatment once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
 | Later | Broaden command registry use in context menus | Use registry metadata for shared actions; keep selection-specific logic local. |
 
