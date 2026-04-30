@@ -94,6 +94,7 @@ from .ui.fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick
 from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .ui.workspace_status import WorkspaceStatusPresenter, connection_state_color
 from .widgets import ChevronComboBox, HistoryLineEdit, set_button_role
+from .workspace_settings_controller import WorkspaceSettingsController
 from .workspace_state import WorkspaceStateService
 
 DRAWER_COLLAPSED_WIDTH = 48
@@ -1495,6 +1496,27 @@ class MainWindow(QMainWindow):
         self.settings_store = SettingsStore(default_config_path())
         self.settings_service = SettingsService(self.settings_store)
         self.settings = self.settings_service.load()
+        self.workspace_state_service = WorkspaceStateService()
+        self.workspace_settings_controller = WorkspaceSettingsController(
+            settings_service=self.settings_service,
+            workspace_state_service=self.workspace_state_service,
+            settings_supplier=lambda: self.settings,
+            set_settings=self._set_settings,
+            is_loading=lambda: self._loading,
+            set_loading=self._set_loading,
+            refresh_quick_actions=self._refresh_quick_actions_from_settings,
+            sync_quick_actions=self._sync_quick_actions_to_settings,
+            active_session_supplier=self.current_session,
+            terminal_sessions_supplier=self.iter_sessions,
+            command_file_editors_supplier=self.iter_command_file_editors,
+            command_history_supplier=lambda: self.history_catalog.all_commands(),
+            window_size_supplier=lambda: (self.width(), self.height()),
+            clear_workspace=self._clear_workspace_for_settings_apply,
+            rebuild_runtime_state=self._rebuild_runtime_state_from_settings,
+            restore_workspace=lambda: self.restore_sessions(prompt_first_settings=False),
+            apply_settings_to_ui=self.apply_settings_to_ui,
+            set_status=self.set_status,
+        )
         self.app_settings_controller = AppSettingsController(
             parent=self,
             settings_service=self.settings_service,
@@ -1503,7 +1525,6 @@ class MainWindow(QMainWindow):
             apply_imported_settings=self.apply_imported_settings,
             set_status=self.set_status,
         )
-        self.workspace_state_service = WorkspaceStateService()
         self.command_registry = CommandRegistry(self)
         self.quick_actions = self._quick_action_library_from_settings()
         self.quick_action_controller = QuickActionController(
@@ -2547,9 +2568,15 @@ class MainWindow(QMainWindow):
         self,
         settings: AppSettings,
     ) -> None:
-        self._refresh_quick_actions_from_settings()
-        self._sync_quick_actions_to_settings()
-        settings = self.settings_service.preserve_quick_actions(settings, self.settings)
+        self.workspace_settings_controller.apply_imported_settings(settings)
+
+    def _set_settings(self, settings: AppSettings) -> None:
+        self.settings = settings
+
+    def _set_loading(self, loading: bool) -> None:
+        self._loading = loading
+
+    def _clear_workspace_for_settings_apply(self) -> None:
         for index in range(self.tabs.count() - 1, -1, -1):
             session = self.session_at(index)
             if session:
@@ -2558,16 +2585,12 @@ class MainWindow(QMainWindow):
             self.tabs.removeTab(index)
             if widget:
                 widget.deleteLater()
-        previous_loading = self._loading
-        self._loading = True
-        self.settings = settings
+
+    def _rebuild_runtime_state_from_settings(self, settings: AppSettings) -> None:
         self.quick_actions = self._quick_action_library_from_settings()
-        self.history_catalog = HistoryStore(self.settings.command_history)
-        self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
-        self.resize(self.settings.window_width, self.settings.window_height)
-        self.restore_sessions(prompt_first_settings=False)
-        self._loading = previous_loading
-        self.apply_settings_to_ui()
+        self.history_catalog = HistoryStore(settings.command_history)
+        self.theme = THEMES.get(settings.theme, THEMES["VS Code Dark"])
+        self.resize(settings.window_width, settings.window_height)
 
     def show_about(self) -> None:
         QMessageBox.information(
@@ -2941,21 +2964,7 @@ class MainWindow(QMainWindow):
         """
 
     def save_settings(self) -> None:
-        if self._loading:
-            return
-        self._refresh_quick_actions_from_settings()
-        self._sync_quick_actions_to_settings()
-        self.workspace_state_service.capture_into_settings(
-            self.settings,
-            active_session=self.current_session(),
-            terminal_sessions=self.iter_sessions(),
-            command_file_editors=self.iter_command_file_editors(),
-            command_history=self.history_catalog.all_commands(),
-            window_width=self.width(),
-            window_height=self.height(),
-        )
-        if not self.settings_service.save(self.settings):
-            self.set_status("Could not save settings to disk.")
+        self.workspace_settings_controller.save_settings()
 
     def closeEvent(self, event) -> None:
         for editor in self.iter_command_file_editors():
