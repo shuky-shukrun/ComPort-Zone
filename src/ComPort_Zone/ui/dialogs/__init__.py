@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from .app_settings_transfer import APP_SETTINGS_EXPLANATION, AppSettingsTransferDialog
 from .command_palette import CommandPaletteDialog
+from .command_file_parameters import (
+    BatchParameterPromptBridge,
+    CommandFileParameterSummary,
+    CommandFileParametersDialog,
+    summarize_parameter_occurrences,
+)
 from .connection import COMMON_BAUD_RATES, ConnectionSettingsDialog
 from .quick_actions import QuickCommandDialog, QuickCommandImportDialog, QuickFileDialog
 from .terminal_font import TerminalFontSettingsDialog
@@ -9,11 +15,15 @@ from .terminal_font import TerminalFontSettingsDialog
 __all__ = [
     "APP_SETTINGS_EXPLANATION",
     "AppSettingsTransferDialog",
+    "BatchParameterPromptBridge",
     "COMMON_BAUD_RATES",
     "CommandPaletteDialog",
+    "CommandFileParameterSummary",
+    "CommandFileParametersDialog",
     "ConnectionSettingsDialog",
     "QuickCommandDialog",
     "QuickCommandImportDialog",
     "QuickFileDialog",
     "TerminalFontSettingsDialog",
+    "summarize_parameter_occurrences",
 ]

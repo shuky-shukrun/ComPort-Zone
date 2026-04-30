@@ -3,18 +3,22 @@ import unittest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QSpinBox
 
 from ComPort_Zone import app as app_module
+from ComPort_Zone.batch import BatchParameterOccurrence
 from ComPort_Zone.command_registry import CommandPaletteEntry
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.ui.dialogs import (
     APP_SETTINGS_EXPLANATION,
     AppSettingsTransferDialog,
+    BatchParameterPromptBridge,
     COMMON_BAUD_RATES,
     CommandPaletteDialog,
+    CommandFileParametersDialog,
     ConnectionSettingsDialog,
     QuickCommandDialog,
     QuickCommandImportDialog,
     QuickFileDialog,
     TerminalFontSettingsDialog,
+    summarize_parameter_occurrences,
 )
 from ComPort_Zone.ui.fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN
 
@@ -67,6 +71,59 @@ class DialogExtractionTests(unittest.TestCase):
         self.assertIs(app_module.QuickCommandImportDialog, QuickCommandImportDialog)
         self.assertIs(app_module.QuickFileDialog, QuickFileDialog)
         self.assertIs(app_module.TerminalFontSettingsDialog, TerminalFontSettingsDialog)
+        self.assertIs(app_module.BatchParameterPromptBridge, BatchParameterPromptBridge)
+
+    def test_command_file_parameter_summary_keeps_stable_names_defaults_and_lines(self) -> None:
+        summary = summarize_parameter_occurrences(
+            [
+                BatchParameterOccurrence("VOLT", "3.3", 1, "SEND VOLT {{VOLT=3.3}}"),
+                BatchParameterOccurrence("MODE", None, 2, "SEND MODE {{MODE}}"),
+                BatchParameterOccurrence("VOLT", "5.0", 1, "SEND VOLT {{VOLT=3.3}}"),
+                BatchParameterOccurrence("MODE", None, 3, "SEND AGAIN {{MODE}}"),
+            ]
+        )
+
+        self.assertEqual(summary.names, ("VOLT", "MODE"))
+        self.assertEqual(summary.defaults, {"VOLT": "3.3"})
+        self.assertEqual(
+            summary.lines_by_parameter,
+            {
+                "VOLT": ("Line 1: SEND VOLT {{VOLT=3.3}}",),
+                "MODE": (
+                    "Line 2: SEND MODE {{MODE}}",
+                    "Line 3: SEND AGAIN {{MODE}}",
+                ),
+            },
+        )
+        self.assertEqual(
+            summary.line_details,
+            (
+                "Line 1: SEND VOLT {{VOLT=3.3}}",
+                "Line 2: SEND MODE {{MODE}}",
+                "Line 3: SEND AGAIN {{MODE}}",
+            ),
+        )
+
+    def test_command_file_parameter_dialog_returns_values_and_ignored_defaults(self) -> None:
+        dialog = CommandFileParametersDialog(
+            [
+                BatchParameterOccurrence("VOLT", "3.3", 1, "SEND VOLT {{VOLT=3.3}}"),
+                BatchParameterOccurrence("MODE", None, 2, "SEND MODE {{MODE}}"),
+            ]
+        )
+        try:
+            self.assertEqual(dialog.inputs["VOLT"].text(), "3.3")
+            self.assertEqual(dialog.inputs["MODE"].placeholderText(), "Ask while running")
+
+            dialog.inputs["VOLT"].clear()
+            dialog.inputs["MODE"].setText(" FAST ")
+
+            values, ignored_defaults = dialog.values()
+
+            self.assertEqual(values, {"MODE": "FAST"})
+            self.assertEqual(ignored_defaults, {"VOLT"})
+        finally:
+            dialog.deleteLater()
 
     def test_connection_settings_dialog_refreshes_ports_and_preserves_manual_port(self) -> None:
         ports = [

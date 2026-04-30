@@ -76,7 +76,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export payload rules. |
 | App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
 | Workspace restore/capture | `workspace_state.py`, `workspace_settings_controller.py` | Same | Done | Captures/restores terminal and command-file tabs; save/apply-imported-settings coordination is outside `MainWindow`. |
-| Dialogs | `ui/dialogs/*` | `ui/dialogs/*` | Done foundation | Named dialog classes are extracted. Some workflow-owned ad hoc prompts still live with their owning feature code. |
+| Dialogs | `ui/dialogs/*` | `ui/dialogs/*` | Done foundation | Named dialog classes are extracted, including command-file parameter dialogs. Some workflow-owned ad hoc prompts still live with their owning feature code. |
 | Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py`, `ui/fonts.py` | Same | In Progress | Font helpers are extracted; more UI helpers may move here. |
 
 ## Important Flows
@@ -122,12 +122,13 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | TabWorkspaceController and workspace status presenter | Tab lifecycle and tab/status presentation are no longer owned directly by `MainWindow`. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
-| Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, and command palette dialogs are extracted. |
+| Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, command palette, and command-file parameter dialogs are extracted. |
 | Done | QuickActionController workflow extraction | MainWindow delegates quick-action mutation/import/export/reorder workflows to the controller. |
 | Done | AppSettingsController workflow extraction | MainWindow delegates app-settings import/export UI workflow to the controller while keeping live workspace application local. |
 | Done | WorkspaceSettingsController save/apply extraction | MainWindow delegates settings capture/save and imported-settings live workspace application coordination. |
 | Done | Command-palette workspace entry extraction | Dynamic tab-switch entries now live in `ui/command_palette_entries.py`. |
 | Done | Terminal tab module-location extraction | `TerminalSessionWidget` now lives in `ui/terminal_tab.py`; `app.py` keeps a compatibility import. |
+| Done | Command-file parameter dialog extraction | Parameter review and per-line summary UI moved from `TerminalSessionWidget` into `ui/dialogs/command_file_parameters.py`. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module location for the command-file tab | Terminal tab moved; command-file tab still needs the same treatment once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
