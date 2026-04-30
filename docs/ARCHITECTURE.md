@@ -22,7 +22,7 @@ ComPort Zone should settle into these layers:
 | Layer | Responsibility | Target Examples |
 | --- | --- | --- |
 | App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
-| Workspace UI | Tabs, status presentation, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
+| Workspace UI | Tabs, status presentation, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
 | Dialog UI | Focused modal dialogs with limited business logic | future `ui/dialogs/*` |
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
@@ -63,7 +63,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Terminal behavior | `terminal_session_controller.py` | `terminal_session_controller.py` | Done | Owns transport, send, logging, batch runner, event decisions, pause buffering. |
 | Terminal text rendering/search | `terminal_view.py` | `terminal_view.py` | Done | Owns QTextEdit insertion, stream rendering, search highlighting. |
 | Command-file editor UI | `command_editor.py` plus parts of `app.py` | future `ui/command_file_tab.py` | In Progress | Core services are extracted; final UI location still open. |
-| Command-file parsing/running support | `batch.py`, `command_file_service.py`, `command_run_targets.py` | Same plus small coordination service | In Progress | Target/menu coordination still partly in `MainWindow`. |
+| Command-file parsing/running support | `batch.py`, `command_file_service.py`, `command_run_targets.py`, `ui/command_file_targets.py` | Same | Done foundation | `ui/command_file_targets.py` owns run-target menu population, editor target refresh, and editor-to-terminal dispatch. |
 | Command editor core/search/highlighting | `command_editor_core.py`, `command_search.py`, `command_editor_highlighting.py` | Same | Done | Focused modules with tests. |
 | Quick actions domain | `quick_actions.py` | `quick_actions.py` | Done | Owns CSV, filtering, sorting, lookup, duplicate/reorder behavior. |
 | Quick actions UI | `quick_actions_panel.py`, `quick_actions_sidebar.py` | Same | Done | Shared terminal/editor sidebar behavior. |
@@ -92,7 +92,7 @@ Serial events arrive from the transport event queue. The terminal widget drains 
 
 ### Command-File Run
 
-Command-file text may come from a file path, quick file, editor buffer, or run target menu. Parsing and execution use `batch.py` and the terminal session batch runner. Parameter prompts remain UI-owned by the terminal widget, while `TerminalSessionController` coordinates template substitution and starts the runner. Remaining target/menu coordination should move out of `MainWindow`.
+Command-file text may come from a file path, quick file, editor buffer, or run target menu. Parsing and execution use `batch.py` and the terminal session batch runner. Parameter prompts remain UI-owned by the terminal widget, while `TerminalSessionController` coordinates template substitution and starts the runner. `ui/command_file_targets.py` coordinates connected terminal targets, run-target menus, editor target refresh, and editor-to-terminal dispatch.
 
 ### Quick Actions
 
@@ -118,7 +118,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. Terminal and e
 | Done | CommandRegistry for menus and command palette | Static command definitions now live in one module. |
 | Done | TabWorkspaceController and workspace status presenter | Tab lifecycle and tab/status presentation are no longer owned directly by `MainWindow`. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
-| Next | Extract command-file target/menu coordination from `MainWindow` | Move run-target menu population and editor-to-terminal dispatch coordination into a small service/presenter. |
+| Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
 | Next | Continue dialog extraction into `ui/dialogs/*` | Start with low-coupling dialogs such as font/settings transfer/import options. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |

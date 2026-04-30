@@ -53,7 +53,7 @@ from .command_editor import CommandEditorQuickActionCallbacks, CommandEditorSour
 from .command_registry import CommandPaletteEntry, CommandRegistry
 from .history import HistoryStore
 from .icons import STYLE_ICON_MAP, TABLER_ICON_PATHS, set_button_icon, standard_icon
-from .command_run_targets import CommandRunRequest, CommandRunTarget, CommandRunTargetService
+from .command_run_targets import CommandRunRequest, CommandRunTarget
 from . import __version__
 from .models import (
     AppSettings,
@@ -85,6 +85,7 @@ from .storage import SettingsStore, default_config_path
 from .terminal_session_controller import TerminalSessionController
 from .terminal_view import TerminalView
 from .themes import THEMES, ThemePalette
+from .ui.command_file_targets import CommandFileRunCoordinator
 from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .ui.workspace_status import WorkspaceStatusPresenter, connection_state_color
 from .widgets import ChevronComboBox, HistoryLineEdit, set_button_role
@@ -2086,6 +2087,14 @@ class MainWindow(QMainWindow):
             connection_action_button=self.connection_action_button,
             footer=self.footer,
         )
+        self.command_file_runs = CommandFileRunCoordinator(
+            sessions_supplier=self.iter_sessions,
+            editors_supplier=self.iter_command_file_editors,
+            current_editor_supplier=self.current_command_file_editor,
+            is_widget_open=lambda widget: self.tabs.indexOf(widget) >= 0,
+            set_status=self.set_status,
+            target_icon_color=lambda: self.theme.rx,
+        )
         self._build_menus()
         self.apply_theme(self.theme.name)
         self.restore_sessions()
@@ -2382,10 +2391,7 @@ class MainWindow(QMainWindow):
                 import_quick_files_csv=self.import_quick_files_csv,
                 export_quick_files_csv=self.export_quick_files_csv,
             ),
-            run_target_service=CommandRunTargetService(
-                targets_supplier=self.command_file_run_targets,
-                run_callback=self.run_command_file_request_in_terminal_by_id,
-            ),
+            run_target_service=self.command_file_runs.target_service,
             embedded=True,
             show_run_button=False,
             show_workspace_side_panel=True,
@@ -2422,81 +2428,28 @@ class MainWindow(QMainWindow):
         session.run_script_text(text, source_label=label, source_path=path)
 
     def connected_terminal_sessions(self) -> list[TerminalSessionWidget]:
-        return [
-            session
-            for session in self.iter_sessions()
-            if session.serial_client.is_connected
-        ]
+        return cast(list[TerminalSessionWidget], self.command_file_runs.connected_sessions())
 
     def command_file_run_targets(self) -> list[CommandRunTarget]:
-        return [
-            CommandRunTarget(session.session_id, session.connection_status_text())
-            for session in self.connected_terminal_sessions()
-        ]
+        return self.command_file_runs.run_targets()
 
     def session_by_id(self, session_id: int) -> TerminalSessionWidget | None:
-        return next((session for session in self.iter_sessions() if session.session_id == session_id), None)
+        return cast(TerminalSessionWidget | None, self.command_file_runs.session_by_id(session_id))
 
     def run_command_file_request_in_terminal_by_id(self, request: CommandRunRequest, session_id: int) -> bool:
-        session = self.session_by_id(session_id)
-        if not session:
-            self.set_status("Selected terminal is no longer available.")
-            return False
-        if not session.serial_client.is_connected:
-            self.set_status(f"{session.tab_title} is not connected.")
-            return False
-        session.run_script_text(request.text, source_label=request.source_label, source_path=request.path)
-        self.set_status(f"Running {request.display_name} in {session.tab_title}.")
-        return True
+        return self.command_file_runs.run_request_in_target(request, session_id)
 
     def run_editor_in_terminal_by_id(self, editor: CommandFileEditorDialog, session_id: int) -> None:
-        session = self.session_by_id(session_id)
-        if not session:
-            self.set_status("Selected terminal is no longer available.")
-            return
-        self.run_editor_in_terminal(editor, session)
+        self.command_file_runs.run_editor_in_target_by_id(editor, session_id)
 
     def refresh_command_file_targets(self) -> None:
-        for editor in self.iter_command_file_editors():
-            editor.refresh_run_targets()
+        self.command_file_runs.refresh_editor_targets()
 
     def populate_run_editor_menu(self, menu: QMenu, editor: CommandFileEditorDialog | None = None) -> None:
-        menu.clear()
-        editor = editor or self.current_command_file_editor()
-        if editor is None:
-            action = menu.addAction("Open a command-file tab first")
-            action.setEnabled(False)
-            return
-        if editor.validation_errors():
-            action = menu.addAction("Fix syntax errors before running")
-            action.setEnabled(False)
-            return
-        sessions = self.connected_terminal_sessions()
-        if not sessions:
-            action = menu.addAction("No connected terminals")
-            action.setEnabled(False)
-            return
-        for session in sessions:
-            label = session.connection_status_text()
-            action = QAction(label, self)
-            action.setIcon(standard_icon(QStyle.StandardPixmap.SP_ComputerIcon, 16, self.theme.rx))
-            action.triggered.connect(lambda _checked=False, target=session, source=editor: self.run_editor_in_terminal(source, target))
-            menu.addAction(action)
+        self.command_file_runs.populate_run_menu(menu, editor)
 
     def run_editor_in_terminal(self, editor: CommandFileEditorDialog, session: TerminalSessionWidget) -> None:
-        if self.tabs.indexOf(editor) < 0 or self.tabs.indexOf(session) < 0:
-            self.set_status("Command-file tab or terminal tab is no longer available.")
-            return
-        if not session.serial_client.is_connected:
-            self.set_status(f"{session.tab_title} is not connected.")
-            return
-        if editor.validation_errors():
-            editor.update_validation_status()
-            self.set_status("Fix command-file syntax errors before running.")
-            return
-        label = str(editor.path) if editor.path else editor.display_name()
-        session.run_script_text(editor.text(), source_label=label, source_path=editor.path)
-        self.set_status(f"Running {editor.display_name()} in {session.tab_title}.")
+        self.command_file_runs.run_editor_in_target(editor, session)
 
     def show_find_in_current_tab(self) -> None:
         editor = self.current_command_file_editor()
