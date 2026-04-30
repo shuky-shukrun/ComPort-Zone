@@ -78,6 +78,7 @@ from .storage import SettingsStore, default_config_path
 from .terminal_session_controller import TerminalSessionController
 from .terminal_view import TerminalView
 from .themes import THEMES, ThemePalette
+from .ui.command_palette_entries import workspace_tab_palette_entries
 from .ui.command_file_targets import CommandFileRunCoordinator
 from .ui.dialogs import (
     APP_SETTINGS_EXPLANATION,
@@ -1940,29 +1941,16 @@ class MainWindow(QMainWindow):
         self.set_status("Replace is available in command-file editor tabs.")
 
     def command_palette_entries(self) -> list[CommandPaletteEntry]:
-        entries = self.command_registry.palette_entries()
-        for index in range(self.tabs.count()):
-            session = self.session_at(index)
-            editor = self.command_file_editor_at(index)
-            title = session.tab_title if session else editor.tab_title() if editor else self.tabs.tabText(index)
-            port = session.profile.port if session and session.profile.port else "No port"
-            subtitle = session.connection_status_text() if session else editor.status_summary() if editor else port
-            icon = QStyle.StandardPixmap.SP_ComputerIcon if session else QStyle.StandardPixmap.SP_FileIcon
-            keywords = (
-                f"switch tab terminal session {index + 1} {title} {port} {session.title}"
-                if session
-                else f"switch tab command file editor script {index + 1} {title}"
-            )
-            entries.append(
-                CommandPaletteEntry(
-                    title=f"Switch to Tab {index + 1}: {title}",
-                    subtitle=subtitle,
-                    callback=lambda tab_index=index: self.tabs.setCurrentIndex(tab_index),
-                    icon=icon,
-                    keywords=keywords,
-                )
-            )
-        return entries
+        return [
+            *self.command_registry.palette_entries(),
+            *workspace_tab_palette_entries(
+                tab_count=self.tabs.count(),
+                session_at=self.session_at,
+                command_file_editor_at=self.command_file_editor_at,
+                tab_text=self.tabs.tabText,
+                activate_tab=self.tabs.setCurrentIndex,
+            ),
+        ]
 
     def show_tab_context_menu(self, position) -> None:
         tab_bar = self.tabs.tabBar()

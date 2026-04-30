@@ -22,7 +22,7 @@ ComPort Zone should settle into these layers:
 | Layer | Responsibility | Target Examples |
 | --- | --- | --- |
 | App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
-| Workspace UI | Tabs, status presentation, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
+| Workspace UI | Tabs, status presentation, command-palette workspace entries, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_palette_entries.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
 | Dialog UI | Focused modal dialogs with limited business logic | `ui/dialogs/*` |
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, `app_settings_controller.py`, `workspace_settings_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
@@ -69,6 +69,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Quick actions workflow | `quick_action_controller.py` | `quick_action_controller.py` | Done foundation | Owns add/edit/delete/import/export/reorder coordination around `QuickActionLibrary`; `MainWindow` keeps compatibility delegates. |
 | Quick actions UI | `quick_actions_panel.py`, `quick_actions_sidebar.py` | Same | Done | Shared terminal/editor sidebar behavior. |
 | Command registry | `command_registry.py` | `command_registry.py` | Done | Menus and command palette share command specs. |
+| Command palette workspace entries | `ui/command_palette_entries.py` | Same | Done | Dynamic tab-switch entries are built outside `MainWindow`. |
 | Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
@@ -106,7 +107,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 
 ### Commands, Menus, and Palette
 
-`CommandRegistry` defines reusable command metadata and callback factories. Menus and the command palette consume registry entries. Context menus should use registry metadata where the action is shared, while keeping index-specific or selection-specific callbacks local.
+`CommandRegistry` defines reusable command metadata and callback factories. Menus and the command palette consume registry entries. Dynamic workspace tab-switch entries are built by `ui/command_palette_entries.py` from generic tab lookup callbacks. Context menus should use registry metadata where the action is shared, while keeping index-specific or selection-specific callbacks local.
 
 ## Progress Roadmap
 
@@ -125,6 +126,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | QuickActionController workflow extraction | MainWindow delegates quick-action mutation/import/export/reorder workflows to the controller. |
 | Done | AppSettingsController workflow extraction | MainWindow delegates app-settings import/export UI workflow to the controller while keeping live workspace application local. |
 | Done | WorkspaceSettingsController save/apply extraction | MainWindow delegates settings capture/save and imported-settings live workspace application coordination. |
+| Done | Command-palette workspace entry extraction | Dynamic tab-switch entries now live in `ui/command_palette_entries.py`. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
