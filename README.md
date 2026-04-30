@@ -31,6 +31,26 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 
 ## Install
 
+After cloning the repository, run the setup script:
+
+```powershell
+.\setup_dev.bat
+```
+
+The script creates or reuses `.venv`, installs the packaging backend, installs ComPort Zone in editable mode, installs dependencies from `pyproject.toml`, and runs the test suite.
+Pip temp files and cache are kept under `build\setup` so setup does not depend on the user's `%LOCALAPPDATA%\Temp` permissions.
+
+Useful setup options:
+
+```powershell
+.\setup_dev.bat -SkipTests
+.\setup_dev.bat -WithBuild
+.\setup_dev.bat -RecreateVenv
+.\scripts\setup_dev.ps1 -DryRun
+```
+
+Manual setup is still possible:
+
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -40,13 +60,49 @@ python -m pip install -e .
 ## Run
 
 ```powershell
-python -m ComPort_Zone
+.\launch_app.bat
+```
+
+PowerShell users can call the underlying script directly:
+
+```powershell
+.\scripts\launch_app.ps1
+```
+
+The script prefers `.venv\Scripts\python.exe` when it exists, falls back to `py -3.12` or `python`, and prepends `src` to `PYTHONPATH` for local source runs.
+
+The raw module command still works:
+
+```powershell
+.\.venv\Scripts\python.exe -m ComPort_Zone
 ```
 
 After installation, the console script can also launch the app:
 
 ```powershell
 comport-zone
+```
+
+## Test
+
+Run the full test suite:
+
+```powershell
+.\run_tests.bat
+```
+
+Run a focused test module or class:
+
+```powershell
+.\run_tests.bat tests.test_quick_actions
+.\run_tests.bat tests.test_app_sessions.AppSessionTests.test_rename_tab_updates_title
+```
+
+PowerShell users can call:
+
+```powershell
+.\scripts\run_tests.ps1
+.\scripts\run_tests.ps1 tests.test_quick_actions
 ```
 
 ## Build Windows EXE
