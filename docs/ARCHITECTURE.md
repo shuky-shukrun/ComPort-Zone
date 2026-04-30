@@ -23,7 +23,7 @@ ComPort Zone should settle into these layers:
 | --- | --- | --- |
 | App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
 | Workspace UI | Tabs, status presentation, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
-| Dialog UI | Focused modal dialogs with limited business logic | future `ui/dialogs/*` |
+| Dialog UI | Focused modal dialogs with limited business logic | `ui/dialogs/*` |
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
 | Commands | One registry for actions used by menus, command palette, shortcuts, and context menus where practical | `command_registry.py` |
@@ -46,7 +46,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 ## Current State Snapshot
 
-The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,600 lines, and still owns important UI assembly, dialogs, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
+The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,800 lines, and still owns important UI assembly, several dialogs, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
 
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
@@ -73,8 +73,8 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
 | Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export rules. |
 | Workspace restore/capture | `workspace_state.py` | `workspace_state.py` | Done | Captures/restores terminal and command-file tabs. |
-| Dialogs | Mostly `app.py` | future `ui/dialogs/*` | Next/Later | Extract once surrounding behavior owners are stable. |
-| Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py` | Same | In Progress | Basic helpers extracted; more UI helpers may move here. |
+| Dialogs | `app.py`, `ui/dialogs/*` | `ui/dialogs/*` | In Progress | Terminal font and app settings transfer dialogs are extracted; connection, quick action, import, and command palette dialogs remain in `app.py`. |
+| Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py`, `ui/fonts.py` | Same | In Progress | Font helpers are extracted; more UI helpers may move here. |
 
 ## Important Flows
 
@@ -119,7 +119,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. Terminal and e
 | Done | TabWorkspaceController and workspace status presenter | Tab lifecycle and tab/status presentation are no longer owned directly by `MainWindow`. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
-| Next | Continue dialog extraction into `ui/dialogs/*` | Start with low-coupling dialogs such as font/settings transfer/import options. |
+| In Progress | Continue dialog extraction into `ui/dialogs/*` | Terminal font and app settings transfer dialogs are done; next candidates are quick action/import dialogs, then connection and command palette. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |

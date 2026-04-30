@@ -12,7 +12,7 @@ from threading import Event
 from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QStringListModel, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QFontDatabase, QIcon, QPainter, QPixmap, QTextCursor
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QPainter, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -86,24 +86,17 @@ from .terminal_session_controller import TerminalSessionController
 from .terminal_view import TerminalView
 from .themes import THEMES, ThemePalette
 from .ui.command_file_targets import CommandFileRunCoordinator
+from .ui.dialogs import APP_SETTINGS_EXPLANATION, AppSettingsTransferDialog, TerminalFontSettingsDialog
+from .ui.fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
 from .ui.workspace_status import WorkspaceStatusPresenter, connection_state_color
 from .widgets import ChevronComboBox, HistoryLineEdit, set_button_role
 from .workspace_state import WorkspaceStateService
 
 COMMON_BAUD_RATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
-TERMINAL_FONT_MIN = 8
-TERMINAL_FONT_MAX = 24
 DRAWER_COLLAPSED_WIDTH = 48
 APP_USER_MODEL_ID = "ComPortZone.Terminal"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "comport-zone-icon.png"
-APP_SETTINGS_EXPLANATION = (
-    "App Settings JSON includes serial defaults, restored tabs, theme, terminal font, "
-    "terminal display preferences, drawer and window state, command history, and last "
-    "log/script paths.\n\n"
-    "Quick Commands and Quick Files are not included here. Manage them with their own "
-    "CSV import/export actions from the Quick Send and Quick Files drawer pages."
-)
 
 def clone_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
@@ -124,38 +117,6 @@ def set_windows_app_user_model_id() -> None:
     except Exception:
         # The icon still works in-window if Windows refuses the taskbar identity call.
         pass
-
-
-def pick_ui_font() -> QFont:
-    families = {family.casefold(): family for family in QFontDatabase.families()}
-    for candidate in ("Segoe UI Variable Text", "Segoe UI", "Inter"):
-        if family := families.get(candidate.casefold()):
-            return QFont(family, 10)
-    return QApplication.font()
-
-
-def pick_mono_font(point_size: int, family_name: str = "") -> QFont:
-    families = {family.casefold(): family for family in QFontDatabase.families()}
-    candidates = [family_name, "Cascadia Mono", "Cascadia Code", "Consolas", "JetBrains Mono"]
-    for candidate in candidates:
-        if candidate and (family := families.get(candidate.casefold())):
-            return QFont(family, point_size)
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    font.setPointSize(point_size)
-    return font
-
-
-def preferred_terminal_font_families() -> list[str]:
-    families = sorted(QFontDatabase.families(), key=str.casefold)
-    preferred = ["Cascadia Mono", "Cascadia Code", "Consolas", "JetBrains Mono"]
-    preferred_lookup = {family.casefold(): family for family in families}
-    ordered = [
-        preferred_lookup[candidate.casefold()]
-        for candidate in preferred
-        if candidate.casefold() in preferred_lookup
-    ]
-    ordered.extend(family for family in families if family not in ordered)
-    return ordered
 
 
 def short_label(text: str, limit: int = 40) -> str:
@@ -340,73 +301,6 @@ class ConnectionSettingsDialog(QDialog):
         )
 
 
-class TerminalFontSettingsDialog(QDialog):
-    def __init__(self, family: str, point_size: int, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Terminal Font Settings")
-        self.setMinimumWidth(460)
-
-        self.family_combo = ChevronComboBox(self)
-        self.family_combo.setEditable(True)
-        self.family_combo.addItem("System default monospace", "")
-        for font_family in preferred_terminal_font_families():
-            self.family_combo.addItem(font_family, font_family)
-        if family:
-            index = self.family_combo.findData(family)
-            if index >= 0:
-                self.family_combo.setCurrentIndex(index)
-            else:
-                self.family_combo.setEditText(family)
-
-        self.size_input = QSpinBox(self)
-        self.size_input.setRange(TERMINAL_FONT_MIN, TERMINAL_FONT_MAX)
-        self.size_input.setValue(max(TERMINAL_FONT_MIN, min(point_size, TERMINAL_FONT_MAX)))
-        self.size_input.setSuffix(" pt")
-
-        reset = QPushButton("Use Default", self)
-        set_button_icon(reset, QStyle.StandardPixmap.SP_BrowserReload)
-        reset.clicked.connect(self.reset_defaults)
-
-        self.preview = QTextEdit(self)
-        self.preview.setReadOnly(True)
-        self.preview.setFixedHeight(92)
-        self.preview.setPlainText("SYS Connected\nTX> *IDN?\nComPort Zone,Terminal,0.0.2")
-
-        self.family_combo.currentTextChanged.connect(self.update_preview)
-        self.size_input.valueChanged.connect(self.update_preview)
-
-        form = QFormLayout()
-        form.addRow("Family", self.family_combo)
-        form.addRow("Size", self.size_input)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(reset)
-        layout.addWidget(self.preview)
-        layout.addWidget(buttons)
-        self.update_preview()
-
-    def reset_defaults(self) -> None:
-        self.family_combo.setCurrentIndex(0)
-        self.size_input.setValue(10)
-
-    def selected_family(self) -> str:
-        data = self.family_combo.currentData()
-        if data is not None:
-            return str(data)
-        return self.family_combo.currentText().strip()
-
-    def selected_size(self) -> int:
-        return int(self.size_input.value())
-
-    def update_preview(self) -> None:
-        self.preview.setFont(pick_mono_font(self.selected_size(), self.selected_family()))
-
-
 class QuickCommandDialog(QDialog):
     def __init__(self, command: QuickCommand | None = None, parent=None) -> None:
         super().__init__(parent)
@@ -575,60 +469,6 @@ class QuickCommandImportDialog(QDialog):
             replace_existing=bool(self.behavior_combo.currentData()),
             skip_duplicates=self.skip_duplicates.isChecked(),
         )
-
-
-class AppSettingsTransferDialog(QDialog):
-    def __init__(self, mode: str = "choose", parent=None) -> None:
-        super().__init__(parent)
-        self.mode = mode if mode in {"choose", "import", "export"} else "choose"
-        self.selected_action = ""
-        titles = {
-            "choose": "App Settings Import / Export",
-            "import": "Import App Settings",
-            "export": "Export App Settings",
-        }
-        self.setWindowTitle(titles[self.mode])
-        self.setMinimumWidth(520)
-
-        heading = QLabel(titles[self.mode], self)
-        heading.setObjectName("dialogTitle")
-
-        intro_text = {
-            "choose": "Choose whether to import or export app-level preferences.",
-            "import": "Import app-level preferences from a JSON file.",
-            "export": "Export app-level preferences to a JSON file.",
-        }[self.mode]
-        intro = QLabel(intro_text, self)
-        intro.setWordWrap(True)
-
-        explanation = QLabel(APP_SETTINGS_EXPLANATION, self)
-        explanation.setObjectName("dialogHint")
-        explanation.setWordWrap(True)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
-        if self.mode in {"choose", "import"}:
-            import_button = buttons.addButton(
-                "Import App Settings...",
-                QDialogButtonBox.ButtonRole.ActionRole,
-            )
-            import_button.clicked.connect(lambda: self._accept_action("import"))
-        if self.mode in {"choose", "export"}:
-            export_button = buttons.addButton(
-                "Export App Settings...",
-                QDialogButtonBox.ButtonRole.ActionRole,
-            )
-            export_button.clicked.connect(lambda: self._accept_action("export"))
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(heading)
-        layout.addWidget(intro)
-        layout.addWidget(explanation)
-        layout.addWidget(buttons)
-
-    def _accept_action(self, action: str) -> None:
-        self.selected_action = action
-        self.accept()
 
 
 class CommandPaletteDialog(QDialog):
