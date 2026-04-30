@@ -24,7 +24,7 @@ ComPort Zone should settle into these layers:
 | App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
 | Workspace UI | Tabs, status presentation, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
 | Dialog UI | Focused modal dialogs with limited business logic | `ui/dialogs/*` |
-| Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, future command-file/workspace controllers |
+| Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
 | Commands | One registry for actions used by menus, command palette, shortcuts, and context menus where practical | `command_registry.py` |
 | Transports | Abstract communication endpoints and concrete adapters | `transports.py`, `serial_core.py` |
@@ -46,7 +46,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 ## Current State Snapshot
 
-The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,400 lines, and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
+The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,100 lines, and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
 
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
@@ -66,6 +66,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Command-file parsing/running support | `batch.py`, `command_file_service.py`, `command_run_targets.py`, `ui/command_file_targets.py` | Same | Done foundation | `ui/command_file_targets.py` owns run-target menu population, editor target refresh, and editor-to-terminal dispatch. |
 | Command editor core/search/highlighting | `command_editor_core.py`, `command_search.py`, `command_editor_highlighting.py` | Same | Done | Focused modules with tests. |
 | Quick actions domain | `quick_actions.py` | `quick_actions.py` | Done | Owns CSV, filtering, sorting, lookup, duplicate/reorder behavior. |
+| Quick actions workflow | `quick_action_controller.py` | `quick_action_controller.py` | Done foundation | Owns add/edit/delete/import/export/reorder coordination around `QuickActionLibrary`; `MainWindow` keeps compatibility delegates. |
 | Quick actions UI | `quick_actions_panel.py`, `quick_actions_sidebar.py` | Same | Done | Shared terminal/editor sidebar behavior. |
 | Command registry | `command_registry.py` | `command_registry.py` | Done | Menus and command palette share command specs. |
 | Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
@@ -96,7 +97,7 @@ Command-file text may come from a file path, quick file, editor buffer, or run t
 
 ### Quick Actions
 
-Quick commands and quick files are owned by `QuickActionLibrary`. Terminal and editor sidebars use shared quick-action UI components with mode-specific callbacks. Terminal mode sends/runs; editor mode inserts/opens. CSV import/export and duplicate/reorder/filter behavior should stay in the domain service.
+Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionController` coordinates UI workflows around the library: add/edit/delete, import/export dialogs, bulk cleanup, reorder, refresh, save, and status updates. Terminal and editor sidebars use shared quick-action UI components with mode-specific callbacks. Terminal mode sends/runs; editor mode inserts/opens. CSV parsing/merge/filter/sort behavior stays in the domain service.
 
 ### Settings Save, Import, and Export
 
@@ -120,6 +121,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. Terminal and e
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
 | Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, and command palette dialogs are extracted. |
+| Done | QuickActionController workflow extraction | MainWindow delegates quick-action mutation/import/export/reorder workflows to the controller. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
