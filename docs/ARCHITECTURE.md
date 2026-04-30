@@ -24,7 +24,7 @@ ComPort Zone should settle into these layers:
 | App shell | Application startup, main window assembly, top-level dependency wiring | `app.py`, future `ui/main_window.py` |
 | Workspace UI | Tabs, status presentation, shared panels, terminal/editor widgets | `ui/tab_workspace.py`, `ui/workspace_status.py`, `ui/command_file_targets.py`, `terminal_view.py`, future `ui/terminal_tab.py`, `ui/command_file_tab.py` |
 | Dialog UI | Focused modal dialogs with limited business logic | `ui/dialogs/*` |
-| Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, future command-file/workspace controllers |
+| Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, `app_settings_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
 | Commands | One registry for actions used by menus, command palette, shortcuts, and context menus where practical | `command_registry.py` |
 | Transports | Abstract communication endpoints and concrete adapters | `transports.py`, `serial_core.py` |
@@ -46,7 +46,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 ## Current State Snapshot
 
-The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,100 lines, and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
+The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,060 lines, and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
 
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
@@ -72,7 +72,8 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
-| Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export rules. |
+| Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export payload rules. |
+| App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
 | Workspace restore/capture | `workspace_state.py` | `workspace_state.py` | Done | Captures/restores terminal and command-file tabs. |
 | Dialogs | `ui/dialogs/*` | `ui/dialogs/*` | Done foundation | Named dialog classes are extracted. Some workflow-owned ad hoc prompts still live with their owning feature code. |
 | Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py`, `ui/fonts.py` | Same | In Progress | Font helpers are extracted; more UI helpers may move here. |
@@ -101,7 +102,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 
 ### Settings Save, Import, and Export
 
-`SettingsService` owns the application settings payload and schema. `StorageStore` only handles JSON file I/O. `WorkspaceStateService` captures runtime tab state into settings before save. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows.
+`SettingsService` owns the application settings payload and schema. `StorageStore` only handles JSON file I/O. `WorkspaceStateService` captures runtime tab state into settings before save. `AppSettingsController` owns the UI workflow for app-settings import/export, then delegates live workspace application back to `MainWindow`. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows.
 
 ### Commands, Menus, and Palette
 
@@ -122,6 +123,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
 | Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, and command palette dialogs are extracted. |
 | Done | QuickActionController workflow extraction | MainWindow delegates quick-action mutation/import/export/reorder workflows to the controller. |
+| Done | AppSettingsController workflow extraction | MainWindow delegates app-settings import/export UI workflow to the controller while keeping live workspace application local. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |

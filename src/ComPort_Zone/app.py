@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from datetime import datetime
@@ -26,7 +25,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -44,6 +42,7 @@ from .batch import (
     BatchParseError,
     parse_hex_payload,
 )
+from .app_settings_controller import AppSettingsController
 from .command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from .command_registry import CommandPaletteEntry, CommandRegistry
 from .history import HistoryStore
@@ -1496,6 +1495,14 @@ class MainWindow(QMainWindow):
         self.settings_store = SettingsStore(default_config_path())
         self.settings_service = SettingsService(self.settings_store)
         self.settings = self.settings_service.load()
+        self.app_settings_controller = AppSettingsController(
+            parent=self,
+            settings_service=self.settings_service,
+            settings_supplier=lambda: self.settings,
+            save_runtime_settings=self.save_settings,
+            apply_imported_settings=self.apply_imported_settings,
+            set_status=self.set_status,
+        )
         self.workspace_state_service = WorkspaceStateService()
         self.command_registry = CommandRegistry(self)
         self.quick_actions = self._quick_action_library_from_settings()
@@ -2519,97 +2526,22 @@ class MainWindow(QMainWindow):
         return self.quick_action_controller.delete_all_quick_files(confirm=confirm)
 
     def show_app_settings_transfer_dialog(self) -> None:
-        dialog = AppSettingsTransferDialog(parent=self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if dialog.selected_action == "import":
-            self.import_settings(show_explanation=False)
-        elif dialog.selected_action == "export":
-            self.export_settings(show_explanation=False)
+        self.app_settings_controller.show_transfer_dialog()
 
     def confirm_app_settings_transfer(self, mode: str) -> bool:
-        dialog = AppSettingsTransferDialog(mode=mode, parent=self)
-        return dialog.exec() == QDialog.DialogCode.Accepted
-
-    def _show_busy_message(self, title: str, message: str) -> QProgressDialog:
-        self.set_status(message)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        dialog = QProgressDialog(message, "", 0, 0, self)
-        dialog.setWindowTitle(title)
-        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-        dialog.setCancelButton(None)
-        dialog.setAutoClose(False)
-        dialog.setAutoReset(False)
-        dialog.setMinimumDuration(0)
-        dialog.show()
-        QApplication.processEvents()
-        return dialog
-
-    def _hide_busy_message(self, dialog: QProgressDialog | None) -> None:
-        if dialog is not None:
-            dialog.close()
-            dialog.deleteLater()
-        QApplication.restoreOverrideCursor()
-        QApplication.processEvents()
+        return self.app_settings_controller.confirm_transfer(mode)
 
     def import_settings(self, *, show_explanation: bool = True) -> None:
-        if show_explanation and not self.confirm_app_settings_transfer("import"):
-            return
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Import App Settings",
-            str(Path.cwd()),
-            "JSON Files (*.json);;All Files (*)",
-        )
-        if not path:
-            return
-        busy = self._show_busy_message("Import App Settings", "Importing app settings...")
-        try:
-            imported_settings = self.load_settings_from_json(Path(path))
-            self.apply_imported_settings(imported_settings)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
-            self._hide_busy_message(busy)
-            QMessageBox.warning(self, "Import App Settings", str(exc))
-            return
-        saved = self.settings_service.save(self.settings)
-        self._hide_busy_message(busy)
-        if not saved:
-            self.set_status("Could not save imported app settings to disk.")
-            QMessageBox.warning(
-                self,
-                "Import App Settings",
-                "Imported settings were applied, but could not be saved to disk.",
-            )
-            return
-        self.set_status(f"Imported app settings from {path}.")
+        self.app_settings_controller.import_settings(show_explanation=show_explanation)
 
     def export_settings(self, *, show_explanation: bool = True) -> None:
-        if show_explanation and not self.confirm_app_settings_transfer("export"):
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export App Settings",
-            str(Path.cwd() / "comport-zone-app-settings.json"),
-            "JSON Files (*.json);;All Files (*)",
-        )
-        if not path:
-            return
-        busy = self._show_busy_message("Export App Settings", "Exporting app settings...")
-        try:
-            self.save_settings()
-            self.export_settings_to_json(Path(path))
-        except OSError as exc:
-            self._hide_busy_message(busy)
-            QMessageBox.warning(self, "Export App Settings", str(exc))
-            return
-        self._hide_busy_message(busy)
-        self.set_status(f"Exported app settings to {path}")
+        self.app_settings_controller.export_settings(show_explanation=show_explanation)
 
     def load_settings_from_json(self, path: Path) -> AppSettings:
-        return self.settings_service.load_from_json(path)
+        return self.app_settings_controller.load_settings_from_json(path)
 
     def export_settings_to_json(self, path: Path) -> None:
-        self.settings_service.export_to_json(self.settings, path)
+        self.app_settings_controller.export_settings_to_json(path)
 
     def apply_imported_settings(
         self,
