@@ -48,6 +48,7 @@ from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
 from .tab_workspace import TabWorkspaceController, TerminalTabWidget
+from .tab_context_menus import TabContextMenuBuilder
 from .terminal_tab import TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
 
@@ -113,6 +114,7 @@ class MainWindow(QMainWindow):
         )
         self.command_registry = CommandRegistry(self)
         self.menu_builder = MainWindowMenuBuilder(self, self.command_registry)
+        self.tab_context_menus = TabContextMenuBuilder(self)
         self.quick_actions = self._quick_action_library_from_settings()
         self.quick_action_controller = QuickActionController(
             parent=self,
@@ -468,130 +470,10 @@ class MainWindow(QMainWindow):
         ]
 
     def show_tab_context_menu(self, position) -> None:
-        tab_bar = self.tabs.tabBar()
-        index = tab_bar.tabAt(position)
-        menu = self.build_tab_context_menu(index)
-        menu.exec(tab_bar.mapToGlobal(position))
+        self.tab_context_menus.show(position)
 
     def build_tab_context_menu(self, index: int) -> QMenu:
-        menu = QMenu(self)
-        if index < 0:
-            self._add_context_command_action(menu, "file.new_tab")
-            self._add_context_command_action(menu, "command_file.new")
-            return menu
-
-        session = self.session_at(index)
-        editor = self.command_file_editor_at(index)
-        if editor:
-            menu.setTitle(editor.tab_title())
-            self._add_context_command_action(menu, "command_file.new")
-            self._add_context_action(
-                menu,
-                "Save",
-                editor.save,
-                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-                enabled=editor.is_dirty() or editor.path is None,
-            )
-            self._add_context_action(
-                menu,
-                "Save As",
-                editor.save_as,
-                icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-            )
-            run_menu = menu.addMenu("Run in Terminal")
-            run_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ArrowForward))
-            run_menu.aboutToShow.connect(lambda menu=run_menu, source=editor: self.populate_run_editor_menu(menu, source))
-            if editor.path:
-                self._add_context_action(
-                    menu,
-                    "Show in Explorer",
-                    lambda source=editor: self.show_path_in_explorer(source.path),
-                    icon=QStyle.StandardPixmap.SP_DirOpenIcon,
-                )
-            menu.addSeparator()
-            self._add_context_command_action(
-                menu,
-                "file.close_tab",
-                lambda tab_index=index: self.close_session(tab_index),
-            )
-            self._add_context_action(
-                menu,
-                "Close Other Tabs",
-                lambda tab_index=index: self.close_other_sessions(tab_index),
-                icon=QStyle.StandardPixmap.SP_TitleBarCloseButton,
-                enabled=self.tabs.count() > 1,
-            )
-            self._add_context_action(
-                menu,
-                "Close Tabs to the Right",
-                lambda tab_index=index: self.close_sessions_to_right(tab_index),
-                icon=QStyle.StandardPixmap.SP_ArrowRight,
-                enabled=index < self.tabs.count() - 1,
-            )
-            return menu
-
-        is_connected = bool(session and session.serial_client.is_connected)
-        is_reconnecting = bool(session and session.serial_client.is_reconnecting)
-        menu.setTitle(session.tab_title if session else self.tabs.tabText(index))
-        self._add_context_command_action(menu, "file.new_tab")
-        self._add_context_command_action(
-            menu,
-            "file.duplicate_tab",
-            lambda tab_index=index: self.duplicate_session(tab_index),
-        )
-        self._add_context_command_action(
-            menu,
-            "session.rename_tab",
-            lambda tab_index=index: self.rename_session(tab_index),
-        )
-        menu.addSeparator()
-        self._add_context_command_action(
-            menu,
-            "serial.settings",
-            lambda tab_index=index: self.open_session_settings(tab_index),
-            enabled=session is not None,
-        )
-        self._add_context_action(
-            menu,
-            "Disconnect" if is_connected else "Stop Retry" if is_reconnecting else "Connect",
-            lambda tab_index=index: self.toggle_session_connection(tab_index),
-            icon=QStyle.StandardPixmap.SP_ComputerIcon,
-            enabled=session is not None,
-        )
-        self._add_context_command_action(
-            menu,
-            "edit.find",
-            lambda tab_index=index: self.show_session_search(tab_index),
-            text="Search",
-            enabled=session is not None,
-        )
-        self._add_context_command_action(
-            menu,
-            "edit.clear_terminal",
-            lambda tab_index=index: self.clear_session_terminal(tab_index),
-            enabled=session is not None,
-        )
-        menu.addSeparator()
-        self._add_context_command_action(
-            menu,
-            "file.close_tab",
-            lambda tab_index=index: self.close_session(tab_index),
-        )
-        self._add_context_action(
-            menu,
-            "Close Other Tabs",
-            lambda tab_index=index: self.close_other_sessions(tab_index),
-            icon=QStyle.StandardPixmap.SP_TitleBarCloseButton,
-            enabled=self.tabs.count() > 1,
-        )
-        self._add_context_action(
-            menu,
-            "Close Tabs to the Right",
-            lambda tab_index=index: self.close_sessions_to_right(tab_index),
-            icon=QStyle.StandardPixmap.SP_ArrowRight,
-            enabled=index < self.tabs.count() - 1,
-        )
-        return menu
+        return self.tab_context_menus.build(index)
 
     def restore_sessions(self, *, prompt_first_settings: bool = True) -> None:
         self.workspace_state_service.restore_from_settings(
