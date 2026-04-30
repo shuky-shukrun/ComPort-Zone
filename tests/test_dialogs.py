@@ -3,11 +3,13 @@ import unittest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QSpinBox
 
 from ComPort_Zone import app as app_module
+from ComPort_Zone.command_registry import CommandPaletteEntry
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.ui.dialogs import (
     APP_SETTINGS_EXPLANATION,
     AppSettingsTransferDialog,
     COMMON_BAUD_RATES,
+    CommandPaletteDialog,
     ConnectionSettingsDialog,
     QuickCommandDialog,
     QuickCommandImportDialog,
@@ -59,6 +61,7 @@ class DialogExtractionTests(unittest.TestCase):
     def test_app_module_reexports_extracted_dialogs_for_compatibility(self) -> None:
         self.assertIs(app_module.COMMON_BAUD_RATES, COMMON_BAUD_RATES)
         self.assertIs(app_module.AppSettingsTransferDialog, AppSettingsTransferDialog)
+        self.assertIs(app_module.CommandPaletteDialog, CommandPaletteDialog)
         self.assertIs(app_module.ConnectionSettingsDialog, ConnectionSettingsDialog)
         self.assertIs(app_module.QuickCommandDialog, QuickCommandDialog)
         self.assertIs(app_module.QuickCommandImportDialog, QuickCommandImportDialog)
@@ -118,6 +121,34 @@ class DialogExtractionTests(unittest.TestCase):
             dialog.reject()
             dialog.deleteLater()
             self.qt.processEvents()
+
+    def test_command_palette_filters_and_executes_selected_entry(self) -> None:
+        calls: list[str] = []
+
+        class FakeHost:
+            def command_palette_entries(self) -> list[CommandPaletteEntry]:
+                return [
+                    CommandPaletteEntry("Connect / Disconnect", "Serial", lambda: calls.append("connect")),
+                    CommandPaletteEntry("Open Command File Editor", "Command Files", lambda: calls.append("editor")),
+                    CommandPaletteEntry("Clear Terminal", "Terminal", lambda: calls.append("clear")),
+                ]
+
+        dialog = CommandPaletteDialog(FakeHost())
+        try:
+            self.assertEqual(dialog.result_list.count(), 3)
+
+            dialog.search_input.setText("command editor")
+
+            self.assertEqual(dialog.result_list.count(), 1)
+            self.assertEqual(dialog.filtered_entries[0].title, "Open Command File Editor")
+
+            dialog.execute_current()
+            self.qt.processEvents()
+
+            self.assertEqual(calls, ["editor"])
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        finally:
+            dialog.deleteLater()
 
     def test_quick_command_dialog_returns_updated_command(self) -> None:
         original = QuickCommand(
