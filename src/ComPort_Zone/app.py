@@ -86,7 +86,8 @@ from .terminal_session_controller import TerminalSessionController
 from .terminal_view import TerminalView
 from .themes import THEMES, ThemePalette
 from .ui.tab_workspace import TabWorkspaceController, TerminalTabWidget
-from .widgets import ChevronComboBox, HistoryLineEdit
+from .ui.workspace_status import WorkspaceStatusPresenter, connection_state_color
+from .widgets import ChevronComboBox, HistoryLineEdit, set_button_role
 from .workspace_state import WorkspaceStateService
 
 COMMON_BAUD_RATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
@@ -105,20 +106,6 @@ APP_SETTINGS_EXPLANATION = (
 
 def clone_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
-
-
-def set_button_role(button: QPushButton, role: str) -> None:
-    button.setProperty("role", role)
-    button.style().unpolish(button)
-    button.style().polish(button)
-    button.update()
-
-
-def set_widget_state(widget: QWidget, state: str) -> None:
-    widget.setProperty("state", state)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
-    widget.update()
 
 
 def app_icon() -> QIcon:
@@ -2091,6 +2078,14 @@ class MainWindow(QMainWindow):
             confirm_close_command_file_tab=self.confirm_close_command_file_tab,
             save_settings=self.save_settings,
         )
+        self.workspace_status = WorkspaceStatusPresenter(
+            self.tabs,
+            terminal_type=TerminalSessionWidget,
+            command_file_type=CommandFileEditorDialog,
+            connection_status_label=self.connection_status_label,
+            connection_action_button=self.connection_action_button,
+            footer=self.footer,
+        )
         self._build_menus()
         self.apply_theme(self.theme.name)
         self.restore_sessions()
@@ -2784,28 +2779,19 @@ class MainWindow(QMainWindow):
         return cast(CommandFileEditorDialog | None, self.tab_workspace.command_file_editor_at(index))
 
     def open_session_settings(self, index: int) -> None:
-        session = self.session_at(index)
-        if session:
-            self.tabs.setCurrentIndex(index)
-            session.open_connection_settings(connect_after_accept=True)
+        self.tab_workspace.activate_session(
+            index,
+            lambda session: session.open_connection_settings(connect_after_accept=True),
+        )
 
     def toggle_session_connection(self, index: int) -> None:
-        session = self.session_at(index)
-        if session:
-            self.tabs.setCurrentIndex(index)
-            session.toggle_connection()
+        self.tab_workspace.activate_session(index, lambda session: session.toggle_connection())
 
     def show_session_search(self, index: int) -> None:
-        session = self.session_at(index)
-        if session:
-            self.tabs.setCurrentIndex(index)
-            session.show_search()
+        self.tab_workspace.activate_session(index, lambda session: session.show_search())
 
     def clear_session_terminal(self, index: int) -> None:
-        session = self.session_at(index)
-        if session:
-            self.tabs.setCurrentIndex(index)
-            session.clear_terminal()
+        self.tab_workspace.activate_session(index, lambda session: session.clear_terminal())
 
     def iter_sessions(self) -> list[TerminalSessionWidget]:
         return cast(list[TerminalSessionWidget], self.tab_workspace.iter_sessions())
@@ -2817,59 +2803,16 @@ class MainWindow(QMainWindow):
         return self.tab_workspace.workspace_tab_count()
 
     def with_session(self, callback) -> None:
-        session = self.current_session()
-        if session:
-            callback(session)
+        self.tab_workspace.with_current_session(callback)
 
     def update_tab_titles(self) -> None:
-        for index in range(self.tabs.count()):
-            widget = self.tabs.widget(index)
-            if isinstance(widget, TerminalSessionWidget):
-                self.tabs.setTabText(index, widget.tab_title)
-                state = widget.connection_state()
-                color = self.connection_state_color(state)
-                icon = QStyle.StandardPixmap.SP_BrowserReload if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
-                self.tabs.setTabIcon(index, standard_icon(icon, 18, color))
-                self.tabs.setTabToolTip(index, widget.connection_status_text())
-                self.tabs.tabBar().setTabTextColor(index, QColor(color))
-            elif isinstance(widget, CommandFileEditorDialog):
-                color = self.theme.status if widget.is_dirty() else self.theme.text
-                if widget.validation_errors():
-                    color = self.theme.error
-                self.tabs.setTabText(index, widget.tab_title())
-                self.tabs.setTabIcon(index, standard_icon(QStyle.StandardPixmap.SP_FileIcon, 18, color))
-                self.tabs.setTabToolTip(index, widget.status_summary())
-                self.tabs.tabBar().setTabTextColor(index, QColor(color))
+        self.workspace_status.update_tab_titles(self.theme)
 
     def sync_status_from_current_session(self) -> None:
-        session = self.current_session()
-        if session:
-            self.update_connection_status(session)
-            return
-        editor = self.current_command_file_editor()
-        if editor:
-            self.connection_status_label.setText(editor.status_summary())
-            self.connection_status_label.setToolTip("Command-file editor tab")
-            set_widget_state(self.connection_status_label, "no-port")
-            self.connection_action_button.setEnabled(False)
-            self.connection_action_button.setText("Terminal only")
-            set_button_icon(self.connection_action_button, QStyle.StandardPixmap.SP_FileIcon, 15)
-            set_button_role(self.connection_action_button, "no-port")
-            self.set_status(editor.status_summary())
-            return
-        self.connection_status_label.setText("No tab")
-        self.connection_action_button.setEnabled(False)
+        self.workspace_status.sync_from_current(self.theme)
 
     def connection_state_color(self, state: str) -> str:
-        if state == "connected":
-            return self.theme.rx
-        if state == "retrying":
-            return self.theme.status
-        if state == "missing":
-            return self.theme.error
-        if state == "no-port":
-            return self.theme.muted
-        return self.theme.text
+        return connection_state_color(state, self.theme)
 
     def connection_status_action_clicked(self) -> None:
         session = self.current_session()
@@ -2883,30 +2826,10 @@ class MainWindow(QMainWindow):
 
     def update_connection_status(self, session: TerminalSessionWidget | None = None) -> None:
         self.refresh_command_file_targets()
-        session = session or self.current_session()
-        if not session:
-            self.connection_status_label.setText("No session")
-            self.connection_action_button.setEnabled(False)
-            return
-        state = session.connection_state()
-        self.connection_status_label.setText(session.connection_status_text())
-        self.connection_status_label.setToolTip(
-            f"{session.connection_tooltip()}\nDouble-click to open Serial Settings."
-        )
-        set_widget_state(self.connection_status_label, state)
-        self.connection_action_button.setEnabled(True)
-        self.connection_action_button.setText(session.connection_action_text())
-        self.connection_action_button.setToolTip(session.connection_tooltip())
-        action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
-        if state == "no-port":
-            action_icon = QStyle.StandardPixmap.SP_FileDialogDetailedView
-        if state == "connected":
-            action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
-        set_button_icon(self.connection_action_button, action_icon, 15)
-        set_button_role(self.connection_action_button, state)
+        self.workspace_status.update_connection_status(session or self.current_session(), self.theme)
 
     def set_status(self, text: str) -> None:
-        self.footer.setText(text)
+        self.workspace_status.set_status(text)
 
     def toggle_drawer(self) -> None:
         self.set_drawer_collapsed(not self.settings.drawer_collapsed)

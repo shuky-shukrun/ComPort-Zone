@@ -166,6 +166,21 @@ class TabWorkspaceController:
     def workspace_tab_count(self) -> int:
         return self.tabs.count()
 
+    def with_current_session(self, callback: Callable[[QWidget], object]) -> bool:
+        session = self.current_session()
+        if session is None:
+            return False
+        callback(session)
+        return True
+
+    def activate_session(self, index: int, callback: Callable[[QWidget], object]) -> bool:
+        session = self.session_at(index)
+        if session is None:
+            return False
+        self.tabs.setCurrentIndex(index)
+        callback(session)
+        return True
+
     def duplicate_current_session(self) -> None:
         self.duplicate_session(self.tabs.currentIndex())
 

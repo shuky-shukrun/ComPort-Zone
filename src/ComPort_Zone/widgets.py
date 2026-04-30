@@ -2,7 +2,21 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QComboBox, QLineEdit
+from PySide6.QtWidgets import QComboBox, QLineEdit, QPushButton, QWidget
+
+
+def set_button_role(button: QPushButton, role: str) -> None:
+    button.setProperty("role", role)
+    button.style().unpolish(button)
+    button.style().polish(button)
+    button.update()
+
+
+def set_widget_state(widget: QWidget, state: str) -> None:
+    widget.setProperty("state", state)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    widget.update()
 
 
 class HistoryLineEdit(QLineEdit):

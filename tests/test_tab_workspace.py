@@ -39,6 +39,7 @@ class FakeTerminalTab(QWidget):
         self.mode_combo = FakeComboBox("Hex Bytes")
         self._title = title
         self.shutdown_called = False
+        self.actions: list[str] = []
 
     @property
     def tab_title(self) -> str:
@@ -46,6 +47,9 @@ class FakeTerminalTab(QWidget):
 
     def shutdown(self) -> None:
         self.shutdown_called = True
+
+    def mark_action(self, name: str) -> None:
+        self.actions.append(name)
 
 
 class FakeCommandFileTab(QWidget):
@@ -163,6 +167,49 @@ class TabWorkspaceControllerTests(unittest.TestCase):
 
         tabs.deleteLater()
         terminal.deleteLater()
+
+    def test_activate_session_selects_tab_and_invokes_callback(self) -> None:
+        tabs = QTabWidget()
+        controller, *_ = self.make_controller(tabs)
+        editor = FakeCommandFileTab()
+        terminal = FakeTerminalTab("DUT")
+        tabs.addTab(editor, "Editor")
+        tabs.addTab(terminal, "Terminal")
+        tabs.setCurrentIndex(0)
+
+        self.assertTrue(
+            controller.activate_session(
+                1,
+                lambda session: session.mark_action("settings"),
+            )
+        )
+        self.assertEqual(tabs.currentWidget(), terminal)
+        self.assertEqual(terminal.actions, ["settings"])
+        self.assertFalse(controller.activate_session(0, lambda session: session.mark_action("ignored")))
+
+        tabs.deleteLater()
+        terminal.deleteLater()
+        editor.deleteLater()
+
+    def test_with_current_session_invokes_only_terminal_tabs(self) -> None:
+        tabs = QTabWidget()
+        controller, *_ = self.make_controller(tabs)
+        terminal = FakeTerminalTab("DUT")
+        editor = FakeCommandFileTab()
+        tabs.addTab(terminal, "Terminal")
+        tabs.addTab(editor, "Editor")
+
+        tabs.setCurrentIndex(0)
+        self.assertTrue(controller.with_current_session(lambda session: session.mark_action("current")))
+        self.assertEqual(terminal.actions, ["current"])
+
+        tabs.setCurrentIndex(1)
+        self.assertFalse(controller.with_current_session(lambda session: session.mark_action("ignored")))
+        self.assertEqual(terminal.actions, ["current"])
+
+        tabs.deleteLater()
+        terminal.deleteLater()
+        editor.deleteLater()
 
     def test_close_session_shutdowns_terminal_and_adds_default_when_empty(self) -> None:
         tabs = QTabWidget()
