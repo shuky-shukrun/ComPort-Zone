@@ -46,7 +46,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 ## Current State Snapshot
 
-The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,700 lines, and still owns important UI assembly, a few dialogs, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
+The project is in an incremental redesign. `src/ComPort_Zone/app.py` is still large, currently about 3,500 lines, and still owns important UI assembly, the command palette dialog, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
 
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
@@ -73,7 +73,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
 | Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export rules. |
 | Workspace restore/capture | `workspace_state.py` | `workspace_state.py` | Done | Captures/restores terminal and command-file tabs. |
-| Dialogs | `app.py`, `ui/dialogs/*` | `ui/dialogs/*` | In Progress | Terminal font, app settings transfer, quick action edit, and quick action import dialogs are extracted; connection and command palette dialogs remain in `app.py`. |
+| Dialogs | `app.py`, `ui/dialogs/*` | `ui/dialogs/*` | In Progress | Terminal font, app settings transfer, quick action edit/import, and connection dialogs are extracted; command palette remains in `app.py`. |
 | Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py`, `ui/fonts.py` | Same | In Progress | Font helpers are extracted; more UI helpers may move here. |
 
 ## Important Flows
@@ -119,7 +119,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. Terminal and e
 | Done | TabWorkspaceController and workspace status presenter | Tab lifecycle and tab/status presentation are no longer owned directly by `MainWindow`. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
-| In Progress | Continue dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit, and quick action import dialogs are done; remaining candidates are connection and command palette. |
+| In Progress | Continue dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, and connection dialogs are done; command palette is the remaining dialog candidate. |
 | Next | Convert `MainWindow` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module locations for terminal and command-file tabs | Move classes out of `app.py` once dependencies are stable. |
 | Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |

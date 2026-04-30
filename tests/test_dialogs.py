@@ -7,6 +7,8 @@ from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.ui.dialogs import (
     APP_SETTINGS_EXPLANATION,
     AppSettingsTransferDialog,
+    COMMON_BAUD_RATES,
+    ConnectionSettingsDialog,
     QuickCommandDialog,
     QuickCommandImportDialog,
     QuickFileDialog,
@@ -55,11 +57,67 @@ class DialogExtractionTests(unittest.TestCase):
             dialog.deleteLater()
 
     def test_app_module_reexports_extracted_dialogs_for_compatibility(self) -> None:
+        self.assertIs(app_module.COMMON_BAUD_RATES, COMMON_BAUD_RATES)
         self.assertIs(app_module.AppSettingsTransferDialog, AppSettingsTransferDialog)
+        self.assertIs(app_module.ConnectionSettingsDialog, ConnectionSettingsDialog)
         self.assertIs(app_module.QuickCommandDialog, QuickCommandDialog)
         self.assertIs(app_module.QuickCommandImportDialog, QuickCommandImportDialog)
         self.assertIs(app_module.QuickFileDialog, QuickFileDialog)
         self.assertIs(app_module.TerminalFontSettingsDialog, TerminalFontSettingsDialog)
+
+    def test_connection_settings_dialog_refreshes_ports_and_preserves_manual_port(self) -> None:
+        ports = [
+            [{"device": "COM1", "description": "USB Serial A"}],
+        ]
+
+        def list_ports() -> list[dict[str, str]]:
+            return [dict(port) for port in ports[-1]]
+
+        dialog = ConnectionSettingsDialog(
+            app_module.SerialProfile(port="COM1", baudrate=57600, line_ending="LF"),
+            list_ports(),
+            ports_supplier=list_ports,
+        )
+        try:
+            self.assertTrue(dialog.port_refresh_timer.isActive())
+            self.assertEqual(dialog.port_refresh_timer.interval(), 1000)
+            self.assertEqual(
+                [dialog.port_combo.itemData(index) for index in range(dialog.port_combo.count())],
+                ["COM1"],
+            )
+            self.assertEqual(dialog.profile().baudrate, 57600)
+            self.assertEqual(dialog.profile().line_ending, "LF")
+
+            ports.append(
+                [
+                    {"device": "COM1", "description": "USB Serial A"},
+                    {"device": "COM2", "description": "USB Serial B"},
+                ]
+            )
+
+            self.assertTrue(dialog.refresh_ports())
+            self.assertEqual(
+                [dialog.port_combo.itemData(index) for index in range(dialog.port_combo.count())],
+                ["COM1", "COM2"],
+            )
+            self.assertEqual(dialog.profile().port, "COM1")
+
+            dialog.port_combo.setEditText("COM99")
+            ports.append(
+                [
+                    {"device": "COM1", "description": "USB Serial A"},
+                    {"device": "COM2", "description": "USB Serial B"},
+                    {"device": "COM3", "description": "USB Serial C"},
+                ]
+            )
+
+            self.assertTrue(dialog.refresh_ports())
+            self.assertEqual(dialog.port_combo.currentText(), "COM99")
+            self.assertEqual(dialog.profile().port, "COM99")
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+            self.qt.processEvents()
 
     def test_quick_command_dialog_returns_updated_command(self) -> None:
         original = QuickCommand(
