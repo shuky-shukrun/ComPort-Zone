@@ -3,7 +3,15 @@ import unittest
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QSpinBox
 
 from ComPort_Zone import app as app_module
-from ComPort_Zone.ui.dialogs import APP_SETTINGS_EXPLANATION, AppSettingsTransferDialog, TerminalFontSettingsDialog
+from ComPort_Zone.models import QuickCommand, QuickFile
+from ComPort_Zone.ui.dialogs import (
+    APP_SETTINGS_EXPLANATION,
+    AppSettingsTransferDialog,
+    QuickCommandDialog,
+    QuickCommandImportDialog,
+    QuickFileDialog,
+    TerminalFontSettingsDialog,
+)
 from ComPort_Zone.ui.fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN
 
 
@@ -48,7 +56,77 @@ class DialogExtractionTests(unittest.TestCase):
 
     def test_app_module_reexports_extracted_dialogs_for_compatibility(self) -> None:
         self.assertIs(app_module.AppSettingsTransferDialog, AppSettingsTransferDialog)
+        self.assertIs(app_module.QuickCommandDialog, QuickCommandDialog)
+        self.assertIs(app_module.QuickCommandImportDialog, QuickCommandImportDialog)
+        self.assertIs(app_module.QuickFileDialog, QuickFileDialog)
         self.assertIs(app_module.TerminalFontSettingsDialog, TerminalFontSettingsDialog)
+
+    def test_quick_command_dialog_returns_updated_command(self) -> None:
+        original = QuickCommand(
+            id="cmd-1",
+            label="Old",
+            command="*OLD",
+            description="Old note",
+            send_mode="Hex Bytes",
+            group="Factory",
+            line_ending_override="CRLF",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        dialog = QuickCommandDialog(original)
+        try:
+            dialog.label_input.setText("Identity")
+            dialog.command_input.setText("*IDN?")
+            dialog.description_input.setPlainText("Read identity")
+            dialog.group_input.setText("General")
+            dialog.mode_combo.setCurrentText("Text")
+            dialog.line_ending_combo.setCurrentText("LF")
+
+            command = dialog.quick_command()
+
+            self.assertEqual(command.id, "cmd-1")
+            self.assertEqual(command.label, "Identity")
+            self.assertEqual(command.command, "*IDN?")
+            self.assertEqual(command.description, "Read identity")
+            self.assertEqual(command.send_mode, "Text")
+            self.assertEqual(command.group, "General")
+            self.assertEqual(command.line_ending_override, "LF")
+            self.assertEqual(command.created_at, "2026-01-01T00:00:00Z")
+            self.assertTrue(command.updated_at)
+        finally:
+            dialog.deleteLater()
+
+    def test_quick_file_dialog_uses_filename_when_label_is_empty(self) -> None:
+        dialog = QuickFileDialog(QuickFile(id="file-1", label="", path="C:/scripts/startup.cmd"))
+        try:
+            quick_file = dialog.quick_file()
+
+            self.assertEqual(quick_file.id, "file-1")
+            self.assertEqual(quick_file.label, "startup.cmd")
+            self.assertEqual(quick_file.path, "C:/scripts/startup.cmd")
+        finally:
+            dialog.deleteLater()
+
+    def test_quick_action_import_dialog_returns_append_or_replace_options(self) -> None:
+        dialog = QuickCommandImportDialog(
+            title="Import Quick Files",
+            message="Choose how to import.",
+            default_replace=True,
+            default_skip_duplicates=False,
+            append_label="Append imported files",
+            replace_label="Replace current quick files",
+            duplicate_checkbox_text="Skip duplicate file paths",
+        )
+        try:
+            self.assertTrue(dialog.options().replace_existing)
+            self.assertFalse(dialog.options().skip_duplicates)
+
+            dialog.behavior_combo.setCurrentIndex(0)
+            dialog.skip_duplicates.setChecked(True)
+
+            self.assertFalse(dialog.options().replace_existing)
+            self.assertTrue(dialog.options().skip_duplicates)
+        finally:
+            dialog.deleteLater()
 
 
 if __name__ == "__main__":
