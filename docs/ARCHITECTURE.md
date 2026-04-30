@@ -6,6 +6,11 @@ This document is the living architecture and redesign reference for ComPort Zone
 
 Update this document in the same change whenever a refactor changes subsystem ownership, introduces a new architectural boundary, or completes a roadmap item. Keep it practical: describe responsibilities, flows, and rules that help the next change land safely. Avoid method-by-method documentation that will drift quickly.
 
+Companion documents:
+
+- `docs/DESIGN.md`: detailed project design, module ownership, Mermaid diagrams, and data/control flows.
+- `docs/LLM_CHANGE_GUIDE.md`: compact task guide for small LLMs and developers making minor fixes.
+
 ## Architecture Goals
 
 - Keep the app PySide6 based and behavior-compatible while reducing large-widget ownership.
