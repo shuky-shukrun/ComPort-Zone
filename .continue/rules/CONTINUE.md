@@ -4,14 +4,21 @@
 
 **ComPort Zone** is a Windows-first COM-port terminal application designed for device bring-up, debugging, and repeated engineering command workflows. It provides a terminal-first interface with a menu bar, Windows Terminal-style tabs, a large terminal surface, a compact command bar, and a foldable left drawer for quick commands and files.
 
+### LLM Instructions
+
+- `docs\LLM_CHANGE_GUIDE.md` - Use as starting point for all project's tasks
+
 ### Key Technologies
+
 - **Python 3.12+** - Core programming language
 - **PySide6 (Qt 6)** - Desktop GUI framework
 - **pyserial** - Serial port communication library
 - **PyInstaller** - Windows executable bundling
 
 ### High-Level Architecture
+
 The application follows a modular architecture:
+
 - **Serial Core Layer** (`serial_core.py`) - Handles serial port connections, reading, writing, and auto-reconnect
 - **Session Controller Layer** (`terminal_session_controller.py`) - Manages terminal sessions and tabs
 - **Command Editor Layer** (`command_editor.py`, `command_editor_core.py`) - Handles command file editing and execution
@@ -21,6 +28,7 @@ The application follows a modular architecture:
 ## 2. Getting Started
 
 ### Prerequisites
+
 - Windows 10/11 (64-bit)
 - Python 3.12 or higher
 - PowerShell
@@ -155,11 +163,13 @@ tests/
 ### Build and Deployment
 
 1. **Development**:
+
    ```powershell
    python -m pip install -e .
    ```
 
 2. **Production EXE**:
+
    ```powershell
    .\build_exe.bat
    ```
@@ -293,26 +303,32 @@ service.save(settings)
 ### Common Issues
 
 **Issue**: "Serial port not found"
+
 - **Solution**: Check Device Manager for COM port availability
 - Verify the port is not in use by another application
 
 **Issue**: "Connection timeout"
+
 - **Solution**: Increase `timeout_ms` in `SerialProfile`
 - Check baud rate matches device specification
 
 **Issue**: "Auto-reconnect not working"
+
 - **Solution**: Set `auto_reconnect=True` in `SerialProfile`
 - Check network/USB device is not disconnected
 
 **Issue**: "PySide6 not found"
+
 - **Solution**: Run `python -m pip install PySide6`
 
 **Issue**: "Build failed - missing dependencies"
+
 - **Solution**: Force reinstall with `scripts\build_exe.ps1 -ForceInstall`
 
 ### Debugging Tips
 
 1. Enable serial event logging by subscribing to events:
+
    ```python
    events = client.subscribe_events()
    while True:
@@ -321,6 +337,7 @@ service.save(settings)
    ```
 
 2. Check thread status:
+
    ```python
    print(f"Is connected: {client.is_connected}")
    print(f"Is reconnecting: {client.is_reconnecting}")
@@ -369,8 +386,8 @@ service.save(settings)
 
 Now let me verify the file was created successfully and provide a summary.
 
-
 ```tool
 TOOL_NAME: ls
 BEGIN_ARG: dirPath
 ".continue/rules"
+```
