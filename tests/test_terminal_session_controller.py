@@ -183,6 +183,7 @@ class TerminalSessionControllerTests(unittest.TestCase):
         hex_plan = controller.render_plan(event, "Hex")
         combined_plan = controller.render_plan(event, "Text + Hex")
         tx_plan = controller.render_plan(SerialEvent(kind="tx", message="*IDN?"), "Text")
+        progress_plan = controller.render_plan(SerialEvent(kind="progress", message="."), "Text")
 
         self.assertTrue(text_plan.stream_text)
         self.assertEqual(text_plan.message, "\ufffdOK")
@@ -190,6 +191,10 @@ class TerminalSessionControllerTests(unittest.TestCase):
         self.assertEqual(combined_plan.message, "\ufffdOK\nHEX FF 4F 4B")
         self.assertEqual(tx_plan.prefix, "TX> ")
         self.assertTrue(tx_plan.ensure_line_break)
+        self.assertTrue(progress_plan.stream_text)
+        self.assertFalse(progress_plan.ensure_line_break)
+        self.assertEqual(progress_plan.color_role, "status")
+        self.assertEqual(progress_plan.prefix, "SYS ")
 
     def test_run_script_text_starts_plain_script_and_updates_last_path(self) -> None:
         controller = make_controller()

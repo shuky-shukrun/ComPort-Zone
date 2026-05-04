@@ -114,6 +114,14 @@ class TerminalSessionController:
 
     def render_plan(self, event: SerialEvent, receive_display_mode: str) -> TerminalRenderPlan:
         message = self.display_message_for_event(event, receive_display_mode)
+        color_role = (
+            "status"
+            if event.kind == "progress"
+            else event.kind
+            if event.kind in {"rx", "tx", "status", "error"}
+            else "default"
+        )
+        stream_text = (event.kind == "rx" and receive_display_mode == "Text") or event.kind == "progress"
         return TerminalRenderPlan(
             event=event,
             message=message,
@@ -122,10 +130,11 @@ class TerminalSessionController:
                 "tx": "TX> ",
                 "status": "SYS ",
                 "error": "ERR ",
+                "progress": "SYS ",
             }.get(event.kind, ""),
-            color_role=event.kind if event.kind in {"rx", "tx", "status", "error"} else "default",
-            stream_text=event.kind == "rx" and receive_display_mode == "Text",
-            ensure_line_break=event.kind != "rx",
+            color_role=color_role,
+            stream_text=stream_text,
+            ensure_line_break=event.kind not in {"rx", "progress"},
         )
 
     def display_message_for_event(self, event: SerialEvent, receive_display_mode: str) -> str:

@@ -55,9 +55,9 @@ class TerminalView:
         search_highlight: str,
     ) -> None:
         if plan.stream_text:
-            self._render_rx_text_plan(
+            self._render_stream_plan(
                 plan,
-                color=colors["rx"],
+                color=colors.get(plan.color_role, colors.get("default", "#d4d4d4")),
                 timestamps_enabled=timestamps_enabled,
                 search_visible=search_visible,
                 search_text=search_text,
@@ -88,7 +88,7 @@ class TerminalView:
             search_highlight=search_highlight,
         )
 
-    def _render_rx_text_plan(
+    def _render_stream_plan(
         self,
         plan: TerminalRenderPlan,
         *,
@@ -101,7 +101,7 @@ class TerminalView:
         message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
         if not message:
             return
-        rendered = self._timestamp_rx_stream(message, plan.event) if timestamps_enabled else message
+        rendered = self._leadered_stream(message, plan, timestamps_enabled=timestamps_enabled)
         self.insert_text(
             rendered,
             color,
@@ -129,13 +129,24 @@ class TerminalView:
         if search_visible:
             self.refresh_search_highlights(search_text, search_highlight)
 
-    def _timestamp_rx_stream(self, message: str, event: SerialEvent) -> str:
-        stamp = f"[{event.timestamp.astimezone().strftime('%H:%M:%S.%f')[:-3]}] "
+    def _leadered_stream(
+        self,
+        message: str,
+        plan: TerminalRenderPlan,
+        *,
+        timestamps_enabled: bool,
+    ) -> str:
+        stamp = (
+            f"[{plan.event.timestamp.astimezone().strftime('%H:%M:%S.%f')[:-3]}] "
+            if timestamps_enabled
+            else ""
+        )
+        leader = f"{stamp}{plan.prefix}"
         rendered: list[str] = []
         at_line_start = self._terminal_at_line_start()
         for chunk in message.splitlines(keepends=True):
             if at_line_start and chunk != "\n":
-                rendered.append(stamp)
+                rendered.append(leader)
             rendered.append(chunk)
             at_line_start = chunk.endswith("\n")
         return "".join(rendered)

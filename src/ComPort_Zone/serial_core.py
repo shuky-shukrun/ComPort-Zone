@@ -20,6 +20,8 @@ FLOW_CONTROL_FLAGS = {
     "DSR/DTR": {"rtscts": False, "xonxoff": False, "dsrdtr": True},
 }
 
+RECONNECT_RETRY_INTERVAL_MS = 1000
+
 
 def decode_serial_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
@@ -152,8 +154,8 @@ class SerialClient:
             port.dtr = profile.dtr
             port.rts = profile.rts
         except SerialException as exc:
-            prefix = "Reconnect" if reconnect_attempt else "Connect"
-            self._emit("error", f"{prefix} failed: {exc}")
+            if not reconnect_attempt:
+                self._emit("error", f"Connect failed: {exc}")
             return False
         with self._lock:
             self._serial = port
@@ -209,21 +211,20 @@ class SerialClient:
         profile = self.active_profile
         if not profile:
             return
-        delay_ms = max(profile.reconnect_initial_delay_ms, 200)
-        max_delay_ms = max(profile.reconnect_max_delay_ms, delay_ms)
-        self._emit("status", f"Auto-reconnect armed. Retrying in {delay_ms} ms.")
-        while not stop_event.wait(delay_ms / 1000):
+        self._emit(
+            "progress",
+            f"Auto-reconnect armed. Retrying every {RECONNECT_RETRY_INTERVAL_MS} ms.",
+        )
+        while not stop_event.wait(RECONNECT_RETRY_INTERVAL_MS / 1000):
             if self._user_disconnect or self.is_connected:
                 return
             profile = self.active_profile
             if not profile:
                 return
-            self._emit("status", f"Trying to reconnect to {profile.port}...")
             if self._attempt_connect(profile, reconnect_attempt=True):
                 self._emit("status", "Auto-reconnect succeeded.")
                 return
-            delay_ms = min(delay_ms * 2, max_delay_ms)
-            self._emit("status", f"Reconnect failed. Next attempt in {delay_ms} ms.")
+            self._emit("progress", ".")
 
     def _stop_reconnect_thread(self) -> None:
         thread = self._reconnect_thread

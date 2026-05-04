@@ -73,6 +73,71 @@ class TerminalViewTests(unittest.TestCase):
 
         self.assertEqual(terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
 
+    def test_render_plan_keeps_progress_dots_on_one_line(self) -> None:
+        view, terminal, _ = self.make_view()
+
+        view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="progress", message="Auto-reconnect armed. Retrying every 1000 ms."),
+                message="Auto-reconnect armed. Retrying every 1000 ms.",
+                prefix="SYS ",
+                color_role="status",
+                stream_text=True,
+            ),
+            colors=COLORS,
+            timestamps_enabled=False,
+            search_visible=False,
+            search_text="",
+            search_highlight="#333333",
+        )
+        view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="progress", message="."),
+                message=".",
+                prefix="SYS ",
+                color_role="status",
+                stream_text=True,
+            ),
+            colors=COLORS,
+            timestamps_enabled=False,
+            search_visible=False,
+            search_text="",
+            search_highlight="#333333",
+        )
+        view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="progress", message="."),
+                message=".",
+                prefix="SYS ",
+                color_role="status",
+                stream_text=True,
+            ),
+            colors=COLORS,
+            timestamps_enabled=False,
+            search_visible=False,
+            search_text="",
+            search_highlight="#333333",
+        )
+        view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="status", message="Auto-reconnect succeeded."),
+                message="Auto-reconnect succeeded.",
+                prefix="SYS ",
+                color_role="status",
+                ensure_line_break=True,
+            ),
+            colors=COLORS,
+            timestamps_enabled=False,
+            search_visible=False,
+            search_text="",
+            search_highlight="#333333",
+        )
+
+        self.assertEqual(
+            terminal.toPlainText(),
+            "SYS Auto-reconnect armed. Retrying every 1000 ms...\nSYS Auto-reconnect succeeded.\n",
+        )
+
     def test_search_highlights_count_and_find_wraps(self) -> None:
         view, terminal, count = self.make_view()
         terminal.setPlainText("alpha\nbeta\nalpha")
