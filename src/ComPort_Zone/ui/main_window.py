@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
                 export_quick_files_csv=self.export_quick_files_csv,
             ),
             run_target_service=self.command_file_runs.target_service,
+            theme_palette=self.theme,
             embedded=True,
             show_run_button=False,
             show_workspace_side_panel=True,
@@ -995,6 +996,8 @@ class MainWindow(QMainWindow):
         self.theme = THEMES.get(name, THEMES["VS Code Dark"])
         self.settings.theme = self.theme.name
         self.setStyleSheet(self._stylesheet(self.theme))
+        for editor in self.iter_command_file_editors():
+            editor.apply_theme_palette(self.theme)
         for theme_name, action in getattr(self, "theme_actions", {}).items():
             action.setChecked(theme_name == self.theme.name)
         self.update_tab_titles()

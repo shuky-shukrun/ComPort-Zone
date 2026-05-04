@@ -589,6 +589,38 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_command_editor_line_number_and_current_line_colors_follow_light_theme(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_editor_light_theme.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            editor = window.add_command_file_tab()
+            editor.setPlainText("SEND *IDN?\n")
+            window.apply_theme("Bench Light")
+            self.qt.processEvents()
+
+            self.assertEqual(editor.editor.line_number_background.name().lower(), window.theme.surface_alt.lower())
+            self.assertEqual(editor.editor.line_number_foreground.name().lower(), window.theme.muted.lower())
+            self.assertEqual(editor.editor.current_line_background.name().lower(), window.theme.chip.lower())
+            self.assertNotEqual(editor.editor.current_line_background.name().lower(), "#202020")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_command_file_run_menu_targets_connected_terminal(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_editor_run.json")
         settings_path.unlink(missing_ok=True)

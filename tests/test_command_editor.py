@@ -10,6 +10,7 @@ from ComPort_Zone.command_editor import CommandFileEditorDialog
 from ComPort_Zone.command_editor_core import CommandEditorSources
 from ComPort_Zone.command_run_targets import CommandRunTarget, CommandRunTargetService
 from ComPort_Zone.models import QuickCommand, QuickFile
+from ComPort_Zone.themes import THEMES
 
 
 class CommandEditorTests(unittest.TestCase):
@@ -166,6 +167,23 @@ class CommandEditorTests(unittest.TestCase):
             dialog.send_to_selected_target()
 
             self.assertEqual(calls, [("SEND *IDN?", 42, None, "Untitled")])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_applies_light_theme_line_and_highlight_colors(self) -> None:
+        theme = THEMES["Bench Light"]
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(),
+            theme_palette=theme,
+        )
+        try:
+            self.assertEqual(dialog.editor.line_number_background.name().lower(), theme.surface_alt.lower())
+            self.assertEqual(dialog.editor.line_number_foreground.name().lower(), theme.muted.lower())
+            self.assertEqual(dialog.editor.current_line_background.name().lower(), theme.chip.lower())
+            self.assertEqual(dialog.editor.search_match_background.name().lower(), theme.search_highlight.lower())
+            self.assertEqual(dialog.editor.search_current_background.name().lower(), theme.accent_soft.lower())
+            self.assertEqual(dialog.editor.search_match_foreground.name().lower(), theme.text.lower())
         finally:
             dialog.close()
             dialog.deleteLater()

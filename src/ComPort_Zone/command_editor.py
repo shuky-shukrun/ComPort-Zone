@@ -63,6 +63,7 @@ from .quick_actions_panel import (
     selected_item_id,
 )
 from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
+from .themes import ThemePalette
 from .widgets import ChevronComboBox
 
 COMPLETION_NAVIGATION_KEYS = {
@@ -137,11 +138,27 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.find_callback: Callable[[], None] | None = None
         self.replace_callback: Callable[[], None] | None = None
         self.search_extra_selections: list[QTextEdit.ExtraSelection] = []
+        self.line_number_background = QColor("#181818")
+        self.line_number_foreground = QColor("#858585")
+        self.current_line_background = QColor("#202020")
+        self.search_match_background = QColor("#264F78")
+        self.search_current_background = QColor("#515C6A")
+        self.search_match_foreground = QColor("#FFFFFF")
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
+
+    def apply_theme_palette(self, theme: ThemePalette) -> None:
+        self.line_number_background = QColor(theme.surface_alt)
+        self.line_number_foreground = QColor(theme.muted)
+        self.current_line_background = QColor(theme.chip)
+        self.search_match_background = QColor(theme.search_highlight)
+        self.search_current_background = QColor(theme.accent_soft)
+        self.search_match_foreground = QColor(theme.text)
+        self.line_number_area.update()
+        self._apply_extra_selections()
 
     def setCompleter(self, completer: QCompleter) -> None:
         self.completer = completer
@@ -190,8 +207,8 @@ class CommandPlainTextEdit(QPlainTextEdit):
 
     def line_number_area_paint_event(self, event) -> None:
         painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor("#181818"))
-        painter.setPen(QColor("#858585"))
+        painter.fillRect(event.rect(), self.line_number_background)
+        painter.setPen(self.line_number_foreground)
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
@@ -216,7 +233,7 @@ class CommandPlainTextEdit(QPlainTextEdit):
 
     def _current_line_selection(self) -> QTextEdit.ExtraSelection:
         selection = QTextEdit.ExtraSelection()
-        selection.format.setBackground(QColor("#202020"))
+        selection.format.setBackground(self.current_line_background)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
@@ -234,8 +251,12 @@ class CommandPlainTextEdit(QPlainTextEdit):
             selection.cursor = QTextCursor(self.document())
             selection.cursor.setPosition(start)
             selection.cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-            selection.format.setBackground(QColor("#515C6A" if index == current_index else "#264F78"))
-            selection.format.setForeground(QColor("#FFFFFF"))
+            selection.format.setBackground(
+                self.search_current_background
+                if index == current_index
+                else self.search_match_background
+            )
+            selection.format.setForeground(self.search_match_foreground)
             selections.append(selection)
         self.search_extra_selections = selections
         self._apply_extra_selections()
@@ -425,6 +446,7 @@ class CommandFileEditorDialog(QDialog):
         quick_action_callbacks: CommandEditorQuickActionCallbacks | None = None,
         file_service: CommandFileService | None = None,
         run_target_service: CommandRunTargetService | None = None,
+        theme_palette: ThemePalette | None = None,
         embedded: bool = False,
         show_run_button: bool = True,
         show_workspace_side_panel: bool = False,
@@ -482,6 +504,8 @@ class CommandFileEditorDialog(QDialog):
         self.editor.setCompleter(self.completer)
         self.editor.set_completion_refresh_callback(self._refresh_completion_model)
         self.highlighter = CommandFileHighlighter(self.editor.document(), self.sources)
+        if theme_palette is not None:
+            self.apply_theme_palette(theme_palette)
         self.editor.textChanged.connect(self._text_changed)
 
         toolbar = QHBoxLayout()
@@ -1088,6 +1112,9 @@ class CommandFileEditorDialog(QDialog):
         self.editor.setFont(font)
         self.editor.document().setDefaultFont(font)
         self.editor.update_line_number_area_width(0)
+
+    def apply_theme_palette(self, theme: ThemePalette) -> None:
+        self.editor.apply_theme_palette(theme)
 
     def restore_text(self, text: str, *, dirty: bool) -> None:
         self.editor.setPlainText(text)
