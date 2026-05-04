@@ -13,11 +13,18 @@ class FakeSerialClient:
 
 
 class FakeSession:
-    def __init__(self, session_id: int = 42, *, connected: bool = True) -> None:
+    def __init__(
+        self,
+        session_id: int = 42,
+        *,
+        connected: bool = True,
+        run_result: bool | None = None,
+    ) -> None:
         self.session_id = session_id
         self.tab_title = f"COM{session_id}"
         self.serial_client = FakeSerialClient(connected)
         self.started: list[tuple[str, str, Path | None]] = []
+        self.run_result = run_result
 
     def connection_status_text(self) -> str:
         return f"Connected | COM{self.session_id}"
@@ -27,8 +34,9 @@ class FakeSession:
         text: str,
         source_label: str = "Editor buffer",
         source_path: Path | None = None,
-    ) -> None:
+    ) -> bool | None:
         self.started.append((text, source_label, source_path))
+        return self.run_result
 
 
 class FakeEditor:
@@ -67,7 +75,9 @@ class CommandFileRunCoordinatorTests(unittest.TestCase):
         editors: list[FakeEditor],
         current_editor: FakeEditor | None,
         statuses: list[str],
+        focused_session_ids: list[int] | None = None,
     ) -> CommandFileRunCoordinator:
+        focused_session_ids = focused_session_ids if focused_session_ids is not None else []
         return CommandFileRunCoordinator(
             sessions_supplier=lambda: sessions,
             editors_supplier=lambda: editors,
@@ -75,6 +85,7 @@ class CommandFileRunCoordinatorTests(unittest.TestCase):
             is_widget_open=lambda _widget: True,
             set_status=statuses.append,
             target_icon_color=lambda: "#9cdcfe",
+            focus_session=lambda session: focused_session_ids.append(session.session_id),
         )
 
     def test_run_targets_include_only_connected_sessions(self) -> None:
@@ -92,11 +103,13 @@ class CommandFileRunCoordinatorTests(unittest.TestCase):
         session = FakeSession(88)
         editor = FakeEditor()
         statuses: list[str] = []
+        focused_session_ids: list[int] = []
         coordinator = self.make_coordinator(
             sessions=[session],
             editors=[editor],
             current_editor=editor,
             statuses=statuses,
+            focused_session_ids=focused_session_ids,
         )
         menu = QMenu()
         try:
@@ -110,6 +123,7 @@ class CommandFileRunCoordinatorTests(unittest.TestCase):
 
             self.assertEqual(session.started, [("SEND *IDN?\n", "Untitled", None)])
             self.assertEqual(statuses, ["Running Untitled in COM88."])
+            self.assertEqual(focused_session_ids, [88])
         finally:
             menu.deleteLater()
 
@@ -150,17 +164,58 @@ class CommandFileRunCoordinatorTests(unittest.TestCase):
     def test_target_service_runs_command_request_by_id(self) -> None:
         session = FakeSession(5)
         statuses: list[str] = []
+        focused_session_ids: list[int] = []
         coordinator = self.make_coordinator(
             sessions=[session],
             editors=[],
             current_editor=None,
             statuses=statuses,
+            focused_session_ids=focused_session_ids,
         )
 
         self.assertTrue(coordinator.target_service.run(CommandRunRequest("SEND *RST"), 5))
 
         self.assertEqual(session.started, [("SEND *RST", "Untitled", None)])
         self.assertEqual(statuses, ["Running Untitled in COM5."])
+        self.assertEqual(focused_session_ids, [5])
+
+    def test_run_request_does_not_focus_when_start_is_cancelled(self) -> None:
+        session = FakeSession(11, run_result=False)
+        statuses: list[str] = []
+        focused_session_ids: list[int] = []
+        coordinator = self.make_coordinator(
+            sessions=[session],
+            editors=[],
+            current_editor=None,
+            statuses=statuses,
+            focused_session_ids=focused_session_ids,
+        )
+
+        started = coordinator.run_request_in_target(CommandRunRequest("SEND SAFE"), 11)
+
+        self.assertFalse(started)
+        self.assertEqual(session.started, [("SEND SAFE", "Untitled", None)])
+        self.assertEqual(statuses, [])
+        self.assertEqual(focused_session_ids, [])
+
+    def test_run_editor_in_target_does_not_focus_when_start_is_cancelled(self) -> None:
+        session = FakeSession(13, run_result=False)
+        editor = FakeEditor(text="SEND ABORT\n")
+        statuses: list[str] = []
+        focused_session_ids: list[int] = []
+        coordinator = self.make_coordinator(
+            sessions=[session],
+            editors=[editor],
+            current_editor=editor,
+            statuses=statuses,
+            focused_session_ids=focused_session_ids,
+        )
+
+        coordinator.run_editor_in_target(editor, session)
+
+        self.assertEqual(session.started, [("SEND ABORT\n", "Untitled", None)])
+        self.assertEqual(statuses, [])
+        self.assertEqual(focused_session_ids, [])
 
 
 if __name__ == "__main__":

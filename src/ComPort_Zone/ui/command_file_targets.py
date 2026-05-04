@@ -28,7 +28,7 @@ class TerminalSessionLike(Protocol):
         text: str,
         source_label: str = "Editor buffer",
         source_path: Path | None = None,
-    ) -> None:
+    ) -> bool | None:
         ...
 
 
@@ -61,6 +61,7 @@ class CommandFileRunCoordinator:
         is_widget_open: Callable[[object], bool],
         set_status: Callable[[str], None],
         target_icon_color: Callable[[], str],
+        focus_session: Callable[[TerminalSessionLike], None] | None = None,
     ) -> None:
         self._sessions_supplier = sessions_supplier
         self._editors_supplier = editors_supplier
@@ -68,6 +69,7 @@ class CommandFileRunCoordinator:
         self._is_widget_open = is_widget_open
         self._set_status = set_status
         self._target_icon_color = target_icon_color
+        self._focus_session = focus_session
         self.target_service = CommandRunTargetService(
             targets_supplier=self.run_targets,
             run_callback=self.run_request_in_target,
@@ -128,7 +130,15 @@ class CommandFileRunCoordinator:
         if not session.serial_client.is_connected:
             self._set_status(f"{session.tab_title} is not connected.")
             return False
-        session.run_script_text(request.text, source_label=request.source_label, source_path=request.path)
+        started = session.run_script_text(
+            request.text,
+            source_label=request.source_label,
+            source_path=request.path,
+        )
+        if started is False:
+            return False
+        if self._focus_session is not None:
+            self._focus_session(session)
         self._set_status(f"Running {request.display_name} in {session.tab_title}.")
         return True
 
@@ -151,7 +161,15 @@ class CommandFileRunCoordinator:
             self._set_status("Fix command-file syntax errors before running.")
             return
         label = str(editor.path) if editor.path else editor.display_name()
-        session.run_script_text(editor.text(), source_label=label, source_path=editor.path)
+        started = session.run_script_text(
+            editor.text(),
+            source_label=label,
+            source_path=editor.path,
+        )
+        if started is False:
+            return
+        if self._focus_session is not None:
+            self._focus_session(session)
         self._set_status(f"Running {editor.display_name()} in {session.tab_title}.")
 
     def _add_disabled_action(self, menu: QMenu, text: str) -> None:

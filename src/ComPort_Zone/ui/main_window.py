@@ -160,6 +160,7 @@ class MainWindow(QMainWindow):
             is_widget_open=lambda widget: self.tabs.indexOf(widget) >= 0,
             set_status=self.set_status,
             target_icon_color=lambda: self.theme.rx,
+            focus_session=self._focus_session_tab,
         )
         self._build_menus()
         self.apply_theme(self.theme.name)
@@ -438,6 +439,11 @@ class MainWindow(QMainWindow):
 
     def run_editor_in_terminal(self, editor: CommandFileEditorDialog, session: TerminalSessionWidget) -> None:
         self.command_file_runs.run_editor_in_target(editor, session)
+
+    def _focus_session_tab(self, session: TerminalSessionWidget) -> None:
+        if self.tabs.indexOf(session) < 0:
+            return
+        self.tabs.setCurrentWidget(session)
 
     def show_find_in_current_tab(self) -> None:
         editor = self.current_command_file_editor()

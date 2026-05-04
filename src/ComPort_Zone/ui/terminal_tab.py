@@ -909,15 +909,15 @@ class TerminalSessionWidget(QWidget):
             return
         self.run_script_path(Path(path))
 
-    def run_script_path(self, path: Path) -> None:
+    def run_script_path(self, path: Path) -> bool:
         try:
             script_text = path.read_text(encoding="utf-8")
         except OSError as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
-            return
-        self.run_script_text(script_text, source_label=str(path), source_path=path)
+            return False
+        return self.run_script_text(script_text, source_label=str(path), source_path=path)
 
-    def run_script_text(self, script_text: str, *, source_label: str = "Editor buffer", source_path: Path | None = None) -> None:
+    def run_script_text(self, script_text: str, *, source_label: str = "Editor buffer", source_path: Path | None = None) -> bool:
         try:
             result = self.controller.run_script_text(
                 script_text,
@@ -929,14 +929,15 @@ class TerminalSessionWidget(QWidget):
             )
         except BatchParseError as exc:
             QMessageBox.critical(self, "Run Command File", str(exc))
-            return
+            return False
         if result.empty:
             QMessageBox.information(self, "Run Command File", "Command file is empty.")
-            return
+            return False
         if not result.started:
-            return
+            return False
         self.host.set_status(result.status_text)
         self.host.save_settings()
+        return True
 
     def _collect_parameter_values(self, parameter_occurrences) -> tuple[dict[str, str], set[str]] | None:
         dialog = CommandFileParametersDialog(parameter_occurrences, self)

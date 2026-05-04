@@ -612,8 +612,8 @@ class AppSessionTests(unittest.TestCase):
             session.profile.port = "COM88"
             session.serial_client._serial = FakePort()
             started: list[tuple[str, object, object]] = []
-            session.run_script_text = lambda text, source_label="Editor buffer", source_path=None: started.append(
-                (text, source_label, source_path)
+            session.run_script_text = lambda text, source_label="Editor buffer", source_path=None: (
+                started.append((text, source_label, source_path)) or True
             )
             editor = window.add_command_file_tab()
             editor.setPlainText("SEND *IDN?\n")
@@ -628,6 +628,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("COM88", editor.run_target_combo.currentText())
             actions[0].trigger()
             self.assertEqual(started, [("SEND *IDN?\n", "Untitled", None)])
+            self.assertIs(window.tabs.currentWidget(), session)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
