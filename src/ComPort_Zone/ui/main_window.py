@@ -516,6 +516,12 @@ class MainWindow(QMainWindow):
     def restore_session_connection(self, session: TerminalSessionWidget) -> None:
         if self.tabs.indexOf(session) < 0 or session.serial_client.is_connected:
             return
+        if session.profile_port_missing():
+            message = f"{session.profile.port} is not currently detected. Auto-connect skipped."
+            session._append_status(message)
+            session._update_connection_ui(False)
+            self.set_status(message)
+            return
         self.set_status(f"Connecting to {session.profile.port}...")
         session.serial_client.connect(session.profile)
         session._update_connection_ui(session.serial_client.is_connected)

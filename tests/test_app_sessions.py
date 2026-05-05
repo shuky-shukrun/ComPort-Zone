@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolBut
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SETTINGS_SCHEMA_VERSION, SerialProfile, TerminalSessionState
+from ComPort_Zone.serial_core import SerialClient
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
 from ComPort_Zone.ui import main_window as main_window_module
@@ -88,6 +89,60 @@ class AppSessionTests(unittest.TestCase):
                 app_module.MainWindow.prompt_current_session_settings = old_prompt_current
                 app_module.MainWindow.prompt_session_settings = old_prompt_session
                 app_module.MainWindow.restore_session_connection = old_restore_connection
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_restored_connected_missing_port_skips_auto_connect(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_restore_missing_port.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(
+                        restored_tabs=[
+                            TerminalSessionState(
+                                title="DUT",
+                                serial=SerialProfile(port="COM77", auto_reconnect=True),
+                                connected_on_launch=True,
+                            )
+                        ]
+                    )
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_list_ports_snapshot = main_window_module.TerminalSessionWidget.list_ports_snapshot
+            old_connect = SerialClient.connect
+            connect_calls: list[str] = []
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            main_window_module.TerminalSessionWidget.list_ports_snapshot = lambda self: []
+            SerialClient.connect = lambda self, profile: connect_calls.append(profile.port) or False
+            try:
+                window = app_module.MainWindow()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+                session = window.current_session()
+
+                self.assertEqual(connect_calls, [])
+                self.assertEqual(session.connection_state(), "missing")
+                self.assertIn("Auto-connect skipped", session.terminal.toPlainText())
+                self.assertIn("Auto-connect skipped", window.footer.text())
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                main_window_module.TerminalSessionWidget.list_ports_snapshot = old_list_ports_snapshot
+                SerialClient.connect = old_connect
                 if window is not None:
                     for active_session in window.iter_sessions():
                         active_session.shutdown()

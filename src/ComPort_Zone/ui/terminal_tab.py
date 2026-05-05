@@ -1312,6 +1312,9 @@ class TerminalSessionWidget(QWidget):
         known_ports = {str(port.get("device", "")) for port in ports}
         return bool(self.profile.port and self.profile.port not in known_ports)
 
+    def profile_port_missing(self) -> bool:
+        return self._profile_port_missing()
+
     def _update_line_ending_label(self) -> None:
         self.line_ending_label.setText(self.profile.line_ending)
         self.host.update_connection_status(self)
