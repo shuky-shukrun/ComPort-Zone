@@ -73,6 +73,40 @@ class TerminalViewTests(unittest.TestCase):
 
         self.assertEqual(terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
 
+    def test_render_plan_streams_rx_hex_with_spaces_between_chunks(self) -> None:
+        view, terminal, _ = self.make_view()
+
+        view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="rx", message="01", raw=b"\x01"),
+                message="01",
+                color_role="rx",
+                stream_text=True,
+                stream_separator=" ",
+            ),
+            colors=COLORS,
+            timestamps_enabled=False,
+            search_visible=False,
+            search_text="",
+            search_highlight="#333333",
+        )
+        view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="rx", message="02 03", raw=b"\x02\x03"),
+                message="02 03",
+                color_role="rx",
+                stream_text=True,
+                stream_separator=" ",
+            ),
+            colors=COLORS,
+            timestamps_enabled=False,
+            search_visible=False,
+            search_text="",
+            search_highlight="#333333",
+        )
+
+        self.assertEqual(terminal.toPlainText(), "01 02 03")
+
     def test_render_plan_keeps_progress_dots_on_one_line(self) -> None:
         view, terminal, _ = self.make_view()
 

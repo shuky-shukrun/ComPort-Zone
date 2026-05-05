@@ -49,6 +49,7 @@ class TerminalRenderPlan:
     color_role: str = "default"
     stream_text: bool = False
     ensure_line_break: bool = False
+    stream_separator: str = ""
 
 
 class TerminalSessionController:
@@ -121,7 +122,10 @@ class TerminalSessionController:
             if event.kind in {"rx", "tx", "status", "error"}
             else "default"
         )
-        stream_text = (event.kind == "rx" and receive_display_mode == "Text") or event.kind == "progress"
+        hex_rx_stream = event.kind == "rx" and receive_display_mode == "Hex"
+        stream_text = (
+            event.kind == "rx" and receive_display_mode in {"Text", "Hex"}
+        ) or event.kind == "progress"
         return TerminalRenderPlan(
             event=event,
             message=message,
@@ -135,6 +139,7 @@ class TerminalSessionController:
             color_role=color_role,
             stream_text=stream_text,
             ensure_line_break=event.kind not in {"rx", "progress"},
+            stream_separator=" " if hex_rx_stream else "",
         )
 
     def display_message_for_event(self, event: SerialEvent, receive_display_mode: str) -> str:

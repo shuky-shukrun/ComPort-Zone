@@ -101,9 +101,18 @@ class TerminalView:
         message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
         if not message:
             return
+        separator = (
+            plan.stream_separator
+            if (
+                plan.stream_separator
+                and not self._terminal_at_line_start()
+                and not message.startswith("\n")
+            )
+            else ""
+        )
         rendered = self._leadered_stream(message, plan, timestamps_enabled=timestamps_enabled)
         self.insert_text(
-            rendered,
+            f"{separator}{rendered}",
             color,
             search_visible=search_visible,
             search_text=search_text,

@@ -187,7 +187,9 @@ class TerminalSessionControllerTests(unittest.TestCase):
 
         self.assertTrue(text_plan.stream_text)
         self.assertEqual(text_plan.message, "\ufffdOK")
+        self.assertTrue(hex_plan.stream_text)
         self.assertEqual(hex_plan.message, "FF 4F 4B")
+        self.assertEqual(hex_plan.stream_separator, " ")
         self.assertEqual(combined_plan.message, "\ufffdOK\nHEX FF 4F 4B")
         self.assertEqual(tx_plan.prefix, "TX> ")
         self.assertTrue(tx_plan.ensure_line_break)
