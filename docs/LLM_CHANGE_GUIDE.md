@@ -39,12 +39,12 @@ git diff --check
 | Workspace tab lifecycle                       | `src/ComPort_Zone/ui/tab_workspace.py`                                                                                             | `tests/test_tab_workspace`, app-session tests                 |
 | Footer/tab status presentation                | `src/ComPort_Zone/ui/workspace_status.py`                                                                                          | `tests/test_workspace_status`                                 |
 | Terminal send/run/event behavior              | `src/ComPort_Zone/terminal_session_controller.py`                                                                                  | `tests/test_terminal_session_controller`                      |
-| Terminal QTextEdit rendering/search           | `src/ComPort_Zone/ui/terminal_view.py`                                                                                             | `tests/test_terminal_view`                                    |
+| Terminal QTextEdit rendering/search           | `src/ComPort_Zone/terminal_view.py`                                                                                                | `tests/test_terminal_view`                                    |
 | Terminal tab UI layout/glue                   | `src/ComPort_Zone/ui/terminal_tab.py`                                                                                              | terminal tests plus app-session tests                         |
 | Serial behavior                               | `src/ComPort_Zone/serial_core.py`                                                                                                  | `tests/test_serial_core`                                      |
 | Transport abstraction                         | `src/ComPort_Zone/transports.py`                                                                                                   | `tests/test_transports`                                       |
 | Command-file parsing/running                  | `src/ComPort_Zone/batch.py`, `src/ComPort_Zone/command_file_service.py`                                                            | `tests/test_batch`, `tests/test_command_file_service`         |
-| Command-file editor UI                        | `src/ComPort_Zone/ui/command_editor.py`                                                                                            | `tests/test_command_editor`                                   |
+| Command-file editor UI                        | `src/ComPort_Zone/command_editor.py`                                                                                               | `tests/test_command_editor`                                   |
 | Editor core/highlighting/search               | `src/ComPort_Zone/command_editor_core.py`, `src/ComPort_Zone/command_editor_highlighting.py`, `src/ComPort_Zone/command_search.py` | matching focused tests                                        |
 | Editor run target menus                       | `src/ComPort_Zone/ui/command_file_targets.py`                                                                                      | `tests/test_command_file_targets`                             |
 | Quick command/file domain                     | `src/ComPort_Zone/quick_actions.py`                                                                                                | `tests/test_quick_actions`                                    |
@@ -134,7 +134,7 @@ git diff --check
 
 ### Fix Terminal Rendering Or Search
 
-1. Start in `src/ComPort_Zone/ui/terminal_view.py`.
+1. Start in `src/ComPort_Zone/terminal_view.py`.
 2. Keep QTextEdit rendering in `TerminalView`.
 3. Keep event decisions in `TerminalSessionController`.
 4. Run:
@@ -158,7 +158,7 @@ git diff --check
 ### Fix Command Editor Search Or Replace
 
 1. Search state/pure logic: edit `src/ComPort_Zone/command_search.py`.
-2. Editor UI: edit `src/ComPort_Zone/ui/command_editor.py`.
+2. Editor UI: edit `src/ComPort_Zone/command_editor.py`.
 3. Run:
 
 ```powershell
@@ -184,6 +184,17 @@ git diff --check
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest tests/test_quick_actions tests/test_quick_action_controller tests/test_quick_actions_panel tests/test_quick_actions_sidebar -q
+```
+
+### Fix Shared Drawer State
+
+1. Start in `src/ComPort_Zone/ui/main_window.py` for global drawer callbacks and persisted settings updates.
+2. Terminal drawer UI lives in `src/ComPort_Zone/ui/terminal_tab.py`.
+3. Embedded command-file editor drawer UI lives in `src/ComPort_Zone/command_editor.py`.
+4. Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests/test_app_sessions.AppSessionTests.test_drawer_width_and_page_are_shared_across_tabs -q
 ```
 
 ### Fix Settings Save/Restore
@@ -256,6 +267,7 @@ Run focused tests:
 - `MainWindow` should keep shrinking. Do not add a new workflow there if a controller/presenter already exists.
 - `ui/terminal_tab.py` is allowed to coordinate terminal UI, but pure behavior should move to controller/domain modules.
 - `command_editor.py` is still the command-file editor UI owner until final module location is decided.
+- Drawer collapsed state, selected page, and width are app-level settings shared by terminal and embedded command-file editor tabs.
 - Quick action CSV import/export belongs to `quick_actions.py` and `quick_action_controller.py`, not `MainWindow`.
 - App settings JSON import/export intentionally excludes quick actions.
 - `SettingsStore` should remain file I/O only. Schema/payload rules belong to `SettingsService`.

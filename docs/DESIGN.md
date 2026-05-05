@@ -23,6 +23,7 @@ ComPort Zone is a PySide6 desktop app for working with serial COM-port devices. 
 - Command-file editing, validation, syntax highlighting, autocomplete, find/replace, and execution.
 - Batch command files with `SEND`, `WAIT`, `EXPECT`, `HEX`, and parameter templates.
 - Quick commands and quick files, shared between terminal and editor views.
+- Shared drawer collapsed state, selected page, and width across terminal and embedded editor tabs.
 - Import/export of quick actions through CSV.
 - App settings import/export through JSON.
 - Restored workspace tabs across app launches.
@@ -181,6 +182,7 @@ The app keeps most persisted state in `models.AppSettings`. The settings service
 Important model groups:
 
 - `AppSettings`: top-level persisted settings, quick actions, command history, restored tabs, UI preferences, app schema version.
+- App-level drawer preferences on `AppSettings`: collapsed state, drawer width, and selected Quick Commands/Quick Files page.
 - `TerminalSessionState`: persisted terminal tab state, including title, transport kind/profile, serial profile, terminal text, command draft, send mode, connect-on-launch flag.
 - `CommandFileTabState`: persisted command-file editor state, including path, unsaved text, dirty state, send target preference.
 - `SerialProfile`: serial connection fields such as port, baudrate, line ending, parity, stop bits, DTR/RTS.
@@ -339,6 +341,7 @@ Quick-action rules:
 - `quick_action_controller.py` owns dialogs and mutation workflow.
 - `quick_actions_panel.py` and `quick_actions_sidebar.py` render shared UI for terminal and editor modes.
 - Terminal and editor sidebars should look the same; only mode-specific primary actions differ.
+- Drawer collapsed state, selected Quick Commands/Quick Files page, and drawer width are app-level settings applied across terminal tabs and embedded command-file editor tabs.
 - App settings JSON import/export excludes quick actions. Quick actions use CSV import/export.
 
 ## Flow: Settings Save, Import, Export
@@ -495,6 +498,7 @@ Done foundations:
 - Command editor core, search, highlighting, command-file services, and run-target coordination are extracted.
 - Settings service, workspace state, workspace settings controller, app settings controller are extracted.
 - Transport abstraction foundation exists with serial adapter.
+- Shared drawer collapsed state, selected page, and resized width are synchronized across terminal and embedded command-file editor tabs.
 
 Remaining design work:
 

@@ -1,3 +1,99 @@
+# ComPort Zone v0.2.3 Release Notes
+
+Release date: 2026-05-05
+
+ComPort Zone v0.2.3 is a focused polish and bug-fix release on top of the v0.2.2 modularization work.
+
+## Highlights
+
+- Terminal output right-click menus now include Clear Terminal, Line Wrap, and Show Timestamps.
+- The left drawer behaves consistently across terminal tabs and embedded command-file editor tabs.
+- RX hex display now streams byte chunks as one readable sequence instead of inserting an unwanted break after the first chunk.
+
+## What's New
+
+### Terminal Context Menu
+
+- Added Clear Terminal to the terminal output context menu.
+- Added checkable Line Wrap and Show Timestamps actions to the same context menu.
+- Context-menu toggles stay synchronized with the matching main menu actions and persisted app settings.
+
+### Shared Drawer State
+
+- The drawer's collapsed/expanded state, selected Quick Commands or Quick Files page, and resized width are shared across terminal tabs and command-file editor tabs.
+- Drawer state is persisted in app settings, including the selected drawer page.
+- Command-file editor tabs use the same drawer sizing rules as terminal tabs when embedded in the workspace.
+
+### Hex Receive Rendering
+
+- RX hex output now keeps streamed chunks on the same line with a space between chunks.
+- Text receive rendering and progress-dot rendering keep their existing streaming behavior.
+
+## Validation
+
+The release added regression coverage for:
+
+- Terminal context-menu controls and setting synchronization.
+- Shared drawer page and width propagation across tabs.
+- Streamed RX hex byte spacing in the terminal view and controller.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
+# ComPort Zone v0.2.2 Release Notes
+
+Release date: 2026-05-05
+
+ComPort Zone v0.2.2 is a modularization and developer-workflow release. It keeps the existing user workflows intact while moving more of the application out of large UI classes and into focused modules with tests.
+
+## Highlights
+
+- `app.py` is now a thin startup module; `MainWindow` lives in `ui/main_window.py`.
+- Terminal tab UI, terminal behavior, and terminal rendering/search are split into separate modules.
+- Menus, tab context menus, command-palette workspace entries, workspace state/settings coordination, dialogs, and quick-action workflows now have focused owners.
+- Developer documentation now describes the architecture, design, and small-change recipes.
+- Setup, launch, and test scripts make fresh clones and day-to-day verification simpler.
+
+## Architecture And Developer Workflow
+
+- Added `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, and `docs/LLM_CHANGE_GUIDE.md`.
+- Added `.continue/rules/CONTINUE.md` with repository guidance for AI-assisted changes.
+- Added `setup_dev.bat`, `launch_app.bat`, `run_tests.bat`, and PowerShell scripts under `scripts/`.
+- Removed committed `.egg-info` metadata from source control.
+
+## Modularization
+
+- Moved `MainWindow` to `ui/main_window.py` while preserving compatibility re-exports from `ComPort_Zone.app`.
+- Moved `TerminalSessionWidget` to `ui/terminal_tab.py`.
+- Added `terminal_session_controller.py` for terminal send/run/event decisions.
+- Added `terminal_view.py` for QTextEdit rendering and terminal search highlighting.
+- Added or expanded focused owners for command registry, menu construction, tab context menus, tab workspace behavior, workspace status presentation, workspace state, workspace settings, app settings, quick-action workflows, dialogs, and command-file run-target coordination.
+
+## User-Facing Polish
+
+- Editor font controls now sit beside the editor Send controls.
+- Command editor gutter, current-line, and search highlight colors now follow the active theme.
+- Auto-reconnect feedback is less noisy and renders repeated attempts as compact progress.
+- Running a command file reports success/failure to the UI so focus only shifts to a terminal after a run actually starts.
+- The terminal search close button is icon-only and no longer shows an extra `X` label.
+
+## Validation
+
+The release added focused tests for extracted modules and kept app-session regression coverage around the main workflows.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.2.1 Release Notes
 
 Release date: 2026-04-29

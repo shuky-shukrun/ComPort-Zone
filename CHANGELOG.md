@@ -2,6 +2,56 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.2.3 - 2026-05-05
+
+### Added
+
+- Add terminal output context-menu actions for Clear Terminal, Line Wrap, and Show Timestamps.
+
+### Changed
+
+- Keep the shared left drawer's collapsed state, selected Quick Commands/Quick Files page, and resized width synchronized across terminal tabs and embedded command-file editor tabs.
+- Stream RX hex display chunks as one continuous byte stream with spaces between chunks.
+
+### Fixed
+
+- Fix a hex receive display issue where later byte chunks could appear after an unwanted line break instead of continuing after the first byte.
+- Fix sidebar state propagation so drawer page and width changes are no longer isolated to only the tab where the change was made.
+
+### Tests
+
+- Added app-session coverage for terminal context-menu controls and shared drawer page/width behavior.
+- Added focused terminal rendering/controller coverage for streamed hex RX chunk spacing.
+
+## 0.2.2 - 2026-05-05
+
+### Added
+
+- Add `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, and `docs/LLM_CHANGE_GUIDE.md` as living references for the redesign, module ownership, and safe change recipes.
+- Add setup, launch, and test helper scripts: `setup_dev.bat`, `launch_app.bat`, `run_tests.bat`, and their PowerShell implementations under `scripts/`.
+- Add AI agent and repository guidance through `.continue/rules/CONTINUE.md`.
+
+### Changed
+
+- Move `MainWindow` into `ui/main_window.py` and keep `app.py` focused on startup, splash handling, and compatibility re-exports.
+- Move `TerminalSessionWidget` into `ui/terminal_tab.py` while preserving existing `ComPort_Zone.app` compatibility imports.
+- Extract terminal behavior into `terminal_session_controller.py` and terminal rendering/search into `terminal_view.py`.
+- Extract command registry, top menu wiring, tab context menus, command-palette workspace entries, tab workspace behavior, workspace status presentation, workspace state capture/restore, and settings save/apply coordination into focused modules.
+- Extract quick-action workflows, app-settings transfer workflows, dialog classes, command-file target coordination, and command-file parameter dialogs into dedicated modules.
+- Move editor font controls beside the editor Send controls.
+- Make command editor line-number gutter, current-line highlight, and search highlights use the active theme palette.
+- Improve auto-reconnect feedback so repeated reconnect attempts render as compact progress instead of noisy status lines.
+- Change command-file execution to report whether a run started so the UI can shift focus to the target terminal only after a successful start.
+- Update commit-message generation and LLM/developer instructions.
+
+### Fixed
+
+- Fix the terminal search close button so it uses the icon-only close button instead of showing an extra `X` label.
+
+### Tests
+
+- Added focused coverage for extracted controllers, dialogs, menu builders, context menus, command registry, tab workspace, workspace state/settings, terminal controller/view behavior, and command-file target coordination.
+
 ## 0.2.1 - 2026-04-29
 
 ### Added

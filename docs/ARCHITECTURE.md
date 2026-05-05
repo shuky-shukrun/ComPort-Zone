@@ -53,6 +53,8 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 The project is in an incremental redesign. `src/ComPort_Zone/app.py` is now a thin startup and compatibility module, while `src/ComPort_Zone/ui/main_window.py` owns the main window shell. The main window module is still large and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
 
+The workspace drawer is treated as app-level UI state: collapsed/expanded state, drawer width, and selected Quick Commands/Quick Files page are applied consistently to terminal tabs and embedded command-file editor tabs.
+
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
 ```powershell
@@ -79,6 +81,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Command palette workspace entries | `ui/command_palette_entries.py` | Same | Done | Dynamic tab-switch entries are built outside `MainWindow`. |
 | Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
+| Workspace drawer state | `ui/main_window.py`, terminal/editor tab drawer hooks | Future presenter/controller if it grows | Done foundation | Collapsed state, selected page, and width are global settings applied across terminal and editor tabs. |
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
 | Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export payload rules. |
 | App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
@@ -108,9 +111,11 @@ Command-file text may come from a file path, quick file, editor buffer, or run t
 
 Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionController` coordinates UI workflows around the library: add/edit/delete, import/export dialogs, bulk cleanup, reorder, refresh, save, and status updates. Terminal and editor sidebars use shared quick-action UI components with mode-specific callbacks. Terminal mode sends/runs; editor mode inserts/opens. CSV parsing/merge/filter/sort behavior stays in the domain service.
 
+The drawer container around those shared panels is app-level UI state. Selecting Quick Commands or Quick Files, collapsing/expanding the drawer, or resizing it should update all terminal and embedded editor tabs through the main workspace callbacks.
+
 ### Settings Save, Import, and Export
 
-`SettingsService` owns the application settings payload and schema. `StorageStore` only handles JSON file I/O. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows.
+`SettingsService` owns the application settings payload and schema. `StorageStore` only handles JSON file I/O. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
 
 ### Commands, Menus, and Palette
 
@@ -127,6 +132,7 @@ Quick commands and quick files are owned by `QuickActionLibrary`. `QuickActionCo
 | Done | Workspace state service | Restore/capture logic has one owner. |
 | Done | CommandRegistry for menus and command palette | Static command definitions now live in one module. |
 | Done | TabWorkspaceController and workspace status presenter | Tab lifecycle and tab/status presentation are no longer owned directly by `MainWindow`. |
+| Done | Shared workspace drawer state | Drawer collapsed state, width, and selected page are synchronized across terminal and embedded editor tabs. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
 | Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, command palette, and command-file parameter dialogs are extracted. |

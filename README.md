@@ -4,12 +4,14 @@ ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging
 
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick commands and quick files.
 
+Current version: `0.2.3`.
+
 ## Current Features
 
 - Terminal-first layout with minimal chrome and a VS Code dark default theme
 - Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
 - Tabs for independent serial sessions and command-file editor documents
-- Foldable and resizable left drawer, collapsed by default
+- Foldable and resizable left drawer, collapsed by default, with shared width and selected page across terminal and editor tabs
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
 - Separate quick-file drawer entry for saved command-file paths, with sorting, drag/manual reorder, double-click/send execution, Explorer reveal, and CSV import/export
 - Built-in command-file editor tabs with line numbers, autocomplete, syntax highlighting, unknown-command warnings, dirty-state tab indicators, file save/open, and explicit run targets
@@ -18,16 +20,17 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 - App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
-- Text sending and hex/raw-byte sending
+- Text and hex/raw-byte sending and receive display
 - Up/Down command history navigation
 - Autocomplete from command history and saved quick commands with `Ctrl+Space`
 - Search within the active terminal tab with highlighted matches
 - RX, TX, status, and error coloring
 - Optional terminal timestamps
 - Clear, copy, select all, pause/resume output, terminal font settings, and line wrap controls
+- Terminal output context menu with Clear Terminal, Line Wrap, Show Timestamps, and selected text/hex conversion helpers
 - Per-tab command file execution with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
 - Per-tab logging to text files
-- Persisted settings for theme, drawer state, serial defaults, quick commands, font size, history, scrollback, restored terminal tabs, and restored command-file tabs
+- Persisted settings for theme, drawer state and page, serial defaults, quick commands, font size, history, scrollback, restored terminal tabs, and restored command-file tabs
 
 ## Install
 
@@ -104,6 +107,13 @@ PowerShell users can call:
 .\scripts\run_tests.ps1
 .\scripts\run_tests.ps1 tests.test_quick_actions
 ```
+
+## Developer Documentation
+
+- `docs/ARCHITECTURE.md`: current refactor state, subsystem ownership, and roadmap.
+- `docs/DESIGN.md`: detailed design reference with module maps, data/control flows, and test guidance.
+- `docs/LLM_CHANGE_GUIDE.md`: compact ownership map and safe change recipes for small fixes.
+- `CHANGELOG.md` and `RELEASE_NOTES.md`: release history and user-facing change summaries.
 
 ## Build Windows EXE
 
@@ -268,7 +278,7 @@ App settings JSON includes:
 - Serial defaults for new tabs
 - Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
 - Command history and autocomplete source data
-- Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state
+- Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state/page
 - Last log/script paths and window size
 
 ## Keyboard Shortcuts
