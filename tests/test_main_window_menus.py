@@ -50,6 +50,10 @@ class MainWindowMenuBuilderTests(unittest.TestCase):
             self.assertIs(host.tools_menu, handles.tools_menu)
             self.assertTrue(host.timestamps_action.isChecked())
             self.assertFalse(host.wrap_action.isChecked())
+            self.assertTrue(host.timestamps_action.isCheckable())
+            self.assertTrue(host.timestamps_action.icon().isNull())
+            self.assertTrue(host.wrap_action.isCheckable())
+            self.assertTrue(host.wrap_action.icon().isNull())
             self.assertIn("VS Code Dark", host.theme_actions)
 
             palette_actions = [

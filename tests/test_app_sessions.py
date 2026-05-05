@@ -998,6 +998,70 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_terminal_view_context_menu_includes_terminal_controls(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_terminal_context_menu.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            self.assertIsNotNone(session)
+            session.terminal.setPlainText("captured output")
+
+            window.settings.line_wrap_enabled = False
+            window.settings.timestamps_enabled = False
+            window.apply_settings_to_ui()
+
+            menu = session.build_terminal_context_menu(session.terminal.viewport().rect().center())
+            titles = [action.text() for action in menu.actions() if not action.isSeparator()]
+            self.assertIn("Clear Terminal", titles)
+            self.assertIn("Line Wrap", titles)
+            self.assertIn("Show Timestamps", titles)
+
+            line_wrap_action = next(action for action in menu.actions() if action.text() == "Line Wrap")
+            timestamps_action = next(action for action in menu.actions() if action.text() == "Show Timestamps")
+            clear_action = next(action for action in menu.actions() if action.text() == "Clear Terminal")
+
+            self.assertTrue(line_wrap_action.isCheckable())
+            self.assertFalse(line_wrap_action.isChecked())
+            self.assertTrue(line_wrap_action.icon().isNull())
+            self.assertTrue(timestamps_action.isCheckable())
+            self.assertFalse(timestamps_action.isChecked())
+            self.assertTrue(timestamps_action.icon().isNull())
+
+            line_wrap_action.trigger()
+            self.qt.processEvents()
+            self.assertTrue(window.settings.line_wrap_enabled)
+            self.assertTrue(window.wrap_action.isChecked())
+            self.assertEqual(
+                session.terminal.lineWrapMode(),
+                session.terminal.LineWrapMode.WidgetWidth,
+            )
+
+            timestamps_action.trigger()
+            self.qt.processEvents()
+            self.assertTrue(window.settings.timestamps_enabled)
+            self.assertTrue(window.timestamps_action.isChecked())
+
+            clear_action.trigger()
+            self.assertEqual(session.terminal.toPlainText(), "")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_top_menus_group_workflow_actions(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_top_menus.json")
         settings_path.unlink(missing_ok=True)

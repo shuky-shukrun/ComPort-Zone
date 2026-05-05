@@ -1004,7 +1004,29 @@ class TerminalSessionWidget(QWidget):
         return self.terminal.textCursor().selectedText().replace("\u2029", "\n")
 
     def show_terminal_context_menu(self, position) -> None:
+        menu = self.build_terminal_context_menu(position)
+        menu.exec(self.terminal.mapToGlobal(position))
+
+    def build_terminal_context_menu(self, position) -> QMenu:
         menu = self.terminal.createStandardContextMenu(position)
+        menu.addSeparator()
+        self.host._add_context_command_action(
+            menu,
+            "edit.clear_terminal",
+            callback=self.clear_terminal,
+        )
+        self._add_terminal_toggle_context_action(
+            menu,
+            text="Line Wrap",
+            checked=self.host.settings.line_wrap_enabled,
+            callback=self._set_line_wrap_enabled_from_context_menu,
+        )
+        self._add_terminal_toggle_context_action(
+            menu,
+            text="Show Timestamps",
+            checked=self.host.settings.timestamps_enabled,
+            callback=self._set_timestamps_enabled_from_context_menu,
+        )
         selected_text = self.selected_terminal_text()
         if selected_text:
             menu.addSeparator()
@@ -1033,7 +1055,50 @@ class TerminalSessionWidget(QWidget):
                 lambda text=selected_text: self.replace_hex_selection_with_text(text),
                 icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
             )
-        menu.exec(self.terminal.mapToGlobal(position))
+        return menu
+
+    def _add_terminal_toggle_context_action(
+        self,
+        menu: QMenu,
+        *,
+        text: str,
+        checked: bool,
+        callback,
+    ) -> QAction:
+        action = QAction(text, menu)
+        action.setCheckable(True)
+        action.setChecked(checked)
+        action.triggered.connect(callback)
+        menu.addAction(action)
+        return action
+
+    def _set_host_action_checked(self, action_name: str, checked: bool) -> bool:
+        action = getattr(self.host, action_name, None)
+        if action is None:
+            return False
+        blocked = action.blockSignals(True)
+        action.setChecked(checked)
+        action.blockSignals(blocked)
+        return True
+
+    def _set_line_wrap_enabled_from_context_menu(self, checked: bool) -> None:
+        if self._set_host_action_checked("wrap_action", checked):
+            self.host.toggle_line_wrap()
+            return
+        self.host.settings.line_wrap_enabled = checked
+        if hasattr(self.host, "iter_sessions"):
+            for session in self.host.iter_sessions():
+                session.apply_settings()
+        else:
+            self.apply_settings()
+        self.host.save_settings()
+
+    def _set_timestamps_enabled_from_context_menu(self, checked: bool) -> None:
+        if self._set_host_action_checked("timestamps_action", checked):
+            self.host.toggle_timestamps()
+            return
+        self.host.settings.timestamps_enabled = checked
+        self.host.save_settings()
 
     def text_to_hex(self, text: str) -> str:
         return format_hex_bytes(text.encode("utf-8"))

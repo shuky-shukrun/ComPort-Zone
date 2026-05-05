@@ -136,7 +136,7 @@ class MainWindowMenuBuilder:
             spec.shortcut,
             spec.callback(self.host),
             checkable=spec.checkable,
-            icon=spec.icon,
+            icon=None if spec.checkable else spec.icon,
         )
 
     def add_action(
