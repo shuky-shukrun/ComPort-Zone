@@ -382,10 +382,17 @@ class MainWindow(QMainWindow):
             ),
             run_target_service=self.command_file_runs.target_service,
             theme_palette=self.theme,
+            workspace_drawer_page_callback=self.request_drawer_page,
+            workspace_drawer_width_callback=lambda width, source: self.set_drawer_width(width, source=source),
             embedded=True,
             show_run_button=False,
             show_workspace_side_panel=True,
             parent=self.tabs,
+        )
+        editor.apply_drawer_state(
+            self.settings.drawer_collapsed,
+            self.settings.drawer_width,
+            self.settings.drawer_page_index,
         )
         editor.apply_editor_font(self.editor_font())
         if state is not None:
@@ -625,6 +632,7 @@ class MainWindow(QMainWindow):
         self.workspace_status.update_tab_titles(self.theme)
 
     def sync_status_from_current_session(self) -> None:
+        self.apply_drawer_state_to_current_tab()
         self.workspace_status.sync_from_current(self.theme)
 
     def connection_state_color(self, state: str) -> str:
@@ -650,14 +658,58 @@ class MainWindow(QMainWindow):
     def toggle_drawer(self) -> None:
         self.set_drawer_collapsed(not self.settings.drawer_collapsed)
 
-    def set_drawer_collapsed(self, collapsed: bool) -> None:
-        self.settings.drawer_collapsed = collapsed
+    def normalized_drawer_page_index(self, index: int | None = None) -> int:
+        page_index = self.settings.drawer_page_index if index is None else index
+        return max(0, min(int(page_index), 1))
+
+    def apply_drawer_state_to_current_tab(self) -> None:
+        widget = self.tabs.currentWidget()
+        if hasattr(widget, "apply_drawer_state"):
+            widget.apply_drawer_state(
+                self.settings.drawer_collapsed,
+                self.settings.drawer_width,
+                self.normalized_drawer_page_index(),
+            )
+
+    def apply_drawer_state_to_tabs(self, *, source=None) -> None:
+        page_index = self.normalized_drawer_page_index()
         for session in self.iter_sessions():
-            session.apply_drawer_state(collapsed, self.settings.drawer_width)
+            if session is not source:
+                session.apply_drawer_state(
+                    self.settings.drawer_collapsed,
+                    self.settings.drawer_width,
+                    page_index,
+                )
+        for editor in self.iter_command_file_editors():
+            if editor is not source:
+                editor.apply_drawer_state(
+                    self.settings.drawer_collapsed,
+                    self.settings.drawer_width,
+                    page_index,
+                )
+
+    def request_drawer_page(self, index: int) -> None:
+        index = self.normalized_drawer_page_index(index)
+        if not self.settings.drawer_collapsed and self.normalized_drawer_page_index() == index:
+            self.set_drawer_collapsed(True)
+            return
+        self.set_drawer_page(index)
+        if self.settings.drawer_collapsed:
+            self.set_drawer_collapsed(False)
+
+    def set_drawer_page(self, index: int) -> None:
+        self.settings.drawer_page_index = self.normalized_drawer_page_index(index)
+        self.apply_drawer_state_to_tabs()
         self.save_settings()
 
-    def set_drawer_width(self, width: int) -> None:
+    def set_drawer_collapsed(self, collapsed: bool) -> None:
+        self.settings.drawer_collapsed = collapsed
+        self.apply_drawer_state_to_tabs()
+        self.save_settings()
+
+    def set_drawer_width(self, width: int, *, source=None) -> None:
         self.settings.drawer_width = max(220, min(width, 520))
+        self.apply_drawer_state_to_tabs(source=source)
         if not self._loading:
             self.save_settings()
 
@@ -724,11 +776,17 @@ class MainWindow(QMainWindow):
             session.apply_drawer_state(
                 self.settings.drawer_collapsed,
                 self.settings.drawer_width,
+                self.settings.drawer_page_index,
             )
             session.refresh_quick_commands()
             session.refresh_quick_files()
         for editor in self.iter_command_file_editors():
             editor.apply_editor_font(self.editor_font())
+            editor.apply_drawer_state(
+                self.settings.drawer_collapsed,
+                self.settings.drawer_width,
+                self.settings.drawer_page_index,
+            )
         self.update_tab_titles()
         self.sync_status_from_current_session()
 

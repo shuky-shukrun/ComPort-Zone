@@ -82,6 +82,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             receive_display_mode="Text + Hex",
             drawer_collapsed=False,
             drawer_width=340,
+            drawer_page_index=1,
         )
         payload: dict[str, str] = {}
         fake_parent = Mock()
@@ -106,6 +107,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(saved_payload["transport"]["profile"]["port"], "COM7")
         self.assertEqual(saved_payload["app"]["terminal_font"]["size"], 13)
         self.assertEqual(saved_payload["app"]["drawer"]["width"], 340)
+        self.assertEqual(saved_payload["app"]["drawer"]["page_index"], 1)
         self.assertEqual(saved_payload["libraries"]["quick_commands"][0]["label"], "Read ID")
         self.assertEqual(saved_payload["workspace"]["terminal_tabs"][0]["title"], "DUT A")
         self.assertEqual(loaded.serial.port, "COM7")
@@ -143,6 +145,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.receive_display_mode, "Text + Hex")
         self.assertFalse(loaded.drawer_collapsed)
         self.assertEqual(loaded.drawer_width, 340)
+        self.assertEqual(loaded.drawer_page_index, 1)
 
     def test_settings_file_uses_nested_schema_sections(self) -> None:
         settings = AppSettings.from_dict(

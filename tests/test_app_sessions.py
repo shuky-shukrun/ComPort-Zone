@@ -304,6 +304,87 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_drawer_width_and_page_are_shared_across_tabs(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_shared_drawer.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            first_session = window.current_session()
+            window.add_session(prompt_settings=False)
+            second_session = window.current_session()
+            editor = window.add_command_file_tab()
+
+            window.set_drawer_collapsed(False)
+            first_session._select_drawer_page(1)
+            self.qt.processEvents()
+
+            self.assertEqual(window.settings.drawer_page_index, 1)
+            self.assertEqual(first_session.drawer_pages.currentIndex(), 1)
+            self.assertEqual(second_session.drawer_pages.currentIndex(), 1)
+            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
+            self.assertFalse(first_session.drawer_panel.isHidden())
+            self.assertFalse(second_session.drawer_panel.isHidden())
+            self.assertFalse(editor.workspace_drawer.panel.isHidden())
+
+            second_drawer_updates: list[tuple[bool, int, int | None]] = []
+            original_second_apply_drawer_state = second_session.apply_drawer_state
+
+            def record_second_drawer_update(collapsed: bool, width: int, page_index: int | None = None) -> None:
+                second_drawer_updates.append((collapsed, width, page_index))
+                original_second_apply_drawer_state(collapsed, width, page_index)
+
+            second_session.apply_drawer_state = record_second_drawer_update
+            window.set_drawer_width(360, source=first_session)
+            window.tabs.setCurrentWidget(second_session)
+            self.qt.processEvents()
+
+            self.assertEqual(window.settings.drawer_width, 360)
+            self.assertIn((False, 360, 1), second_drawer_updates)
+            window.tabs.setCurrentWidget(editor)
+            self.qt.processEvents()
+            self.assertGreater(editor.workspace_splitter.sizes()[0], 48)
+            self.assertEqual(editor.workspace_drawer.maximumWidth(), 520)
+
+            first_drawer_updates: list[tuple[bool, int, int | None]] = []
+            original_first_apply_drawer_state = first_session.apply_drawer_state
+
+            def record_first_drawer_update(collapsed: bool, width: int, page_index: int | None = None) -> None:
+                first_drawer_updates.append((collapsed, width, page_index))
+                original_first_apply_drawer_state(collapsed, width, page_index)
+
+            first_session.apply_drawer_state = record_first_drawer_update
+            editor.workspace_splitter.setSizes([420, 900])
+            editor._workspace_drawer_resized(420, 0)
+            editor_drawer_width = editor.workspace_splitter.sizes()[0]
+
+            self.assertEqual(window.settings.drawer_width, editor_drawer_width)
+            self.assertIn((False, editor_drawer_width, 1), first_drawer_updates)
+
+            second_session._select_drawer_page(1)
+            self.qt.processEvents()
+
+            self.assertTrue(window.settings.drawer_collapsed)
+            self.assertTrue(first_session.drawer_panel.isHidden())
+            self.assertTrue(second_session.drawer_panel.isHidden())
+            self.assertTrue(editor.workspace_drawer.panel.isHidden())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_file_menu_unifies_app_settings_import_export_dialog(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_file_menu_settings_dialog.json")
         settings_path.unlink(missing_ok=True)

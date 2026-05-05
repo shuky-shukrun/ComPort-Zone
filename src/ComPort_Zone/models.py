@@ -284,6 +284,7 @@ class AppSettings:
     receive_display_mode: str = "Text"
     drawer_collapsed: bool = True
     drawer_width: int = 260
+    drawer_page_index: int = 0
     log_path: str = ""
     last_script_path: str = ""
     window_width: int = 1320
@@ -310,6 +311,7 @@ class AppSettings:
                 "drawer": {
                     "collapsed": self.drawer_collapsed,
                     "width": self.drawer_width,
+                    "page_index": self.drawer_page_index,
                 },
                 "paths": {
                     "log": self.log_path,
@@ -416,6 +418,7 @@ class AppSettings:
             receive_display_mode=receive_display_mode,
             drawer_collapsed=bool(drawer.get("collapsed", True)),
             drawer_width=int(drawer.get("width", 260)),
+            drawer_page_index=max(0, min(int(drawer.get("page_index", 0)), 1)),
             log_path=str(paths.get("log", "")),
             last_script_path=str(paths.get("last_script", "")),
             window_width=int(window.get("width", 1320)),

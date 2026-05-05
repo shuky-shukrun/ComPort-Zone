@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QLineEdit,
     QPushButton,
+    QSplitter,
     QStyle,
     QTextEdit,
     QToolButton,
@@ -447,6 +448,8 @@ class CommandFileEditorDialog(QDialog):
         file_service: CommandFileService | None = None,
         run_target_service: CommandRunTargetService | None = None,
         theme_palette: ThemePalette | None = None,
+        workspace_drawer_page_callback: Callable[[int], None] | None = None,
+        workspace_drawer_width_callback: Callable[[int, object], None] | None = None,
         embedded: bool = False,
         show_run_button: bool = True,
         show_workspace_side_panel: bool = False,
@@ -461,6 +464,8 @@ class CommandFileEditorDialog(QDialog):
         self.quick_action_callbacks = quick_action_callbacks or CommandEditorQuickActionCallbacks()
         self.file_service = file_service or CommandFileService()
         self.run_target_service = run_target_service
+        self.workspace_drawer_page_callback = workspace_drawer_page_callback
+        self.workspace_drawer_width_callback = workspace_drawer_width_callback
         self._show_run_bar = self.run_target_service is not None and self.run_target_service.is_configured()
         self.embedded = embedded
         self.show_workspace_side_panel = show_workspace_side_panel
@@ -468,6 +473,7 @@ class CommandFileEditorDialog(QDialog):
         self._local_quick_file_sort_mode = "Custom"
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
+        self._applying_drawer_state = False
         self._dirty = False
         self.search_state = CommandSearchState()
         if self.embedded:
@@ -559,8 +565,15 @@ class CommandFileEditorDialog(QDialog):
             root_layout = QHBoxLayout(self)
             root_layout.setContentsMargins(0, 0, 0, 0)
             root_layout.setSpacing(0)
-            root_layout.addWidget(self._build_workspace_side_panel())
-            root_layout.addWidget(editor_column, 1)
+            self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+            self.workspace_splitter.setChildrenCollapsible(False)
+            self.workspace_splitter.setHandleWidth(3)
+            self.workspace_splitter.splitterMoved.connect(self._workspace_drawer_resized)
+            self.workspace_splitter.addWidget(self._build_workspace_side_panel())
+            self.workspace_splitter.addWidget(editor_column)
+            self.workspace_splitter.setStretchFactor(0, 0)
+            self.workspace_splitter.setStretchFactor(1, 1)
+            root_layout.addWidget(self.workspace_splitter, 1)
         else:
             layout = QVBoxLayout(self)
             layout.addWidget(editor_column, 1)
@@ -579,7 +592,42 @@ class CommandFileEditorDialog(QDialog):
     def _select_workspace_drawer_page(self, index: int) -> None:
         if not hasattr(self, "workspace_drawer"):
             return
+        if self.workspace_drawer_page_callback is not None:
+            self.workspace_drawer_page_callback(index)
+            return
         self.workspace_drawer.select_page(index)
+
+    def apply_drawer_state(self, collapsed: bool, width: int, page_index: int | None = None) -> None:
+        if not hasattr(self, "workspace_drawer"):
+            return
+        self._applying_drawer_state = True
+        if page_index is not None:
+            self.workspace_drawer.select_page(page_index)
+        self.workspace_drawer.panel.setVisible(not collapsed)
+        rail_width = max(1, self.workspace_drawer.rail.maximumWidth())
+        try:
+            if collapsed:
+                self.workspace_drawer.setMinimumWidth(rail_width)
+                self.workspace_drawer.setMaximumWidth(rail_width)
+                if hasattr(self, "workspace_splitter"):
+                    self.workspace_splitter.setSizes([rail_width, max(700, self.width() - rail_width)])
+                return
+            drawer_width = max(220, min(width, 520))
+            self.workspace_drawer.setMinimumWidth(220)
+            self.workspace_drawer.setMaximumWidth(520)
+            if hasattr(self, "workspace_splitter"):
+                self.workspace_splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
+        finally:
+            self._applying_drawer_state = False
+
+    def _workspace_drawer_resized(self, pos: int, index: int) -> None:
+        if self._applying_drawer_state or not hasattr(self, "workspace_splitter"):
+            return
+        if not hasattr(self, "workspace_drawer") or self.workspace_drawer.panel.isHidden():
+            return
+        sizes = self.workspace_splitter.sizes()
+        if sizes and self.workspace_drawer_width_callback is not None:
+            self.workspace_drawer_width_callback(sizes[0], self)
 
     def _quick_action_callback(self, name: str) -> Callable | None:
         return getattr(self.quick_action_callbacks, name, None)
@@ -958,6 +1006,7 @@ class CommandFileEditorDialog(QDialog):
             file_order_changed=self._persist_quick_file_order,
             command_selection_changed=self._refresh_quick_action_buttons,
             file_selection_changed=self._refresh_quick_action_buttons,
+            on_page_requested=self._select_workspace_drawer_page,
             parent=self,
         )
         self.quick_command_list = drawer.quick_command_list

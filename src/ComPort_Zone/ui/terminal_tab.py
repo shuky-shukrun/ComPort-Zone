@@ -106,7 +106,11 @@ class TerminalSessionWidget(QWidget):
         if state.terminal_text:
             self.terminal.setPlainText(state.terminal_text)
             self.terminal.moveCursor(QTextCursor.MoveOperation.End)
-        self.apply_drawer_state(host.settings.drawer_collapsed, host.settings.drawer_width)
+        self.apply_drawer_state(
+            host.settings.drawer_collapsed,
+            host.settings.drawer_width,
+            host.settings.drawer_page_index,
+        )
         self._update_connection_ui(False)
 
         self.event_timer = QTimer(self)
@@ -325,18 +329,7 @@ class TerminalSessionWidget(QWidget):
         return sidebar
 
     def _select_drawer_page(self, index: int) -> None:
-        if self.drawer_pages.count() == 0:
-            return
-        index = max(0, min(index, self.drawer_pages.count() - 1))
-        if (
-            not self.host.settings.drawer_collapsed
-            and self.drawer_pages.currentIndex() == index
-        ):
-            self.host.set_drawer_collapsed(True)
-            return
-        self.drawer_pages.setCurrentIndex(index)
-        if self.host.settings.drawer_collapsed:
-            self.host.set_drawer_collapsed(False)
+        self.host.request_drawer_page(index)
 
     def apply_settings(self) -> None:
         self.terminal.document().setMaximumBlockCount(max(self.host.settings.scrollback_size, 1000))
@@ -368,7 +361,9 @@ class TerminalSessionWidget(QWidget):
         if mode:
             self.host.set_receive_display_mode(str(mode))
 
-    def apply_drawer_state(self, collapsed: bool, width: int) -> None:
+    def apply_drawer_state(self, collapsed: bool, width: int, page_index: int | None = None) -> None:
+        if page_index is not None and self.drawer_pages.count() > 0:
+            self.drawer_pages.setCurrentIndex(max(0, min(page_index, self.drawer_pages.count() - 1)))
         self.drawer_panel.setVisible(not collapsed)
         if collapsed:
             self.drawer.setMinimumWidth(DRAWER_COLLAPSED_WIDTH)
@@ -385,7 +380,7 @@ class TerminalSessionWidget(QWidget):
             return
         sizes = self.splitter.sizes()
         if sizes:
-            self.host.set_drawer_width(sizes[0])
+            self.host.set_drawer_width(sizes[0], source=self)
 
     def _quick_sort_changed(self) -> None:
         mode = self.quick_sort_combo.currentData()
