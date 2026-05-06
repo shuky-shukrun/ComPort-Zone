@@ -115,6 +115,24 @@ PowerShell users can call:
 - `docs/LLM_CHANGE_GUIDE.md`: compact ownership map and safe change recipes for small fixes.
 - `CHANGELOG.md` and `RELEASE_NOTES.md`: release history and user-facing change summaries.
 
+## CI/CD
+
+GitHub Actions runs the Windows CI workflow on pushes and pull requests targeting `master` or `main`.
+The CI job installs the editable package through `scripts\setup_dev.ps1`, runs the `unittest` suite with `scripts\run_tests.ps1`, and checks installed package dependencies.
+
+The release workflow builds the Windows PyInstaller zip package on matching version tags and manual dispatches.
+To publish a GitHub Release, update the version files, commit the change, create a tag that matches `src\ComPort_Zone\VERSION`, and push it:
+
+```powershell
+.\update_version.bat -Version 1.2.3
+git add pyproject.toml src\ComPort_Zone\VERSION
+git commit -m "Release v1.2.3"
+git tag v1.2.3
+git push origin master --tags
+```
+
+Manual release workflow runs build and upload the Windows zip as a workflow artifact without publishing a GitHub Release unless the run is for a tag.
+
 ## Build Windows EXE
 
 Update the app version before a release:

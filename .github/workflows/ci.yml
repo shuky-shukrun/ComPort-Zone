@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Windows tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Show tool versions
+        shell: pwsh
+        run: |
+          python --version
+          python -m pip --version
+          pwsh --version
+
+      - name: Install application
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_dev.ps1 -SkipTests
+
+      - name: Run unit tests
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_tests.ps1
+
+      - name: Check installed dependencies
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe -m pip check
