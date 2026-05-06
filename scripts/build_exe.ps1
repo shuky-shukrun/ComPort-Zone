@@ -98,7 +98,13 @@ function Invoke-Pip {
         "$SetupCompatPath$([IO.Path]::PathSeparator)$PreviousPythonPath"
     }
     try {
-        Invoke-Checked -FilePath $VenvPython -Arguments (@($PipRunner) + $Arguments)
+        $PipArguments = if ($Arguments.Count -ge 3 -and $Arguments[0] -eq "install" -and $Arguments -contains "--upgrade" -and $Arguments -contains "pip") {
+            @("-m", "pip") + $Arguments
+        }
+        else {
+            @($PipRunner) + $Arguments
+        }
+        Invoke-Checked -FilePath $VenvPython -Arguments $PipArguments
     }
     finally {
         if ([string]::IsNullOrEmpty($PreviousPythonPath)) {

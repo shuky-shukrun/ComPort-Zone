@@ -46,7 +46,7 @@ jobs:
 
       - name: Install application
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_dev.ps1 -SkipTests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_dev.ps1 -SkipTests -NoPipUpgrade
 
       - name: Run unit tests
         shell: pwsh

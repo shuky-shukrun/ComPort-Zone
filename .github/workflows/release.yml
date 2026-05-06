@@ -55,7 +55,7 @@ jobs:
 
       - name: Install build environment
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_dev.ps1 -WithBuild -SkipTests
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_dev.ps1 -WithBuild -SkipTests -NoPipUpgrade
 
       - name: Run unit tests
         shell: pwsh
