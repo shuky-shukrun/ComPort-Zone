@@ -32,10 +32,23 @@ def drawer_action_rows(page) -> list[list[str]]:
     return rows
 
 
+def cleanup_tmp_settings_artifacts() -> None:
+    tests_dir = Path(__file__).parent
+    for pattern in ("_tmp_settings*.json", "_tmp_settings*.json.bak", "._tmp_settings*.json.*.tmp"):
+        for path in tests_dir.glob(pattern):
+            path.unlink(missing_ok=True)
+
+
 class AppSessionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.qt = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        cleanup_tmp_settings_artifacts()
+
+    def tearDown(self) -> None:
+        cleanup_tmp_settings_artifacts()
 
     def test_restored_tab_loads_saved_session_state_without_prompt(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_restore.json")

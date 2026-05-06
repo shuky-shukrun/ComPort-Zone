@@ -13,13 +13,12 @@ class SettingsService:
         self.store = store or SettingsStore(default_config_path())
 
     def load(self) -> AppSettings:
-        payload = self.store.load_payload()
-        if payload is None:
-            return AppSettings()
-        try:
-            return self.settings_from_payload(payload)
-        except (TypeError, ValueError):
-            return AppSettings()
+        for payload in self.store.load_payload_candidates():
+            try:
+                return self.settings_from_payload(payload)
+            except (TypeError, ValueError):
+                continue
+        return AppSettings()
 
     def save(self, settings: AppSettings) -> bool:
         return self.store.save_payload(self.payload_from_settings(settings))

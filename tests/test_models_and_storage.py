@@ -1,6 +1,6 @@
 import json
+from pathlib import Path
 import unittest
-from unittest.mock import Mock
 
 from ComPort_Zone.models import (
     AppSettings,
@@ -14,6 +14,13 @@ from ComPort_Zone.models import (
 )
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
+
+
+def cleanup_settings_artifacts(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    path.with_name(f"{path.name}.bak").unlink(missing_ok=True)
+    for temp_path in path.parent.glob(f".{path.name}.*.tmp"):
+        temp_path.unlink(missing_ok=True)
 
 
 class ModelsAndStorageTests(unittest.TestCase):
@@ -84,24 +91,18 @@ class ModelsAndStorageTests(unittest.TestCase):
             drawer_width=340,
             drawer_page_index=1,
         )
-        payload: dict[str, str] = {}
-        fake_parent = Mock()
-        fake_path = Mock()
-        fake_path.parent = fake_parent
-        fake_path.exists.return_value = True
-        fake_path.write_text.side_effect = lambda text, encoding="utf-8": payload.setdefault(
-            "json", text
-        )
-        fake_path.read_text.side_effect = lambda encoding="utf-8": payload["json"]
+        settings_path = Path(__file__).with_name("_tmp_settings_storage_round_trip.json")
+        cleanup_settings_artifacts(settings_path)
+        try:
+            service = SettingsService(SettingsStore(settings_path))
 
-        service = SettingsService(SettingsStore(fake_path))
-        service.save(settings)
-        saved_payload = json.loads(payload["json"])
-        loaded = service.load()
+            self.assertTrue(service.save(settings))
+            saved_payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            loaded = service.load()
+            self.assertFalse(any(settings_path.parent.glob("*.tmp")))
+        finally:
+            cleanup_settings_artifacts(settings_path)
 
-        fake_parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
-        fake_path.write_text.assert_called_once()
-        fake_path.read_text.assert_called_once()
         self.assertEqual(saved_payload["schema_version"], SETTINGS_SCHEMA_VERSION)
         self.assertNotIn("serial", saved_payload)
         self.assertEqual(saved_payload["transport"]["profile"]["port"], "COM7")
@@ -146,6 +147,59 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertFalse(loaded.drawer_collapsed)
         self.assertEqual(loaded.drawer_width, 340)
         self.assertEqual(loaded.drawer_page_index, 1)
+
+    def test_settings_store_keeps_previous_payload_as_backup(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_storage_backup.json")
+        cleanup_settings_artifacts(settings_path)
+        try:
+            store = SettingsStore(settings_path)
+            service = SettingsService(store)
+            first = AppSettings(serial=SerialProfile(port="COM1"))
+            second = AppSettings(serial=SerialProfile(port="COM2"))
+
+            self.assertTrue(service.save(first))
+            self.assertFalse(store.backup_path.exists())
+            self.assertTrue(service.save(second))
+
+            current_payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            backup_payload = json.loads(store.backup_path.read_text(encoding="utf-8"))
+        finally:
+            cleanup_settings_artifacts(settings_path)
+
+        self.assertEqual(current_payload["transport"]["profile"]["port"], "COM2")
+        self.assertEqual(backup_payload["transport"]["profile"]["port"], "COM1")
+
+    def test_settings_load_uses_backup_when_primary_is_corrupt(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_storage_corrupt.json")
+        cleanup_settings_artifacts(settings_path)
+        try:
+            store = SettingsStore(settings_path)
+            service = SettingsService(store)
+            backup = AppSettings(serial=SerialProfile(port="COM8")).to_dict()
+            settings_path.write_text("{not json", encoding="utf-8")
+            store.backup_path.write_text(json.dumps(backup), encoding="utf-8")
+
+            loaded = service.load()
+        finally:
+            cleanup_settings_artifacts(settings_path)
+
+        self.assertEqual(loaded.serial.port, "COM8")
+
+    def test_settings_load_uses_backup_when_primary_schema_is_invalid(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_storage_schema.json")
+        cleanup_settings_artifacts(settings_path)
+        try:
+            store = SettingsStore(settings_path)
+            service = SettingsService(store)
+            backup = AppSettings(serial=SerialProfile(port="COM9")).to_dict()
+            settings_path.write_text(json.dumps({"schema_version": -1}), encoding="utf-8")
+            store.backup_path.write_text(json.dumps(backup), encoding="utf-8")
+
+            loaded = service.load()
+        finally:
+            cleanup_settings_artifacts(settings_path)
+
+        self.assertEqual(loaded.serial.port, "COM9")
 
     def test_settings_file_uses_nested_schema_sections(self) -> None:
         settings = AppSettings.from_dict(
