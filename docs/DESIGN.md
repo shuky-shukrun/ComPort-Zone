@@ -18,7 +18,7 @@ ComPort Zone is a PySide6 desktop app for working with serial COM-port devices. 
 
 - Multiple terminal tabs.
 - Serial connection settings and reconnect behavior.
-- Text and hex send modes.
+- Integrated `TX> ` terminal prompt with text and hex send modes.
 - Timestamped terminal output, search, copy, conversion helpers, and logging.
 - Command-file editing, validation, syntax highlighting, autocomplete, find/replace, and execution.
 - Batch command files with `SEND`, `WAIT`, `EXPECT`, `HEX`, and parameter templates.
@@ -49,6 +49,7 @@ flowchart TD
 
     TerminalTab --> TerminalCtl["terminal_session_controller.py\nTerminal behavior"]
     TerminalTab --> TerminalView["terminal_view.py\nQTextEdit rendering/search"]
+    TerminalTab --> TerminalInput["widgets.py\nIntegratedTerminalEdit"]
     TerminalCtl --> Transport["transports.py\nTransportAdapter"]
     Transport --> Serial["serial_core.py\nSerialClient"]
 
@@ -102,6 +103,7 @@ Rules:
 | Terminal tab UI | `ui/terminal_tab.py` | Terminal screen layout, command bar, sidebar integration, user-facing dialogs. |
 | Terminal behavior | `terminal_session_controller.py` | Send/run/log/event decisions, pause buffering, batch runner coordination. |
 | Terminal rendering | `terminal_view.py` | QTextEdit insertion, rendered event plans, terminal search highlighting. |
+| Terminal input widget | `widgets.py` | `IntegratedTerminalEdit` prompt/draft editing, protected transcript behavior, autocomplete navigation, and font-wheel forwarding. |
 | Transport abstraction | `transports.py` | `TransportAdapter`, transport events, serial adapter. |
 | Serial implementation | `serial_core.py` | Serial port list/connect/read/write/reconnect behavior. |
 | Command editor UI | `command_editor.py` | Command-file editor tab/dialog UI and editor-specific wiring. |
@@ -138,6 +140,7 @@ classDiagram
         profile
         controller
         terminal_view
+        command_input
         serial_client
         batch_runner
     }
@@ -210,7 +213,7 @@ sequenceDiagram
     App->>Main: Construct MainWindow
     Main->>Store: Create store from default_config_path()
     Main->>Settings: load()
-    Settings->>Store: read JSON
+    Settings->>Store: read primary/backup JSON candidates
     Settings-->>Main: AppSettings
     Main->>Main: Build UI, menus, status presenters
     Main->>Workspace: restore_from_settings(settings, host)
@@ -225,6 +228,7 @@ Notes:
 - `app.py` re-exports `MainWindow` for compatibility.
 - Tests may monkeypatch `ComPort_Zone.app.default_config_path`; `MainWindow.config_path_supplier` preserves this seam.
 - Restore should not prompt serial settings for restored tabs unless explicitly requested.
+- Restored connected tabs should skip auto-connect and report status when the saved COM port is not currently detected.
 
 ## Flow: Terminal Send
 
@@ -237,19 +241,22 @@ sequenceDiagram
     participant Serial as serial_core.SerialClient
     participant Host as ui/main_window.MainWindow
 
-    User->>Tab: Enter command and click Send
+    User->>Tab: Type after TX> prompt and press Enter
+    Tab->>Tab: Read IntegratedTerminalEdit draft and selected send mode
     Tab->>Ctrl: send_payload(raw, mode)
     Ctrl->>Ctrl: Parse text/hex mode
     Ctrl->>Transport: send_text() or send_bytes()
     Transport->>Serial: write to serial port
     Ctrl-->>Tab: success/error
+    Tab->>Tab: Commit TX echo into transcript
     Tab->>Host: record_command(command)
-    Tab->>Tab: clear input after event loop settles
+    Tab->>Tab: Clear draft after event loop settles
 ```
 
 Rules:
 
-- UI reads current widgets and shows message boxes.
+- `IntegratedTerminalEdit` owns prompt/draft editing rules and protects committed transcript text from normal editing.
+- UI reads current widgets, commits TX transcript text, and shows message boxes.
 - Controller owns send parsing and transport call decisions.
 - Transport adapter hides `SerialClient` details from higher layers.
 - Command history lives in settings through `HistoryStore` and `MainWindow.record_command()`.
@@ -359,7 +366,7 @@ sequenceDiagram
     WorkspaceCtl->>WorkspaceState: capture live tabs
     WorkspaceState-->>WorkspaceCtl: restored_tabs payload
     WorkspaceCtl->>SettingsSvc: save(settings)
-    SettingsSvc->>Store: write JSON
+    SettingsSvc->>Store: write JSON through temp file and refresh backup
 
     AppCtl->>SettingsSvc: load/export JSON for app settings
     SettingsSvc-->>AppCtl: AppSettings payload
@@ -370,7 +377,8 @@ sequenceDiagram
 Rules:
 
 - `SettingsService` owns schema and payload rules.
-- `SettingsStore` owns file I/O only.
+- `SettingsStore` owns file I/O only: temporary-file writes, atomic replacement, backup creation, and primary/backup payload candidates.
+- `SettingsService.load()` tries each valid payload candidate before returning default settings.
 - `WorkspaceStateService` owns tab capture/restore.
 - `WorkspaceSettingsController` coordinates live apply/save through callbacks.
 - `AppSettingsController` owns file-picker/dialog/busy UI for JSON settings transfer.
@@ -469,7 +477,7 @@ Typical focused tests:
 | Tab context menus | `tests.test_tab_context_menus` |
 | Quick action domain | `tests.test_quick_actions` |
 | Quick action UI/sidebar/controller | `tests.test_quick_actions_panel`, `tests.test_quick_actions_sidebar`, `tests.test_quick_action_controller` |
-| Terminal controller/rendering | `tests.test_terminal_session_controller`, `tests.test_terminal_view` |
+| Terminal controller/rendering/input | `tests.test_terminal_session_controller`, `tests.test_terminal_view`, `tests.test_integrated_terminal_input` |
 | Command editor | `tests.test_command_editor`, `tests.test_command_editor_core`, `tests.test_command_editor_highlighting`, `tests.test_command_search` |
 | Command-file target coordination | `tests.test_command_file_targets`, `tests.test_command_run_targets` |
 | Settings/workspace | `tests.test_models_and_storage`, `tests.test_workspace_state`, `tests.test_workspace_settings_controller` |
@@ -494,9 +502,11 @@ Done foundations:
 - Tab context menus moved to `ui/tab_context_menus.py`.
 - Terminal tab moved to `ui/terminal_tab.py`.
 - Terminal behavior and rendering split into `terminal_session_controller.py` and `terminal_view.py`.
+- Integrated terminal input lives in `widgets.IntegratedTerminalEdit`, with `ui/terminal_tab.py` coordinating send/history/autocomplete around it.
 - Quick action domain, controller, and shared panel/sidebar are extracted.
 - Command editor core, search, highlighting, command-file services, and run-target coordination are extracted.
 - Settings service, workspace state, workspace settings controller, app settings controller are extracted.
+- Settings storage now saves atomically and can fall back to `settings.json.bak`.
 - Transport abstraction foundation exists with serial adapter.
 - Shared drawer collapsed state, selected page, and resized width are synchronized across terminal and embedded command-file editor tabs.
 

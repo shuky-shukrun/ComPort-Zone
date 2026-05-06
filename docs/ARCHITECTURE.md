@@ -55,6 +55,10 @@ The project is in an incremental redesign. `src/ComPort_Zone/app.py` is now a th
 
 The workspace drawer is treated as app-level UI state: collapsed/expanded state, drawer width, and selected Quick Commands/Quick Files page are applied consistently to terminal tabs and embedded command-file editor tabs.
 
+Terminal command entry is integrated into the terminal surface through `IntegratedTerminalEdit` in `widgets.py`. The widget owns prompt/draft editing rules, while `ui/terminal_tab.py` coordinates send, history, autocomplete, font zoom, and context-menu conversion actions around it.
+
+Settings storage is intentionally conservative: `SettingsService` owns schema interpretation, while `SettingsStore` owns JSON file I/O, atomic replacement, and backup fallback. Loading tries valid payload candidates before returning defaults.
+
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
 ```powershell
@@ -66,9 +70,9 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Subsystem | Current Owner | Ideal Owner | Status | Notes |
 | --- | --- | --- | --- | --- |
 | App shell and main window assembly | `app.py`, `ui/main_window.py` | Thin `app.py` plus `ui/main_window.py` shell | In Progress | `app.py` is thin; `ui/main_window.py` should continue shrinking toward orchestration only. |
-| Terminal tab UI | `ui/terminal_tab.py` | `ui/terminal_tab.py` | In Progress | Module location is extracted; the widget still has more UI workflow code to slim. |
+| Terminal tab UI | `ui/terminal_tab.py` | `ui/terminal_tab.py` | In Progress | Module location is extracted; the widget owns terminal layout/glue around the integrated prompt, quick drawer, status, context menus, and dialogs. |
 | Terminal behavior | `terminal_session_controller.py` | `terminal_session_controller.py` | Done | Owns transport, send, logging, batch runner, event decisions, pause buffering. |
-| Terminal text rendering/search | `terminal_view.py` | `terminal_view.py` | Done | Owns QTextEdit insertion, stream rendering, search highlighting. |
+| Terminal text rendering/search | `terminal_view.py` | `terminal_view.py` | Done | Owns committed QTextEdit insertion, stream rendering, and search highlighting. |
 | Command-file editor UI | `command_editor.py` plus coordination in `ui/main_window.py` | future `ui/command_file_tab.py` | In Progress | Core services are extracted; final UI location still open. |
 | Command-file parsing/running support | `batch.py`, `command_file_service.py`, `command_run_targets.py`, `ui/command_file_targets.py` | Same | Done foundation | `ui/command_file_targets.py` owns run-target menu population, editor target refresh, and editor-to-terminal dispatch. |
 | Command editor core/search/highlighting | `command_editor_core.py`, `command_search.py`, `command_editor_highlighting.py` | Same | Done | Focused modules with tests. |
@@ -83,21 +87,21 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Workspace drawer state | `ui/main_window.py`, terminal/editor tab drawer hooks | Future presenter/controller if it grows | Done foundation | Collapsed state, selected page, and width are global settings applied across terminal and editor tabs. |
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
-| Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export payload rules. |
+| Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export payload rules; `SettingsStore` owns atomic save and backup fallback. |
 | App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
 | Workspace restore/capture | `workspace_state.py`, `workspace_settings_controller.py` | Same | Done | Captures/restores terminal and command-file tabs; save/apply-imported-settings coordination is outside `MainWindow`. |
 | Dialogs | `ui/dialogs/*` | `ui/dialogs/*` | Done foundation | Named dialog classes are extracted, including command-file parameter dialogs. Some workflow-owned ad hoc prompts still live with their owning feature code. |
-| Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py`, `ui/fonts.py` | Same | In Progress | Font helpers are extracted; more UI helpers may move here. |
+| Theme/icons/widgets | `themes.py`, `icons.py`, `widgets.py`, `ui/fonts.py` | Same | In Progress | Font helpers and `IntegratedTerminalEdit` are extracted; more UI helpers may move here. |
 
 ## Important Flows
 
 ### Launch and Workspace Restore
 
-`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for serial settings.
+`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for serial settings. Restored connected terminal tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected.
 
 ### Terminal Send
 
-The terminal widget reads UI state from the command input and mode combo, then delegates send behavior to `TerminalSessionController`. The controller parses text or hex mode, sends through the transport adapter, and asks the host to record command history. The widget only clears the input and handles user-facing send errors.
+The terminal widget reads the active draft from `IntegratedTerminalEdit` and the selected send mode, then delegates send behavior to `TerminalSessionController`. The controller parses text or hex mode, sends through the transport adapter, and asks the host to record command history. The widget commits the sent command into the terminal transcript, suppresses duplicate TX echo where needed, clears the draft after send, and handles user-facing send errors.
 
 ### RX Event Rendering
 
@@ -115,7 +119,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 
 ### Settings Save, Import, and Export
 
-`SettingsService` owns the application settings payload and schema. `StorageStore` only handles JSON file I/O. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
+`SettingsService` owns the application settings payload and schema. `SettingsStore` only handles JSON file I/O, atomic replacement, and backup fallback. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
 
 ### Commands, Menus, and Palette
 
@@ -134,6 +138,8 @@ The drawer container around those shared panels is app-level UI state. Selecting
 | Done | TabWorkspaceController and workspace status presenter | Tab lifecycle and tab/status presentation are no longer owned directly by `MainWindow`. |
 | Done | Shared workspace drawer state | Drawer collapsed state, width, and selected page are synchronized across terminal and embedded editor tabs. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
+| Done | Integrated terminal input widget | `IntegratedTerminalEdit` keeps transcript text protected while editing the active `TX> ` draft. |
+| Done | Settings atomic save and backup fallback | `SettingsStore` writes through a temp file, keeps a `.bak`, and `SettingsService` tries backup candidates before defaults. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
 | Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, command palette, and command-file parameter dialogs are extracted. |
 | Done | QuickActionController workflow extraction | MainWindow delegates quick-action mutation/import/export/reorder workflows to the controller. |
@@ -166,6 +172,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 - Every extracted pure/domain module should have focused unit tests.
 - Every extracted Qt helper or presenter should have lightweight QApplication-backed tests when practical.
 - Startup and main-window behavior should continue to be protected by app-session regression tests for high-value workflows.
+- Terminal input widget changes should include `tests/test_integrated_terminal_input.py` coverage plus app-session tests for send/history/autocomplete behavior.
 - Transport work should use fake adapters/clients for contract tests.
 - Settings changes should include serialization/import/export tests and restored workspace tests.
 - Command registry changes should verify menus and command palette expose shared actions consistently.

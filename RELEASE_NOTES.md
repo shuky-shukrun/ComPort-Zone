@@ -1,3 +1,66 @@
+# ComPort Zone v0.2.5 Release Notes
+
+Release date: 2026-05-06
+
+ComPort Zone v0.2.5 rolls up the terminal polish, settings hardening, and release-infrastructure work completed since the v0.2.3 release notes. The main user-facing change is a more terminal-native input experience, with follow-up fixes around restore, text/hex conversion, and packaging reliability.
+
+## Highlights
+
+- Terminal input now lives directly in the terminal surface behind a `TX> ` prompt, while previously committed output stays protected from normal typing.
+- Restored connected tabs skip auto-connect cleanly when their saved COM port is not currently detected.
+- Settings saves are more resilient: writes use a temporary file and the previous valid settings payload is kept as `settings.json.bak`.
+- Terminal selection conversion and replacement actions now work correctly with the integrated terminal input.
+- GitHub Actions now runs Windows CI and can build tagged Windows release artifacts.
+
+## What's New
+
+### Integrated Terminal Input
+
+- Replaced the separate command-entry line with an integrated terminal draft prompt.
+- Pressing Enter sends the current draft; Shift+Enter inserts a new line into the draft.
+- Committed terminal transcript text is locked during normal editing, while the active draft remains editable.
+- Sent commands are committed back into the transcript as TX output and the active draft clears after send.
+- Autocomplete, command history, paste, copy, cut, Home, and selection behavior now operate inside the integrated terminal prompt.
+- Terminal font zoom through Ctrl+mouse wheel now works from the terminal surface.
+
+### Startup And Settings Resilience
+
+- Restored tabs preserve terminal transcript text, command draft, and send mode with the integrated input model.
+- Auto-connect for restored tabs now checks whether the saved port is present before connecting.
+- Missing restored ports are reported in the terminal/status area instead of leaving the UI stuck during startup.
+- Local settings saves now write atomically through a temporary file.
+- The last valid settings file is retained as a `.bak` backup, and startup can fall back to it if the primary file is corrupt or has an invalid schema.
+
+### Terminal Selection Tools
+
+- Show Selection as Hex and Show Hex Selection as Text continue to work from the terminal context menu.
+- Replace Selection with Hex and Replace Hex Selection with Text now update committed transcript selections without corrupting the active prompt or draft.
+- Autocomplete insertions now keep the expected terminal draft coloring.
+
+### Release Infrastructure
+
+- Added a Windows CI workflow that installs the app, runs the unit suite, and checks installed dependencies.
+- Added a release workflow that validates version tags, runs tests, builds the PyInstaller Windows zip, uploads the artifact, and publishes a GitHub Release for matching tags.
+- Setup and build scripts use local temp/cache folders more consistently and avoid fragile pip/build-isolation paths in CI and local Windows builds.
+- Added a `-NoPipUpgrade` setup option for CI environments that should use the provisioned pip version.
+
+## Validation
+
+The release added or expanded regression coverage for:
+
+- Integrated terminal input editing, protected transcript behavior, multiline drafts, autocomplete coloring, and menu-driven text/hex replacement.
+- App-session behavior for integrated sends, TX echo handling, font zoom, restored tabs, missing restored ports, and terminal selection conversion.
+- Settings backup/fallback behavior and atomic save cleanup.
+- CI/release workflow script paths and setup/build command options.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.2.3 Release Notes
 
 Release date: 2026-05-05

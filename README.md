@@ -2,9 +2,9 @@
 
 ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows.
 
-The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface, a compact command bar, and a foldable left drawer for quick commands and quick files.
+The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface with an integrated `TX> ` command prompt, a compact control bar, and a foldable left drawer for quick commands and quick files.
 
-Current version: `0.2.3`.
+Current version: `0.2.5`.
 
 ## Current Features
 
@@ -20,17 +20,18 @@ Current version: `0.2.3`.
 - App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
-- Text and hex/raw-byte sending and receive display
+- Text and hex/raw-byte sending from the integrated `TX> ` prompt, plus receive display modes
 - Up/Down command history navigation
 - Autocomplete from command history and saved quick commands with `Ctrl+Space`
 - Search within the active terminal tab with highlighted matches
 - RX, TX, status, and error coloring
 - Optional terminal timestamps
-- Clear, copy, select all, pause/resume output, terminal font settings, and line wrap controls
-- Terminal output context menu with Clear Terminal, Line Wrap, Show Timestamps, and selected text/hex conversion helpers
+- Clear, copy, select all, pause/resume output, terminal font settings, Ctrl+mouse-wheel zoom, and line wrap controls
+- Terminal output context menu with Clear Terminal, Line Wrap, Show Timestamps, and selected text/hex show/replace helpers
 - Per-tab command file execution with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
 - Per-tab logging to text files
 - Persisted settings for theme, drawer state and page, serial defaults, quick commands, font size, history, scrollback, restored terminal tabs, and restored command-file tabs
+- Atomic local settings saves with a backup fallback if the primary settings file is corrupt or invalid
 
 ## Install
 
@@ -49,6 +50,7 @@ Useful setup options:
 .\setup_dev.bat -SkipTests
 .\setup_dev.bat -WithBuild
 .\setup_dev.bat -RecreateVenv
+.\setup_dev.bat -NoPipUpgrade
 .\scripts\setup_dev.ps1 -DryRun
 ```
 
@@ -164,6 +166,19 @@ After the first setup, later builds skip dependency installation when the `.venv
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -ForceInstall
 ```
+
+## Terminal Input
+
+Terminal tabs use an integrated `TX> ` draft at the bottom of the terminal surface. Type after the prompt and press Enter to send the draft using the selected send mode.
+
+- Enter sends the current draft.
+- Shift+Enter inserts a new line into the draft.
+- Up and Down navigate command history.
+- Ctrl+Space opens autocomplete from command history and quick commands.
+- Shift+Delete removes the current draft from command history when it matches a saved history entry.
+- Ctrl+mouse wheel adjusts the terminal font size.
+
+Committed RX, TX, status, and error transcript text is protected from normal typing. The terminal context menu can still show or replace selected transcript text as hex/text when you explicitly choose those actions.
 
 ## Batch Script Format
 
@@ -283,6 +298,14 @@ The app autosaves the current setup to:
 %LOCALAPPDATA%\ComPortZone\settings.json
 ```
 
+Local autosaves are written through a temporary file and the previous valid payload is retained at:
+
+```text
+%LOCALAPPDATA%\ComPortZone\settings.json.bak
+```
+
+If the primary settings file is corrupt or uses an unsupported schema, startup tries the backup before falling back to defaults.
+
 Use `File > App Settings Import / Export...` to open the App Settings dialog, then choose whether to import or export a JSON app-settings file. This replaces the older idea of managing named profiles inside the app.
 
 App settings JSON is versioned with `schema_version: 2` and grouped into `transport`, `app`, `history`, `libraries`, and `workspace` sections. Older flat app-settings JSON is not migrated.
@@ -309,11 +332,14 @@ App settings JSON includes:
 - `Ctrl+Enter`: Connect or disconnect
 - `Ctrl+F`: Search active terminal
 - `Ctrl+K`: Clear terminal
+- `Enter`: Send the current terminal `TX>` draft
+- `Shift+Enter`: Add a new line to the terminal draft
 - `Ctrl+Space`: Autocomplete command input
 - `Up` / `Down`: Navigate command history
+- `Shift+Delete`: Remove the current draft from command history
 - `Ctrl+=` / `Ctrl+-`: Increase or decrease terminal font size
 
-Terminal font family and size can also be changed from `View > Terminal Font Settings`.
+Terminal font family and size can also be changed from `View > Terminal Font Settings`, the terminal command bar, or Ctrl+mouse wheel over the terminal.
 
 ## Third-Party Notices
 

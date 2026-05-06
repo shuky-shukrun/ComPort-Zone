@@ -41,6 +41,7 @@ git diff --check
 | Terminal send/run/event behavior              | `src/ComPort_Zone/terminal_session_controller.py`                                                                                  | `tests/test_terminal_session_controller`                      |
 | Terminal QTextEdit rendering/search           | `src/ComPort_Zone/terminal_view.py`                                                                                                | `tests/test_terminal_view`                                    |
 | Terminal tab UI layout/glue                   | `src/ComPort_Zone/ui/terminal_tab.py`                                                                                              | terminal tests plus app-session tests                         |
+| Integrated terminal prompt/draft editing      | `src/ComPort_Zone/widgets.py`                                                                                                      | `tests/test_integrated_terminal_input`                        |
 | Serial behavior                               | `src/ComPort_Zone/serial_core.py`                                                                                                  | `tests/test_serial_core`                                      |
 | Transport abstraction                         | `src/ComPort_Zone/transports.py`                                                                                                   | `tests/test_transports`                                       |
 | Command-file parsing/running                  | `src/ComPort_Zone/batch.py`, `src/ComPort_Zone/command_file_service.py`                                                            | `tests/test_batch`, `tests/test_command_file_service`         |
@@ -60,6 +61,8 @@ git diff --check
 - `ComPort_Zone.app.default_config_path` may be monkeypatched by tests and older tooling. `MainWindow.config_path_supplier` preserves this.
 - `ComPort_Zone.app` re-exports several dialogs, quick-action helpers, `SerialProfile`, `SerialEvent`, `TerminalSessionWidget`, and `BatchParameterPromptBridge`.
 - Terminal/editor quick action sidebars should share the same panel shape. Do not fork separate sidebar designs.
+- `TerminalSessionWidget.command_input` is the terminal `IntegratedTerminalEdit`; use `.text()` for the active `TX> ` draft and `.toPlainText()` for committed transcript text.
+- Normal typing should never mutate committed terminal transcript text. Menu-driven replacement goes through `IntegratedTerminalEdit.replace_selection_from_menu()`.
 - Quick action CSV import/export belongs to `quick_actions.py` and `quick_action_controller.py`, not `MainWindow`.
 - App settings JSON import/export intentionally excludes quick actions.
 - `SettingsStore` should remain file I/O only. Schema/payload rules belong to `SettingsService`.
@@ -125,22 +128,45 @@ git diff --check
 
 1. Start in `src/ComPort_Zone/terminal_session_controller.py`.
 2. Only edit `src/ComPort_Zone/ui/terminal_tab.py` if the bug is UI input, message box, combo state, or focus behavior.
-3. Update `tests/test_terminal_session_controller.py` or app-session tests.
+3. If the bug touches the integrated prompt/draft itself, edit `src/ComPort_Zone/widgets.py` and update `tests/test_integrated_terminal_input.py`.
+4. Update `tests/test_terminal_session_controller.py` or app-session tests.
+5. Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests/test_terminal_session_controller tests/test_integrated_terminal_input tests/test_app_sessions -q
+```
+
+### Fix Integrated Terminal Prompt Behavior
+
+1. Start in `src/ComPort_Zone/widgets.py`, especially `IntegratedTerminalEdit`.
+2. Keep prompt/draft boundary logic inside the widget.
+3. Use `src/ComPort_Zone/ui/terminal_tab.py` only for send/history/autocomplete wiring, context-menu actions, or host coordination.
 4. Run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_terminal_session_controller tests/test_app_sessions -q
+.\.venv\Scripts\python.exe -m unittest tests/test_integrated_terminal_input tests/test_app_sessions -q
 ```
 
 ### Fix Terminal Rendering Or Search
 
 1. Start in `src/ComPort_Zone/terminal_view.py`.
-2. Keep QTextEdit rendering in `TerminalView`.
+2. Keep committed QTextEdit rendering in `TerminalView`.
 3. Keep event decisions in `TerminalSessionController`.
 4. Run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_terminal_view tests/test_terminal_session_controller -q
+.\.venv\Scripts\python.exe -m unittest tests/test_terminal_view tests/test_terminal_session_controller tests/test_integrated_terminal_input -q
+```
+
+### Fix Terminal Selection Conversion
+
+1. Context-menu wiring lives in `src/ComPort_Zone/ui/terminal_tab.py`.
+2. Text/hex parsing helpers come from `src/ComPort_Zone/batch.py` and `src/ComPort_Zone/serial_core.py`.
+3. Replacing committed transcript selections should go through `IntegratedTerminalEdit.replace_selection_from_menu()`.
+4. Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests/test_integrated_terminal_input tests/test_app_sessions -q
 ```
 
 ### Fix Command-File Run Behavior
@@ -203,7 +229,8 @@ git diff --check
 2. File I/O: edit `src/ComPort_Zone/storage.py`.
 3. Runtime tab capture/restore: edit `src/ComPort_Zone/workspace_state.py`.
 4. Live save/apply coordination: edit `src/ComPort_Zone/workspace_settings_controller.py`.
-5. Run:
+5. Preserve atomic save, `.bak` fallback, and primary/backup payload candidate behavior.
+6. Run:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest tests/test_models_and_storage tests/test_workspace_state tests/test_workspace_settings_controller tests/test_app_sessions -q
@@ -232,6 +259,8 @@ Setup options:
 ```powershell
 .\setup_dev.bat -SkipTests
 .\setup_dev.bat -WithBuild
+.\setup_dev.bat -RecreateVenv
+.\setup_dev.bat -NoPipUpgrade
 .\scripts\setup_dev.ps1 -DryRun
 ```
 
@@ -266,6 +295,7 @@ Run focused tests:
 - Existing settings and CSV formats should stay compatible unless the change explicitly says otherwise.
 - `MainWindow` should keep shrinking. Do not add a new workflow there if a controller/presenter already exists.
 - `ui/terminal_tab.py` is allowed to coordinate terminal UI, but pure behavior should move to controller/domain modules.
+- Integrated terminal prompt/draft behavior belongs in `IntegratedTerminalEdit`; `ui/terminal_tab.py` should coordinate around it rather than duplicating boundary rules.
 - `command_editor.py` is still the command-file editor UI owner until final module location is decided.
 - Drawer collapsed state, selected page, and width are app-level settings shared by terminal and embedded command-file editor tabs.
 - Quick action CSV import/export belongs to `quick_actions.py` and `quick_action_controller.py`, not `MainWindow`.
@@ -277,6 +307,7 @@ Run focused tests:
 
 - Missing imports after moving Qt code are easy to miss. Add a focused regression test when fixing one.
 - Rename tab should suggest visible tab text, such as `COM13`, not the internal default title `Terminal 1`.
+- Terminal transcript text and terminal draft text are intentionally different: `.toPlainText()` returns committed transcript only, while `.text()` returns the active prompt draft.
 - Quick command manual reorder is only reliable when custom order is active and all groups are visible.
 - `Run in Terminal` appears both in menus and editor tab context menus. Keep target population delegated to `ui/command_file_targets.py`.
 - `QApplication` must exist for Qt widget tests. Follow existing test patterns with `QApplication.instance() or QApplication([])`.

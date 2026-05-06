@@ -2,6 +2,41 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.2.5 - 2026-05-06
+
+This entry covers changes after the documented 0.2.3 release notes, including the v0.2.4 packaging and polish work.
+
+### Added
+
+- Add integrated terminal input through a `TX> ` prompt inside the terminal surface.
+- Add multiline terminal drafts with Shift+Enter.
+- Add Windows CI and release workflows for test, package, artifact upload, and tag-matched GitHub Release publishing.
+- Add `-NoPipUpgrade` to the setup script for CI environments.
+
+### Changed
+
+- Commit sent TX commands into the terminal transcript and clear the active draft after send.
+- Keep committed terminal transcript text protected during normal editing while preserving editable draft behavior.
+- Preserve restored terminal transcript, command draft, and send mode with the integrated terminal input.
+- Save settings through a temporary file and retain the previous valid settings payload as `settings.json.bak`.
+- Make setup/build scripts use local temp/cache and no-build-isolation install paths more consistently.
+- Update release documentation and developer docs for the v0.2.5 workflow.
+
+### Fixed
+
+- Fix startup behavior when a restored connected tab points at a COM port that is no longer detected.
+- Fix terminal context-menu replacement actions for text-to-hex and hex-to-text selections.
+- Fix terminal autocomplete insertion color in the integrated prompt.
+- Fix terminal font zoom with Ctrl+mouse wheel from the terminal surface.
+- Fix settings load so a corrupt or invalid primary settings file can fall back to the backup payload.
+- Fix CI setup by avoiding pip upgrade behavior that is brittle on hosted Windows runners.
+
+### Tests
+
+- Added `tests/test_integrated_terminal_input.py` coverage for protected transcript editing, multiline drafts, autocomplete coloring, and menu replacement behavior.
+- Expanded app-session coverage for integrated sends, TX echo handling, restored missing ports, font zoom, and text/hex replacement.
+- Expanded storage/settings tests for backup creation, backup fallback, invalid schema fallback, and temporary-file cleanup.
+
 ## 0.2.3 - 2026-05-05
 
 ### Added
