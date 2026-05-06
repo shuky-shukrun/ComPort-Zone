@@ -79,6 +79,40 @@ class IntegratedTerminalEditTests(unittest.TestCase):
             terminal.deleteLater()
             self.qt.processEvents()
 
+    def test_menu_replacement_can_edit_committed_transcript(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.append_committed_text("OK\n", "#d4d4d4")
+            terminal.setText("draft")
+            cursor = QTextCursor(terminal.document())
+            cursor.setPosition(0)
+            cursor.setPosition(2, QTextCursor.MoveMode.KeepAnchor)
+            terminal.setTextCursor(cursor)
+
+            self.assertTrue(terminal.replace_selection_from_menu("4F 4B"))
+
+            self.assertEqual(terminal.toPlainText(), "4F 4B\n")
+            self.assertEqual(terminal.text(), "draft")
+            self.assertIn("TX> draft", terminal.display_text())
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_menu_replacement_does_not_cross_prompt_boundary(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.append_committed_text("OK\n", "#d4d4d4")
+            cursor = QTextCursor(terminal.document())
+            cursor.setPosition(0)
+            cursor.setPosition(len(terminal.display_text()), QTextCursor.MoveMode.KeepAnchor)
+            terminal.setTextCursor(cursor)
+
+            self.assertFalse(terminal.replace_selection_from_menu("blocked"))
+            self.assertEqual(terminal.toPlainText(), "OK\n")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

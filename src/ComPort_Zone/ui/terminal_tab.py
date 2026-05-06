@@ -1198,9 +1198,9 @@ class TerminalSessionWidget(QWidget):
         self.replace_terminal_selection(converted)
 
     def replace_terminal_selection(self, replacement: str) -> None:
-        replace_in_draft = getattr(self.terminal, "replace_selection_in_draft", None)
-        if callable(replace_in_draft):
-            if replace_in_draft(replacement) and self.search_bar.isVisible():
+        replace_from_menu = getattr(self.terminal, "replace_selection_from_menu", None)
+        if callable(replace_from_menu):
+            if replace_from_menu(replacement) and self.search_bar.isVisible():
                 self._refresh_search_highlights(self.search_input.text())
             return
         cursor = self.terminal.textCursor()

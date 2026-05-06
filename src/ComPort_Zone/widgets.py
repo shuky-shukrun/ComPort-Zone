@@ -256,6 +256,24 @@ class IntegratedTerminalEdit(QTextEdit):
         self.textEdited.emit(self.text())
         return True
 
+    def replace_selection_from_menu(self, replacement: str) -> bool:
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return False
+        start = min(cursor.position(), cursor.anchor())
+        end = max(cursor.position(), cursor.anchor())
+        if start >= self._safe_draft_start():
+            return self.replace_selection_in_draft(replacement)
+        if end > self._safe_prompt_start():
+            return False
+        selected_length = end - start
+        cursor.insertText(replacement, self._format(self._transcript_color))
+        delta = len(replacement) - selected_length
+        self._prompt_start += delta
+        self._draft_start += delta
+        self.setTextCursor(cursor)
+        return True
+
     def cut(self) -> None:
         if not self.selection_within_draft():
             self.copy()

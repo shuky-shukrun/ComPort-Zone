@@ -1248,6 +1248,14 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(window.settings.timestamps_enabled)
             self.assertTrue(window.timestamps_action.isChecked())
 
+            session.terminal.setPlainText("OK\n")
+            cursor = QTextCursor(session.terminal.document())
+            cursor.setPosition(0)
+            cursor.setPosition(2, QTextCursor.MoveMode.KeepAnchor)
+            session.terminal.setTextCursor(cursor)
+            session.replace_terminal_selection(session.text_to_hex("OK"))
+            self.assertEqual(session.terminal.toPlainText(), "4F 4B\n")
+
             clear_action.trigger()
             self.assertEqual(session.terminal.toPlainText(), "")
         finally:
