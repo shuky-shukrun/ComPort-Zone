@@ -18,7 +18,7 @@ function Get-CurrentVersion {
     if (-not (Test-Path $VersionFile)) {
         throw "Version file was not found: $VersionFile"
     }
-    $CurrentVersion = (Get-Content $VersionFile -Raw).Trim()
+    $CurrentVersion = (Get-Content $VersionFile -Raw).Trim().TrimStart([char]0xfeff)
     if ($CurrentVersion -notmatch $SemVerPattern) {
         throw "Current version '$CurrentVersion' must use major.minor.patch format."
     }
@@ -69,7 +69,7 @@ else {
 }
 
 $Next = "$($Parts.Major).$($Parts.Minor).$($Parts.Patch)"
-$PyProjectText = Get-Content $PyProjectFile -Raw
+$PyProjectText = (Get-Content $PyProjectFile -Raw).TrimStart([char]0xfeff)
 $UpdatedPyProjectText = $PyProjectText -replace '(?m)^version\s*=\s*"[^"]+"', "version = `"$Next`""
 if ($UpdatedPyProjectText -eq $PyProjectText -and $PyProjectText -notmatch "(?m)^version\s*=") {
     throw "Could not find project version in pyproject.toml."
@@ -83,8 +83,9 @@ if ($DryRun) {
     return
 }
 
-Set-Content -Path $VersionFile -Value $Next -NoNewline -Encoding UTF8
-Set-Content -Path $PyProjectFile -Value $UpdatedPyProjectText -NoNewline -Encoding UTF8
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($VersionFile, $Next, $Utf8NoBom)
+[System.IO.File]::WriteAllText($PyProjectFile, $UpdatedPyProjectText, $Utf8NoBom)
 Write-Host "Updated:"
 Write-Host "  $VersionFile"
 Write-Host "  $PyProjectFile"
