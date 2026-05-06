@@ -76,7 +76,7 @@ class IntegratedTerminalEdit(QTextEdit):
         self._prompt_start = 0
         self._draft_start = 0
         self._prompt_color = "#4fc1ff"
-        self._draft_color = "#d4d4d4"
+        self._draft_color = "#4fc1ff"
         self._transcript_color = "#d4d4d4"
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.setAcceptRichText(False)
@@ -86,7 +86,7 @@ class IntegratedTerminalEdit(QTextEdit):
 
     def set_terminal_colors(self, *, prompt: str, draft: str) -> None:
         self._prompt_color = prompt
-        self._draft_color = draft
+        self._draft_color = prompt
         self._transcript_color = draft
         self._replace_prompt_preserving_content()
 

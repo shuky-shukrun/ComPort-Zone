@@ -1,6 +1,7 @@
 import unittest
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -55,6 +56,25 @@ class IntegratedTerminalEditTests(unittest.TestCase):
             terminal.setTextCursor(cursor)
             QTest.keyClick(terminal, Qt.Key.Key_Backspace)
             self.assertEqual(terminal.text(), "status\nread")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_completion_keeps_draft_text_in_prompt_color(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.set_terminal_colors(prompt="#4fc1ff", draft="#d4d4d4")
+            terminal.setText("SIN")
+
+            terminal.insert_completion("SINK:CURR?")
+
+            display_text = terminal.display_text()
+            cursor = QTextCursor(terminal.document())
+            cursor.setPosition(display_text.index("SINK"))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+
+            self.assertEqual(terminal.text(), "SINK:CURR?")
+            self.assertEqual(cursor.charFormat().foreground().color().name().lower(), "#4fc1ff")
         finally:
             terminal.deleteLater()
             self.qt.processEvents()
