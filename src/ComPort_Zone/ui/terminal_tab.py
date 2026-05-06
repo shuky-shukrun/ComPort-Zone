@@ -205,6 +205,7 @@ class TerminalSessionWidget(QWidget):
         self.terminal.customContextMenuRequested.connect(self.show_terminal_context_menu)
         self.terminal_view = TerminalView(self.terminal, self.search_count)
         self.command_input = self.terminal
+        self.terminal.set_font_zoom_callback(lambda delta: self.host.change_font_size(delta))
 
         self.command_bar = QFrame(terminal_column)
         self.command_bar.setObjectName("commandBar")

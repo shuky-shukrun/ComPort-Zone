@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTextEdit, QWidget
@@ -76,6 +78,7 @@ class IntegratedTerminalEdit(QTextEdit):
         self._prompt_color = "#4fc1ff"
         self._draft_color = "#d4d4d4"
         self._transcript_color = "#d4d4d4"
+        self.font_zoom_callback: Callable[[int], None] | None = None
         self.setAcceptRichText(False)
         self.setUndoRedoEnabled(False)
         self.setAcceptDrops(False)
@@ -91,6 +94,9 @@ class IntegratedTerminalEdit(QTextEdit):
         self._completer = completer
         completer.setWidget(self)
         completer.popup().installEventFilter(self)
+
+    def set_font_zoom_callback(self, callback: Callable[[int], None]) -> None:
+        self.font_zoom_callback = callback
 
     def completer(self):
         return self._completer
@@ -291,6 +297,14 @@ class IntegratedTerminalEdit(QTextEdit):
                 popup.hide()
                 return True
         return super().eventFilter(watched, event)
+
+    def wheelEvent(self, event) -> None:
+        if self.font_zoom_callback and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = 1 if event.angleDelta().y() > 0 else -1
+            self.font_zoom_callback(delta)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def keyPressEvent(self, event) -> None:
         popup = self._completer.popup() if self._completer else None

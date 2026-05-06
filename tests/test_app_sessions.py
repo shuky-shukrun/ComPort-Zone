@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QKeyEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
@@ -1391,6 +1391,60 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(session.terminal.font().pointSize(), 15)
             self.assertEqual(window.settings.terminal_font_family, "Consolas")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_terminal_ctrl_wheel_changes_font_size(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_terminal_ctrl_wheel.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        class FakeWheelEvent:
+            def __init__(self, y: int) -> None:
+                self._angle_delta = QPoint(0, y)
+                self.accepted = False
+
+            def modifiers(self):
+                return Qt.KeyboardModifier.ControlModifier
+
+            def angleDelta(self) -> QPoint:
+                return self._angle_delta
+
+            def accept(self) -> None:
+                self.accepted = True
+
+        try:
+            window = app_module.MainWindow()
+            window.settings.terminal_font_size = 12
+            session = window.current_session()
+
+            increase = FakeWheelEvent(120)
+            session.terminal.wheelEvent(increase)
+
+            self.assertTrue(increase.accepted)
+            self.assertEqual(window.settings.terminal_font_size, 13)
+            self.assertEqual(session.terminal.font().pointSize(), 13)
+
+            decrease = FakeWheelEvent(-120)
+            session.terminal.wheelEvent(decrease)
+
+            self.assertTrue(decrease.accepted)
+            self.assertEqual(window.settings.terminal_font_size, 12)
+            self.assertEqual(session.terminal.font().pointSize(), 12)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
