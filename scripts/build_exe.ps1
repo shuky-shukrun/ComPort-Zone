@@ -12,6 +12,8 @@ $AppName = "ComPort Zone"
 $PackageName = "ComPort_Zone"
 $SourcePath = Join-Path $Root "src"
 $EntryPoint = Join-Path $Root "scripts\pyinstaller_entry.py"
+$PipRunner = Join-Path $ScriptDir "run_pip.py"
+$SetupCompatPath = Join-Path $ScriptDir "setup_compat"
 $IconPng = Join-Path $Root "src\$PackageName\assets\comport-zone-icon.png"
 $BuildId = Get-Date -Format "yyyyMMdd-HHmmss"
 $BuildRoot = Join-Path $Root "build\pyinstaller"
@@ -72,8 +74,47 @@ function Test-PythonModule {
         [string]$PythonExe,
         [string]$ModuleName
     )
-    & $PythonExe -c "import $ModuleName" *> $null
-    return $LASTEXITCODE -eq 0
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $PythonExe -c "import importlib, sys; importlib.import_module(sys.argv[1])" $ModuleName *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+}
+
+function Invoke-Pip {
+    param([string[]]$Arguments)
+
+    $PreviousCompat = $env:COMPORT_ZONE_SETUP_INHERIT_TEMP_ACL
+    $PreviousPythonPath = $env:PYTHONPATH
+    $env:COMPORT_ZONE_SETUP_INHERIT_TEMP_ACL = "1"
+    $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($PreviousPythonPath)) {
+        $SetupCompatPath
+    }
+    else {
+        "$SetupCompatPath$([IO.Path]::PathSeparator)$PreviousPythonPath"
+    }
+    try {
+        Invoke-Checked -FilePath $VenvPython -Arguments (@($PipRunner) + $Arguments)
+    }
+    finally {
+        if ([string]::IsNullOrEmpty($PreviousPythonPath)) {
+            Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:PYTHONPATH = $PreviousPythonPath
+        }
+
+        if ([string]::IsNullOrEmpty($PreviousCompat)) {
+            Remove-Item Env:COMPORT_ZONE_SETUP_INHERIT_TEMP_ACL -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:COMPORT_ZONE_SETUP_INHERIT_TEMP_ACL = $PreviousCompat
+        }
+    }
 }
 
 function Test-BuildEnvironment {
@@ -276,8 +317,9 @@ if (-not (Test-Path $VenvPython)) {
 
 if ($ForceInstall -or -not (Test-BuildEnvironment)) {
     Write-Step "Installing build dependencies"
-    Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip")
-    Invoke-Checked $VenvPython @("-m", "pip", "install", "-e", "${Root}[build]")
+    Invoke-Pip -Arguments @("install", "--upgrade", "pip")
+    Invoke-Pip -Arguments @("install", "setuptools>=68")
+    Invoke-Pip -Arguments @("install", "--no-build-isolation", "-e", "${Root}[build]")
 }
 else {
     Write-Step "Build dependencies already installed"
