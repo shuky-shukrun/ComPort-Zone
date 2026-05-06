@@ -1062,6 +1062,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(self._stylesheet(self.theme))
         for editor in self.iter_command_file_editors():
             editor.apply_theme_palette(self.theme)
+        for session in self.iter_sessions():
+            session.apply_theme_palette()
         for theme_name, action in getattr(self, "theme_actions", {}).items():
             action.setChecked(theme_name == self.theme.name)
         self.update_tab_titles()

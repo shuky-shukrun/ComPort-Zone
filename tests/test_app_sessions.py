@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeyEvent
+from PySide6.QtGui import QAction, QKeyEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
 
@@ -82,6 +82,13 @@ class AppSessionTests(unittest.TestCase):
                 self.assertEqual(session.profile.baudrate, 57600)
                 self.assertEqual(session.profile.line_ending, "LF")
                 self.assertEqual(session.terminal.toPlainText(), "previous output")
+                cursor = QTextCursor(session.terminal.document())
+                cursor.setPosition(session.terminal.display_text().index("previous"))
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+                self.assertEqual(
+                    cursor.charFormat().foreground().color().name().lower(),
+                    window.theme.text.lower(),
+                )
                 self.assertEqual(session.command_input.text(), "status")
                 self.assertEqual(session.mode_combo.currentText(), "Hex Bytes")
             finally:
@@ -205,6 +212,7 @@ class AppSessionTests(unittest.TestCase):
         app_module.MainWindow.prompt_session_settings = lambda self, session: None
         try:
             window = app_module.MainWindow()
+            window.settings.timestamps_enabled = False
             session = window.current_session()
             sent: list[str] = []
             session.serial_client.send_text = lambda text, *_: sent.append(text)
@@ -217,6 +225,61 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(sent, ["status"])
             self.assertEqual(session.command_input.text(), "")
+            self.assertEqual(session.terminal.toPlainText(), "TX> status\n")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_integrated_send_suppresses_echo_and_marks_partial_failure(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_integrated_send.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.timestamps_enabled = False
+            session = window.current_session()
+            sent: list[str] = []
+
+            def fake_send_text(text: str, *_args) -> None:
+                sent.append(text)
+                if text == "bad":
+                    raise RuntimeError("write failed")
+                session.serial_client.events.put(app_module.SerialEvent(kind="tx", message=text))
+
+            session.serial_client.send_text = fake_send_text
+            session.command_input.setText("ok\nbad\nlater")
+
+            session.send_from_input()
+            session._drain_events()
+            self.qt.processEvents()
+
+            self.assertEqual(sent, ["ok", "bad"])
+            self.assertEqual(session.command_input.text(), "")
+            self.assertEqual(session.terminal.toPlainText(), "TX> ok\nTX> bad\nTX> later\n")
+            display_text = session.terminal.display_text()
+
+            def color_for(fragment: str) -> str:
+                cursor = QTextCursor(session.terminal.document())
+                cursor.setPosition(display_text.index(fragment))
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+                return cursor.charFormat().foreground().color().name().lower()
+
+            self.assertEqual(color_for("ok"), window.theme.tx.lower())
+            self.assertEqual(color_for("bad"), window.theme.error.lower())
+            self.assertEqual(color_for("later"), window.theme.error.lower())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

@@ -128,6 +128,12 @@ class TerminalView:
         search_text: str,
         search_highlight: str,
     ) -> None:
+        append_committed_text = getattr(self.terminal, "append_committed_text", None)
+        if callable(append_committed_text):
+            append_committed_text(text, color)
+            if search_visible:
+                self.refresh_search_highlights(search_text, search_highlight)
+            return
         cursor = self.terminal.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()

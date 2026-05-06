@@ -48,9 +48,9 @@ from ..quick_actions_panel import (
 )
 from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
-from ..terminal_session_controller import TerminalSessionController
+from ..terminal_session_controller import TerminalRenderPlan, TerminalSessionController
 from ..terminal_view import TerminalView
-from ..widgets import ChevronComboBox, HistoryLineEdit, set_button_role
+from ..widgets import ChevronComboBox, IntegratedTerminalEdit
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
 
@@ -93,6 +93,7 @@ class TerminalSessionWidget(QWidget):
         self._status_text = "Disconnected"
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
+        self._suppressed_tx_echoes: list[str] = []
 
         self._build_ui()
         self.refresh_ports()
@@ -197,14 +198,13 @@ class TerminalSessionWidget(QWidget):
         search_layout.addWidget(close_search)
         self.search_bar.hide()
 
-        self.terminal = QTextEdit(terminal_column)
+        self.terminal = IntegratedTerminalEdit(terminal_column)
         self.terminal.setObjectName("terminal")
-        self.terminal.setReadOnly(True)
-        self.terminal.setAcceptRichText(False)
         self.terminal.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.terminal.customContextMenuRequested.connect(self.show_terminal_context_menu)
         self.terminal_view = TerminalView(self.terminal, self.search_count)
+        self.command_input = self.terminal
 
         self.command_bar = QFrame(terminal_column)
         self.command_bar.setObjectName("commandBar")
@@ -224,8 +224,6 @@ class TerminalSessionWidget(QWidget):
         self.rx_display_combo.setFixedWidth(132)
         self.rx_display_combo.setToolTip("Receive display mode")
         self.rx_display_combo.currentIndexChanged.connect(self._receive_display_mode_changed)
-        self.command_input = HistoryLineEdit(self.command_bar)
-        self.command_input.setPlaceholderText("Send command")
         self.command_input.returnPressed.connect(self.send_from_input)
         self.command_input.historyRequested.connect(self._navigate_history)
         self.command_input.autocompleteRequested.connect(self._show_completion_popup)
@@ -237,10 +235,6 @@ class TerminalSessionWidget(QWidget):
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         completer.activated.connect(self._apply_completion)
         self.command_input.setCompleter(completer)
-        send_button = QPushButton("Send", self.command_bar)
-        set_button_role(send_button, "accent")
-        set_button_icon(send_button, QStyle.StandardPixmap.SP_ArrowForward)
-        send_button.clicked.connect(self.send_from_input)
         self.line_ending_label = QLabel("", self.command_bar)
         self.log_label = QLabel("Log off", self.command_bar)
         self.pause_label = QLabel("", self.command_bar)
@@ -262,8 +256,6 @@ class TerminalSessionWidget(QWidget):
 
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.rx_display_combo)
-        command_layout.addWidget(self.command_input, 1)
-        command_layout.addWidget(send_button)
         command_layout.addWidget(self.line_ending_label)
         command_layout.addWidget(self.log_label)
         command_layout.addWidget(self.pause_label)
@@ -344,6 +336,8 @@ class TerminalSessionWidget(QWidget):
         )
         self.terminal.setFont(terminal_font)
         self.terminal.document().setDefaultFont(terminal_font)
+        if hasattr(self.terminal, "set_terminal_colors"):
+            self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
         receive_mode = (
             self.host.settings.receive_display_mode
             if self.host.settings.receive_display_mode in RECEIVE_DISPLAY_MODES
@@ -355,6 +349,10 @@ class TerminalSessionWidget(QWidget):
             self.rx_display_combo.setCurrentIndex(receive_mode_index)
         self.rx_display_combo.blockSignals(False)
         self._update_line_ending_label()
+
+    def apply_theme_palette(self) -> None:
+        if hasattr(self.terminal, "set_terminal_colors"):
+            self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()
@@ -858,20 +856,97 @@ class TerminalSessionWidget(QWidget):
 
     def send_from_input(self) -> None:
         raw = self.command_input.text()
-        try:
-            sent = self.controller.send_input(
-                raw,
-                self.mode_combo.currentText(),
-                record_command=self.host.record_command,
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "Send", str(exc))
+        if not raw.strip():
             return
-        if sent:
+        if self._send_integrated_input(raw, self.mode_combo.currentText()):
             self._clear_command_input_after_send()
 
     def _send_payload(self, raw: str, mode: str) -> None:
         self.controller.send_payload(raw, mode)
+
+    def _send_integrated_input(self, raw: str, mode: str) -> bool:
+        if mode == "Hex Bytes":
+            try:
+                payload = parse_hex_payload(raw)
+            except ValueError as exc:
+                self._render_user_send(raw.strip(), color_role="error")
+                self.host.set_status(str(exc))
+                return True
+            display = "HEX " + format_hex_bytes(payload)
+            try:
+                self.transport.send_bytes(payload)
+            except Exception as exc:
+                self._render_user_send(display, color_role="error")
+                self.host.set_status(str(exc))
+                return True
+            self._suppress_tx_echo(display)
+            self._render_user_send(display, color_role="tx")
+            self.host.record_command(raw.strip())
+            return True
+
+        lines = [line.strip() for line in raw.splitlines()]
+        sendable_lines = [line for line in lines if line]
+        if not sendable_lines:
+            return False
+        sent_all = True
+        failed_index: int | None = None
+        for index, line in enumerate(sendable_lines):
+            try:
+                self.transport.send_text(line)
+            except Exception as exc:
+                failed_index = index
+                self._render_user_send(line, color_role="error")
+                self.host.set_status(str(exc))
+                sent_all = False
+                break
+            self._suppress_tx_echo(line)
+            self._render_user_send(line, color_role="tx")
+        if failed_index is not None:
+            for line in sendable_lines[failed_index + 1 :]:
+                self._render_user_send(line, color_role="error")
+        if sent_all:
+            self.host.record_command(raw.strip())
+        return True
+
+    def _render_user_send(self, message: str, *, color_role: str) -> None:
+        if not message:
+            return
+        self.terminal_view.render_plan(
+            TerminalRenderPlan(
+                event=SerialEvent(kind="tx", message=message),
+                message=message,
+                prefix="TX> ",
+                color_role=color_role,
+                ensure_line_break=True,
+            ),
+            colors={
+                "tx": self.host.theme.tx,
+                "error": self.host.theme.error,
+                "default": self.host.theme.text,
+            },
+            timestamps_enabled=self.host.settings.timestamps_enabled,
+            search_visible=self.search_bar.isVisible(),
+            search_text=self.search_input.text(),
+            search_highlight=self.host.theme.search_highlight,
+        )
+
+    def _suppress_tx_echo(self, message: str) -> None:
+        self._suppressed_tx_echoes.append(message)
+        QTimer.singleShot(1000, self._clear_stale_suppressed_tx_echoes)
+
+    def _clear_stale_suppressed_tx_echoes(self) -> None:
+        self._suppressed_tx_echoes.clear()
+
+    def _consume_suppressed_tx_echo(self, message: str) -> bool:
+        if not self._suppressed_tx_echoes:
+            return False
+        if self._suppressed_tx_echoes[0] == message:
+            self._suppressed_tx_echoes.pop(0)
+            return True
+        if message in self._suppressed_tx_echoes:
+            self._suppressed_tx_echoes.remove(message)
+            return True
+        return False
 
     def send_selected_quick_command(self) -> None:
         command = self.host.quick_command_by_id(self.selected_quick_command_id())
@@ -970,7 +1045,11 @@ class TerminalSessionWidget(QWidget):
                 self._render_event(event)
 
     def clear_terminal(self) -> None:
-        self.terminal.clear()
+        clear_transcript = getattr(self.terminal, "clear_transcript", None)
+        if callable(clear_transcript):
+            clear_transcript(clear_draft=True)
+        else:
+            self.terminal.clear()
         self._refresh_search_highlights(self.search_input.text())
 
     def show_search(self) -> None:
@@ -1118,6 +1197,11 @@ class TerminalSessionWidget(QWidget):
         self.replace_terminal_selection(converted)
 
     def replace_terminal_selection(self, replacement: str) -> None:
+        replace_in_draft = getattr(self.terminal, "replace_selection_in_draft", None)
+        if callable(replace_in_draft):
+            if replace_in_draft(replacement) and self.search_bar.isVisible():
+                self._refresh_search_highlights(self.search_input.text())
+            return
         cursor = self.terminal.textCursor()
         if not cursor.hasSelection():
             return
@@ -1158,7 +1242,8 @@ class TerminalSessionWidget(QWidget):
 
     def _on_command_edited(self, text: str) -> None:
         self.history_store.reset_navigation()
-        self._update_completion_model(text)
+        token_under_cursor = getattr(self.command_input, "token_under_cursor", None)
+        self._update_completion_model(token_under_cursor() if callable(token_under_cursor) else text)
 
     def _delete_current_input_from_history(self) -> None:
         command = self.command_input.text().strip()
@@ -1181,11 +1266,20 @@ class TerminalSessionWidget(QWidget):
         self.completion_model.setStringList(suggestions[:30])
 
     def _show_completion_popup(self) -> None:
-        self._update_completion_model()
+        token_under_cursor = getattr(self.command_input, "token_under_cursor", None)
+        self._update_completion_model(token_under_cursor() if callable(token_under_cursor) else None)
         if self.completion_model.rowCount() > 0 and self.command_input.completer():
-            self.command_input.completer().complete()
+            show_completions = getattr(self.command_input, "show_completions", None)
+            if callable(show_completions):
+                show_completions(forced=True)
+            else:
+                self.command_input.completer().complete()
 
     def _apply_completion(self, value: str) -> None:
+        insert_completion = getattr(self.command_input, "insert_completion", None)
+        if callable(insert_completion):
+            insert_completion(value)
+            return
         self.command_input.setText(value)
         self.command_input.setCursorPosition(len(value))
 
@@ -1198,6 +1292,8 @@ class TerminalSessionWidget(QWidget):
             self._handle_event(event)
 
     def _handle_event(self, event: SerialEvent) -> None:
+        if event.kind == "tx" and self._consume_suppressed_tx_echo(event.message):
+            return
         decision = self.controller.handle_event(event)
         if decision.paused_count is not None:
             self.pause_label.setText(f"Paused ({decision.paused_count})")
