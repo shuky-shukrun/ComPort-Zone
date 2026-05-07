@@ -6,6 +6,30 @@ The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one l
 
 Current version: `0.2.5`.
 
+## UI Preview
+
+These screenshots and GIFs are captured from the current PySide UI with sample serial data, so GitHub reviewers can see the real application surface while reading the code.
+
+### Screenshots
+
+<p>
+  <img src="docs/media/comport-zone-terminal.png" alt="ComPort Zone terminal workspace with the quick-send drawer open" width="900">
+</p>
+
+<p>
+  <img src="docs/media/comport-zone-command-editor.png" alt="ComPort Zone command-file editor tab with syntax highlighting and quick commands" width="900">
+</p>
+
+### GIFs
+
+<p>
+  <img src="docs/media/comport-zone-quick-drawer.gif" alt="ComPort Zone quick drawer switching between collapsed, quick-send, and quick-file views" width="760">
+</p>
+
+<p>
+  <img src="docs/media/comport-zone-workspace-tabs.gif" alt="ComPort Zone switching between terminal and command-file editor tabs" width="760">
+</p>
+
 ## Current Features
 
 - Terminal-first layout with minimal chrome and a VS Code dark default theme

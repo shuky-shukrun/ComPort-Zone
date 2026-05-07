@@ -1,10 +1,10 @@
-VOLT 10 // Test
+// C Style comments
+VOLT 10
 WAIT 100
 VOLT? 
 WAIT 100
+// RealTime Parameters
 CURR {{CURR_VALUE}}
-# Test 3
-// Test 4
 WAIT 100
 CURR?
 WAIT 100
@@ -12,6 +12,7 @@ SINK:CURR {{SINK_CURR_VALUE}}
 WAIT 100
 SINK:CURR?
 WAIT 100
+// RealTime Parameters with defaults
 POW {{POW_VALUE=1000}}
 WAIT 100
 POW?
