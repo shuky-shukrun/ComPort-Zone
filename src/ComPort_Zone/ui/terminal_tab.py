@@ -1301,7 +1301,7 @@ class TerminalSessionWidget(QWidget):
             return
         if decision.event_to_render is not None:
             self._render_event(decision.event_to_render)
-        if decision.status_message:
+        if decision.status_message and self.host.tabs.currentWidget() is self:
             self.host.set_status(decision.status_message)
         if decision.connection_state is not None:
             self._update_connection_ui(
@@ -1339,7 +1339,7 @@ class TerminalSessionWidget(QWidget):
         self.status_label.setText(status_text)
         self.host.update_tab_titles()
         self.host.update_connection_status(self)
-        if update_footer:
+        if update_footer and self.host.tabs.currentWidget() is self:
             self.host.set_status(self._status_text)
 
     def connection_state(self) -> str:

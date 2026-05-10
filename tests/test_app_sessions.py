@@ -171,6 +171,71 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_background_restore_does_not_replace_active_connection_status(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_restore_background_status.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(
+                        restored_tabs=[
+                            TerminalSessionState(
+                                title="Connected DUT",
+                                serial=SerialProfile(port="COM11"),
+                                connected_on_launch=True,
+                            ),
+                            TerminalSessionState(
+                                title="Idle DUT",
+                                serial=SerialProfile(port="COM22"),
+                                connected_on_launch=False,
+                            ),
+                        ]
+                    )
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_restore_connection = app_module.MainWindow.restore_session_connection
+            old_list_ports_snapshot = main_window_module.TerminalSessionWidget.list_ports_snapshot
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            main_window_module.TerminalSessionWidget.list_ports_snapshot = lambda self: [
+                {"device": "COM11", "description": "Connected", "hwid": ""},
+                {"device": "COM22", "description": "Idle", "hwid": ""},
+            ]
+            app_module.MainWindow.restore_session_connection = (
+                lambda self, session: session._update_connection_ui(True)
+            )
+            try:
+                window = app_module.MainWindow()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+
+                self.assertEqual(window.current_session().profile.port, "COM22")
+                self.assertEqual(
+                    window.connection_status_label.text(),
+                    "Closed | COM22 | 115200 8N1 | CRLF | Log off",
+                )
+                self.assertEqual(window.connection_action_button.text(), "Connect")
+                self.assertEqual(window.footer.text(), "Ready")
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                app_module.MainWindow.restore_session_connection = old_restore_connection
+                main_window_module.TerminalSessionWidget.list_ports_snapshot = old_list_ports_snapshot
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_duplicate_tab_copies_live_session_state(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_duplicate.json")
         settings_path.unlink(missing_ok=True)

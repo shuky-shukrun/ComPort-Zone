@@ -520,9 +520,11 @@ class MainWindow(QMainWindow):
             message = f"{session.profile.port} is not currently detected. Auto-connect skipped."
             session._append_status(message)
             session._update_connection_ui(False)
-            self.set_status(message)
+            if self.tabs.currentWidget() is session:
+                self.set_status(message)
             return
-        self.set_status(f"Connecting to {session.profile.port}...")
+        if self.tabs.currentWidget() is session:
+            self.set_status(f"Connecting to {session.profile.port}...")
         session.serial_client.connect(session.profile)
         session._update_connection_ui(session.serial_client.is_connected)
 
@@ -656,7 +658,9 @@ class MainWindow(QMainWindow):
 
     def update_connection_status(self, session: TerminalSessionWidget | None = None) -> None:
         self.refresh_command_file_targets()
-        self.workspace_status.update_connection_status(session or self.current_session(), self.theme)
+        # The shared status bar belongs to the selected tab; background tab
+        # updates should refresh shared targets without replacing it.
+        self.workspace_status.sync_from_current(self.theme)
 
     def set_status(self, text: str) -> None:
         self.workspace_status.set_status(text)
