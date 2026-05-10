@@ -88,7 +88,7 @@ class IntegratedTerminalEdit(QTextEdit):
         self._prompt_color = prompt
         self._draft_color = prompt
         self._transcript_color = draft
-        self._replace_prompt_preserving_content()
+        self._reformat_prompt_and_draft()
 
     def setCompleter(self, completer) -> None:
         self._completer = completer
@@ -420,6 +420,22 @@ class IntegratedTerminalEdit(QTextEdit):
         draft = self.text()
         cursor_offset = self.cursorPosition()
         self._replace_document(transcript, draft, cursor_offset)
+
+    def _reformat_prompt_and_draft(self) -> None:
+        current_cursor = self.textCursor()
+        prompt_start = self._safe_prompt_start()
+        draft_start = self._safe_draft_start()
+        document_end = self._document_end_position()
+        cursor = QTextCursor(self.document())
+        if prompt_start < draft_start:
+            cursor.setPosition(prompt_start)
+            cursor.setPosition(draft_start, QTextCursor.MoveMode.KeepAnchor)
+            cursor.setCharFormat(self._format(self._prompt_color))
+        if draft_start < document_end:
+            cursor.setPosition(draft_start)
+            cursor.setPosition(document_end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.setCharFormat(self._format(self._draft_color))
+        self.setTextCursor(current_cursor)
 
     def _insert_prompt(self, draft: str, cursor_offset: int) -> None:
         cursor = QTextCursor(self.document())

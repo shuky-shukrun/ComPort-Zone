@@ -1404,7 +1404,11 @@ class AppSessionTests(unittest.TestCase):
         app_module.MainWindow.prompt_session_settings = lambda self, session: None
         try:
             window = app_module.MainWindow()
+            window.settings.timestamps_enabled = False
             session = window.current_session()
+            session._render_event(app_module.SerialEvent(kind="tx", message="status"))
+            session._render_event(app_module.SerialEvent(kind="rx", message="OK\r\n", raw=b"OK\r\n"))
+            session._render_event(app_module.SerialEvent(kind="error", message="write failed"))
             window.settings.terminal_font_family = "Consolas"
             window.settings.terminal_font_size = 15
 
@@ -1412,6 +1416,17 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(session.terminal.font().pointSize(), 15)
             self.assertEqual(window.settings.terminal_font_family, "Consolas")
+            display_text = session.terminal.display_text()
+
+            def color_for(fragment: str) -> str:
+                cursor = QTextCursor(session.terminal.document())
+                cursor.setPosition(display_text.index(fragment))
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+                return cursor.charFormat().foreground().color().name().lower()
+
+            self.assertEqual(color_for("status"), window.theme.tx.lower())
+            self.assertEqual(color_for("OK"), window.theme.rx.lower())
+            self.assertEqual(color_for("write failed"), window.theme.error.lower())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
