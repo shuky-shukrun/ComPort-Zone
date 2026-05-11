@@ -1,3 +1,55 @@
+# ComPort Zone v0.2.7 Release Notes
+
+Release date: 2026-05-11
+
+ComPort Zone v0.2.7 reorganizes the Windows release package around a faster one-folder PyInstaller bundle and an Inno Setup installer. It also adds settings compatibility metadata so local settings can survive compatible upgrades and downgrades more predictably.
+
+## Highlights
+
+- Windows releases now use a PyInstaller one-folder bundle plus an installer for faster startup and cleaner upgrades/downgrades.
+- The release workflow now produces both a portable zip and an Inno Setup installer.
+- Installs are per-user under `%LOCALAPPDATA%\ComPortZone`, with the frozen app isolated in the `app` folder.
+- Upgrades and downgrades replace the installed app bundle while preserving `settings.json`, `settings.json.bak`, the uninstaller, and user data.
+- Settings now declare minimum-compatible schema metadata so compatible future payloads can load safely and incompatible ones fall back to backups/defaults.
+
+## What's New
+
+### Windows Packaging
+
+- PyInstaller now builds a one-folder app bundle instead of a one-file executable.
+- The build script can create a portable zip and an Inno Setup installer; use `-SkipInstaller` to build only the portable zip.
+- The installer creates Start Menu and desktop shortcuts for the per-user install.
+- The installed app internals live under `%LOCALAPPDATA%\ComPortZone\app`.
+- The portable publish folder keeps the PyInstaller bundle under `app`.
+
+### Settings Compatibility
+
+- App settings JSON now includes `minimum_compatible_schema_version`.
+- Compatible upgrades and downgrades keep local settings, Quick Commands, and Quick Files because they live outside the installed app bundle.
+- Older builds treat payloads with a newer minimum-compatible schema as unsupported and try `settings.json.bak` before falling back to defaults.
+
+### Documentation And Release Workflow
+
+- README build/release instructions now describe the one-folder zip, installer output, install layout, and `-SkipInstaller`.
+- Architecture and design docs now describe minimum-compatible schema checks.
+- The GitHub release workflow uploads both release artifacts.
+
+## Validation
+
+The release added or expanded coverage for:
+
+- Settings compatibility metadata, compatible future-schema loading, and incompatible future-schema backup fallback.
+- Release packaging script and workflow changes for portable zip and installer output.
+- Documentation updates for the installer layout, portable bundle layout, and settings compatibility behavior.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.2.6 Release Notes
 
 Release date: 2026-05-11

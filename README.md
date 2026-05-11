@@ -4,7 +4,7 @@ ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging
 
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface with an integrated `TX> ` command prompt, a compact control bar, and a foldable left drawer for quick commands and quick files.
 
-Current version: `0.2.6`.
+Current version: `0.2.7`.
 
 ## UI Preview
 

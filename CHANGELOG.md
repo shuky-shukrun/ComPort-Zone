@@ -2,6 +2,25 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.2.7 - 2026-05-11
+
+### Added
+
+- Add an Inno Setup installer for Windows releases.
+- Add settings `minimum_compatible_schema_version` metadata for upgrade and downgrade safety.
+- Add `-SkipInstaller` support for portable-only Windows builds.
+
+### Changed
+
+- Build PyInstaller releases as a one-folder bundle instead of a one-file executable.
+- Update the release workflow to upload both the portable zip and installer.
+- Install as a per-user Windows app under `%LOCALAPPDATA%\ComPortZone`, with the PyInstaller bundle isolated in the `app` folder and replaced on upgrades/downgrades while preserving local user settings.
+- Update README and architecture/design docs for the installer layout and settings compatibility behavior.
+
+### Tests
+
+- Expanded settings tests for compatible future schema reads and incompatible future schema fallback.
+
 ## 0.2.6 - 2026-05-11
 
 ### Added
