@@ -147,7 +147,7 @@ PowerShell users can call:
 GitHub Actions runs the Windows CI workflow on pushes and pull requests targeting `master` or `main`.
 The CI job installs the editable package through `scripts\setup_dev.ps1`, runs the `unittest` suite with `scripts\run_tests.ps1`, and checks installed package dependencies.
 
-The release workflow builds the Windows PyInstaller zip package on matching version tags and manual dispatches.
+The release workflow builds the Windows PyInstaller one-folder zip package and installer on matching version tags and manual dispatches.
 To publish a GitHub Release, update the version files, commit the change, create a tag that matches `src\ComPort_Zone\VERSION`, and push it:
 
 ```powershell
@@ -158,7 +158,7 @@ git tag v1.2.3
 git push origin master --tags
 ```
 
-Manual release workflow runs build and upload the Windows zip as a workflow artifact without publishing a GitHub Release unless the run is for a tag.
+Manual release workflow runs build and upload the Windows zip and installer as workflow artifacts without publishing a GitHub Release unless the run is for a tag.
 
 ## Build Windows EXE
 
@@ -171,25 +171,48 @@ Update the app version before a release:
 .\update_version.bat -Bump major
 ```
 
-Double-click `build_exe.bat` from the project folder.
+Double-click `build_exe.bat` from the project folder. Install Inno Setup 6 first so the script can create the Windows installer.
 
-The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller, embeds Windows file-version properties, adds a startup splash screen for the one-file unpack/load delay, and writes publishable output to:
+The script creates or reuses `.venv`, installs the app with build dependencies, runs PyInstaller in `onedir` mode, embeds Windows file-version properties, builds an Inno Setup installer, and writes publishable output to:
 
 ```text
 release\ComPort_Zone-X.Y.Z-win64\
 release\ComPort_Zone-X.Y.Z-win64.zip
+release\ComPort_Zone-X.Y.Z-win64-setup.exe
 ```
 
 The generated executable is also available at:
 
 ```text
-dist\ComPort Zone.exe
+dist\ComPort Zone\ComPort Zone.exe
 ```
+
+The publish folder keeps the PyInstaller bundle under `app\`. Installer users do not run from that folder directly; they run `release\ComPort_Zone-X.Y.Z-win64-setup.exe`, which installs a normal per-user Windows app with Start Menu and desktop shortcuts.
+
+The installer writes the frozen app internals to:
+
+```text
+%LOCALAPPDATA%\ComPortZone\app\
+```
+
+The local settings file remains beside that app folder:
+
+```text
+%LOCALAPPDATA%\ComPortZone\settings.json
+```
+
+The installer uses a stable AppId and replaces only the installed `app\` bundle on every install, so upgrades and downgrades remove stale PyInstaller files while preserving `settings.json`, `settings.json.bak`, the uninstaller, and user data.
 
 After the first setup, later builds skip dependency installation when the `.venv` build environment is already ready. To force a dependency refresh, run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -ForceInstall
+```
+
+To build only the portable one-folder zip without the installer:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -SkipInstaller
 ```
 
 ## Terminal Input
@@ -333,7 +356,9 @@ If the primary settings file is corrupt or uses an unsupported schema, startup t
 
 Use `File > App Settings Import / Export...` to open the App Settings dialog, then choose whether to import or export a JSON app-settings file. This replaces the older idea of managing named profiles inside the app.
 
-App settings JSON is versioned with `schema_version: 2` and grouped into `transport`, `app`, `history`, `libraries`, and `workspace` sections. Older flat app-settings JSON is not migrated.
+App settings JSON is versioned with `schema_version: 2`, declares `minimum_compatible_schema_version: 2`, and is grouped into `transport`, `app`, `history`, `libraries`, and `workspace` sections. Older flat app-settings JSON is not migrated.
+
+Compatible upgrades and downgrades keep the local settings file, Quick Commands, and Quick Files because they live under `%LOCALAPPDATA%\ComPortZone`, outside the installed app bundle. If a future release makes a non-backward-compatible settings change, update `MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION` in `src\ComPort_Zone\models.py`; older builds will treat that payload as unsupported and try `settings.json.bak` before defaults.
 
 Quick Commands and Quick Files are intentionally not included in app-settings JSON import/export. They are action libraries, so they use their own CSV import/export flows from the matching sidebar pages or `Tools > Quick Commands` and `Tools > Quick Files`.
 

@@ -2,7 +2,7 @@
 
 ## Project Shape
 
-ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows. It is a Python 3.12+ desktop app built with PySide6, pyserial, and PyInstaller.
+ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging, and repeated engineering command workflows. It is a Python 3.12+ desktop app built with PySide6, pyserial, PyInstaller `onedir`, and an Inno Setup installer.
 
 Use this file as the canonical project guide for coding agents. Tool-specific files should stay thin and point back here.
 

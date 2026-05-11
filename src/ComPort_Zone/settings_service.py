@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .models import AppSettings, SETTINGS_SCHEMA_VERSION
+from .models import (
+    AppSettings,
+    MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+    SETTINGS_SCHEMA_VERSION,
+)
 from .storage import SettingsStore, default_config_path
 
 
@@ -42,13 +46,33 @@ class SettingsService:
         return settings.to_app_settings_dict()
 
     def settings_from_payload(self, payload: dict[str, Any]) -> AppSettings:
-        schema_version = payload.get("schema_version")
-        if schema_version != SETTINGS_SCHEMA_VERSION:
+        schema_version = self._schema_version(payload.get("schema_version"), "schema_version")
+        minimum_compatible_schema_version = self._schema_version(
+            payload.get("minimum_compatible_schema_version", schema_version),
+            "minimum_compatible_schema_version",
+        )
+        if minimum_compatible_schema_version > schema_version:
+            raise ValueError(
+                "App settings minimum compatible schema cannot be newer "
+                "than the payload schema."
+            )
+        if schema_version < MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION:
             raise ValueError(
                 f"Unsupported app settings schema {schema_version!r}; "
-                f"expected {SETTINGS_SCHEMA_VERSION}."
+                f"minimum readable schema is {MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION}."
+            )
+        if minimum_compatible_schema_version > SETTINGS_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported app settings schema {schema_version!r}; "
+                f"minimum compatible schema is {minimum_compatible_schema_version}, "
+                f"but this app supports {SETTINGS_SCHEMA_VERSION}."
             )
         return AppSettings.from_dict(payload)
+
+    def _schema_version(self, value: Any, field_name: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"App settings {field_name} must be an integer.")
+        return value
 
     def preserve_quick_actions(
         self,

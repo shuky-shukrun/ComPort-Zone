@@ -42,6 +42,7 @@ jobs:
           }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "zip_path=release\ComPort_Zone-$version-win64.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "installer_path=release\ComPort_Zone-$version-win64-setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Verify release tag matches project version
         if: github.ref_type == 'tag'
@@ -61,6 +62,10 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_tests.ps1
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
       - name: Build Windows executable package
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_exe.ps1
@@ -69,7 +74,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ComPort_Zone-${{ steps.version.outputs.version }}-win64
-          path: ${{ steps.version.outputs.zip_path }}
+          path: |
+            ${{ steps.version.outputs.zip_path }}
+            ${{ steps.version.outputs.installer_path }}
           if-no-files-found: error
           retention-days: 30
 
@@ -79,6 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ZIP: ${{ steps.version.outputs.zip_path }}
+          RELEASE_INSTALLER: ${{ steps.version.outputs.installer_path }}
         run: |
           $tag = "${{ github.ref_name }}"
           $title = "ComPort Zone ${{ steps.version.outputs.version }}"
@@ -87,8 +95,8 @@ jobs:
           $releaseExists = $LASTEXITCODE -eq 0
 
           if ($releaseExists) {
-            gh release upload $tag $env:RELEASE_ZIP --repo $env:GITHUB_REPOSITORY --clobber
+            gh release upload $tag $env:RELEASE_ZIP $env:RELEASE_INSTALLER --repo $env:GITHUB_REPOSITORY --clobber
           }
           else {
-            gh release create $tag $env:RELEASE_ZIP --repo $env:GITHUB_REPOSITORY --title $title --generate-notes --verify-tag
+            gh release create $tag $env:RELEASE_ZIP $env:RELEASE_INSTALLER --repo $env:GITHUB_REPOSITORY --title $title --generate-notes --verify-tag
           }

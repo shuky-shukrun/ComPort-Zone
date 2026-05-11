@@ -19,6 +19,7 @@ QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
 SETTINGS_SCHEMA_VERSION = 2
+MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
@@ -295,6 +296,7 @@ class AppSettings:
         transport_profile = dict(self.transport_profile or self.serial.to_dict())
         return {
             "schema_version": SETTINGS_SCHEMA_VERSION,
+            "minimum_compatible_schema_version": MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
             "transport": {
                 "kind": self.transport_kind or "serial",
                 "profile": transport_profile,

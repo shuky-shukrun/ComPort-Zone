@@ -380,7 +380,7 @@ Rules:
 
 - `SettingsService` owns schema and payload rules.
 - `SettingsStore` owns file I/O only: temporary-file writes, atomic replacement, backup creation, and primary/backup payload candidates.
-- `SettingsService.load()` tries each valid payload candidate before returning default settings.
+- `SettingsService.load()` tries each valid payload candidate before returning default settings. Future payloads are readable only when their `minimum_compatible_schema_version` is not newer than the running app's supported schema.
 - `WorkspaceStateService` owns tab capture/restore.
 - `WorkspaceSettingsController` coordinates live apply/save through callbacks.
 - `AppSettingsController` owns file-picker/dialog/busy UI for JSON settings transfer.
@@ -508,7 +508,7 @@ Done foundations:
 - Quick action domain, controller, and shared panel/sidebar are extracted.
 - Command editor core, search, highlighting, command-file services, and run-target coordination are extracted.
 - Settings service, workspace state, workspace settings controller, app settings controller are extracted.
-- Settings storage now saves atomically and can fall back to `settings.json.bak`.
+- Settings storage now saves atomically, can fall back to `settings.json.bak`, and declares minimum-compatible schema metadata for upgrade/downgrade safety.
 - Transport abstraction foundation exists with serial adapter.
 - Shared drawer collapsed state, selected page, and resized width are synchronized across terminal and embedded command-file editor tabs.
 

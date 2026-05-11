@@ -1,6 +1,8 @@
 param(
     [switch]$NoZip,
-    [switch]$ForceInstall
+    [switch]$ForceInstall,
+    [switch]$SkipInstaller,
+    [string]$InstallerCompilerPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +27,7 @@ $WorkPath = Join-Path $WorkRoot $BuildId
 $SpecPath = Join-Path $BuildRoot "spec"
 $DistPath = Join-Path $Root "dist"
 $ReleaseRoot = Join-Path $Root "release"
+$InstallerBuildPath = Join-Path $BuildRoot "installer"
 $VenvPath = Join-Path $Root ".venv"
 $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
 $Version = (Get-Content (Join-Path $Root "src\$PackageName\VERSION") -Raw).Trim()
@@ -37,8 +40,14 @@ $VersionMinor = [int]$Matches[2]
 $VersionPatch = [int]$Matches[3]
 $ExeBaseName = $AppName
 $ExeFileName = "$ExeBaseName.exe"
+$DistBundlePath = Join-Path $DistPath $ExeBaseName
 $PublishDir = Join-Path $ReleaseRoot "$($AppName.Replace(' ', '_'))-$Version-win64"
+$PublishAppDir = Join-Path $PublishDir "app"
 $ZipPath = Join-Path $ReleaseRoot "$($AppName.Replace(' ', '_'))-$Version-win64.zip"
+$InstallerBaseName = "$($AppName.Replace(' ', '_'))-$Version-win64-setup"
+$InstallerFileName = "$InstallerBaseName.exe"
+$InstallerPath = Join-Path $ReleaseRoot $InstallerFileName
+$InstallerScriptPath = Join-Path $InstallerBuildPath "$($AppName.Replace(' ', '_'))-$Version.iss"
 
 function Write-Step {
     param([string]$Message)
@@ -191,69 +200,6 @@ if not icon.pixmap(QSize(256, 256)).save(str(target), "ICO"):
     Invoke-Checked $PythonExe @($IconScript, $SourcePng, $TargetIco)
 }
 
-function New-SplashFile {
-    param(
-        [string]$PythonExe,
-        [string]$SourcePng,
-        [string]$TargetPng
-    )
-    $SplashScript = Join-Path $BuildRoot "make_splash.py"
-    @'
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPixmap
-
-app = QGuiApplication.instance() or QGuiApplication([])
-source = Path(sys.argv[1])
-target = Path(sys.argv[2])
-
-width = 520
-height = 320
-pixmap = QPixmap(width, height)
-pixmap.fill(QColor("#111820"))
-
-painter = QPainter(pixmap)
-painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-painter.setPen(Qt.PenStyle.NoPen)
-painter.setBrush(QColor("#151c24"))
-painter.drawRoundedRect(18, 18, width - 36, height - 36, 28, 28)
-painter.setBrush(QColor("#1f2933"))
-painter.drawRoundedRect(32, 32, width - 64, height - 64, 22, 22)
-
-logo = QPixmap(str(source))
-if not logo.isNull():
-    logo = logo.scaled(
-        QSize(118, 118),
-        Qt.AspectRatioMode.KeepAspectRatio,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-    painter.drawPixmap(int((width - logo.width()) / 2), 58, logo)
-
-title_font = QFont("Segoe UI", 22)
-title_font.setBold(True)
-painter.setFont(title_font)
-painter.setPen(QColor("#f4f7fb"))
-painter.drawText(0, 190, width, 36, Qt.AlignmentFlag.AlignCenter, "ComPort Zone")
-
-body_font = QFont("Segoe UI", 10)
-painter.setFont(body_font)
-painter.setPen(QColor("#9fb0c2"))
-painter.drawText(0, 232, width, 26, Qt.AlignmentFlag.AlignCenter, "Loading serial workspace...")
-painter.setPen(QColor("#4fd1c5"))
-painter.drawLine(210, 274, 310, 274)
-painter.end()
-
-target.parent.mkdir(parents=True, exist_ok=True)
-if not pixmap.save(str(target), "PNG"):
-    raise RuntimeError(f"Could not write splash file: {target}")
-'@ | Set-Content -Path $SplashScript -Encoding UTF8
-    Invoke-Checked $PythonExe @($SplashScript, $SourcePng, $TargetPng)
-}
-
 function New-VersionInfoFile {
     param(
         [string]$TargetPath
@@ -295,8 +241,160 @@ VSVersionInfo(
 "@ | Set-Content -Path $TargetPath -Encoding UTF8
 }
 
+function Remove-DirectoryInsideRoot {
+    param(
+        [string]$Path
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $ResolvedRoot = (Resolve-Path -LiteralPath $Root).Path
+    $ResolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    if (-not $ResolvedPath.StartsWith($ResolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove directory outside repository root: $ResolvedPath"
+    }
+    Remove-Item -LiteralPath $ResolvedPath -Recurse -Force
+}
+
+function Format-InnoStringLiteral {
+    param(
+        [string]$Value
+    )
+    return '"' + $Value.Replace('"', '""') + '"'
+}
+
+function Find-InnoSetupCompiler {
+    if (-not [string]::IsNullOrWhiteSpace($InstallerCompilerPath)) {
+        if (Test-Path -LiteralPath $InstallerCompilerPath) {
+            return (Resolve-Path -LiteralPath $InstallerCompilerPath).Path
+        }
+        throw "Inno Setup compiler was not found at '$InstallerCompilerPath'."
+    }
+
+    $Command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($Command) {
+        return $Command.Source
+    }
+
+    $Candidates = @()
+    $AppPathKeys = @(
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\ISCC.exe",
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\ISCC.exe"
+    )
+    foreach ($Key in $AppPathKeys) {
+        $AppPath = Get-ItemProperty -Path $Key -ErrorAction SilentlyContinue
+        if ($AppPath) {
+            $Candidates += $AppPath."(default)"
+        }
+    }
+    $UninstallKeys = @(
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($Key in $UninstallKeys) {
+        $Installations = Get-ItemProperty -Path $Key -ErrorAction SilentlyContinue |
+            Where-Object {
+                $DisplayName = $_.PSObject.Properties["DisplayName"]
+                $InstallLocation = $_.PSObject.Properties["InstallLocation"]
+                $DisplayName -and
+                    $InstallLocation -and
+                    $DisplayName.Value -like "Inno Setup*" -and
+                    -not [string]::IsNullOrWhiteSpace([string]$InstallLocation.Value)
+            }
+        foreach ($Installation in $Installations) {
+            $Candidates += Join-Path $Installation.InstallLocation "ISCC.exe"
+        }
+    }
+    $ProgramFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    $ProgramFiles = [Environment]::GetEnvironmentVariable("ProgramFiles")
+    $LocalAppData = [Environment]::GetEnvironmentVariable("LOCALAPPDATA")
+    if (-not [string]::IsNullOrWhiteSpace($ProgramFilesX86)) {
+        $Candidates += Join-Path $ProgramFilesX86 "Inno Setup 6\ISCC.exe"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProgramFiles)) {
+        $Candidates += Join-Path $ProgramFiles "Inno Setup 6\ISCC.exe"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LocalAppData)) {
+        $Candidates += Join-Path $LocalAppData "Programs\Inno Setup 6\ISCC.exe"
+    }
+    foreach ($Candidate in $Candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($Candidate) -and (Test-Path -LiteralPath $Candidate)) {
+            return $Candidate
+        }
+    }
+
+    throw "Inno Setup 6 compiler (ISCC.exe) was not found. Install Inno Setup 6 or rerun with -SkipInstaller."
+}
+
+function New-InnoSetupScript {
+    param(
+        [string]$TargetPath
+    )
+
+    $AppNameLiteral = Format-InnoStringLiteral $AppName
+    $AppVersionLiteral = Format-InnoStringLiteral $Version
+    $AppExeNameLiteral = Format-InnoStringLiteral $ExeFileName
+    $SourceDirLiteral = Format-InnoStringLiteral $PublishDir
+    $OutputDirLiteral = Format-InnoStringLiteral $ReleaseRoot
+    $OutputBaseFilenameLiteral = Format-InnoStringLiteral $InstallerBaseName
+
+    @"
+#define MyAppName $AppNameLiteral
+#define MyAppVersion $AppVersionLiteral
+#define MyAppExeName $AppExeNameLiteral
+#define MySourceDir $SourceDirLiteral
+#define MyOutputDir $OutputDirLiteral
+#define MyOutputBaseFilename $OutputBaseFilenameLiteral
+
+[Setup]
+AppId={{A80A1B61-FC77-4656-A5DB-4047D0E7348C}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}
+AppPublisher=ComPort Zone
+DefaultDirName={localappdata}\ComPortZone
+DefaultGroupName=ComPort Zone
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+OutputDir={#MyOutputDir}
+OutputBaseFilename={#MyOutputBaseFilename}
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+PrivilegesRequired=lowest
+CloseApplications=yes
+CloseApplicationsFilter={#MyAppExeName}
+RestartApplications=no
+SetupMutex=ComPortZoneSetup
+UninstallDisplayIcon={app}\app\{#MyAppExeName}
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\app"
+
+[Files]
+Source: "{#MySourceDir}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MySourceDir}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\{#MyAppName}"; Filename: "{app}\app\{#MyAppExeName}"
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\app\{#MyAppExeName}"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\app\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\app"
+"@ | Set-Content -Path $TargetPath -Encoding UTF8
+}
+
 Write-Step "Preparing build folders"
-New-Item -ItemType Directory -Force -Path $BuildRoot, $ToolTempRoot, $PipTempPath, $PipCachePath, $WorkRoot, $WorkPath, $SpecPath, $ReleaseRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $BuildRoot, $ToolTempRoot, $PipTempPath, $PipCachePath, $WorkRoot, $WorkPath, $SpecPath, $ReleaseRoot, $InstallerBuildPath | Out-Null
 Remove-OldWorkFolders
 $env:TEMP = $PipTempPath
 $env:TMP = $PipTempPath
@@ -345,29 +443,17 @@ catch {
     Write-Warning "Could not create .ico file. The app will still build, but the .exe file icon may be generic. $($_.Exception.Message)"
 }
 
-$SplashArgs = @()
-$SplashPng = Join-Path $BuildRoot "comport-zone-splash.png"
-try {
-    Write-Step "Preparing startup splash"
-    New-SplashFile -PythonExe $VenvPython -SourcePng $IconPng -TargetPng $SplashPng
-    if (Test-Path $SplashPng) {
-        $SplashArgs = @("--splash", $SplashPng)
-    }
-}
-catch {
-    Write-Warning "Could not create startup splash. The app will still build without a boot splash. $($_.Exception.Message)"
-}
-
-Write-Step "Building one-file executable"
+Write-Step "Building one-folder executable"
 $AddDataVersion = "$((Join-Path $Root "src\$PackageName\VERSION"));$PackageName"
 $AddDataAssets = "$((Join-Path $Root "src\$PackageName\assets"));$PackageName\assets"
 $VersionInfoPath = Join-Path $BuildRoot "version_info.txt"
 New-VersionInfoFile -TargetPath $VersionInfoPath
+Remove-DirectoryInsideRoot -Path $DistBundlePath
 $PyInstallerArgs = @(
     "-m", "PyInstaller",
     "--noconfirm",
     "--clean",
-    "--onefile",
+    "--onedir",
     "--windowed",
     "--name", $ExeBaseName,
     "--distpath", $DistPath,
@@ -378,22 +464,37 @@ $PyInstallerArgs = @(
     "--add-data", $AddDataAssets,
     "--hidden-import", "serial.tools.list_ports_windows",
     "--hidden-import", "serial.tools.list_ports_common"
-) + $IconArgs + $SplashArgs + @($EntryPoint)
+) + $IconArgs + @($EntryPoint)
 Invoke-Checked $VenvPython $PyInstallerArgs
 
-$ExePath = Join-Path $DistPath $ExeFileName
+$ExePath = Join-Path $DistBundlePath $ExeFileName
 if (-not (Test-Path $ExePath)) {
     throw "Build completed, but the executable was not found: $ExePath"
 }
 
 Write-Step "Preparing publish folder"
-if (Test-Path $PublishDir) {
-    Remove-Item -LiteralPath $PublishDir -Recurse -Force
+Remove-DirectoryInsideRoot -Path $PublishDir
+New-Item -ItemType Directory -Force -Path $PublishDir, $PublishAppDir | Out-Null
+$BundleItems = @(Get-ChildItem -LiteralPath $DistBundlePath -Force)
+if ($BundleItems.Count -eq 0) {
+    throw "Build completed, but the PyInstaller bundle is empty: $DistBundlePath"
 }
-New-Item -ItemType Directory -Force -Path $PublishDir | Out-Null
-Copy-Item -LiteralPath $ExePath -Destination (Join-Path $PublishDir $ExeFileName) -Force
+Copy-Item -LiteralPath $BundleItems.FullName -Destination $PublishAppDir -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $Root "README.md") -Destination $PublishDir -Force
 Copy-Item -LiteralPath (Join-Path $Root "THIRD_PARTY_NOTICES.md") -Destination $PublishDir -Force
+
+if (-not $SkipInstaller) {
+    Write-Step "Creating installer"
+    $InnoCompiler = Find-InnoSetupCompiler
+    if (Test-Path -LiteralPath $InstallerPath) {
+        Remove-Item -LiteralPath $InstallerPath -Force
+    }
+    New-InnoSetupScript -TargetPath $InstallerScriptPath
+    Invoke-Checked $InnoCompiler @($InstallerScriptPath)
+    if (-not (Test-Path -LiteralPath $InstallerPath)) {
+        throw "Installer build completed, but the installer was not found: $InstallerPath"
+    }
+}
 
 if (-not $NoZip) {
     Write-Step "Creating zip package"
@@ -408,6 +509,9 @@ Write-Host ""
 Write-Host "Build completed successfully." -ForegroundColor Green
 Write-Host "Executable: $ExePath"
 Write-Host "Publish folder: $PublishDir"
+if (-not $SkipInstaller) {
+    Write-Host "Installer: $InstallerPath"
+}
 if (-not $NoZip) {
     Write-Host "Zip package: $ZipPath"
 }

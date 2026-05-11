@@ -57,7 +57,7 @@ The workspace drawer is treated as app-level UI state: collapsed/expanded state,
 
 Terminal command entry is integrated into the terminal surface through `IntegratedTerminalEdit` in `widgets.py`. The widget owns prompt/draft editing rules, while `ui/terminal_tab.py` coordinates send, history, autocomplete, font zoom, and context-menu conversion actions around it.
 
-Settings storage is intentionally conservative: `SettingsService` owns schema interpretation, while `SettingsStore` owns JSON file I/O, atomic replacement, and backup fallback. Loading tries valid payload candidates before returning defaults.
+Settings storage is intentionally conservative: `SettingsService` owns schema interpretation, including minimum-compatible schema declarations for upgrade/downgrade safety, while `SettingsStore` owns JSON file I/O, atomic replacement, and backup fallback. Loading tries valid payload candidates before returning defaults.
 
 The current test suite is built around `unittest` and has focused coverage for extracted modules plus broader app-session behavior. The standard verification command is:
 
@@ -87,7 +87,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Workspace drawer state | `ui/main_window.py`, terminal/editor tab drawer hooks | Future presenter/controller if it grows | Done foundation | Collapsed state, selected page, and width are global settings applied across terminal and editor tabs. |
 | Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
-| Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2 and import/export payload rules; `SettingsStore` owns atomic save and backup fallback. |
+| Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2, minimum-compatible schema checks, and import/export payload rules; `SettingsStore` owns atomic save and backup fallback. |
 | App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
 | Workspace restore/capture | `workspace_state.py`, `workspace_settings_controller.py` | Same | Done | Captures/restores terminal and command-file tabs; save/apply-imported-settings coordination is outside `MainWindow`. |
 | Dialogs | `ui/dialogs/*` | `ui/dialogs/*` | Done foundation | Named dialog classes are extracted, including command-file parameter dialogs. Some workflow-owned ad hoc prompts still live with their owning feature code. |
@@ -119,7 +119,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 
 ### Settings Save, Import, and Export
 
-`SettingsService` owns the application settings payload and schema. `SettingsStore` only handles JSON file I/O, atomic replacement, and backup fallback. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
+`SettingsService` owns the application settings payload, schema, and minimum-compatible schema checks. `SettingsStore` only handles JSON file I/O, atomic replacement, and backup fallback. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
 
 ### Commands, Menus, and Palette
 
@@ -139,7 +139,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 | Done | Shared workspace drawer state | Drawer collapsed state, width, and selected page are synchronized across terminal and embedded editor tabs. |
 | Done | TerminalSessionController and TerminalView split | Terminal behavior decisions and QTextEdit rendering are separate. |
 | Done | Integrated terminal input widget | `IntegratedTerminalEdit` keeps transcript text protected while editing the active `TX> ` draft. |
-| Done | Settings atomic save and backup fallback | `SettingsStore` writes through a temp file, keeps a `.bak`, and `SettingsService` tries backup candidates before defaults. |
+| Done | Settings atomic save, backup fallback, and compatibility metadata | `SettingsStore` writes through a temp file, keeps a `.bak`, and `SettingsService` tries compatible primary/backup candidates before defaults. |
 | Done | Command-file target/menu coordination | Run-target menu population and editor-to-terminal dispatch are owned by `ui/command_file_targets.py`. |
 | Done | Dialog extraction into `ui/dialogs/*` | Terminal font, app settings transfer, quick action edit/import, connection, command palette, and command-file parameter dialogs are extracted. |
 | Done | QuickActionController workflow extraction | MainWindow delegates quick-action mutation/import/export/reorder workflows to the controller. |

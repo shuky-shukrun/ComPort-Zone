@@ -5,6 +5,7 @@ import unittest
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
+    MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
     QuickCommand,
     QuickFile,
     SerialProfile,
@@ -106,6 +107,10 @@ class ModelsAndStorageTests(unittest.TestCase):
             cleanup_settings_artifacts(settings_path)
 
         self.assertEqual(saved_payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(
+            saved_payload["minimum_compatible_schema_version"],
+            MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+        )
         self.assertNotIn("serial", saved_payload)
         self.assertEqual(saved_payload["transport"]["profile"]["port"], "COM7")
         self.assertEqual(saved_payload["app"]["terminal_font"]["size"], 13)
@@ -269,11 +274,59 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(state.serial.baudrate, 230400)
         self.assertEqual(state.to_dict()["transport"]["profile"]["port"], "COM44")
 
-    def test_settings_service_rejects_non_current_schema(self) -> None:
+    def test_settings_service_rejects_missing_schema(self) -> None:
         service = SettingsService()
 
         with self.assertRaises(ValueError):
             service.settings_from_payload({"serial": {"port": "COM1"}})
+
+    def test_settings_service_loads_future_schema_when_declared_compatible(self) -> None:
+        service = SettingsService()
+        payload = AppSettings(
+            serial=SerialProfile(port="COM15"),
+            quick_commands=[QuickCommand(id="cmd-upgrade", label="Version", command="version")],
+            quick_files=[QuickFile(id="file-upgrade", label="Bring-up", path="C:/scripts/bringup.txt")],
+        ).to_dict()
+        payload["schema_version"] = SETTINGS_SCHEMA_VERSION + 1
+        payload["minimum_compatible_schema_version"] = SETTINGS_SCHEMA_VERSION
+        payload["future_section"] = {"ignored": True}
+
+        loaded = service.settings_from_payload(payload)
+
+        self.assertEqual(loaded.serial.port, "COM15")
+        self.assertEqual([command.command for command in loaded.quick_commands], ["version"])
+        self.assertEqual(
+            [quick_file.path for quick_file in loaded.quick_files],
+            ["C:/scripts/bringup.txt"],
+        )
+
+    def test_settings_load_uses_backup_when_future_schema_declares_break(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_storage_future_schema.json")
+        cleanup_settings_artifacts(settings_path)
+        try:
+            store = SettingsStore(settings_path)
+            service = SettingsService(store)
+            future_payload = AppSettings(
+                quick_commands=[QuickCommand(label="Future", command="future")],
+                quick_files=[QuickFile(label="Future File", path="C:/future.txt")],
+            ).to_dict()
+            future_payload["schema_version"] = SETTINGS_SCHEMA_VERSION + 1
+            future_payload["minimum_compatible_schema_version"] = SETTINGS_SCHEMA_VERSION + 1
+            backup = AppSettings(
+                serial=SerialProfile(port="COM16"),
+                quick_commands=[QuickCommand(label="Backup", command="backup")],
+                quick_files=[QuickFile(label="Backup File", path="C:/backup.txt")],
+            ).to_dict()
+            settings_path.write_text(json.dumps(future_payload), encoding="utf-8")
+            store.backup_path.write_text(json.dumps(backup), encoding="utf-8")
+
+            loaded = service.load()
+        finally:
+            cleanup_settings_artifacts(settings_path)
+
+        self.assertEqual(loaded.serial.port, "COM16")
+        self.assertEqual([command.command for command in loaded.quick_commands], ["backup"])
+        self.assertEqual([quick_file.path for quick_file in loaded.quick_files], ["C:/backup.txt"])
 
     def test_settings_bundle_captures_all_preferences(self) -> None:
         settings = AppSettings(
