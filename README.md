@@ -4,7 +4,7 @@ ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging
 
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface with an integrated `TX> ` command prompt, a compact control bar, and a foldable left drawer for quick commands and quick files.
 
-Current version: `0.2.5`.
+Current version: `0.2.6`.
 
 ## UI Preview
 
@@ -42,6 +42,7 @@ These screenshots and GIFs are captured from the current PySide UI with sample s
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
 - App settings import/export as JSON files instead of an internal profile list
 - App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences
+- Help menu update checks against the latest GitHub release, with an optional startup check preference
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
 - Text and hex/raw-byte sending from the integrated `TX> ` prompt, plus receive display modes

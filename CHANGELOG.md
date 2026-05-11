@@ -2,6 +2,37 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.2.6 - 2026-05-11
+
+### Added
+
+- Add `Help > Check for Updates` and a command-palette entry for manual update checks.
+- Add `Help > Check for Updates on Launch` with persisted app-settings support.
+- Add GitHub latest-release parsing, dotted-version comparison, and update-result helpers.
+- Add a version update dialog with release link and startup-check preference control.
+- Add a clickable repository link to the About dialog.
+- Add README UI preview screenshots and GIFs.
+- Add refreshed `AGENTS.md`, Copilot, and Continue guidance files.
+
+### Changed
+
+- Keep automatic startup update checks quiet when no update is available or when the check fails.
+- Reserve space for the custom new-tab button and reposition it after tab/title/layout changes.
+- Forward right-clicks on the new-tab button to the empty-tab context menu.
+- Keep shared footer and connection status tied to the active tab when background tabs update.
+
+### Fixed
+
+- Fix new-tab button overlap with tab close buttons after long titles or tab renames.
+- Fix disconnected valid-port tabs showing the wrong status/action in the shared status bar.
+- Fix terminal transcript color loss when terminal font/theme formatting is reapplied.
+
+### Tests
+
+- Added `tests/test_version_check.py` coverage for release payload parsing and version comparison.
+- Expanded app-session tests for startup/manual update checks, update preferences, About links, active-tab status behavior, and terminal color preservation.
+- Expanded menu/dialog/tab-workspace tests for Help menu update actions, version dialog behavior, and new-tab button positioning/context menus.
+
 ## 0.2.5 - 2026-05-06
 
 This entry covers changes after the documented 0.2.3 release notes, including the v0.2.4 packaging and polish work.

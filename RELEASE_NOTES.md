@@ -1,3 +1,61 @@
+# ComPort Zone v0.2.6 Release Notes
+
+Release date: 2026-05-11
+
+ComPort Zone v0.2.6 adds built-in update discovery and tightens several workspace polish issues from the v0.2.5 terminal-input release. It helps users find newer GitHub releases from inside the app while improving tab layout, active-tab status behavior, and terminal color stability.
+
+## Highlights
+
+- New Help menu actions can check GitHub for the latest ComPort Zone release.
+- Update checks can run automatically on launch and are persisted in app settings.
+- The About dialog now includes a clickable project repository link.
+- The new-tab button no longer overlaps tab close buttons after long titles or renames.
+- Background tab connection events no longer replace the active tab's shared status bar.
+- Terminal transcript colors are preserved when terminal font/theme formatting is reapplied.
+
+## What's New
+
+### Update Checks
+
+- Added `Help > Check for Updates`.
+- Added `Help > Check for Updates on Launch`, a checkable setting that persists with app settings.
+- Added a command-palette entry for checking updates.
+- Added a version-check service that reads GitHub's latest release metadata, normalizes `v`-prefixed tags, and compares dotted versions.
+- Added an update dialog that shows whether a newer release is available, links to the release page, and lets users keep or change the startup-check preference.
+- Automatic startup checks are quiet when no update is available or when the check fails; manual checks show a status message or warning.
+
+### Help And Documentation
+
+- The About dialog now shows the current version and a clickable repository URL.
+- README documentation now includes UI preview screenshots and GIFs for the terminal workspace, command editor, quick drawer, and workspace tabs.
+- Developer/assistant guidance was refreshed through `AGENTS.md`, Copilot instructions, and the Continue rules.
+
+### Workspace Polish
+
+- The custom new-tab button now reserves tab-bar space and repositions after tab insertion, removal, resize, icon changes, and title changes.
+- Right-clicking the new-tab button opens the empty-tab context menu with New Tab and New Command File actions.
+- Disconnected tabs now show the correct Closed/Connect status when the selected port is valid.
+- Background restored tabs and background serial events no longer overwrite the active tab's footer or connection status controls.
+- Terminal transcript colors for TX, RX, and errors survive terminal font setting changes and formatting refreshes.
+
+## Validation
+
+The release added or expanded regression coverage for:
+
+- Version comparison, GitHub release payload parsing, update-result construction, update dialogs, Help menu entries, command-palette entries, startup checks, manual checks, and persisted update preferences.
+- About dialog repository links.
+- New-tab button positioning, context menu forwarding, and close-button spacing after long tab titles.
+- Active-tab-only connection/status behavior for restored and background tabs.
+- Terminal transcript color preservation after terminal font settings are reapplied.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.2.5 Release Notes
 
 Release date: 2026-05-06
