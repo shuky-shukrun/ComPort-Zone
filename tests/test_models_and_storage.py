@@ -40,6 +40,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"],
         )
         self.assertEqual([command.group for command in settings.quick_commands], ["General"] * 3)
+        self.assertTrue(settings.check_for_updates_on_launch)
 
     def test_settings_store_round_trip(self) -> None:
         settings = AppSettings(
@@ -90,6 +91,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             drawer_collapsed=False,
             drawer_width=340,
             drawer_page_index=1,
+            check_for_updates_on_launch=True,
         )
         settings_path = Path(__file__).with_name("_tmp_settings_storage_round_trip.json")
         cleanup_settings_artifacts(settings_path)
@@ -109,6 +111,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(saved_payload["app"]["terminal_font"]["size"], 13)
         self.assertEqual(saved_payload["app"]["drawer"]["width"], 340)
         self.assertEqual(saved_payload["app"]["drawer"]["page_index"], 1)
+        self.assertTrue(saved_payload["app"]["updates"]["check_on_launch"])
         self.assertEqual(saved_payload["libraries"]["quick_commands"][0]["label"], "Read ID")
         self.assertEqual(saved_payload["workspace"]["terminal_tabs"][0]["title"], "DUT A")
         self.assertEqual(loaded.serial.port, "COM7")
@@ -147,6 +150,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertFalse(loaded.drawer_collapsed)
         self.assertEqual(loaded.drawer_width, 340)
         self.assertEqual(loaded.drawer_page_index, 1)
+        self.assertTrue(loaded.check_for_updates_on_launch)
 
     def test_settings_store_keeps_previous_payload_as_backup(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_storage_backup.json")
@@ -231,6 +235,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(settings.receive_display_mode, "Hex")
         self.assertEqual(settings.serial.port, "COM12")
         self.assertEqual(settings.quick_commands[0].command, "version")
+        self.assertTrue(settings.check_for_updates_on_launch)
 
     def test_settings_accept_generic_serial_transport_profile(self) -> None:
         settings = AppSettings.from_dict(

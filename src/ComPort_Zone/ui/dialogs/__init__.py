@@ -11,6 +11,7 @@ from .command_file_parameters import (
 from .connection import COMMON_BAUD_RATES, ConnectionSettingsDialog
 from .quick_actions import QuickCommandDialog, QuickCommandImportDialog, QuickFileDialog
 from .terminal_font import TerminalFontSettingsDialog
+from .version_update import VersionUpdateDialog
 
 __all__ = [
     "APP_SETTINGS_EXPLANATION",
@@ -25,5 +26,6 @@ __all__ = [
     "QuickCommandImportDialog",
     "QuickFileDialog",
     "TerminalFontSettingsDialog",
+    "VersionUpdateDialog",
     "summarize_parameter_occurrences",
 ]

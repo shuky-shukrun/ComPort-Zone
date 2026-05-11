@@ -13,6 +13,7 @@ from ComPort_Zone.serial_core import SerialClient
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
 from ComPort_Zone.ui import main_window as main_window_module
+from ComPort_Zone.version_check import VersionCheckResult
 
 
 def drawer_action_rows(page) -> list[list[str]]:
@@ -57,6 +58,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(
                 SettingsService(SettingsStore(settings_path)).save(
                     AppSettings(
+                        check_for_updates_on_launch=False,
                         restored_tabs=[
                             TerminalSessionState(
                                 title="DUT",
@@ -124,6 +126,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(
                 SettingsService(SettingsStore(settings_path)).save(
                     AppSettings(
+                        check_for_updates_on_launch=False,
                         restored_tabs=[
                             TerminalSessionState(
                                 title="DUT",
@@ -178,6 +181,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(
                 SettingsService(SettingsStore(settings_path)).save(
                     AppSettings(
+                        check_for_updates_on_launch=False,
                         restored_tabs=[
                             TerminalSessionState(
                                 title="Connected DUT",
@@ -228,6 +232,160 @@ class AppSessionTests(unittest.TestCase):
                 app_module.MainWindow.prompt_session_settings = old_prompt_session
                 app_module.MainWindow.restore_session_connection = old_restore_connection
                 main_window_module.TerminalSessionWidget.list_ports_snapshot = old_list_ports_snapshot
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_update_check_on_launch_setting_triggers_version_check(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_update_check_launch.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=True)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_check_for_updates = app_module.MainWindow.check_for_updates
+            calls: list[bool] = []
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            app_module.MainWindow.check_for_updates = (
+                lambda self, *, automatic=False: calls.append(automatic)
+            )
+            try:
+                window = app_module.MainWindow()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+
+                self.assertEqual(calls, [True])
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                app_module.MainWindow.check_for_updates = old_check_for_updates
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_manual_update_check_suggests_enabling_startup_checks(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_update_check_suggest.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_version_update_dialog = main_window_module.VersionUpdateDialog
+            dialog_calls: list[tuple[bool, bool]] = []
+            window = None
+
+            class FakeVersionUpdateDialog:
+                def __init__(self, result, check_on_launch: bool, parent=None) -> None:
+                    dialog_calls.append((result.update_available, check_on_launch))
+                    self._check_on_launch = True
+
+                def exec(self) -> int:
+                    return 1
+
+                def check_on_launch_enabled(self) -> bool:
+                    return self._check_on_launch
+
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            main_window_module.VersionUpdateDialog = FakeVersionUpdateDialog
+            try:
+                window = app_module.MainWindow()
+                result = VersionCheckResult(
+                    current_version="0.2.5",
+                    latest_version="0.2.5",
+                    release_name="ComPort Zone v0.2.5",
+                    release_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.2.5",
+                    update_available=False,
+                )
+
+                window._show_version_check_result(result, automatic=False)
+                saved = SettingsService(SettingsStore(settings_path)).load()
+
+                self.assertEqual(dialog_calls, [(False, False)])
+                self.assertTrue(window.settings.check_for_updates_on_launch)
+                self.assertTrue(window.check_for_updates_on_launch_action.isChecked())
+                self.assertTrue(saved.check_for_updates_on_launch)
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                main_window_module.VersionUpdateDialog = old_version_update_dialog
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_automatic_update_check_sets_checking_status(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_update_check_status.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            window = None
+
+            class FakeSignal:
+                def connect(self, _callback) -> None:
+                    return None
+
+            class FakeReply:
+                finished = FakeSignal()
+
+            class FakeNetwork:
+                def __init__(self) -> None:
+                    self.reply = FakeReply()
+
+                def get(self, _request):
+                    return self.reply
+
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            try:
+                window = app_module.MainWindow()
+                fake_network = FakeNetwork()
+                window.version_check_network = fake_network
+
+                window.check_for_updates(automatic=True)
+
+                self.assertEqual(window.footer.text(), "Checking for updates...")
+                self.assertIs(window._version_check_reply, fake_network.reply)
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
                 if window is not None:
                     for active_session in window.iter_sessions():
                         active_session.shutdown()
@@ -1283,6 +1441,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Import Quick Files from CSV", titles)
             self.assertIn("Export Quick Files to CSV", titles)
             self.assertIn("Delete All Quick Files", titles)
+            self.assertIn("Check for Updates", titles)
             self.assertTrue(any(title.startswith("Switch to Tab 1:") for title in titles))
             self.assertTrue(any(title == "Switch to Tab 2: Second" for title in titles))
 
@@ -1426,6 +1585,10 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Find", edit_titles)
             self.assertIn("Replace", edit_titles)
             self.assertIn("Clear Command History", edit_titles)
+
+            help_titles = [action.text() for action in window.help_menu.actions()]
+            self.assertIn("Check for Updates", help_titles)
+            self.assertIn("Check for Updates on Launch", help_titles)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

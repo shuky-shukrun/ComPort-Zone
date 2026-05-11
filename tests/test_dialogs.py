@@ -1,11 +1,19 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QSpinBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+)
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.batch import BatchParameterOccurrence
 from ComPort_Zone.command_registry import CommandPaletteEntry
 from ComPort_Zone.models import QuickCommand, QuickFile
+from ComPort_Zone.version_check import VersionCheckResult
 from ComPort_Zone.ui.dialogs import (
     APP_SETTINGS_EXPLANATION,
     AppSettingsTransferDialog,
@@ -18,6 +26,7 @@ from ComPort_Zone.ui.dialogs import (
     QuickCommandImportDialog,
     QuickFileDialog,
     TerminalFontSettingsDialog,
+    VersionUpdateDialog,
     summarize_parameter_occurrences,
 )
 from ComPort_Zone.ui.fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN
@@ -71,7 +80,27 @@ class DialogExtractionTests(unittest.TestCase):
         self.assertIs(app_module.QuickCommandImportDialog, QuickCommandImportDialog)
         self.assertIs(app_module.QuickFileDialog, QuickFileDialog)
         self.assertIs(app_module.TerminalFontSettingsDialog, TerminalFontSettingsDialog)
+        self.assertIs(app_module.VersionUpdateDialog, VersionUpdateDialog)
         self.assertIs(app_module.BatchParameterPromptBridge, BatchParameterPromptBridge)
+
+    def test_version_update_dialog_syncs_launch_check_initial_state(self) -> None:
+        result = VersionCheckResult(
+            current_version="0.2.5",
+            latest_version="0.2.6",
+            release_name="ComPort Zone v0.2.6",
+            release_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.2.6",
+            update_available=True,
+        )
+        dialog = VersionUpdateDialog(result, check_on_launch=False)
+        try:
+            checkbox = dialog.findChild(QCheckBox)
+
+            self.assertIsNotNone(checkbox)
+            self.assertFalse(dialog.check_on_launch_enabled())
+            checkbox.setChecked(True)
+            self.assertTrue(dialog.check_on_launch_enabled())
+        finally:
+            dialog.deleteLater()
 
     def test_command_file_parameter_summary_keeps_stable_names_defaults_and_lines(self) -> None:
         summary = summarize_parameter_occurrences(

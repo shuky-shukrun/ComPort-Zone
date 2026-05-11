@@ -21,6 +21,7 @@ from .ui.dialogs import (
     QuickCommandImportDialog,
     QuickFileDialog,
     TerminalFontSettingsDialog,
+    VersionUpdateDialog,
 )
 from .ui.fonts import pick_ui_font
 from .ui.main_window import APP_ICON_PATH, ConnectionStatusLabel, MainWindow, app_icon, clone_profile

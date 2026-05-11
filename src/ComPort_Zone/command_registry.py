@@ -405,6 +405,21 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         palette_keywords="quick files command files scripts csv export",
     ),
     CommandSpec(
+        "help.check_for_updates",
+        lambda host: host.check_for_updates,
+        menu_text="Check for Updates",
+        icon=QStyle.StandardPixmap.SP_BrowserReload,
+        palette_title="Check for Updates",
+        palette_subtitle="Look for a newer ComPort Zone release on GitHub",
+        palette_keywords="update version release github download",
+    ),
+    CommandSpec(
+        "help.check_for_updates_on_launch",
+        lambda host: host.toggle_check_for_updates_on_launch,
+        menu_text="Check for Updates on Launch",
+        checkable=True,
+    ),
+    CommandSpec(
         "help.about",
         lambda host: host.show_about,
         menu_text="About",
@@ -484,7 +499,12 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         "quick_files.import_csv",
         "quick_files.export_csv",
     ),
-    "help": ("help.about",),
+    "help": (
+        "help.check_for_updates",
+        "help.check_for_updates_on_launch",
+        SEPARATOR,
+        "help.about",
+    ),
 }
 
 
@@ -511,6 +531,7 @@ PALETTE_COMMAND_IDS: tuple[str, ...] = (
     "quick_files.import_csv",
     "quick_files.export_csv",
     "quick_files.delete_all",
+    "help.check_for_updates",
 )
 
 

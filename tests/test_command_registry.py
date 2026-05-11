@@ -65,6 +65,7 @@ class CommandRegistryTests(unittest.TestCase):
                 "Import Quick Files from CSV",
                 "Export Quick Files to CSV",
                 "Delete All Quick Files",
+                "Check for Updates",
             ],
         )
 

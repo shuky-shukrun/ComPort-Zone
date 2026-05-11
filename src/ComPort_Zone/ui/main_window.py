@@ -5,8 +5,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar, cast
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -40,11 +41,17 @@ from ..quick_action_controller import QuickActionController
 from ..settings_service import SettingsService
 from ..storage import SettingsStore, default_config_path
 from ..themes import THEMES, ThemePalette
+from ..version_check import (
+    GITHUB_LATEST_RELEASE_API_URL,
+    VersionCheckResult,
+    build_version_check_result,
+    release_info_from_json,
+)
 from ..workspace_settings_controller import WorkspaceSettingsController
 from ..workspace_state import WorkspaceStateService
 from .command_file_targets import CommandFileRunCoordinator
 from .command_palette_entries import workspace_tab_palette_entries
-from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog
+from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog, VersionUpdateDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
 from .tab_workspace import TabWorkspaceController, TerminalTabWidget
@@ -131,6 +138,9 @@ class MainWindow(QMainWindow):
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
         self._session_counter = 0
         self._loading = True
+        self.version_check_network = QNetworkAccessManager(self)
+        self._version_check_reply: QNetworkReply | None = None
+        self._version_check_previous_status: str | None = None
 
         self.setWindowTitle("ComPort Zone")
         self.setWindowIcon(app_icon())
@@ -167,6 +177,8 @@ class MainWindow(QMainWindow):
         self.restore_sessions()
         self._loading = False
         self.set_status("Ready")
+        if self.settings.check_for_updates_on_launch:
+            QTimer.singleShot(0, lambda: self.check_for_updates(automatic=True))
 
     def _build_ui(self) -> None:
         self.tabs = TerminalTabWidget(self)
@@ -764,6 +776,21 @@ class MainWindow(QMainWindow):
             session.apply_settings()
         self.save_settings()
 
+    def toggle_check_for_updates_on_launch(self) -> None:
+        action = getattr(self, "check_for_updates_on_launch_action", None)
+        checked = (
+            bool(action.isChecked())
+            if action is not None
+            else not self.settings.check_for_updates_on_launch
+        )
+        self.settings.check_for_updates_on_launch = checked
+        self.save_settings()
+        self.set_status(
+            "Will check for updates on launch."
+            if checked
+            else "Launch update checks disabled."
+        )
+
     def set_receive_display_mode(self, mode: str) -> None:
         if mode not in RECEIVE_DISPLAY_MODES:
             mode = "Text"
@@ -783,6 +810,10 @@ class MainWindow(QMainWindow):
             self.timestamps_action.setChecked(self.settings.timestamps_enabled)
         if hasattr(self, "wrap_action"):
             self.wrap_action.setChecked(self.settings.line_wrap_enabled)
+        if hasattr(self, "check_for_updates_on_launch_action"):
+            self.check_for_updates_on_launch_action.setChecked(
+                self.settings.check_for_updates_on_launch
+            )
         for session in self.iter_sessions():
             session.controller.replace_history(self.history_catalog.all_commands())
             session.history_store = session.controller.history_store
@@ -1063,6 +1094,82 @@ class MainWindow(QMainWindow):
             "About ComPort Zone",
             f"ComPort Zone\nVersion {__version__}\n\nCOM-port terminal for Windows device workflows.",
         )
+
+    def check_for_updates(self, *, automatic: bool = False) -> None:
+        if self._version_check_reply is not None:
+            if not automatic:
+                self.set_status("Version check already in progress.")
+            return
+        request = QNetworkRequest(QUrl(GITHUB_LATEST_RELEASE_API_URL))
+        request.setRawHeader(b"Accept", b"application/vnd.github+json")
+        request.setRawHeader(
+            b"User-Agent",
+            f"ComPort-Zone/{__version__}".encode("ascii", "ignore"),
+        )
+        reply = self.version_check_network.get(request)
+        self._version_check_reply = reply
+        self._version_check_previous_status = self.footer.text() if automatic else None
+        reply.finished.connect(
+            lambda target=reply, auto=automatic: self._finish_version_check(target, automatic=auto)
+        )
+        self.set_status("Checking for updates...")
+
+    def _finish_version_check(self, reply: QNetworkReply, *, automatic: bool) -> None:
+        if self._version_check_reply is reply:
+            self._version_check_reply = None
+        try:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                raise RuntimeError(reply.errorString())
+            release = release_info_from_json(bytes(reply.readAll()))
+            result = build_version_check_result(__version__, release)
+        except Exception as exc:
+            self._show_version_check_error(str(exc), automatic=automatic)
+        else:
+            self._show_version_check_result(result, automatic=automatic)
+        finally:
+            reply.deleteLater()
+
+    def _show_version_check_error(self, detail: str, *, automatic: bool) -> None:
+        if automatic:
+            self._restore_automatic_version_check_status()
+            return
+        self.set_status("Could not check for updates.")
+        QMessageBox.warning(
+            self,
+            "Check for Updates",
+            f"Could not check for updates:\n{detail}",
+        )
+
+    def _show_version_check_result(self, result: VersionCheckResult, *, automatic: bool) -> None:
+        if result.update_available:
+            self._version_check_previous_status = None
+            self.set_status(f"ComPort Zone {result.latest_version} is available.")
+            self._show_version_update_dialog(result)
+            return
+        if automatic:
+            self._restore_automatic_version_check_status()
+            return
+        self.set_status(f"ComPort Zone is up to date ({result.current_version}).")
+        self._show_version_update_dialog(result)
+
+    def _restore_automatic_version_check_status(self) -> None:
+        previous_status = self._version_check_previous_status
+        self._version_check_previous_status = None
+        if previous_status:
+            self.set_status(previous_status)
+
+    def _show_version_update_dialog(self, result: VersionCheckResult) -> None:
+        dialog = VersionUpdateDialog(result, self.settings.check_for_updates_on_launch, self)
+        dialog.exec()
+        self._set_check_for_updates_on_launch(dialog.check_on_launch_enabled())
+
+    def _set_check_for_updates_on_launch(self, enabled: bool) -> None:
+        if self.settings.check_for_updates_on_launch == enabled:
+            return
+        self.settings.check_for_updates_on_launch = enabled
+        if hasattr(self, "check_for_updates_on_launch_action"):
+            self.check_for_updates_on_launch_action.setChecked(enabled)
+        self.save_settings()
 
     def apply_theme(self, name: str, *, save: bool = True) -> None:
         self.theme = THEMES.get(name, THEMES["VS Code Dark"])

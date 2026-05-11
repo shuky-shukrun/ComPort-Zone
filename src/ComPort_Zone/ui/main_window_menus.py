@@ -29,6 +29,7 @@ class MainMenuHandles:
     quick_commands_menu: QMenu
     quick_files_menu: QMenu
     help_menu: QMenu
+    check_for_updates_on_launch_action: QAction
 
     def install_on(self, host: Any) -> None:
         for field in fields(self):
@@ -98,7 +99,11 @@ class MainWindowMenuBuilder:
         self.add_registered_menu_section(quick_files_menu, "quick_files")
 
         help_menu = menu_bar.addMenu("Help")
-        self.add_registered_menu_section(help_menu, "help")
+        help_actions = self.add_registered_menu_section(help_menu, "help")
+        check_for_updates_on_launch_action = help_actions["help.check_for_updates_on_launch"]
+        check_for_updates_on_launch_action.setChecked(
+            self.host.settings.check_for_updates_on_launch
+        )
 
         return MainMenuHandles(
             file_menu=file_menu,
@@ -117,6 +122,7 @@ class MainWindowMenuBuilder:
             quick_commands_menu=quick_commands_menu,
             quick_files_menu=quick_files_menu,
             help_menu=help_menu,
+            check_for_updates_on_launch_action=check_for_updates_on_launch_action,
         )
 
     def add_registered_menu_section(self, menu: QMenu, menu_key: str) -> dict[str, QAction]:

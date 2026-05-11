@@ -15,6 +15,7 @@ class FakeMenuHost(QMainWindow):
         self.settings = SimpleNamespace(
             timestamps_enabled=True,
             line_wrap_enabled=False,
+            check_for_updates_on_launch=True,
         )
         self.calls: list[object] = []
 
@@ -54,6 +55,8 @@ class MainWindowMenuBuilderTests(unittest.TestCase):
             self.assertTrue(host.timestamps_action.icon().isNull())
             self.assertTrue(host.wrap_action.isCheckable())
             self.assertTrue(host.wrap_action.icon().isNull())
+            self.assertTrue(host.check_for_updates_on_launch_action.isCheckable())
+            self.assertTrue(host.check_for_updates_on_launch_action.isChecked())
             self.assertIn("VS Code Dark", host.theme_actions)
 
             palette_actions = [
