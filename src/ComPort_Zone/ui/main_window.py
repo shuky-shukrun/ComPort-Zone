@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from html import escape
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -10,6 +11,7 @@ from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QInputDialog,
     QLabel,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStyle,
+    QVBoxLayout,
 )
 
 from .. import __version__
@@ -43,6 +46,7 @@ from ..storage import SettingsStore, default_config_path
 from ..themes import THEMES, ThemePalette
 from ..version_check import (
     GITHUB_LATEST_RELEASE_API_URL,
+    GITHUB_REPOSITORY_URL,
     VersionCheckResult,
     build_version_check_result,
     release_info_from_json,
@@ -1089,11 +1093,35 @@ class MainWindow(QMainWindow):
         self.resize(settings.window_width, settings.window_height)
 
     def show_about(self) -> None:
-        QMessageBox.information(
-            self,
-            "About ComPort Zone",
-            f"ComPort Zone\nVersion {__version__}\n\nCOM-port terminal for Windows device workflows.",
+        self.build_about_dialog().exec()
+
+    def build_about_dialog(self) -> QDialog:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About ComPort Zone")
+        dialog.setMinimumWidth(420)
+
+        title = QLabel("ComPort Zone", dialog)
+        title.setObjectName("dialogTitle")
+
+        body = QLabel(
+            f"Version {escape(__version__)}<br><br>"
+            "COM-port terminal for Windows device workflows.<br><br>"
+            f'Repository: <a href="{GITHUB_REPOSITORY_URL}">{GITHUB_REPOSITORY_URL}</a>',
+            dialog,
         )
+        body.setTextFormat(Qt.TextFormat.RichText)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        body.setOpenExternalLinks(True)
+        body.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, dialog)
+        buttons.accepted.connect(dialog.accept)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(title)
+        layout.addWidget(body)
+        layout.addWidget(buttons)
+        return dialog
 
     def check_for_updates(self, *, automatic: bool = False) -> None:
         if self._version_check_reply is not None:

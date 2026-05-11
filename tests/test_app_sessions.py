@@ -1600,6 +1600,50 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_about_dialog_includes_clickable_repository_link(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_about_dialog.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            try:
+                window = app_module.MainWindow()
+                dialog = window.build_about_dialog()
+                try:
+                    label_texts = [label.text() for label in dialog.findChildren(QLabel)]
+                    link_labels = [
+                        label
+                        for label in dialog.findChildren(QLabel)
+                        if "github.com/shuky-shukrun/ComPort-Zone" in label.text()
+                    ]
+
+                    self.assertIn("ComPort Zone", label_texts)
+                    self.assertEqual(len(link_labels), 1)
+                    self.assertTrue(link_labels[0].openExternalLinks())
+                finally:
+                    dialog.deleteLater()
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_bulk_cleanup_actions_clear_history_quick_commands_and_files(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_bulk_cleanup.json")
         settings_path.unlink(missing_ok=True)
