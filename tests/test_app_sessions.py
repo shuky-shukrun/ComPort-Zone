@@ -418,6 +418,40 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_new_tab_button_context_menu_uses_empty_tab_actions(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_new_tab_context.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            self.qt.processEvents()
+            calls: list[QPoint] = []
+            window.tab_context_menus.show_empty_at = lambda global_position: calls.append(global_position)
+            position = QPoint(5, 6)
+
+            window.tabs.new_tab_button.customContextMenuRequested.emit(position)
+
+            self.assertEqual(calls, [window.tabs.new_tab_button.mapToGlobal(position)])
+            menu = window.build_tab_context_menu(-1)
+            titles = [action.text() for action in menu.actions() if not action.isSeparator()]
+            self.assertEqual(titles, ["New Tab", "New Command File"])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_input_clears_after_quick_command_send(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_command_clear.json")
         settings_path.unlink(missing_ok=True)

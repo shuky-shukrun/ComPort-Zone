@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import QStyle, QTabBar, QTabWidget, QToolButton, QWidget
 
 from ..icons import set_button_icon
@@ -41,16 +41,24 @@ class TerminalTabLike(Protocol):
 
 class TerminalTabWidget(QTabWidget):
     newTabRequested = Signal()
+    newTabMenuRequested = Signal(QPoint)
+    _NEW_TAB_BUTTON_GAP = 8
+    _NEW_TAB_BUTTON_SIDE_MARGIN = 4
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.new_tab_button = QToolButton(self.tabBar())
+        self.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
+        self.new_tab_button = QToolButton(self)
         self.new_tab_button.setObjectName("newTabButton")
         set_button_icon(self.new_tab_button, QStyle.StandardPixmap.SP_FileDialogNewFolder, 17)
         self.new_tab_button.setToolTip("New tab")
         self.new_tab_button.setAutoRaise(True)
         self.new_tab_button.setFixedSize(32, 28)
         self.new_tab_button.clicked.connect(self.newTabRequested.emit)
+        self.new_tab_button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.new_tab_button.customContextMenuRequested.connect(
+            lambda position: self.newTabMenuRequested.emit(self.new_tab_button.mapToGlobal(position))
+        )
         self.tabBar().installEventFilter(self)
         self.currentChanged.connect(lambda _: self._schedule_new_tab_button_position())
 
@@ -64,7 +72,16 @@ class TerminalTabWidget(QTabWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._position_new_tab_button()
+        self._sync_tab_bar_width_limit()
+        self._schedule_new_tab_button_position()
+
+    def setTabText(self, index: int, text: str) -> None:
+        super().setTabText(index, text)
+        self._schedule_new_tab_button_position()
+
+    def setTabIcon(self, index: int, icon) -> None:
+        super().setTabIcon(index, icon)
+        self._schedule_new_tab_button_position()
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.tabBar() and event.type() in {
@@ -79,15 +96,29 @@ class TerminalTabWidget(QTabWidget):
     def _schedule_new_tab_button_position(self) -> None:
         QTimer.singleShot(0, self._position_new_tab_button)
 
+    def _sync_tab_bar_width_limit(self) -> None:
+        reserved_width = (
+            self.new_tab_button.width()
+            + self._NEW_TAB_BUTTON_GAP
+            + self._NEW_TAB_BUTTON_SIDE_MARGIN
+        )
+        self.tabBar().setMaximumWidth(max(1, self.width() - reserved_width))
+
     def _position_new_tab_button(self) -> None:
         bar = self.tabBar()
+        self._sync_tab_bar_width_limit()
+        bar_origin = bar.mapTo(self, QPoint(0, 0))
         if self.count() == 0:
-            x = 6
+            desired_x = bar_origin.x() + 6
         else:
             right_edge = max(bar.tabRect(index).right() for index in range(self.count()))
-            x = right_edge + 8
-        x = max(4, min(x, bar.width() - self.new_tab_button.width() - 4))
-        y = max(2, int((bar.height() - self.new_tab_button.height()) / 2))
+            desired_x = bar_origin.x() + min(right_edge, bar.width() - 1) + self._NEW_TAB_BUTTON_GAP
+        max_x = max(
+            self._NEW_TAB_BUTTON_SIDE_MARGIN,
+            self.width() - self.new_tab_button.width() - self._NEW_TAB_BUTTON_SIDE_MARGIN,
+        )
+        x = max(self._NEW_TAB_BUTTON_SIDE_MARGIN, min(desired_x, max_x))
+        y = bar_origin.y() + max(2, int((bar.height() - self.new_tab_button.height()) / 2))
         self.new_tab_button.move(x, y)
         self.new_tab_button.raise_()
 

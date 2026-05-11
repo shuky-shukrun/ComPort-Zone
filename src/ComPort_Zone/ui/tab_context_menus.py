@@ -18,6 +18,9 @@ class TabContextMenuBuilder:
         menu = self.build(index)
         menu.exec(tab_bar.mapToGlobal(position))
 
+    def show_empty_at(self, global_position) -> None:
+        self.build(-1).exec(global_position)
+
     def build(self, index: int) -> QMenu:
         host = self.host
         menu = QMenu(host)

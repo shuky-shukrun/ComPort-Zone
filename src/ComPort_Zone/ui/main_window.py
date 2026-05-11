@@ -175,6 +175,7 @@ class MainWindow(QMainWindow):
         self.tabs.setTabsClosable(False)
         self.tabs.setUsesScrollButtons(True)
         self.tabs.newTabRequested.connect(lambda: self.add_session(prompt_settings=True))
+        self.tabs.newTabMenuRequested.connect(self.show_new_tab_button_context_menu)
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
         self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
@@ -485,6 +486,9 @@ class MainWindow(QMainWindow):
 
     def show_tab_context_menu(self, position) -> None:
         self.tab_context_menus.show(position)
+
+    def show_new_tab_button_context_menu(self, global_position) -> None:
+        self.tab_context_menus.show_empty_at(global_position)
 
     def build_tab_context_menu(self, index: int) -> QMenu:
         return self.tab_context_menus.build(index)

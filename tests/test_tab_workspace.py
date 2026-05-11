@@ -1,5 +1,6 @@
 import unittest
 
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication, QTabBar, QTabWidget, QWidget
 
 from ComPort_Zone.models import SerialProfile, TerminalSessionState
@@ -119,11 +120,56 @@ class TabWorkspaceControllerTests(unittest.TestCase):
 
         self.assertEqual(tabs.new_tab_button.objectName(), "newTabButton")
         self.assertEqual(tabs.new_tab_button.toolTip(), "New tab")
+        self.assertIs(tabs.new_tab_button.parent(), tabs)
+        self.assertEqual(
+            tabs.new_tab_button.contextMenuPolicy(),
+            Qt.ContextMenuPolicy.CustomContextMenu,
+        )
 
         tabs.new_tab_button.click()
 
         self.assertEqual(emitted, ["new"])
         tabs.deleteLater()
+
+    def test_terminal_tab_widget_forwards_new_tab_button_context_menu(self) -> None:
+        tabs = TerminalTabWidget()
+        tabs.resize(400, 240)
+        tabs.show()
+        self.qt.processEvents()
+        emitted: list[QPoint] = []
+        tabs.newTabMenuRequested.connect(emitted.append)
+        position = QPoint(3, 4)
+
+        tabs.new_tab_button.customContextMenuRequested.emit(position)
+
+        self.assertEqual(emitted, [tabs.new_tab_button.mapToGlobal(position)])
+        tabs.deleteLater()
+
+    def test_new_tab_button_stays_clear_of_close_button_after_tab_rename(self) -> None:
+        tabs = TerminalTabWidget()
+        tabs.resize(600, 240)
+        controller, *_ = self.make_controller(tabs)
+        terminal = FakeTerminalTab("DUT")
+        index = tabs.addTab(terminal, "COM1")
+        controller.attach_tab_close_button(index, terminal)
+        tabs.show()
+        self.qt.processEvents()
+
+        tabs.setTabText(index, "Renamed DUT with a much much longer tab title")
+        self.qt.processEvents()
+        self.qt.processEvents()
+
+        close_button = tabs.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide)
+        self.assertIsNotNone(close_button)
+        close_right = close_button.mapTo(tabs, close_button.rect().topRight()).x()
+        self.assertGreater(tabs.new_tab_button.x(), close_right)
+        self.assertLessEqual(
+            tabs.tabBar().width(),
+            tabs.width() - tabs.new_tab_button.width() - tabs._NEW_TAB_BUTTON_GAP,
+        )
+
+        tabs.deleteLater()
+        terminal.deleteLater()
 
     def test_attach_tab_close_button_owns_close_button_ui(self) -> None:
         tabs = QTabWidget()
