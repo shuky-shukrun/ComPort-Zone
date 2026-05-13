@@ -2,6 +2,34 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.3.0 - 2026-05-13
+
+### Added
+
+- Add raw TCP LAN transport support with host/port connections, text and hex sends, RX raw-byte preservation, remote-close detection, and auto-reconnect retries.
+- Add LAN connection settings for host, port, line ending, timeout, and auto-reconnect.
+- Add generic transport profile persistence for default settings and restored terminal tabs.
+- Add LAN-aware command-file run targets, command-palette tab entries, workspace status text, and restored-tab auto-connect behavior.
+
+### Changed
+
+- Route terminal sends, Quick Commands, command-file runs, logging, pause buffering, and event handling through a shared serial/LAN transport adapter contract.
+- Update Connection Settings to switch between Serial and LAN profiles.
+- Update workspace capture, restore, duplication, and app-settings import/export to preserve LAN profiles.
+- Move settings schema to v3 while keeping serial-only payloads minimum-compatible with schema v2.
+- Refresh architecture, design, and LLM guidance docs for LAN and transport ownership.
+
+### Fixed
+
+- Fix Enter in the integrated terminal prompt so it submits the draft instead of accepting a visible autocomplete suggestion.
+- Keep Tab and Shift+Tab as the completion-accept keys while the autocomplete popup is visible.
+
+### Tests
+
+- Added `tests/test_lan_core.py` coverage for LAN connect/send/disconnect, RX events, remote-close handling, and reconnect loops.
+- Expanded transport, settings/storage, workspace-state, app-session, dialog, command-palette, and workspace-status coverage for LAN profiles and endpoints.
+- Expanded integrated terminal input coverage for Enter versus Tab/Shift+Tab autocomplete behavior.
+
 ## 0.2.7 - 2026-05-11
 
 ### Added

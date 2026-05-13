@@ -1,3 +1,65 @@
+# ComPort Zone v0.3.0 Release Notes
+
+Release date: 2026-05-13
+
+ComPort Zone v0.3.0 expands the terminal beyond local COM ports with raw TCP LAN connections. Serial and LAN sessions now share the same terminal workspace, command-file targets, status/footer behavior, settings capture/restore, and transport adapter layer. This release also fixes terminal autocomplete handling so Enter sends the draft while Tab accepts a highlighted completion.
+
+## Highlights
+
+- Terminal tabs can now connect to raw TCP LAN endpoints by host and port.
+- Connection Settings now switches between Serial and LAN profiles, including LAN host, port, line ending, timeout, and auto-reconnect fields.
+- Terminal sends, Quick Commands, command-file runs, logging, pause buffering, receive display modes, and auto-reconnect now run through a shared transport adapter contract.
+- App settings and restored workspace tabs now persist generic transport profiles, with schema v3 required when LAN data is present.
+- Restored LAN tabs can reconnect to saved endpoints on launch, and duplicated tabs/command-file run targets preserve LAN endpoint details.
+- Pressing Enter with the autocomplete popup visible now sends the current draft; Tab and Shift+Tab still accept the highlighted completion.
+
+## What's New
+
+### LAN Connections
+
+- Added a raw TCP LAN client with host/port connect, text and hex send paths, RX raw-byte preservation, remote-close detection, and reconnect status events.
+- Added LAN connection profiles with host, port, line ending, timeout, and auto-reconnect settings.
+- Connection Settings now includes a Serial/LAN selector and a dedicated LAN settings page.
+- LAN tabs use endpoint-aware titles, status text, tooltips, and Set Endpoint/Connect actions.
+- LAN endpoints are entered manually; Refresh Ports now reports that LAN endpoint discovery is not available.
+
+### Shared Transport Workflow
+
+- Serial and LAN adapters now expose the same connect, disconnect, send, event, and subscription contract.
+- The terminal controller, batch runner, quick command execution, event draining, logging, and pause buffering now use the shared transport adapter.
+- Command-file target menus can target connected LAN tabs, and target labels no longer assume COM ports.
+- Command palette tab entries and workspace status text now use connection endpoints instead of serial-only port text.
+
+### Settings And Restore
+
+- Settings schema now supports generic `transport.kind` and `transport.profile` payloads for both defaults and restored terminal tabs.
+- Serial-only payloads remain minimum-compatible with schema v2; LAN payloads mark schema v3 as the minimum compatible version.
+- Workspace capture, restore, app-settings import/export, and duplicated terminal tabs preserve LAN profiles.
+- Restored connected LAN tabs auto-connect to saved hosts and ports because there is no LAN endpoint discovery step.
+
+### Terminal Input
+
+- Enter no longer accepts a visible autocomplete suggestion in the integrated terminal prompt; it hides the popup and submits the draft.
+- Tab and Shift+Tab continue to accept the visible completion without sending the command.
+
+## Validation
+
+The release added or expanded regression coverage for:
+
+- LAN connect/send/disconnect, RX raw-byte preservation, remote-close handling, failed-connect reconnect loops, and reconnect cancellation.
+- Serial and LAN transport adapter contracts, including profile kind validation and event subscriptions.
+- LAN settings serialization, schema v3 compatibility rules, restored LAN terminal tabs, workspace capture/restore, and app-settings import/export.
+- LAN connection dialog fields, restored LAN auto-connect, duplicated LAN tabs, command-file LAN targets, command palette endpoint text, and workspace status labels.
+- Integrated terminal autocomplete behavior for Enter versus Tab/Shift+Tab.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.2.7 Release Notes
 
 Release date: 2026-05-11
