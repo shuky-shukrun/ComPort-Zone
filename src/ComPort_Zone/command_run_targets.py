@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-NO_RUN_TARGET_LABEL = "No connected COM ports"
+NO_RUN_TARGET_LABEL = "No connected terminals"
 
 
 @dataclass(frozen=True, slots=True)

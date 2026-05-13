@@ -34,6 +34,7 @@ from ..icons import standard_icon
 from ..models import (
     AppSettings,
     CommandFileTabState,
+    LanProfile,
     QuickCommand,
     QuickFile,
     RECEIVE_DISPLAY_MODES,
@@ -71,6 +72,10 @@ QuickFileImportOptions = _quick_actions.QuickFileImportOptions
 
 def clone_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
+
+
+def clone_lan_profile(profile: LanProfile) -> LanProfile:
+    return LanProfile.from_dict(profile.to_dict())
 
 
 def app_icon() -> QIcon:
@@ -530,23 +535,23 @@ class MainWindow(QMainWindow):
         self.update_tab_titles()
         if prompt_settings:
             self.prompt_session_settings(session)
-        if state.connected_on_launch and session.profile.port:
+        if state.connected_on_launch and session.connection_endpoint():
             QTimer.singleShot(0, lambda target=session: self.restore_session_connection(target))
 
     def restore_session_connection(self, session: TerminalSessionWidget) -> None:
-        if self.tabs.indexOf(session) < 0 or session.serial_client.is_connected:
+        if self.tabs.indexOf(session) < 0 or session.transport.is_connected:
             return
         if session.profile_port_missing():
-            message = f"{session.profile.port} is not currently detected. Auto-connect skipped."
+            message = f"{session.connection_endpoint()} is not currently detected. Auto-connect skipped."
             session._append_status(message)
             session._update_connection_ui(False)
             if self.tabs.currentWidget() is session:
                 self.set_status(message)
             return
         if self.tabs.currentWidget() is session:
-            self.set_status(f"Connecting to {session.profile.port}...")
-        session.serial_client.connect(session.profile)
-        session._update_connection_ui(session.serial_client.is_connected)
+            self.set_status(f"Connecting to {session.connection_endpoint()}...")
+        session.transport.connect(session.profile)
+        session._update_connection_ui(session.transport.is_connected)
 
     def prompt_current_session_settings(self) -> None:
         session = self.current_session()
@@ -807,6 +812,9 @@ class MainWindow(QMainWindow):
 
     def default_serial_profile(self) -> SerialProfile:
         return clone_profile(self.settings.serial)
+
+    def default_lan_profile(self) -> LanProfile:
+        return clone_lan_profile(self.settings.lan)
 
     def apply_settings_to_ui(self) -> None:
         self.apply_theme(self.settings.theme, save=False)

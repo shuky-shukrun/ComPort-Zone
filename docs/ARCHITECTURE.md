@@ -15,7 +15,7 @@ Companion documents:
 
 - Keep the app PySide6 based and behavior-compatible while reducing large-widget ownership.
 - Make feature work easier by separating UI wiring, controllers, domain services, transport adapters, persistence, and models.
-- Keep serial as the only implemented transport for now, while making future transports possible without rewiring the whole app.
+- Support serial and LAN transports through the shared transport layer, while making future transports possible without rewiring the whole app.
 - Prefer incremental refactors over rewrites. Every slice should keep the app usable and the test suite green.
 - Keep pure/domain modules free of Qt dependencies unless the module is explicitly a Qt UI helper.
 - Preserve existing user workflows unless a change is intentionally planned and documented.
@@ -32,7 +32,7 @@ ComPort Zone should settle into these layers:
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, `app_settings_controller.py`, `workspace_settings_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
 | Commands | One registry for actions used by menus, command palette, shortcuts, and context menus where practical | `command_registry.py` |
-| Transports | Abstract communication endpoints and concrete adapters | `transports.py`, `serial_core.py` |
+| Transports | Abstract communication endpoints and concrete adapters | `transports.py`, `serial_core.py`, `lan_core.py` |
 | Persistence/settings | Read/write settings payloads, schema ownership, import/export behavior | `settings_service.py`, `storage.py`, `models.py` |
 | Shared utilities | Theme, icons, widgets, history, logging | `themes.py`, `icons.py`, `widgets.py`, `history.py`, `session_log.py` |
 | Tests | Focused tests beside each extracted module plus app-session regression tests | `tests/` |
@@ -51,7 +51,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 ## Current State Snapshot
 
-The project is in an incremental redesign. `src/ComPort_Zone/app.py` is now a thin startup and compatibility module, while `src/ComPort_Zone/ui/main_window.py` owns the main window shell. The main window module is still large and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules.
+The project is in an incremental redesign. `src/ComPort_Zone/app.py` is now a thin startup and compatibility module, while `src/ComPort_Zone/ui/main_window.py` owns the main window shell. The main window module is still large and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules. Serial and raw TCP LAN are now concrete transports behind the shared adapter contract.
 
 The workspace drawer is treated as app-level UI state: collapsed/expanded state, drawer width, and selected Quick Commands/Quick Files page are applied consistently to terminal tabs and embedded command-file editor tabs.
 
@@ -86,7 +86,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Workspace drawer state | `ui/main_window.py`, terminal/editor tab drawer hooks | Future presenter/controller if it grows | Done foundation | Collapsed state, selected page, and width are global settings applied across terminal and editor tabs. |
-| Transport abstraction | `transports.py`, `serial_core.py` | Same | Done foundation | Serial is the only adapter. Future transports should add adapters, not rewrite UI. |
+| Transport abstraction | `transports.py`, `serial_core.py`, `lan_core.py` | Same | Done foundation | Serial and raw TCP LAN adapters share the terminal controller/event contract. Future transports should add adapters, not rewrite UI. |
 | Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2, minimum-compatible schema checks, and import/export payload rules; `SettingsStore` owns atomic save and backup fallback. |
 | App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
 | Workspace restore/capture | `workspace_state.py`, `workspace_settings_controller.py` | Same | Done | Captures/restores terminal and command-file tabs; save/apply-imported-settings coordination is outside `MainWindow`. |
@@ -97,7 +97,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 
 ### Launch and Workspace Restore
 
-`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for serial settings. Restored connected terminal tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected.
+`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for connection settings. Restored connected serial tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected. Restored LAN tabs connect to the saved host and port directly because there is no endpoint discovery in v1.
 
 ### Terminal Send
 
@@ -131,7 +131,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 | --- | --- | --- |
 | Done | Quick action domain/library and shared sidebar/panel | Terminal and editor share data and UI shape. |
 | Done | Command editor core/file/search/highlighting/run-target extractions | Editor internals are now split into focused modules. |
-| Done | Transport abstraction foundation with serial adapter | No non-serial transport yet. |
+| Done | Transport abstraction foundation with serial and LAN adapters | Raw TCP LAN is implemented as a client transport. |
 | Done | SettingsService and schema v2 ownership | Settings payload logic moved out of raw storage. |
 | Done | Workspace state service | Restore/capture logic has one owner. |
 | Done | CommandRegistry for menus and command palette | Static command definitions now live in one module. |
@@ -153,7 +153,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 | Done | Tab context menu extraction | `ui/tab_context_menus.py` owns terminal/editor/empty-tab context menu construction. |
 | Next | Slim `ui/main_window.py` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module location for the command-file tab | Terminal tab moved; command-file tab still needs the same treatment once dependencies are stable. |
-| Later | Add non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
+| Later | Add more non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
 | Later | Broaden command registry use in context menus | Use registry metadata for shared actions; keep selection-specific logic local. |
 
 ## Refactor Rules

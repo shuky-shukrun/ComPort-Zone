@@ -8,7 +8,16 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
 
 from ComPort_Zone import app as app_module
-from ComPort_Zone.models import AppSettings, QuickCommand, QuickFile, SETTINGS_SCHEMA_VERSION, SerialProfile, TerminalSessionState
+from ComPort_Zone.lan_core import LanClient
+from ComPort_Zone.models import (
+    AppSettings,
+    LanProfile,
+    QuickCommand,
+    QuickFile,
+    SETTINGS_SCHEMA_VERSION,
+    SerialProfile,
+    TerminalSessionState,
+)
 from ComPort_Zone.serial_core import SerialClient
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
@@ -166,6 +175,86 @@ class AppSessionTests(unittest.TestCase):
                 app_module.MainWindow.prompt_session_settings = old_prompt_session
                 main_window_module.TerminalSessionWidget.list_ports_snapshot = old_list_ports_snapshot
                 SerialClient.connect = old_connect
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_restored_lan_tab_loads_and_auto_connects(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_restore_lan.json")
+        settings_path.unlink(missing_ok=True)
+
+        class FakeSocket:
+            def close(self) -> None:
+                pass
+
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(
+                        check_for_updates_on_launch=False,
+                        restored_tabs=[
+                            TerminalSessionState(
+                                title="Terminal 1",
+                                transport_kind="lan",
+                                transport_profile={
+                                    "host": "192.168.1.50",
+                                    "port": 5025,
+                                    "line_ending": "LF",
+                                },
+                                lan=LanProfile(
+                                    host="192.168.1.50",
+                                    port=5025,
+                                    line_ending="LF",
+                                ),
+                                connected_on_launch=True,
+                            )
+                        ],
+                    )
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_lan_connect = LanClient.connect
+            connect_calls: list[str] = []
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+            def fake_lan_connect(client: LanClient, profile: LanProfile) -> bool:
+                connect_calls.append(profile.endpoint())
+                client._desired_profile = profile
+                client._profile = profile
+                client._socket = FakeSocket()
+                return True
+
+            LanClient.connect = fake_lan_connect
+            try:
+                window = app_module.MainWindow()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+                session = window.current_session()
+
+                self.assertEqual(connect_calls, ["192.168.1.50:5025"])
+                self.assertEqual(session.transport_kind, "lan")
+                self.assertEqual(session.profile.host, "192.168.1.50")
+                self.assertEqual(session.profile.port, 5025)
+                self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "192.168.1.50:5025")
+                self.assertEqual(
+                    window.connection_status_label.text(),
+                    "Connected | LAN 192.168.1.50:5025 | LF | Log off",
+                )
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                LanClient.connect = old_lan_connect
                 if window is not None:
                     for active_session in window.iter_sessions():
                         active_session.shutdown()
@@ -949,6 +1038,72 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_lan_status_duplicate_and_command_file_target(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_lan_session.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+
+        class FakeSocket:
+            def close(self) -> None:
+                pass
+
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session._replace_controller(
+                LanProfile(host="dut.local", port=5555, line_ending="LF"),
+                "lan",
+            )
+            session._update_connection_ui(False)
+
+            self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "dut.local:5555")
+            self.assertEqual(
+                window.connection_status_label.text(),
+                "Closed | LAN dut.local:5555 | LF | Log off",
+            )
+
+            window.duplicate_current_session()
+            duplicate = window.current_session()
+            self.assertEqual(duplicate.transport_kind, "lan")
+            self.assertEqual(duplicate.profile.host, "dut.local")
+            self.assertEqual(duplicate.profile.port, 5555)
+            self.assertFalse(duplicate.transport.is_connected)
+
+            window.tabs.setCurrentWidget(session)
+            session.serial_client._socket = FakeSocket()
+            session._update_connection_ui(True)
+            started: list[tuple[str, object, object]] = []
+            session.run_script_text = lambda text, source_label="Editor buffer", source_path=None: (
+                started.append((text, source_label, source_path)) or True
+            )
+            editor = window.add_command_file_tab()
+            editor.setPlainText("SEND *IDN?\n")
+
+            menu = QMenu(window)
+            window.populate_run_editor_menu(menu, editor)
+            actions = menu.actions()
+
+            self.assertEqual(len(actions), 1)
+            self.assertIn("LAN dut.local:5555", actions[0].text())
+            actions[0].trigger()
+            self.assertEqual(started, [("SEND *IDN?\n", "Untitled", None)])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_double_click_connection_status_opens_serial_settings(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_connection_settings.json")
         settings_path.unlink(missing_ok=True)
@@ -970,7 +1125,7 @@ class AppSessionTests(unittest.TestCase):
             window.connection_status_label.doubleClicked.emit()
 
             self.assertEqual(settings_calls, [True])
-            self.assertIn("Double-click to open Serial Settings.", window.connection_status_label.toolTip())
+            self.assertIn("Double-click to open Connection Settings.", window.connection_status_label.toolTip())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1418,7 +1573,7 @@ class AppSessionTests(unittest.TestCase):
             titles = [entry.title for entry in entries]
 
             self.assertIn("Connect / Disconnect", titles)
-            self.assertIn("Serial Settings", titles)
+            self.assertIn("Connection Settings", titles)
             self.assertIn("Run Command File", titles)
             self.assertIn("New Command File", titles)
             self.assertIn("Open Command File Editor", titles)

@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from ComPort_Zone.models import AppSettings, CommandFileTabState, SerialProfile, TerminalSessionState
+from ComPort_Zone.models import AppSettings, CommandFileTabState, LanProfile, SerialProfile, TerminalSessionState
 from ComPort_Zone.workspace_state import WorkspaceStateService
 
 
@@ -131,6 +131,34 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual(settings.window_height, 700)
         self.assertEqual(settings.restored_tabs, [])
         self.assertEqual(settings.restored_command_files, [])
+
+    def test_capture_active_lan_session_updates_default_transport(self) -> None:
+        service = WorkspaceStateService()
+        settings = AppSettings(serial=SerialProfile(port="COM1"))
+        active = FakeTerminalSession(
+            LanProfile(host="dut.local", port=5025),
+            TerminalSessionState(
+                title="LAN DUT",
+                transport_kind="lan",
+                transport_profile={"host": "dut.local", "port": 5025},
+                lan=LanProfile(host="dut.local", port=5025),
+            ),
+        )
+
+        service.capture_into_settings(
+            settings,
+            active_session=active,
+            terminal_sessions=[active],
+            command_file_editors=[],
+            command_history=[],
+            window_width=1000,
+            window_height=700,
+        )
+
+        self.assertEqual(settings.transport_kind, "lan")
+        self.assertEqual(settings.transport_profile["host"], "dut.local")
+        self.assertEqual(settings.lan.host, "dut.local")
+        self.assertEqual(settings.restored_tabs[0].transport_kind, "lan")
 
     def test_restore_adds_default_terminal_and_prompt_when_no_terminal_state(self) -> None:
         service = WorkspaceStateService()

@@ -43,6 +43,7 @@ git diff --check
 | Terminal tab UI layout/glue                   | `src/ComPort_Zone/ui/terminal_tab.py`                                                                                              | terminal tests plus app-session tests                         |
 | Integrated terminal prompt/draft editing      | `src/ComPort_Zone/widgets.py`                                                                                                      | `tests/test_integrated_terminal_input`                        |
 | Serial behavior                               | `src/ComPort_Zone/serial_core.py`                                                                                                  | `tests/test_serial_core`                                      |
+| LAN behavior                                  | `src/ComPort_Zone/lan_core.py`                                                                                                     | `tests/test_lan_core`                                         |
 | Transport abstraction                         | `src/ComPort_Zone/transports.py`                                                                                                   | `tests/test_transports`                                       |
 | Command-file parsing/running                  | `src/ComPort_Zone/batch.py`, `src/ComPort_Zone/command_file_service.py`                                                            | `tests/test_batch`, `tests/test_command_file_service`         |
 | Command-file editor UI                        | `src/ComPort_Zone/command_editor.py`                                                                                               | `tests/test_command_editor`                                   |
@@ -244,7 +245,7 @@ Do not start by editing UI labels everywhere.
 2. Add fake adapter contract tests in `tests/test_transports.py`.
 3. Extend settings profiles through `models.py` and `settings_service.py` only as needed.
 4. Wire controller-level selection before UI polish.
-5. Keep serial behavior unchanged.
+5. Keep serial and LAN behavior unchanged.
 
 ## Project Scripts
 

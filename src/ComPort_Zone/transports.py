@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from queue import Queue
 from typing import Any, Protocol, runtime_checkable
 
-from .models import SerialProfile
+from .lan_core import LanClient
+from .models import LanProfile, SerialProfile
 from .serial_core import SerialClient, SerialEvent
 
 
@@ -36,8 +37,15 @@ class TransportProfile:
     def from_serial_profile(cls, profile: SerialProfile) -> "TransportProfile":
         return cls(kind="serial", settings=profile.to_dict())
 
+    @classmethod
+    def from_lan_profile(cls, profile: LanProfile) -> "TransportProfile":
+        return cls(kind="lan", settings=profile.to_dict())
+
     def to_serial_profile(self) -> SerialProfile:
         return SerialProfile.from_dict(self.settings)
+
+    def to_lan_profile(self) -> LanProfile:
+        return LanProfile.from_dict(self.settings)
 
 
 @runtime_checkable
@@ -55,7 +63,7 @@ class TransportAdapter(Protocol):
     def list_endpoints(self) -> list[EndpointInfo]:
         ...
 
-    def connect(self, profile: TransportProfile | SerialProfile) -> bool:
+    def connect(self, profile: TransportProfile | SerialProfile | LanProfile) -> bool:
         ...
 
     def disconnect(self) -> None:
@@ -142,3 +150,57 @@ class SerialTransportAdapter:
 
     def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
         self.client.unsubscribe_events(queue)
+
+
+class LanTransportAdapter:
+    kind = "lan"
+
+    def __init__(self, client: LanClient | None = None) -> None:
+        self.client = client or LanClient()
+
+    @property
+    def events(self) -> Queue[SerialEvent]:
+        return self.client.events
+
+    @property
+    def is_connected(self) -> bool:
+        return self.client.is_connected
+
+    @property
+    def is_reconnecting(self) -> bool:
+        return self.client.is_reconnecting
+
+    @property
+    def active_profile(self) -> LanProfile | None:
+        return self.client.active_profile
+
+    def list_endpoints(self) -> list[EndpointInfo]:
+        return []
+
+    def connect(self, profile: TransportProfile | LanProfile) -> bool:
+        if isinstance(profile, TransportProfile):
+            if profile.kind != self.kind:
+                raise ValueError(f"LAN transport cannot connect profile kind {profile.kind!r}.")
+            profile = profile.to_lan_profile()
+        return self.client.connect(profile)
+
+    def disconnect(self) -> None:
+        self.client.disconnect()
+
+    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+        self.client.send_text(text, line_ending_override)
+
+    def send_bytes(self, data: bytes) -> None:
+        self.client.send_bytes(data)
+
+    def subscribe_events(self) -> Queue[SerialEvent]:
+        return self.client.subscribe_events()
+
+    def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
+        self.client.unsubscribe_events(queue)
+
+
+def create_transport_adapter(kind: str) -> TransportAdapter:
+    if kind == "lan":
+        return LanTransportAdapter()
+    return SerialTransportAdapter()

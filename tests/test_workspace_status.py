@@ -99,7 +99,7 @@ class WorkspaceStatusPresenterTests(unittest.TestCase):
         self.assertEqual(status_label.text(), "Connected | COM1")
         self.assertEqual(action_button.text(), "Disconnect")
         self.assertTrue(action_button.isEnabled())
-        self.assertIn("Double-click to open Serial Settings.", status_label.toolTip())
+        self.assertIn("Double-click to open Connection Settings.", status_label.toolTip())
 
         tabs.setCurrentWidget(editor)
         presenter.sync_from_current(theme)

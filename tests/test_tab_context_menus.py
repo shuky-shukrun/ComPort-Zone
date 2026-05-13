@@ -101,7 +101,7 @@ class TabContextMenuBuilderTests(unittest.TestCase):
                     "New Tab",
                     "Duplicate Tab",
                     "Rename Tab",
-                    "Serial Settings",
+                    "Connection Settings",
                     "Connect",
                     "Search",
                     "Clear Terminal",

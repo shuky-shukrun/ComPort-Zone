@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 
 from . import __version__
 from . import quick_actions as _quick_actions
-from .models import SerialProfile
+from .models import LanProfile, SerialProfile
 from .serial_core import SerialEvent
 from .storage import default_config_path
 from .ui.dialogs import (

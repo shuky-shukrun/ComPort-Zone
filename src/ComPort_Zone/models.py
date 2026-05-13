@@ -18,7 +18,7 @@ RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 3
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 
 
@@ -90,6 +90,45 @@ class SerialProfile:
             reconnect_max_delay_ms=int(data.get("reconnect_max_delay_ms", 10000)),
             dtr=bool(data.get("dtr", True)),
             rts=bool(data.get("rts", True)),
+        )
+
+
+@dataclass(slots=True)
+class LanProfile:
+    host: str = ""
+    port: int = 5025
+    line_ending: str = "CRLF"
+    timeout_ms: int = 100
+    auto_reconnect: bool = True
+    reconnect_initial_delay_ms: int = 1000
+    reconnect_max_delay_ms: int = 10000
+
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}" if self.host else ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "host": self.host,
+            "port": self.port,
+            "line_ending": self.line_ending,
+            "timeout_ms": self.timeout_ms,
+            "auto_reconnect": self.auto_reconnect,
+            "reconnect_initial_delay_ms": self.reconnect_initial_delay_ms,
+            "reconnect_max_delay_ms": self.reconnect_max_delay_ms,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "LanProfile":
+        if not data:
+            return cls()
+        return cls(
+            host=str(data.get("host", "")).strip(),
+            port=int(data.get("port", 5025)),
+            line_ending=str(data.get("line_ending", "CRLF")),
+            timeout_ms=int(data.get("timeout_ms", 100)),
+            auto_reconnect=bool(data.get("auto_reconnect", True)),
+            reconnect_initial_delay_ms=int(data.get("reconnect_initial_delay_ms", 1000)),
+            reconnect_max_delay_ms=int(data.get("reconnect_max_delay_ms", 10000)),
         )
 
 
@@ -184,6 +223,7 @@ class TerminalSessionState:
     transport_kind: str = "serial"
     transport_profile: dict[str, Any] = field(default_factory=dict)
     serial: SerialProfile | None = None
+    lan: LanProfile | None = None
     connected_on_launch: bool = False
     terminal_text: str = ""
     command_draft: str = ""
@@ -191,13 +231,16 @@ class TerminalSessionState:
 
     def to_dict(self) -> dict[str, Any]:
         transport_profile = dict(self.transport_profile)
-        if not transport_profile and self.serial is not None:
+        transport_kind = self.transport_kind or "serial"
+        if not transport_profile and transport_kind == "serial" and self.serial is not None:
             transport_profile = self.serial.to_dict()
+        if not transport_profile and transport_kind == "lan" and self.lan is not None:
+            transport_profile = self.lan.to_dict()
         payload = {
             "title": self.title,
             "title_is_custom": self.title_is_custom,
             "transport": {
-                "kind": self.transport_kind or "serial",
+                "kind": transport_kind,
                 "profile": transport_profile,
             },
             "connected_on_launch": self.connected_on_launch,
@@ -219,17 +262,19 @@ class TerminalSessionState:
         transport_profile = _dict_value(transport.get("profile"))
         title = str(data.get("title", "Terminal")) or "Terminal"
         serial = SerialProfile.from_dict(transport_profile) if transport_kind == "serial" else None
+        lan = LanProfile.from_dict(transport_profile) if transport_kind == "lan" else None
         return cls(
             title=title,
             title_is_custom=bool(
                 data.get(
                     "title_is_custom",
-                    not title.startswith("Terminal") and title != "No port",
+                    not title.startswith("Terminal") and title not in {"No port", "No endpoint"},
                 )
             ),
             transport_kind=transport_kind,
             transport_profile=dict(transport_profile),
             serial=serial,
+            lan=lan,
             connected_on_launch=bool(data.get("connected_on_launch", False)),
             terminal_text=str(data.get("terminal_text", "")),
             command_draft=str(data.get("command_draft", "")),
@@ -266,6 +311,7 @@ class AppSettings:
     transport_kind: str = "serial"
     transport_profile: dict[str, Any] = field(default_factory=dict)
     serial: SerialProfile = field(default_factory=SerialProfile)
+    lan: LanProfile = field(default_factory=LanProfile)
     command_history: list[str] = field(default_factory=list)
     quick_commands: list[QuickCommand] = field(
         default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
@@ -292,13 +338,29 @@ class AppSettings:
     window_width: int = 1320
     window_height: int = 860
 
+    def _default_transport_profile(self, kind: str) -> dict[str, Any]:
+        if kind == "lan":
+            return self.lan.to_dict()
+        return self.serial.to_dict()
+
+    def _uses_lan_transport(self) -> bool:
+        if self.transport_kind == "lan":
+            return True
+        return any(session.transport_kind == "lan" for session in self.restored_tabs)
+
     def to_dict(self) -> dict[str, Any]:
-        transport_profile = dict(self.transport_profile or self.serial.to_dict())
+        transport_kind = self.transport_kind or "serial"
+        transport_profile = dict(self.transport_profile or self._default_transport_profile(transport_kind))
+        minimum_compatible_schema = (
+            SETTINGS_SCHEMA_VERSION
+            if self._uses_lan_transport()
+            else MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION
+        )
         return {
             "schema_version": SETTINGS_SCHEMA_VERSION,
-            "minimum_compatible_schema_version": MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+            "minimum_compatible_schema_version": minimum_compatible_schema,
             "transport": {
-                "kind": self.transport_kind or "serial",
+                "kind": transport_kind,
                 "profile": transport_profile,
             },
             "app": {
@@ -360,6 +422,7 @@ class AppSettings:
         transport_kind = str(transport.get("kind", "serial")) or "serial"
         transport_profile = _dict_value(transport.get("profile"))
         serial = SerialProfile.from_dict(transport_profile if transport_kind == "serial" else {})
+        lan = LanProfile.from_dict(transport_profile if transport_kind == "lan" else {})
         app = _dict_value(data.get("app"))
         terminal_font = _dict_value(app.get("terminal_font"))
         drawer = _dict_value(app.get("drawer"))
@@ -396,8 +459,12 @@ class AppSettings:
             quick_file_sort_mode = "Custom"
         settings = cls(
             transport_kind=transport_kind,
-            transport_profile=dict(transport_profile or serial.to_dict()),
+            transport_profile=dict(
+                transport_profile
+                or (lan.to_dict() if transport_kind == "lan" else serial.to_dict())
+            ),
             serial=serial,
+            lan=lan,
             command_history=[str(item) for item in _list_value(history.get("commands"))],
             quick_commands=quick_commands,
             quick_files=quick_files,

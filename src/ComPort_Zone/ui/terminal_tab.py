@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from ..batch import BatchParseError, parse_hex_payload
 from ..icons import set_button_icon
 from ..models import (
+    LanProfile,
     QUICK_COMMAND_SORT_MODES,
     QUICK_FILE_SORT_MODES,
     RECEIVE_DISPLAY_MODES,
@@ -48,8 +49,9 @@ from ..quick_actions_panel import (
 )
 from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
-from ..terminal_session_controller import TerminalRenderPlan, TerminalSessionController
+from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan, TerminalSessionController
 from ..terminal_view import TerminalView
+from ..transports import SerialTransportAdapter
 from ..widgets import ChevronComboBox, IntegratedTerminalEdit
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
@@ -59,6 +61,10 @@ DRAWER_COLLAPSED_WIDTH = 48
 
 def clone_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
+
+
+def clone_lan_profile(profile: LanProfile) -> LanProfile:
+    return LanProfile.from_dict(profile.to_dict())
 
 
 def short_label(text: str, limit: int = 40) -> str:
@@ -75,14 +81,16 @@ class TerminalSessionWidget(QWidget):
         self.title_is_custom = state.title_is_custom or (
             bool(self.title)
             and not self.title.startswith("Terminal")
-            and self.title != "No port"
+            and self.title not in {"No port", "No endpoint"}
         )
-        self.profile = clone_profile(state.serial) if state.serial is not None else host.default_serial_profile()
+        self.transport_kind = state.transport_kind or "serial"
+        self.profile: ConnectionProfile = self._profile_from_state(state)
         self.parameter_prompt_bridge = BatchParameterPromptBridge(self)
         self.controller = TerminalSessionController(
             self.profile,
             history_commands=host.history_catalog.all_commands(),
             parameter_prompt=self.parameter_prompt_bridge.prompt,
+            transport_kind=self.transport_kind,
         )
         self.transport = self.controller.transport
         self.serial_client = self.controller.serial_client
@@ -122,9 +130,10 @@ class TerminalSessionWidget(QWidget):
     def tab_title(self) -> str:
         if self.title_is_custom:
             return self.title
-        if self.profile.port:
-            return self.profile.port
-        return "No port"
+        endpoint = self.connection_endpoint()
+        if endpoint:
+            return endpoint
+        return "No endpoint" if self.transport_kind == "lan" else "No port"
 
     @property
     def paused(self) -> bool:
@@ -139,17 +148,34 @@ class TerminalSessionWidget(QWidget):
         return self.controller.pending_events
 
     def to_state(self) -> TerminalSessionState:
+        transport_profile = self.profile.to_dict()
+        serial_profile = clone_profile(self.profile) if isinstance(self.profile, SerialProfile) else None
+        lan_profile = clone_lan_profile(self.profile) if isinstance(self.profile, LanProfile) else None
         return TerminalSessionState(
             title=self.title,
             title_is_custom=self.title_is_custom,
-            transport_kind="serial",
-            transport_profile=self.profile.to_dict(),
-            serial=clone_profile(self.profile),
-            connected_on_launch=self._connected or self.serial_client.is_connected,
+            transport_kind=self.transport_kind,
+            transport_profile=transport_profile,
+            serial=serial_profile,
+            lan=lan_profile,
+            connected_on_launch=self._connected or self.transport.is_connected,
             terminal_text=self.terminal.toPlainText(),
             command_draft=self.command_input.text(),
             send_mode=self.mode_combo.currentText(),
         )
+
+    def _profile_from_state(self, state: TerminalSessionState) -> ConnectionProfile:
+        if self.transport_kind == "lan":
+            if state.lan is not None:
+                return clone_lan_profile(state.lan)
+            if state.transport_profile:
+                return LanProfile.from_dict(state.transport_profile)
+            return self.host.default_lan_profile()
+        if state.serial is not None:
+            return clone_profile(state.serial)
+        if state.transport_profile:
+            return SerialProfile.from_dict(state.transport_profile)
+        return self.host.default_serial_profile()
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -810,43 +836,84 @@ class TerminalSessionWidget(QWidget):
         self.run_script_path(Path(quick_file.path))
 
     def refresh_ports(self) -> None:
+        if self.transport_kind != "serial":
+            self._ports = []
+            self.host.set_status("LAN endpoints are entered manually.")
+            self._update_connection_ui(self.transport.is_connected, update_footer=False)
+            return
         self._ports = self.list_ports_snapshot()
         self.host.set_status(f"{len(self._ports)} serial port(s) detected.")
-        self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
+        self._update_connection_ui(self.transport.is_connected, update_footer=False)
 
     def list_ports_snapshot(self) -> list[dict[str, str]]:
+        if self.transport_kind != "serial" or not hasattr(self.transport, "list_ports"):
+            self._ports = []
+            self._update_connection_ui(self.transport.is_connected, update_footer=False)
+            return self._ports
         self._ports = self.transport.list_ports()
-        self._update_connection_ui(self.serial_client.is_connected, update_footer=False)
+        self._update_connection_ui(self.transport.is_connected, update_footer=False)
+        return self._ports
+
+    def serial_ports_snapshot(self) -> list[dict[str, str]]:
+        if self.transport_kind == "serial":
+            return self.list_ports_snapshot()
+        self._ports = SerialTransportAdapter().list_ports()
         return self._ports
 
     def open_connection_settings(self, *, connect_after_accept: bool = True) -> bool:
+        serial_ports_supplier = (
+            self.list_ports_snapshot
+            if self.transport_kind == "serial"
+            else self.serial_ports_snapshot
+        )
         dialog = ConnectionSettingsDialog(
             self.profile,
-            self.list_ports_snapshot(),
+            serial_ports_supplier(),
             self,
-            ports_supplier=self.list_ports_snapshot,
+            ports_supplier=serial_ports_supplier,
+            transport_kind=self.transport_kind,
+            serial_profile=(
+                self.profile
+                if isinstance(self.profile, SerialProfile)
+                else self.host.default_serial_profile()
+            ),
+            lan_profile=(
+                self.profile
+                if isinstance(self.profile, LanProfile)
+                else self.host.default_lan_profile()
+            ),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
         try:
-            self.profile = dialog.profile()
+            new_kind = dialog.transport_kind()
+            new_profile = dialog.profile()
         except ValueError as exc:
-            QMessageBox.warning(self, "Serial Settings", str(exc))
+            QMessageBox.warning(self, "Connection Settings", str(exc))
             return False
+        if new_kind != self.transport_kind:
+            if self.transport.is_connected or self.transport.is_reconnecting:
+                self.transport.disconnect()
+            self._replace_controller(new_profile, new_kind)
+        else:
+            self.profile = new_profile
+            self.controller.profile = self.profile
         self.controller.profile = self.profile
         self._update_line_ending_label()
-        self._update_connection_ui(self.serial_client.is_connected)
-        if connect_after_accept and self.profile.port:
-            if self.serial_client.is_connected:
-                self.serial_client.disconnect()
-            self.host.set_status(f"Connecting to {self.profile.port}...")
-            self.serial_client.connect(self.profile)
-            self._update_connection_ui(self.serial_client.is_connected)
+        self._update_connection_ui(self.transport.is_connected)
+        endpoint = self.connection_endpoint()
+        if connect_after_accept and endpoint:
+            if self.transport.is_connected:
+                self.transport.disconnect()
+            self.host.set_status(f"Connecting to {endpoint}...")
+            self.transport.connect(self.profile)
+            self._update_connection_ui(self.transport.is_connected)
         self.host.save_settings()
         return True
 
     def toggle_connection(self) -> None:
         self.controller.profile = self.profile
+        self.controller.transport_kind = self.transport_kind
         self.controller.toggle_connection(
             open_connection_settings=self.open_connection_settings,
             set_status=self.host.set_status,
@@ -854,6 +921,24 @@ class TerminalSessionWidget(QWidget):
             append_status=self._append_status,
             save_settings=self.host.save_settings,
         )
+
+    def _replace_controller(self, profile: ConnectionProfile, transport_kind: str) -> None:
+        logger = self.logger
+        self.batch_runner.stop(emit_message=False)
+        self.profile = profile
+        self.transport_kind = transport_kind
+        self.controller = TerminalSessionController(
+            self.profile,
+            history_commands=self.host.history_catalog.all_commands(),
+            parameter_prompt=self.parameter_prompt_bridge.prompt,
+            transport_kind=self.transport_kind,
+        )
+        self.controller.logger = logger
+        self.transport = self.controller.transport
+        self.serial_client = self.controller.serial_client
+        self.history_store = self.controller.history_store
+        self.logger = self.controller.logger
+        self.batch_runner = self.controller.batch_runner
 
     def send_from_input(self) -> None:
         raw = self.command_input.text()
@@ -1287,7 +1372,7 @@ class TerminalSessionWidget(QWidget):
     def _drain_events(self) -> None:
         while True:
             try:
-                event = self.serial_client.events.get_nowait()
+                event = self.transport.events.get_nowait()
             except Empty:
                 break
             self._handle_event(event)
@@ -1343,31 +1428,33 @@ class TerminalSessionWidget(QWidget):
             self.host.set_status(self._status_text)
 
     def connection_state(self) -> str:
-        if self._connected or self.serial_client.is_connected:
+        if self._connected or self.transport.is_connected:
             return "connected"
-        if self.serial_client.is_reconnecting:
+        if self.transport.is_reconnecting:
             return "retrying"
-        if not self.profile.port:
+        if not self.connection_endpoint():
             return "no-port"
         if self._profile_port_missing():
             return "missing"
         return "closed"
 
     def connection_state_label(self) -> str:
+        no_endpoint_label = "No endpoint" if self.transport_kind == "lan" else "No port"
         return {
             "connected": "Connected",
             "retrying": "Retrying",
             "missing": "Missing",
-            "no-port": "No port",
+            "no-port": no_endpoint_label,
             "closed": "Closed",
         }[self.connection_state()]
 
     def connection_action_text(self) -> str:
+        no_endpoint_action = "Set Endpoint" if self.transport_kind == "lan" else "Set Port"
         return {
             "connected": "Disconnect",
             "retrying": "Stop Retry",
             "missing": "Connect",
-            "no-port": "Set Port",
+            "no-port": no_endpoint_action,
             "closed": "Connect",
         }[self.connection_state()]
 
@@ -1379,16 +1466,26 @@ class TerminalSessionWidget(QWidget):
         if state == "retrying":
             return f"Stop auto-reconnect attempts for {profile_text}."
         if state == "missing":
-            return f"{self.profile.port} is not currently detected. Try to connect anyway or open Serial Settings."
+            return f"{self.profile.port} is not currently detected. Try to connect anyway or open Connection Settings."
         if state == "no-port":
-            return "Choose a COM port and connect."
+            return "Choose a LAN host and port." if self.transport_kind == "lan" else "Choose a COM port and connect."
         return f"Connect to {profile_text}."
 
     def connection_status_text(self) -> str:
-        if not self.profile.port:
-            return "No port selected"
-        framing = f"{self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
+        endpoint = self.connection_endpoint()
+        if not endpoint:
+            return "No endpoint selected" if self.transport_kind == "lan" else "No port selected"
         log_status = "Log on" if self.logger.enabled else "Log off"
+        if isinstance(self.profile, LanProfile):
+            return " | ".join(
+                [
+                    self.connection_state_label(),
+                    f"LAN {endpoint}",
+                    self.profile.line_ending,
+                    log_status,
+                ]
+            )
+        framing = f"{self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
         return " | ".join(
             [
                 self.connection_state_label(),
@@ -1400,11 +1497,22 @@ class TerminalSessionWidget(QWidget):
         )
 
     def _profile_summary(self) -> str:
-        if not self.profile.port:
-            return "No port"
-        return f"{self.profile.port} {self.profile.baudrate} {self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
+        endpoint = self.connection_endpoint()
+        if not endpoint:
+            return "No endpoint" if self.transport_kind == "lan" else "No port"
+        if isinstance(self.profile, LanProfile):
+            return f"LAN {endpoint}"
+        framing = f"{self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
+        return f"{self.profile.port} {self.profile.baudrate} {framing}"
+
+    def connection_endpoint(self) -> str:
+        if isinstance(self.profile, LanProfile):
+            return self.profile.endpoint()
+        return self.profile.port
 
     def _profile_port_missing(self) -> bool:
+        if self.transport_kind != "serial" or not isinstance(self.profile, SerialProfile):
+            return False
         ports = getattr(self, "_ports", [])
         known_ports = {str(port.get("device", "")) for port in ports}
         return bool(self.profile.port and self.profile.port not in known_ports)
@@ -1419,5 +1527,5 @@ class TerminalSessionWidget(QWidget):
     def shutdown(self) -> None:
         self.event_timer.stop()
         self.batch_runner.stop(emit_message=False)
-        self.serial_client.disconnect()
+        self.transport.disconnect()
         self.logger.close()

@@ -7,7 +7,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import QStyle, QTabBar, QTabWidget, QToolButton, QWidget
 
 from ..icons import set_button_icon
-from ..models import SerialProfile, TerminalSessionState
+from ..models import LanProfile, SerialProfile, TerminalSessionState
 
 
 class TextBufferLike(Protocol):
@@ -26,7 +26,7 @@ class ComboBoxLike(Protocol):
 
 
 class TerminalTabLike(Protocol):
-    profile: SerialProfile
+    profile: SerialProfile | LanProfile
     terminal: TextBufferLike
     command_input: LineEditLike
     mode_combo: ComboBoxLike
@@ -36,6 +36,9 @@ class TerminalTabLike(Protocol):
         ...
 
     def shutdown(self) -> None:
+        ...
+
+    def to_state(self) -> TerminalSessionState:
         ...
 
 
@@ -274,12 +277,17 @@ class TabWorkspaceController:
         return widgets
 
     def _duplicate_state(self, session: TerminalTabLike) -> TerminalSessionState:
-        return TerminalSessionState(
-            title=f"{session.tab_title} Copy",
-            title_is_custom=True,
-            serial=SerialProfile.from_dict(session.profile.to_dict()),
-            connected_on_launch=False,
-            terminal_text=session.terminal.toPlainText(),
-            command_draft=session.command_input.text(),
-            send_mode=session.mode_combo.currentText(),
-        )
+        to_state = getattr(session, "to_state", None)
+        if callable(to_state):
+            state = to_state()
+        else:
+            state = TerminalSessionState(
+                serial=SerialProfile.from_dict(session.profile.to_dict()),
+                terminal_text=session.terminal.toPlainText(),
+                command_draft=session.command_input.text(),
+                send_mode=session.mode_combo.currentText(),
+            )
+        state.title = f"{session.tab_title} Copy"
+        state.title_is_custom = True
+        state.connected_on_launch = False
+        return state

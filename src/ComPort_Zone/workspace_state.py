@@ -4,11 +4,11 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
-from .models import AppSettings, CommandFileTabState, SerialProfile, TerminalSessionState
+from .models import AppSettings, CommandFileTabState, LanProfile, SerialProfile, TerminalSessionState
 
 
 class TerminalStateSource(Protocol):
-    profile: SerialProfile
+    profile: SerialProfile | LanProfile
 
     def to_state(self) -> TerminalSessionState:
         ...
@@ -51,6 +51,10 @@ def clone_serial_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
 
 
+def clone_lan_profile(profile: LanProfile) -> LanProfile:
+    return LanProfile.from_dict(profile.to_dict())
+
+
 class WorkspaceStateService:
     def capture_into_settings(
         self,
@@ -64,9 +68,17 @@ class WorkspaceStateService:
         window_height: int,
     ) -> AppSettings:
         if active_session is not None:
-            settings.serial = clone_serial_profile(active_session.profile)
-            settings.transport_kind = "serial"
-            settings.transport_profile = settings.serial.to_dict()
+            active_state = active_session.to_state()
+            settings.transport_kind = active_state.transport_kind or "serial"
+            settings.transport_profile = dict(active_state.transport_profile)
+            if active_state.serial is not None:
+                settings.serial = clone_serial_profile(active_state.serial)
+                if not settings.transport_profile:
+                    settings.transport_profile = settings.serial.to_dict()
+            if active_state.lan is not None:
+                settings.lan = clone_lan_profile(active_state.lan)
+                if not settings.transport_profile:
+                    settings.transport_profile = settings.lan.to_dict()
         settings.command_history = [str(command) for command in command_history]
         settings.window_width = int(window_width)
         settings.window_height = int(window_height)

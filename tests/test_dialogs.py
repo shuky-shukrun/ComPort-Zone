@@ -208,6 +208,33 @@ class DialogExtractionTests(unittest.TestCase):
             dialog.deleteLater()
             self.qt.processEvents()
 
+    def test_connection_settings_dialog_supports_lan_profile(self) -> None:
+        dialog = ConnectionSettingsDialog(
+            app_module.LanProfile(host="192.168.1.50", port=5025, line_ending="LF"),
+            [],
+            transport_kind="lan",
+        )
+        try:
+            self.assertEqual(dialog.transport_kind(), "lan")
+            self.assertEqual(dialog.connection_stack.currentIndex(), 1)
+            profile = dialog.profile()
+
+            self.assertIsInstance(profile, app_module.LanProfile)
+            self.assertEqual(profile.host, "192.168.1.50")
+            self.assertEqual(profile.port, 5025)
+            self.assertEqual(profile.line_ending, "LF")
+
+            serial_index = dialog.connection_type_combo.findData("serial")
+            dialog.connection_type_combo.setCurrentIndex(serial_index)
+            serial_profile = dialog.profile()
+
+            self.assertEqual(dialog.transport_kind(), "serial")
+            self.assertIsInstance(serial_profile, app_module.SerialProfile)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+            self.qt.processEvents()
+
     def test_command_palette_filters_and_executes_selected_entry(self) -> None:
         calls: list[str] = []
 

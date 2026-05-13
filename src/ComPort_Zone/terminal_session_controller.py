@@ -14,15 +14,16 @@ from .batch import (
     substitute_batch_parameters,
 )
 from .history import HistoryStore
-from .models import QuickCommand, SerialProfile
+from .models import LanProfile, QuickCommand, SerialProfile
 from .serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
 from .session_log import SessionLogger
-from .transports import SerialTransportAdapter, TransportAdapter
+from .transports import TransportAdapter, create_transport_adapter
 
 
 ParameterSheet = tuple[dict[str, str], set[str]]
 ParameterCollector = Callable[[Iterable[Any]], ParameterSheet | None]
 ParameterPrompt = Callable[[str, int, str], str | None]
+ConnectionProfile = SerialProfile | LanProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,14 +56,16 @@ class TerminalRenderPlan:
 class TerminalSessionController:
     def __init__(
         self,
-        profile: SerialProfile,
+        profile: ConnectionProfile,
         *,
         history_commands: Iterable[str],
         parameter_prompt: ParameterPrompt,
+        transport_kind: str = "serial",
         transport: TransportAdapter | None = None,
     ) -> None:
         self.profile = profile
-        self.transport = transport or SerialTransportAdapter()
+        self.transport_kind = transport_kind
+        self.transport = transport or create_transport_adapter(transport_kind)
         self.serial_client = getattr(self.transport, "client", self.transport)
         self.history_store = HistoryStore(history_commands)
         self.logger = SessionLogger()
@@ -168,14 +171,18 @@ class TerminalSessionController:
             update_connection_ui(False)
             save_settings()
             return True
-        if not self.profile.port:
+        endpoint = self.profile_endpoint()
+        if not endpoint:
             open_connection_settings(connect_after_accept=True)
             return False
-        set_status(f"Connecting to {self.profile.port}...")
+        set_status(f"Connecting to {endpoint}...")
         self.transport.connect(self.profile)
         update_connection_ui(self.transport.is_connected)
         save_settings()
         return True
+
+    def profile_endpoint(self) -> str:
+        return endpoint_for_profile(self.profile)
 
     def send_payload(self, raw: str, mode: str) -> None:
         if mode == "Hex Bytes":
@@ -272,3 +279,9 @@ class TerminalSessionController:
         path = self.logger.path
         self.logger.close()
         return path
+
+
+def endpoint_for_profile(profile: ConnectionProfile) -> str:
+    if isinstance(profile, LanProfile):
+        return profile.endpoint()
+    return profile.port

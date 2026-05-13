@@ -1046,7 +1046,7 @@ class CommandFileEditorDialog(QDialog):
         label = QLabel("Send file to", bar)
         self.run_target_combo = ChevronComboBox(bar)
         self.run_target_combo.setMinimumWidth(220)
-        self.run_target_combo.setToolTip("Connected COM port target")
+        self.run_target_combo.setToolTip("Connected terminal target")
         self.send_to_target_button = QPushButton("Send", bar)
         self.send_to_target_button.clicked.connect(self.send_to_selected_target)
         layout.addStretch(1)

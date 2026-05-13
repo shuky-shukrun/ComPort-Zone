@@ -19,6 +19,8 @@ class TerminalPaletteTab(Protocol):
     @property
     def tab_title(self) -> str: ...
 
+    def connection_endpoint(self) -> str: ...
+
     def connection_status_text(self) -> str: ...
 
 
@@ -41,11 +43,15 @@ def workspace_tab_palette_entries(
         session = session_at(index)
         editor = command_file_editor_at(index)
         title = session.tab_title if session else editor.tab_title() if editor else tab_text(index)
-        port = session.profile.port if session and session.profile.port else "No port"
-        subtitle = session.connection_status_text() if session else editor.status_summary() if editor else port
+        if session:
+            endpoint_getter = getattr(session, "connection_endpoint", None)
+            endpoint = str(endpoint_getter()) if callable(endpoint_getter) else str(session.profile.port or "No port")
+        else:
+            endpoint = "No port"
+        subtitle = session.connection_status_text() if session else editor.status_summary() if editor else endpoint
         icon = QStyle.StandardPixmap.SP_ComputerIcon if session else QStyle.StandardPixmap.SP_FileIcon
         keywords = (
-            f"switch tab terminal session {index + 1} {title} {port} {session.title}"
+            f"switch tab terminal session {index + 1} {title} {endpoint} {session.title}"
             if session
             else f"switch tab command file editor script {index + 1} {title}"
         )

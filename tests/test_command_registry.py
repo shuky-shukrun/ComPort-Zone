@@ -44,7 +44,7 @@ class CommandRegistryTests(unittest.TestCase):
             [entry.title for entry in registry.palette_entries()],
             [
                 "Connect / Disconnect",
-                "Serial Settings",
+                "Connection Settings",
                 "Run Command File",
                 "New Command File",
                 "Open Command File Editor",

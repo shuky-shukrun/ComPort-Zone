@@ -220,12 +220,12 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "serial.settings",
         lambda host: lambda: host.with_session(lambda session: session.open_connection_settings()),
-        menu_text="Serial Settings",
+        menu_text="Connection Settings",
         shortcut="Ctrl+,",
         icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-        palette_title="Serial Settings",
-        palette_subtitle="Open COM port, baud rate, line ending, DTR, and RTS settings",
-        palette_keywords="settings port baud parity stop bits flow control",
+        palette_title="Connection Settings",
+        palette_subtitle="Open serial COM port or LAN host settings",
+        palette_keywords="settings connection serial lan tcp port baud parity stop bits flow control",
     ),
     CommandSpec(
         "serial.refresh_ports",

@@ -5,6 +5,7 @@ import unittest
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
+    LanProfile,
     MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
     QuickCommand,
     QuickFile,
@@ -258,6 +259,25 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(settings.serial.baudrate, 57600)
         self.assertEqual(settings.to_dict()["transport"]["profile"]["port"], "COM33")
 
+    def test_settings_accept_lan_transport_profile_and_marks_schema_v3_required(self) -> None:
+        settings = AppSettings(
+            transport_kind="lan",
+            lan=LanProfile(host="192.168.1.50", port=5025, line_ending="LF"),
+        )
+
+        payload = settings.to_dict()
+        loaded = AppSettings.from_dict(payload)
+
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(payload["minimum_compatible_schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(payload["transport"]["kind"], "lan")
+        self.assertEqual(payload["transport"]["profile"]["host"], "192.168.1.50")
+        self.assertEqual(payload["transport"]["profile"]["port"], 5025)
+        self.assertEqual(loaded.transport_kind, "lan")
+        self.assertEqual(loaded.lan.host, "192.168.1.50")
+        self.assertEqual(loaded.lan.port, 5025)
+        self.assertEqual(loaded.lan.line_ending, "LF")
+
     def test_restored_tab_accepts_generic_serial_transport_profile(self) -> None:
         state = TerminalSessionState.from_dict(
             {
@@ -273,6 +293,24 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(state.serial.port, "COM44")
         self.assertEqual(state.serial.baudrate, 230400)
         self.assertEqual(state.to_dict()["transport"]["profile"]["port"], "COM44")
+
+    def test_restored_tab_accepts_lan_transport_profile(self) -> None:
+        state = TerminalSessionState.from_dict(
+            {
+                "title": "LAN DUT",
+                "transport": {
+                    "kind": "lan",
+                    "profile": {"host": "dut.local", "port": 9000, "line_ending": "LF"},
+                },
+            }
+        )
+
+        self.assertEqual(state.transport_kind, "lan")
+        self.assertIsNotNone(state.lan)
+        self.assertEqual(state.lan.host, "dut.local")
+        self.assertEqual(state.lan.port, 9000)
+        self.assertEqual(state.lan.line_ending, "LF")
+        self.assertEqual(state.to_dict()["transport"]["profile"]["host"], "dut.local")
 
     def test_settings_service_rejects_missing_schema(self) -> None:
         service = SettingsService()

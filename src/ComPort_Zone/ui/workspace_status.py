@@ -102,7 +102,7 @@ class WorkspaceStatusPresenter:
         state = session.connection_state()
         self.connection_status_label.setText(session.connection_status_text())
         self.connection_status_label.setToolTip(
-            f"{session.connection_tooltip()}\nDouble-click to open Serial Settings."
+            f"{session.connection_tooltip()}\nDouble-click to open Connection Settings."
         )
         set_widget_state(self.connection_status_label, state)
         self.connection_action_button.setEnabled(True)
