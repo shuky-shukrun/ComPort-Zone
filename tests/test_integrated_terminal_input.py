@@ -1,9 +1,9 @@
 import unittest
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QStringListModel
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QCompleter
 
 from ComPort_Zone.widgets import IntegratedTerminalEdit
 
@@ -75,6 +75,60 @@ class IntegratedTerminalEditTests(unittest.TestCase):
 
             self.assertEqual(terminal.text(), "SINK:CURR?")
             self.assertEqual(cursor.charFormat().foreground().color().name().lower(), "#4fc1ff")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_enter_submits_draft_without_accepting_visible_completion(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        model = QStringListModel(["volt 100"], terminal)
+        completer = QCompleter(model, terminal)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        submitted: list[str] = []
+        terminal.setCompleter(completer)
+        terminal.returnPressed.connect(lambda: submitted.append(terminal.text()))
+        try:
+            terminal.show()
+            terminal.setFocus()
+            terminal.setText("volt:acdc 100")
+            terminal.show_completions(forced=True)
+            self.qt.processEvents()
+
+            self.assertTrue(completer.popup().isVisible())
+            QTest.keyClick(terminal, Qt.Key.Key_Return)
+            self.qt.processEvents()
+
+            self.assertEqual(submitted, ["volt:acdc 100"])
+            self.assertEqual(terminal.text(), "volt:acdc 100")
+            self.assertFalse(completer.popup().isVisible())
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_tab_accepts_visible_completion_without_submitting(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        model = QStringListModel(["volt 100"], terminal)
+        completer = QCompleter(model, terminal)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        submitted: list[str] = []
+        terminal.setCompleter(completer)
+        terminal.returnPressed.connect(lambda: submitted.append(terminal.text()))
+        try:
+            terminal.show()
+            terminal.setFocus()
+            terminal.setText("volt:acdc 100")
+            terminal.show_completions(forced=True)
+            self.qt.processEvents()
+
+            self.assertTrue(completer.popup().isVisible())
+            QTest.keyClick(terminal, Qt.Key.Key_Tab)
+            self.qt.processEvents()
+
+            self.assertEqual(submitted, [])
+            self.assertEqual(terminal.text(), "volt:acdc volt 100")
+            self.assertFalse(completer.popup().isVisible())
         finally:
             terminal.deleteLater()
             self.qt.processEvents()

@@ -190,6 +190,14 @@ class IntegratedTerminalEdit(QTextEdit):
             self.insert_completion(completion)
         self._completer.popup().hide()
 
+    def _handle_return_key(self, modifiers: Qt.KeyboardModifiers) -> None:
+        if self._completer:
+            self._completer.popup().hide()
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            self._insert_draft_text("\n")
+            return
+        self.returnPressed.emit()
+
     def navigate_completion(self, key: Qt.Key) -> None:
         if not self._completer:
             return
@@ -308,8 +316,11 @@ class IntegratedTerminalEdit(QTextEdit):
             if event.key() in TERMINAL_COMPLETION_NAVIGATION_KEYS:
                 self.navigate_completion(event.key())
                 return True
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if event.key() in {Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
                 self.accept_current_completion()
+                return True
+            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return}:
+                self._handle_return_key(event.modifiers())
                 return True
             if event.key() == Qt.Key.Key_Escape:
                 popup.hide()
@@ -332,8 +343,12 @@ class IntegratedTerminalEdit(QTextEdit):
                 self.navigate_completion(event.key())
                 event.accept()
                 return
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if event.key() in {Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
                 self.accept_current_completion()
+                event.accept()
+                return
+            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return}:
+                self._handle_return_key(event.modifiers())
                 event.accept()
                 return
             if event.key() == Qt.Key.Key_Escape:
@@ -358,10 +373,7 @@ class IntegratedTerminalEdit(QTextEdit):
             event.accept()
             return
         if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return}:
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                self._insert_draft_text("\n")
-            else:
-                self.returnPressed.emit()
+            self._handle_return_key(event.modifiers())
             event.accept()
             return
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
