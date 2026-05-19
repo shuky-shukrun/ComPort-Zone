@@ -41,6 +41,25 @@ CORE_SUBMODULES = (
 )
 
 
+# Every CLI module is required to remain PySide-free so the headless CLI
+# process never accidentally pulls in Qt. Adding a new CLI module? Add it
+# here too.
+CLI_MODULES = (
+    "ComPort_Zone.cli",
+    "ComPort_Zone.cli.main",
+    "ComPort_Zone.cli.exit_codes",
+    "ComPort_Zone.cli.output",
+    "ComPort_Zone.cli.options",
+    "ComPort_Zone.cli.config_resolver",
+    "ComPort_Zone.cli.transports",
+    "ComPort_Zone.cli.serial_session",
+    "ComPort_Zone.cli.commands.version",
+    "ComPort_Zone.cli.commands.ports",
+    "ComPort_Zone.cli.commands.send",
+    "ComPort_Zone.cli.commands.listen",
+)
+
+
 def _run_isolation_check(import_statements: str) -> dict:
     """Run ``import_statements`` in a fresh Python process and return a dict
     summarising whether any PySide6 module showed up in ``sys.modules``.
@@ -115,6 +134,21 @@ class CoreNoPySideTests(unittest.TestCase):
                     msg=(
                         f"Importing ComPort_Zone.core.{name} loaded PySide6: "
                         f"{result['offenders']!r}."
+                    ),
+                )
+
+
+class CliNoPySideTests(unittest.TestCase):
+    def test_importing_each_cli_module_does_not_load_pyside(self) -> None:
+        for module in CLI_MODULES:
+            with self.subTest(module=module):
+                result = _run_isolation_check(f"import {module}")
+                self.assertEqual(
+                    result["offenders"],
+                    [],
+                    msg=(
+                        f"Importing {module} loaded PySide6: "
+                        f"{result['offenders']!r}. The CLI must remain GUI-free."
                     ),
                 )
 

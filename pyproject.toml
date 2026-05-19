@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pyserial>=3.5",
     "PySide6>=6.7",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]
