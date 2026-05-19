@@ -24,7 +24,13 @@ class FakeSerialTransport:
         self._connected: bool = False
         self._ports: list[dict[str, Any]] = []
         self._endpoints: list[EndpointInfo] = []
+        # ``_pending_rx`` is delivered to every NEW subscriber on subscribe —
+        # use for listen-style tests where the device is already chattering.
+        # ``_response_queue`` is delivered to CURRENT subscribers AFTER the
+        # next send call — use for run/send-with-expect tests where the
+        # device responds to commands.
         self._pending_rx: list[bytes] = []
+        self._response_queue: list[bytes] = []
         self.connect_returns: bool = True
         # Recording surfaces for assertions:
         self.connect_calls: list[Any] = []
@@ -70,9 +76,19 @@ class FakeSerialTransport:
 
     def send_text(self, text: str, line_ending_override: str | None = None) -> None:
         self.sent_text.append((text, line_ending_override))
+        self._deliver_next_response()
 
     def send_bytes(self, data: bytes) -> None:
         self.sent_bytes.append(data)
+        self._deliver_next_response()
+
+    def _deliver_next_response(self) -> None:
+        if not self._response_queue:
+            return
+        raw = self._response_queue.pop(0)
+        event = SerialEvent(kind="rx", message=raw.decode("utf-8", "replace"), raw=raw)
+        for subscriber in self._subscribers:
+            subscriber.put(event)
 
     def subscribe_events(self) -> Queue[SerialEvent]:
         queue: Queue[SerialEvent] = Queue()
@@ -96,6 +112,14 @@ class FakeSerialTransport:
     def stage_rx(self, raw: bytes) -> None:
         """Queue an RX payload that every future subscriber will receive."""
         self._pending_rx.append(raw)
+
+    def queue_response(self, raw: bytes) -> None:
+        """Queue an RX payload delivered to current subscribers after the
+        next ``send_text``/``send_bytes`` call. Use this for run/send tests
+        where the device responds to a command rather than chattering on
+        its own.
+        """
+        self._response_queue.append(raw)
 
     def push_rx_now(self, raw: bytes) -> None:
         """Deliver an RX event to all current subscribers immediately."""

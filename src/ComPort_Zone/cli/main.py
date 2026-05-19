@@ -13,9 +13,13 @@ from typing import Any
 
 import click
 
+from .commands.files import files_group
 from .commands.listen import listen_command
 from .commands.ports import ports_group
+from .commands.quick import quick_group
+from .commands.run import run_command
 from .commands.send import hex_command, send_command
+from .commands.validate import validate_command
 from .commands.version import version_command
 from .output import CliOutput
 
@@ -69,6 +73,10 @@ cli.add_command(ports_group)
 cli.add_command(send_command)
 cli.add_command(hex_command)
 cli.add_command(listen_command)
+cli.add_command(run_command)
+cli.add_command(validate_command)
+cli.add_command(quick_group)
+cli.add_command(files_group)
 
 
 def run(argv: list[str] | None = None) -> int:

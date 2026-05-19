@@ -107,6 +107,17 @@ def load_app_settings(config_path: Path | None) -> AppSettings:
     return SettingsService(store).load()
 
 
+def save_app_settings(config_path: Path | None, settings: AppSettings) -> bool:
+    """Persist ``settings`` to the configured settings.json.
+
+    Uses the same store as :func:`load_app_settings`, so the Stage 1
+    advisory lock + atomic temp-rename applies — concurrent CLI / GUI
+    writes won't tear the file.
+    """
+    store = SettingsStore(config_path) if config_path else SettingsStore()
+    return SettingsService(store).save(settings)
+
+
 # --------------------------------------------------------------- main resolver
 
 def resolve_serial_profile(

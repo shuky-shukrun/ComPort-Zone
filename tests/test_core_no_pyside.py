@@ -57,6 +57,11 @@ CLI_MODULES = (
     "ComPort_Zone.cli.commands.ports",
     "ComPort_Zone.cli.commands.send",
     "ComPort_Zone.cli.commands.listen",
+    "ComPort_Zone.cli.commands.run",
+    "ComPort_Zone.cli.commands.validate",
+    "ComPort_Zone.cli.commands.quick",
+    "ComPort_Zone.cli.commands.files",
+    "ComPort_Zone.cli.command_file_runner",
 )
 
 

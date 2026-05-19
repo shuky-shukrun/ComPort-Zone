@@ -58,7 +58,7 @@ def _parse_hex_payload(text: str) -> bytes:
         raise click.BadParameter(f"Invalid hex bytes: {exc}") from exc
 
 
-def _run_send(
+def run_send_once(
     ctx: click.Context,
     *,
     payload: str,
@@ -67,7 +67,12 @@ def _run_send(
     expect_timeout_ms: int,
     read_after_ms: int,
     serial_flag_values: dict[str, Any],
+    line_ending_override: str | None = None,
 ) -> None:
+    """Open the configured port, send a single message, optionally wait
+    for a response, then close. Shared between ``send`` / ``hex`` /
+    ``quick send`` so the per-command code only assembles the inputs.
+    """
     output: CliOutput = ctx.obj["output"]
     settings = load_app_settings(ctx.obj.get("config_path"))
     profile = resolve_serial_profile(settings=settings, **{
@@ -110,7 +115,7 @@ def _run_send(
             transport.send_bytes(data)
             output.event("tx", mode="hex", data=payload, display=f"HEX {format_hex_bytes(data)}")
         else:
-            transport.send_text(payload)
+            transport.send_text(payload, line_ending_override)
             output.event("tx", mode="text", data=payload, display=payload)
 
         rx_buffer = bytearray()
@@ -228,7 +233,7 @@ def send_command(
     **serial_flag_values: Any,
 ) -> None:
     """Open a port, send TEXT once, optionally wait for a response, close."""
-    _run_send(
+    run_send_once(
         ctx,
         payload=text,
         as_hex=as_hex,
@@ -277,7 +282,7 @@ def hex_command(
 ) -> None:
     """Convenience alias for ``send --hex`` - accepts BYTES... as positional args."""
     payload = " ".join(bytes_text)
-    _run_send(
+    run_send_once(
         ctx,
         payload=payload,
         as_hex=True,
