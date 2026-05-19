@@ -14,11 +14,15 @@ from typing import Any
 import click
 
 from .commands.files import files_group
+from .commands.history import history_group
 from .commands.listen import listen_command
 from .commands.ports import ports_group
 from .commands.quick import quick_group
+from .commands.repl import repl_command
 from .commands.run import run_command
 from .commands.send import hex_command, send_command
+from .commands.settings import settings_group
+from .commands.update import update_group
 from .commands.validate import validate_command
 from .commands.version import version_command
 from .output import CliOutput
@@ -77,6 +81,10 @@ cli.add_command(run_command)
 cli.add_command(validate_command)
 cli.add_command(quick_group)
 cli.add_command(files_group)
+cli.add_command(settings_group)
+cli.add_command(history_group)
+cli.add_command(update_group)
+cli.add_command(repl_command)
 
 
 def run(argv: list[str] | None = None) -> int:
