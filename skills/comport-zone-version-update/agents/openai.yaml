@@ -1,0 +1,4 @@
+interface:
+  display_name: "ComPort Zone Version Release"
+  short_description: "Release ComPort Zone versions safely"
+  default_prompt: "Use $comport-zone-version-update to prepare and publish a ComPort Zone X.Y.Z release."
