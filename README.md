@@ -4,7 +4,7 @@ ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging
 
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface with an integrated `TX> ` command prompt, a compact control bar, and a foldable left drawer for quick commands and quick files.
 
-Current version: `0.3.0`.
+Current version: `0.3.1`.
 
 ## UI Preview
 
@@ -35,13 +35,16 @@ These screenshots and GIFs are captured from the current PySide UI with sample s
 - Terminal-first layout with minimal chrome and a VS Code dark default theme
 - Bundled Tabler Icons subset for richer, modern, MIT-licensed UI icons
 - Tabs for independent serial sessions and command-file editor documents
+- Split workspace panes for side-by-side or stacked terminal/editor tabs, with drag-to-pane movement and join controls
 - Foldable and resizable left drawer, collapsed by default, with shared width and selected page across terminal and editor tabs
 - Quick-send commands with add, edit, delete, reorder, groups, text mode, hex mode, optional descriptions, optional line-ending override, and CSV import/export
 - Separate quick-file drawer entry for saved command-file paths, with sorting, drag/manual reorder, double-click/send execution, Explorer reveal, and CSV import/export
 - Built-in command-file editor tabs with line numbers, autocomplete, syntax highlighting, unknown-command warnings, dirty-state tab indicators, file save/open, and explicit run targets
 - Serial settings with COM port, baud rate, data bits, parity, stop bits, flow control, DTR, RTS, auto-reconnect, and line ending
+- Raw TCP LAN terminal sessions with host/port endpoint settings, text and hex sends, and shared terminal workflows
+- Headless `comport-zone` CLI for ports, send/listen, command files, quick libraries, settings, history, updates, and REPL workflows
 - App settings import/export as JSON files instead of an internal profile list
-- App settings import/export includes serial defaults, theme, terminal font, history, drawer state, log/script paths, restored tabs, and workflow preferences
+- App settings import/export includes transport defaults, theme, terminal font, history, drawer state, split workspace layout, log/script paths, restored tabs, and workflow preferences
 - Help menu update checks against the latest GitHub release, with an optional startup check preference
 - Serial Settings opens automatically for the active tab on launch and for each new blank tab
 - Connect, disconnect, refresh ports, and reconnect feedback
@@ -55,7 +58,7 @@ These screenshots and GIFs are captured from the current PySide UI with sample s
 - Terminal output context menu with Clear Terminal, Line Wrap, Show Timestamps, and selected text/hex show/replace helpers
 - Per-tab command file execution with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
 - Per-tab logging to text files
-- Persisted settings for theme, drawer state and page, serial defaults, quick commands, font size, history, scrollback, restored terminal tabs, and restored command-file tabs
+- Persisted settings for theme, drawer state and page, transport defaults, quick commands, font size, history, scrollback, restored tabs, and split workspace layout
 - Atomic local settings saves with a backup fallback if the primary settings file is corrupt or invalid
 
 ## Install
@@ -113,6 +116,42 @@ After installation, the console script can also launch the app:
 comport-zone
 ```
 
+## CLI
+
+Run `comport-zone` without arguments, or with `gui`, to launch the desktop app. Pass a subcommand for headless workflows that share the same `%LOCALAPPDATA%\ComPortZone\settings.json` settings as the GUI.
+
+Global options:
+
+| Option | Description |
+| ------ | ----------- |
+| `--json` | Emit machine-readable output where supported. |
+| `--no-color` | Disable ANSI colors. |
+| `--quiet` | Suppress status messages. |
+| `--verbose` | Include debug events. |
+| `--config PATH` | Use a specific `settings.json` file. |
+
+Serial commands accept shared connection flags: `--port`, `--baud`, `--data-bits`, `--parity`, `--stop-bits`, `--flow-control`, `--line-ending`, `--dtr`, `--rts`, `--auto-reconnect`/`--no-auto-reconnect`, and `--wait`.
+
+Common CLI commands:
+
+| Command | Purpose |
+| ------- | ------- |
+| `comport-zone version` | Print app, Python, and pyserial versions. |
+| `comport-zone ports list` / `comport-zone ports info COM3` | List COM ports or inspect one port. |
+| `comport-zone send "*IDN?" --port COM3 --read-after 500` | Send text once, optionally wait for RX. |
+| `comport-zone hex 55 AA 01 0D --port COM3` | Send raw bytes. |
+| `comport-zone listen --port COM3 --timestamps --duration 10` | Stream RX as text or hex, with optional filtering/logging. |
+| `comport-zone run file.txt --port COM3 --param NAME=VALUE` | Run a command file with parameter support. |
+| `comport-zone validate file.txt` | Parse-check a command file. |
+| `comport-zone quick list` / `comport-zone quick send LABEL --port COM3` | Manage and send Quick Commands. |
+| `comport-zone files list` / `comport-zone files run LABEL --port COM3` | Manage and run Quick Files by label, id, or path. |
+| `comport-zone settings show --section app` | Inspect, set, export, or import app settings. |
+| `comport-zone history list --limit 20` | List or clear command history. |
+| `comport-zone update check` | Compare the local build against the latest GitHub release. |
+| `comport-zone repl --port COM3` | Open an interactive serial REPL. |
+
+Stable CLI exit codes are `0` OK, `1` generic error, `2` usage error, `10` port busy, `11` EXPECT failed, `12` missing parameter, `13` parse error, `14` port not found, `15` settings error, and `130` interrupted.
+
 ## Test
 
 Run the full test suite:
@@ -148,17 +187,19 @@ GitHub Actions runs the Windows CI workflow on pushes and pull requests targetin
 The CI job installs the editable package through `scripts\setup_dev.ps1`, runs the `unittest` suite with `scripts\run_tests.ps1`, and checks installed package dependencies.
 
 The release workflow builds the Windows PyInstaller one-folder zip package and installer on matching version tags and manual dispatches.
-To publish a GitHub Release, update the version files, commit the change, create a tag that matches `src\ComPort_Zone\VERSION`, and push it:
+To publish a GitHub Release, update the version files, update release docs, commit the change, create an annotated tag that matches `src\ComPort_Zone\VERSION`, and push it. The tag message file should include the change list since the previous version.
 
 ```powershell
 .\update_version.bat -Version 1.2.3
-git add pyproject.toml src\ComPort_Zone\VERSION
+git add -A
 git commit -m "Release v1.2.3"
-git tag v1.2.3
-git push origin master --tags
+git tag -a v1.2.3 -F build\release-v1.2.3-tag.md
+git push origin master
+git push origin v1.2.3
 ```
 
 Manual release workflow runs build and upload the Windows zip and installer as workflow artifacts without publishing a GitHub Release unless the run is for a tag.
+Annotated release tags should include the change list since the previous version so the generated GitHub Release can be verified against the intended notes.
 
 ## Build Windows EXE
 
@@ -356,7 +397,7 @@ If the primary settings file is corrupt or uses an unsupported schema, startup t
 
 Use `File > App Settings Import / Export...` to open the App Settings dialog, then choose whether to import or export a JSON app-settings file. This replaces the older idea of managing named profiles inside the app.
 
-App settings JSON is versioned with `schema_version: 2`, declares `minimum_compatible_schema_version: 2`, and is grouped into `transport`, `app`, `history`, `libraries`, and `workspace` sections. Older flat app-settings JSON is not migrated.
+App settings JSON is versioned with `schema_version: 4`, declares `minimum_compatible_schema_version: 2` when the payload is backward-compatible, and is grouped into `transport`, `app`, `history`, `libraries`, and `workspace` sections. Older flat app-settings JSON is not migrated.
 
 Compatible upgrades and downgrades keep the local settings file, Quick Commands, and Quick Files because they live under `%LOCALAPPDATA%\ComPortZone`, outside the installed app bundle. If a future release makes a non-backward-compatible settings change, update `MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION` in `src\ComPort_Zone\models.py`; older builds will treat that payload as unsupported and try `settings.json.bak` before defaults.
 
@@ -366,8 +407,9 @@ The local autosaved `%LOCALAPPDATA%\ComPortZone\settings.json` still stores Quic
 
 App settings JSON includes:
 
-- Serial defaults for new tabs
+- Transport defaults for new tabs, including serial defaults and LAN endpoint settings
 - Restored tabs and each tab's serial settings, terminal text, command draft, and send mode
+- Split workspace pane layout, active pane, and splitter sizes
 - Command history and autocomplete source data
 - Theme, terminal font, line wrap, scrollback, RX display mode, timestamps, and drawer state/page
 - Last log/script paths and window size
@@ -379,6 +421,7 @@ App settings JSON includes:
 - `Ctrl+W`: Close tab
 - `Ctrl+Shift+P`: Command palette
 - `Ctrl+B`: Toggle left drawer
+- `Ctrl+\`: Split the active tab to the right
 - `Ctrl+Enter`: Connect or disconnect
 - `Ctrl+F`: Search active terminal
 - `Ctrl+K`: Clear terminal

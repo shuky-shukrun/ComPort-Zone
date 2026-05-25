@@ -2,6 +2,27 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.3.1 - 2026-05-25
+
+### Added
+
+- Add split workspace panes so terminal and command-file tabs can be split right or down, dragged between panes, joined back together, and restored from saved layout state.
+- Add the `comport-zone` CLI for version, port discovery, send/hex, listen, command-file run/validate, Quick Commands, Quick Files, settings, history, update checks, and interactive REPL workflows.
+- Add stable CLI output modes, shared serial connection flags, JSON support, and public exit codes for automation.
+- Add a repo-local `comport-zone-version-update` Codex skill for repeatable release prep, annotated tag creation, and GitHub Release verification.
+
+### Changed
+
+- Introduce a GUI-free core package and CLI dispatcher so headless commands can reuse settings, serial, command-file, quick-action, and version-check behavior without importing PySide.
+- Persist split workspace layout metadata in app settings schema v4 while keeping flat terminal/editor tab fallbacks for compatibility.
+- Update README release guidance, CLI reference material, and settings-schema documentation for the new release process and CLI surface.
+
+### Tests
+
+- Added and expanded CLI coverage for dispatch, output formatting, serial config resolution, send/listen/run/validate, quick libraries, files, settings, history, updates, hex parsing, and wait/retry behavior.
+- Added split-workspace coverage for pane creation, tab movement, empty-pane handling, active-pane selection, join behavior, and restored layout configuration.
+- Expanded core, storage, settings, transport, command-runner, and edge-case tests for the GUI-free service layer.
+
 ## 0.3.0 - 2026-05-13
 
 ### Added

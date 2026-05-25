@@ -1,3 +1,56 @@
+# ComPort Zone v0.3.1 Release Notes
+
+Release date: 2026-05-25
+
+ComPort Zone v0.3.1 adds a practical headless automation surface and a split workspace for heavier bring-up sessions. The desktop app can now keep terminal and command-file tabs side by side or stacked, while the new `comport-zone` CLI covers serial sends, listening, command-file runs, quick libraries, settings, history, update checks, and an interactive REPL. This release also moves more behavior into GUI-free core modules and adds a release skill for future version updates.
+
+## Highlights
+
+- Workspace tabs can be split right or down, dragged between panes, joined back into one pane, and restored from saved layout state.
+- The new `comport-zone` CLI supports version, ports, send, hex, listen, run, validate, quick, files, settings, history, update, and repl commands.
+- CLI commands share GUI settings, support JSON output where useful, and expose stable exit codes for scripts and CI jobs.
+- Core serial, settings, command-file, quick-action, and version-check behavior now has a PySide-free path for CLI reuse.
+- A repo-local `comport-zone-version-update` skill documents the release workflow, annotated tag requirements, and GitHub Release verification.
+
+## What's New
+
+### Split Workspace
+
+- Added a two-pane workspace that can split the active terminal or command-file tab to the right or down.
+- Added tab movement between panes, including drag-based movement, and a Join Tabs action to merge split panes back together.
+- Persisted pane orientation, active pane, pane contents, and splitter sizes in app settings schema v4.
+- Kept flat terminal/editor tab fallbacks so workspace restore remains resilient.
+
+### Command-Line Workflows
+
+- Added CLI dispatch through `comport-zone` and `python -m ComPort_Zone`; no arguments still launch the GUI.
+- Added serial commands for port listing, port inspection, one-shot text sends, hex sends, RX listening, and interactive REPL sessions.
+- Added command-file validation and execution from the CLI, including parameters, EXPECT handling, logging, and non-interactive mode.
+- Added Quick Command and Quick File management from the CLI, including list/send/run/add/edit/remove/import/export flows.
+- Added app-settings show/get/set/export/import, command-history list/clear, and GitHub update-check commands.
+- Added global `--json`, `--no-color`, `--quiet`, `--verbose`, and `--config` options plus shared serial connection flags.
+
+### Release Automation And Documentation
+
+- Added the `comport-zone-version-update` skill to keep version bumps, release notes, annotated tags, pushes, and GitHub Release body verification consistent.
+- Updated README documentation for the CLI reference, release tagging process, split workspace feature, and settings schema v4.
+
+## Validation
+
+The release added or expanded regression coverage for:
+
+- CLI dispatch, global options, output formatting, exit codes, config resolution, send/hex/listen/run/validate, quick/files/settings/history/update commands, and REPL dispatcher behavior.
+- Split workspace pane creation, split right/down behavior, tab movement, drag activation, join behavior, empty-pane cleanup, and restored layout configuration.
+- GUI-free core imports, atomic locked settings I/O, command-file runner behavior, library lookup, storage concurrency, transport seams, and edge cases across the CLI stack.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.3.0 Release Notes
 
 Release date: 2026-05-13
