@@ -1,6 +1,13 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 tests/__pycache__/
+# Claude Code session/agent state (per-user, not part of the project).
+.claude/
+# Settings advisory-lock files created next to settings.json (one byte each;
+# persisted by design so the lock inode stays stable across writers).
+tests/_tmp_settings_*.json.lock
+tests/_tmp_*_settings_*.json.lock
+tests/_tmp_workspace_settings_*.json.lock
 *.py[codz]
 *$py.class
 artifacts/
