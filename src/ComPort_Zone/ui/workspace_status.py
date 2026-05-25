@@ -76,6 +76,14 @@ class WorkspaceStatusPresenter:
         self.footer.setText(text)
 
     def update_tab_titles(self, theme: ThemePalette) -> None:
+        refs = getattr(self.tabs, "iter_tab_refs", lambda: [])()
+        if refs:
+            for ref in refs:
+                if isinstance(ref.widget, self.terminal_type):
+                    self._update_terminal_tab(ref.global_index, ref.widget, theme)
+                elif isinstance(ref.widget, self.command_file_type):
+                    self._update_command_file_tab(ref.global_index, ref.widget, theme)
+            return
         for index in range(self.tabs.count()):
             widget = self.tabs.widget(index)
             if isinstance(widget, self.terminal_type):
@@ -123,7 +131,7 @@ class WorkspaceStatusPresenter:
         icon = QStyle.StandardPixmap.SP_BrowserReload if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
         self.tabs.setTabIcon(index, standard_icon(icon, 18, color))
         self.tabs.setTabToolTip(index, tab.connection_status_text())
-        self.tabs.tabBar().setTabTextColor(index, QColor(color))
+        self._tab_bar_for(index).setTabTextColor(self._local_index_for(index), QColor(color))
 
     def _update_command_file_tab(self, index: int, tab: CommandFileStatusTab, theme: ThemePalette) -> None:
         color = theme.status if tab.is_dirty() else theme.text
@@ -132,7 +140,15 @@ class WorkspaceStatusPresenter:
         self.tabs.setTabText(index, tab.tab_title())
         self.tabs.setTabIcon(index, standard_icon(QStyle.StandardPixmap.SP_FileIcon, 18, color))
         self.tabs.setTabToolTip(index, tab.status_summary())
-        self.tabs.tabBar().setTabTextColor(index, QColor(color))
+        self._tab_bar_for(index).setTabTextColor(self._local_index_for(index), QColor(color))
+
+    def _tab_bar_for(self, index: int):
+        tab_ref = getattr(self.tabs, "tab_ref", lambda _index: None)(index)
+        return tab_ref.pane.tabBar() if tab_ref is not None else self.tabs.tabBar()
+
+    def _local_index_for(self, index: int) -> int:
+        tab_ref = getattr(self.tabs, "tab_ref", lambda _index: None)(index)
+        return tab_ref.local_index if tab_ref is not None else index
 
     def _show_command_file_status(self, tab: CommandFileStatusTab) -> None:
         status = tab.status_summary()

@@ -12,6 +12,9 @@ from ComPort_Zone.models import (
     SerialProfile,
     SETTINGS_SCHEMA_VERSION,
     TerminalSessionState,
+    WorkspaceLayoutState,
+    WorkspacePaneState,
+    WorkspaceTabState,
     apply_line_ending,
 )
 from ComPort_Zone.settings_service import SettingsService
@@ -83,6 +86,30 @@ class ModelsAndStorageTests(unittest.TestCase):
                     dirty=True,
                 )
             ],
+            workspace_layout=WorkspaceLayoutState(
+                orientation="horizontal",
+                active_pane=1,
+                panes=[
+                    WorkspacePaneState(
+                        tabs=[
+                            WorkspaceTabState(
+                                kind="terminal",
+                                terminal=TerminalSessionState(title="DUT A"),
+                            )
+                        ]
+                    ),
+                    WorkspacePaneState(
+                        tabs=[
+                            WorkspaceTabState(
+                                kind="command_file",
+                                command_file=CommandFileTabState(path="C:/scripts/bringup.txt"),
+                            )
+                        ],
+                        active_tab=0,
+                    ),
+                ],
+                splitter_sizes=[480, 720],
+            ),
             theme="Scope Amber",
             timestamps_enabled=False,
             terminal_font_size=13,
@@ -120,6 +147,8 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertTrue(saved_payload["app"]["updates"]["check_on_launch"])
         self.assertEqual(saved_payload["libraries"]["quick_commands"][0]["label"], "Read ID")
         self.assertEqual(saved_payload["workspace"]["terminal_tabs"][0]["title"], "DUT A")
+        self.assertEqual(saved_payload["workspace"]["layout"]["active_pane"], 1)
+        self.assertEqual(saved_payload["workspace"]["layout"]["splitter_sizes"], [480, 720])
         self.assertEqual(loaded.serial.port, "COM7")
         self.assertEqual(loaded.serial.baudrate, 57600)
         self.assertEqual(loaded.serial.line_ending, "LF")
@@ -146,6 +175,9 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.restored_command_files[0].path, "C:/scripts/bringup.txt")
         self.assertEqual(loaded.restored_command_files[0].text, "SEND *IDN?\n")
         self.assertTrue(loaded.restored_command_files[0].dirty)
+        self.assertEqual(loaded.workspace_layout.active_pane, 1)
+        self.assertEqual(loaded.workspace_layout.panes[0].tabs[0].terminal.title, "DUT A")
+        self.assertEqual(loaded.workspace_layout.panes[1].tabs[0].command_file.path, "C:/scripts/bringup.txt")
         self.assertEqual(loaded.theme, "Scope Amber")
         self.assertFalse(loaded.timestamps_enabled)
         self.assertEqual(loaded.terminal_font_size, 13)

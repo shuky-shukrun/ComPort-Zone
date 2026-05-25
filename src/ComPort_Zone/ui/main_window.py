@@ -40,6 +40,9 @@ from ..models import (
     RECEIVE_DISPLAY_MODES,
     SerialProfile,
     TerminalSessionState,
+    WorkspaceLayoutState,
+    WorkspacePaneState,
+    WorkspaceTabState,
 )
 from ..quick_action_controller import QuickActionController
 from ..settings_service import SettingsService
@@ -59,7 +62,8 @@ from .command_palette_entries import workspace_tab_palette_entries
 from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog, VersionUpdateDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
-from .tab_workspace import TabWorkspaceController, TerminalTabWidget
+from .split_workspace import SplitWorkspaceWidget
+from .tab_workspace import TabWorkspaceController
 from .tab_context_menus import TabContextMenuBuilder
 from .terminal_tab import TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
@@ -114,6 +118,7 @@ class MainWindow(QMainWindow):
             command_file_editors_supplier=self.iter_command_file_editors,
             command_history_supplier=lambda: self.history_catalog.all_commands(),
             window_size_supplier=lambda: (self.width(), self.height()),
+            workspace_layout_supplier=self.capture_workspace_layout,
             clear_workspace=self._clear_workspace_for_settings_apply,
             rebuild_runtime_state=self._rebuild_runtime_state_from_settings,
             restore_workspace=lambda: self.restore_sessions(prompt_first_settings=False),
@@ -190,7 +195,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self.check_for_updates(automatic=True))
 
     def _build_ui(self) -> None:
-        self.tabs = TerminalTabWidget(self)
+        self.tabs = SplitWorkspaceWidget(self)
         self.tabs.setDocumentMode(True)
         self.tabs.setMovable(True)
         self.tabs.setTabsClosable(False)
@@ -198,8 +203,8 @@ class MainWindow(QMainWindow):
         self.tabs.newTabRequested.connect(lambda: self.add_session(prompt_settings=True))
         self.tabs.newTabMenuRequested.connect(self.show_new_tab_button_context_menu)
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
-        self.tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tabs.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
+        self.tabs.tabContextMenuRequested.connect(self.show_tab_context_menu)
+        self.tabs.tabMovedBetweenPanes.connect(self._tab_moved_between_panes)
         self.setCentralWidget(self.tabs)
 
         self.footer = QLabel("Ready", self)
@@ -520,6 +525,86 @@ class MainWindow(QMainWindow):
             self,
             prompt_first_settings=prompt_first_settings,
         )
+
+    def configure_workspace_layout(self, layout: WorkspaceLayoutState) -> None:
+        if len(layout.panes) < 2:
+            self.tabs.join_panes()
+            return
+        orientation = Qt.Orientation.Vertical if layout.orientation == "vertical" else Qt.Orientation.Horizontal
+        self.tabs.configure_layout(
+            orientation=orientation,
+            active_pane=layout.active_pane,
+            splitter_sizes=layout.splitter_sizes,
+        )
+
+    def select_workspace_pane(self, pane_index: int) -> None:
+        self.tabs.set_active_pane_index(pane_index)
+
+    def finish_workspace_layout_restore(self, layout: WorkspaceLayoutState) -> None:
+        panes = self.tabs.panes()
+        for pane_index, pane_state in enumerate(layout.panes[:len(panes)]):
+            pane = panes[pane_index]
+            if pane.count():
+                pane.setCurrentIndex(max(0, min(pane_state.active_tab, pane.count() - 1)))
+        self.select_workspace_pane(layout.active_pane)
+        self.sync_status_from_current_session()
+
+    def capture_workspace_layout(self) -> WorkspaceLayoutState:
+        panes: list[WorkspacePaneState] = []
+        for pane in self.tabs.panes():
+            tab_states: list[WorkspaceTabState] = []
+            for local_index in range(pane.count()):
+                widget = pane.widget(local_index)
+                if isinstance(widget, TerminalSessionWidget):
+                    tab_states.append(WorkspaceTabState(kind="terminal", terminal=widget.to_state()))
+                elif isinstance(widget, CommandFileEditorDialog):
+                    tab_states.append(
+                        WorkspaceTabState(
+                            kind="command_file",
+                            command_file=self.workspace_state_service.command_file_state(widget),
+                        )
+                    )
+            panes.append(WorkspacePaneState(tabs=tab_states, active_tab=max(0, pane.currentIndex())))
+        active_pane = max(0, self.tabs.pane_index(self.tabs.active_pane()))
+        orientation = "vertical" if self.tabs.splitter.orientation() == Qt.Orientation.Vertical else "horizontal"
+        return WorkspaceLayoutState(
+            orientation=orientation,
+            panes=panes,
+            active_pane=active_pane,
+            splitter_sizes=self.tabs.splitter.sizes(),
+        )
+
+    def split_current_tab_right(self) -> None:
+        self.split_tab_right(self.tabs.currentIndex())
+
+    def split_tab_right(self, index: int) -> None:
+        if self.tabs.move_tab_to_other_pane(index, orientation=Qt.Orientation.Horizontal):
+            self.update_tab_titles()
+            self.save_settings()
+
+    def split_current_tab_down(self) -> None:
+        self.split_tab_down(self.tabs.currentIndex())
+
+    def split_tab_down(self, index: int) -> None:
+        if self.tabs.move_tab_to_other_pane(index, orientation=Qt.Orientation.Vertical):
+            self.update_tab_titles()
+            self.save_settings()
+
+    def move_tab_to_other_pane(self, index: int | None = None) -> None:
+        target_index = self.tabs.currentIndex() if index is None else index
+        if self.tabs.move_tab_to_other_pane(target_index):
+            self.update_tab_titles()
+            self.save_settings()
+
+    def join_workspace_panes(self) -> None:
+        if self.tabs.join_panes():
+            self.update_tab_titles()
+            self.save_settings()
+
+    def _tab_moved_between_panes(self, widget, index: int) -> None:
+        self.tab_workspace.attach_tab_close_button(index, widget)
+        self.update_tab_titles()
+        self.save_settings()
 
     def add_session(self, state: TerminalSessionState | None = None, *, prompt_settings: bool = True) -> None:
         self._session_counter += 1
@@ -1093,6 +1178,7 @@ class MainWindow(QMainWindow):
             self.tabs.removeTab(index)
             if widget:
                 widget.deleteLater()
+        self.tabs.join_panes()
 
     def _rebuild_runtime_state_from_settings(self, settings: AppSettings) -> None:
         self.quick_actions = self._quick_action_library_from_settings()

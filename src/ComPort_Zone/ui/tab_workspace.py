@@ -145,7 +145,10 @@ class TabWorkspaceController:
         self._save_settings = save_settings
 
     def attach_tab_close_button(self, index: int, widget: QWidget) -> None:
-        close_button = QToolButton(self.tabs.tabBar())
+        tab_ref = getattr(self.tabs, "tab_ref", lambda _index: None)(index)
+        tab_bar = tab_ref.pane.tabBar() if tab_ref is not None else self.tabs.tabBar()
+        local_index = tab_ref.local_index if tab_ref is not None else index
+        close_button = QToolButton(tab_bar)
         close_button.setObjectName("tabCloseButton")
         close_button.setAutoRaise(True)
         close_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -155,7 +158,7 @@ class TabWorkspaceController:
         close_button.clicked.connect(
             lambda _checked=False, target=widget: self.close_session(self.tabs.indexOf(target))
         )
-        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close_button)
+        tab_bar.setTabButton(local_index, QTabBar.ButtonPosition.RightSide, close_button)
 
     def tab_display_title(self, widget: QWidget | None) -> str:
         if widget is None:
@@ -260,6 +263,21 @@ class TabWorkspaceController:
         self._save_settings()
 
     def close_sessions_to_right(self, index: int) -> None:
+        tab_ref = getattr(self.tabs, "tab_ref", lambda _index: None)(index)
+        if tab_ref is not None:
+            pane = tab_ref.pane
+            if tab_ref.local_index >= pane.count() - 1:
+                return
+            for local_index in range(pane.count() - 1, tab_ref.local_index, -1):
+                widget = pane.widget(local_index)
+                global_index = self.tabs.indexOf(widget) if widget is not None else -1
+                if not self.close_session(global_index):
+                    break
+            current_index = self.tabs.indexOf(tab_ref.widget)
+            if current_index >= 0:
+                self.tabs.setCurrentIndex(current_index)
+            self._save_settings()
+            return
         if index < 0 or index >= self.tabs.count() - 1:
             return
         for tab_index in range(self.tabs.count() - 1, index, -1):
