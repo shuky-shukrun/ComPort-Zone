@@ -1,6 +1,6 @@
 ---
 name: comport-zone-version-update
-description: Guides ComPort Zone release preparation and publishing. Use when Codex needs to bump the ComPort Zone app version, update README/changelog/release notes/CLI reference material, create a release commit, create and verify an annotated vX.Y.Z tag, push release refs, and verify or repair the generated GitHub Release body.
+description: Guides ComPort Zone release preparation and publishing. Use when Codex needs to bump the ComPort Zone app version, update user-focused README/changelog/release notes/CLI reference material, create a release commit, create and verify an annotated vX.Y.Z tag, push release refs, and verify or repair the generated GitHub Release body.
 ---
 
 # ComPort Zone Version Update
@@ -40,6 +40,7 @@ Use this skill for ComPort Zone version releases. It keeps the version files, re
    - `README.md`: update `Current version:`, release command examples if they name the release version, and CLI reference sections when CLI behavior changed.
    - `CHANGELOG.md`: prepend `## X.Y.Z - YYYY-MM-DD` with Added/Changed/Fixed/Tests sections as appropriate.
    - `RELEASE_NOTES.md`: prepend `# ComPort Zone vX.Y.Z Release Notes`, release date, highlights, user-facing changes, and validation.
+   - Write release text for users first: describe workflows, features, fixes, compatibility, and upgrade impact. Do not lead user-facing docs with PR titles, merge commits, hashes, or internal refactor labels.
 4. Search before deciding whether CLI reference text needs edits:
    - `rg -n "CLI|comport-zone|Usage|Commands|--json|--port|version|update|settings|history|quick|files|run|validate" README.md docs src\ComPort_Zone\cli tests -S`
    - Update README or nearby CLI documentation when commands, options, output formats, or examples changed.
@@ -49,13 +50,12 @@ Use this skill for ComPort Zone version releases. It keeps the version files, re
 1. Identify the previous release tag with `git describe --tags --abbrev=0`.
 2. Generate the raw change list before creating the release commit:
    - `git log --format="- %s (%h)" <previous-tag>..HEAD`
-3. Use the raw list as the source for:
-   - user-facing changelog bullets,
-   - release notes highlights,
-   - the release commit body,
-   - the annotated tag message,
-   - the GitHub Release body.
-4. The tag message and GitHub Release body must contain the concrete list of changes since the previous version, not only a generic "Release vX.Y.Z" line.
+3. Treat the raw list as traceability input, not release copy. Synthesize it into user-focused bullets:
+   - Prefer "Users can..." or "The app now..." language for features.
+   - Group changes under sections such as Highlights, What's New, Fixes, Compatibility, and Validation.
+   - Mention internal architecture or tests only when they explain a user-visible reliability, automation, or compatibility benefit.
+4. Use the raw list in the release commit body and annotated tag message for maintainer traceability.
+5. Do not use raw merge commits, PR titles, or commit hashes as the main GitHub Release body. The GitHub Release body must be a concise user-facing summary of features, fixes, compatibility notes, and download/validation context.
 
 ## Validate, Commit, Tag, And Push
 
@@ -67,11 +67,12 @@ Use this skill for ComPort Zone version releases. It keeps the version files, re
 4. Create an annotated tag from a message file to avoid shell quoting issues:
    - First line: `ComPort Zone vX.Y.Z`
    - Include the release date.
-   - Include the generated change list.
+   - Include a short user-facing summary.
+   - Include a "Maintainer traceability" section with the generated raw change list.
    - Command: `git tag -a vX.Y.Z -F <tag-message-file>`
 5. Verify the tag:
    - `git cat-file -t vX.Y.Z` must output `tag`
-   - `git tag -n99 vX.Y.Z` must include the release title and change list
+   - `git tag -n99 vX.Y.Z` must include the release title, user-facing summary, and traceability list
 6. Push the branch and tag separately:
    - `git push origin master`
    - `git push origin vX.Y.Z`
@@ -83,10 +84,14 @@ The release workflow publishes on tags matching `v*.*.*` and rejects tags that d
 1. Wait for the tag-triggered release workflow to create the release.
 2. Verify the GitHub Release body:
    - `gh release view vX.Y.Z --repo shuky-shukrun/ComPort-Zone --json body,url`
-3. If the release body does not contain the generated change list, write the curated release body to a temporary file and update the release:
+3. Confirm the body is user-focused:
+   - It leads with user-visible features, fixes, and workflow improvements.
+   - It does not primarily list PR merges, commit subjects, hashes, or internal-only changes.
+   - It includes any important compatibility, settings, packaging, or validation notes.
+4. If the generated body is PR/commit-oriented or misses important user-facing changes, write a curated release body to a temporary file and update the release:
    - `gh release edit vX.Y.Z --repo shuky-shukrun/ComPort-Zone --notes-file <release-notes-file>`
-4. Re-run `gh release view` and confirm the body now contains the change list.
-5. If `gh`, auth, or network access is unavailable, report the exact blocked command and the local verification already completed.
+5. Re-run `gh release view` and confirm the body is now user-focused.
+6. If `gh`, auth, or network access is unavailable, report the exact blocked command and the local verification already completed.
 
 ## Final Report
 
