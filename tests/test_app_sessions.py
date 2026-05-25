@@ -525,6 +525,69 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_split_right_shows_two_visible_workspace_panes(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_split_tabs.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(
+                        check_for_updates_on_launch=False,
+                        restored_tabs=[
+                            TerminalSessionState(title="Left", serial=SerialProfile(port="COM1")),
+                            TerminalSessionState(title="Right", serial=SerialProfile(port="COM2")),
+                        ],
+                    )
+                )
+            )
+            window = app_module.MainWindow()
+            window.resize(1000, 700)
+            window.show()
+            self.qt.processEvents()
+            sessions = window.iter_sessions()
+
+            window.split_tab_right(window.tabs.indexOf(sessions[1]))
+            self.qt.processEvents()
+
+            self.assertEqual(window.tabs.pane_count(), 2)
+            self.assertEqual([pane.count() for pane in window.tabs.panes()], [1, 1])
+            self.assertIs(window.tabs.currentWidget(), sessions[1])
+            sizes = window.tabs.splitter.sizes()
+            self.assertEqual(len(sizes), 2)
+            self.assertGreater(sizes[0], 0)
+            self.assertGreater(sizes[1], 0)
+
+            QTest.mouseClick(
+                sessions[0].terminal.viewport(),
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                sessions[0].terminal.viewport().rect().center(),
+            )
+            self.qt.processEvents()
+
+            self.assertIs(window.current_session(), sessions[0])
+            self.assertEqual(
+                window.connection_status_label.text(),
+                sessions[0].connection_status_text(),
+            )
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_input_clears_after_enter_send_even_if_completion_reapplies(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_input_clear.json")
         settings_path.unlink(missing_ok=True)

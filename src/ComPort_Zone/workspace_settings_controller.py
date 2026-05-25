@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from .models import AppSettings
+from .models import AppSettings, WorkspaceLayoutState
 from .settings_service import SettingsService
 from .workspace_state import CommandFileStateSource, TerminalStateSource, WorkspaceStateService
 
@@ -28,6 +28,7 @@ class WorkspaceSettingsController:
         restore_workspace: Callable[[], None],
         apply_settings_to_ui: Callable[[], None],
         set_status: Callable[[str], None],
+        workspace_layout_supplier: Callable[[], WorkspaceLayoutState | None] | None = None,
     ) -> None:
         self.settings_service = settings_service
         self.workspace_state_service = workspace_state_service
@@ -40,6 +41,7 @@ class WorkspaceSettingsController:
         self._active_session_supplier = active_session_supplier
         self._terminal_sessions_supplier = terminal_sessions_supplier
         self._command_file_editors_supplier = command_file_editors_supplier
+        self._workspace_layout_supplier = workspace_layout_supplier or (lambda: None)
         self._command_history_supplier = command_history_supplier
         self._window_size_supplier = window_size_supplier
         self._clear_workspace = clear_workspace
@@ -60,6 +62,7 @@ class WorkspaceSettingsController:
             active_session=self._active_session_supplier(),
             terminal_sessions=self._terminal_sessions_supplier(),
             command_file_editors=self._command_file_editors_supplier(),
+            workspace_layout=self._workspace_layout_supplier(),
             command_history=self._command_history_supplier(),
             window_width=width,
             window_height=height,

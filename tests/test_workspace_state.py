@@ -1,7 +1,16 @@
 import unittest
 from pathlib import Path
 
-from ComPort_Zone.models import AppSettings, CommandFileTabState, LanProfile, SerialProfile, TerminalSessionState
+from ComPort_Zone.models import (
+    AppSettings,
+    CommandFileTabState,
+    LanProfile,
+    SerialProfile,
+    TerminalSessionState,
+    WorkspaceLayoutState,
+    WorkspacePaneState,
+    WorkspaceTabState,
+)
 from ComPort_Zone.workspace_state import WorkspaceStateService
 
 
@@ -33,6 +42,9 @@ class FakeRestoreTarget:
         self.sessions: list[tuple[TerminalSessionState | None, bool]] = []
         self.command_files: list[tuple[Path | None, CommandFileTabState | None]] = []
         self.prompt_count = 0
+        self.configured_layouts: list[WorkspaceLayoutState] = []
+        self.selected_panes: list[int] = []
+        self.finished_layouts: list[WorkspaceLayoutState] = []
 
     def add_session(
         self,
@@ -58,6 +70,15 @@ class FakeRestoreTarget:
         if not self.count_additions:
             return 0
         return len(self.sessions) + len(self.command_files)
+
+    def configure_workspace_layout(self, layout: WorkspaceLayoutState) -> None:
+        self.configured_layouts.append(layout)
+
+    def select_workspace_pane(self, pane_index: int) -> None:
+        self.selected_panes.append(pane_index)
+
+    def finish_workspace_layout_restore(self, layout: WorkspaceLayoutState) -> None:
+        self.finished_layouts.append(layout)
 
 
 class WorkspaceStateServiceTests(unittest.TestCase):
@@ -160,6 +181,47 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual(settings.lan.host, "dut.local")
         self.assertEqual(settings.restored_tabs[0].transport_kind, "lan")
 
+    def test_capture_persists_workspace_layout_and_flat_fallbacks(self) -> None:
+        service = WorkspaceStateService()
+        settings = AppSettings()
+        terminal = FakeTerminalSession(
+            SerialProfile(port="COM7"),
+            TerminalSessionState(title="DUT", serial=SerialProfile(port="COM7")),
+        )
+        editor = FakeCommandFileEditor(Path("C:/scripts/bringup.txt"), "SEND *IDN?\n", True)
+        layout = WorkspaceLayoutState(
+            orientation="horizontal",
+            active_pane=1,
+            panes=[
+                WorkspacePaneState(tabs=[WorkspaceTabState(kind="terminal", terminal=terminal.to_state())]),
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(
+                            kind="command_file",
+                            command_file=service.command_file_state(editor),
+                        )
+                    ],
+                    active_tab=0,
+                ),
+            ],
+            splitter_sizes=[500, 700],
+        )
+
+        service.capture_into_settings(
+            settings,
+            active_session=terminal,
+            terminal_sessions=[terminal],
+            command_file_editors=[editor],
+            workspace_layout=layout,
+            command_history=[],
+            window_width=1000,
+            window_height=700,
+        )
+
+        self.assertIs(settings.workspace_layout, layout)
+        self.assertEqual([tab.title for tab in settings.restored_tabs], ["DUT"])
+        self.assertEqual(Path(settings.restored_command_files[0].path), Path("C:/scripts/bringup.txt"))
+
     def test_restore_adds_default_terminal_and_prompt_when_no_terminal_state(self) -> None:
         service = WorkspaceStateService()
         settings = AppSettings()
@@ -199,6 +261,50 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         path, state = target.command_files[0]
         self.assertEqual(path, Path(command_file.path))
         self.assertIs(state, command_file)
+
+    def test_restore_prefers_split_workspace_layout(self) -> None:
+        service = WorkspaceStateService()
+        command_file = CommandFileTabState(
+            path="C:/scripts/bringup.txt",
+            text="SEND *IDN?\n",
+            dirty=True,
+        )
+        layout = WorkspaceLayoutState(
+            orientation="horizontal",
+            active_pane=1,
+            panes=[
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(
+                            kind="terminal",
+                            terminal=TerminalSessionState(title="DUT", serial=SerialProfile(port="COM7")),
+                        )
+                    ],
+                    active_tab=0,
+                ),
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(kind="command_file", command_file=command_file),
+                    ],
+                    active_tab=0,
+                ),
+            ],
+            splitter_sizes=[400, 600],
+        )
+        settings = AppSettings(
+            restored_tabs=[TerminalSessionState(title="Flat Fallback")],
+            workspace_layout=layout,
+        )
+        target = FakeRestoreTarget()
+
+        service.restore_from_settings(settings, target, prompt_first_settings=True)
+
+        self.assertEqual(target.configured_layouts, [layout])
+        self.assertEqual(target.selected_panes, [0, 1])
+        self.assertEqual(target.finished_layouts, [layout])
+        self.assertEqual([state.title for state, _ in target.sessions if state], ["DUT"])
+        self.assertEqual(len(target.command_files), 1)
+        self.assertEqual(target.command_files[0][0], Path(command_file.path))
 
     def test_restore_can_suppress_default_prompt(self) -> None:
         service = WorkspaceStateService()

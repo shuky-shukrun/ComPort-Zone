@@ -66,6 +66,8 @@ class TabContextMenuBuilder:
                 icon=QStyle.StandardPixmap.SP_DirOpenIcon,
             )
         menu.addSeparator()
+        self._add_split_actions(menu, index)
+        menu.addSeparator()
         host._add_context_command_action(
             menu,
             "file.close_tab",
@@ -117,6 +119,8 @@ class TabContextMenuBuilder:
             enabled=session is not None,
         )
         menu.addSeparator()
+        self._add_split_actions(menu, index)
+        menu.addSeparator()
         host._add_context_command_action(
             menu,
             "file.close_tab",
@@ -126,6 +130,12 @@ class TabContextMenuBuilder:
 
     def _add_common_close_actions(self, menu: QMenu, index: int) -> None:
         host = self.host
+        tab_ref = getattr(host.tabs, "tab_ref", lambda _index: None)(index)
+        has_tabs_to_right = (
+            tab_ref.local_index < tab_ref.pane.count() - 1
+            if tab_ref is not None
+            else index < host.tabs.count() - 1
+        )
         host._add_context_action(
             menu,
             "Close Other Tabs",
@@ -138,5 +148,32 @@ class TabContextMenuBuilder:
             "Close Tabs to the Right",
             lambda tab_index=index: host.close_sessions_to_right(tab_index),
             icon=QStyle.StandardPixmap.SP_ArrowRight,
-            enabled=index < host.tabs.count() - 1,
+            enabled=has_tabs_to_right,
+        )
+
+    def _add_split_actions(self, menu: QMenu, index: int) -> None:
+        host = self.host
+        host._add_context_action(
+            menu,
+            "Move to Other Pane",
+            lambda tab_index=index: host.move_tab_to_other_pane(tab_index),
+            icon=QStyle.StandardPixmap.SP_ArrowRight,
+            enabled=host.tabs.count() > 1,
+        )
+        host._add_context_action(
+            menu,
+            "Split Right",
+            lambda tab_index=index: host.split_tab_right(tab_index),
+            icon=QStyle.StandardPixmap.SP_ArrowRight,
+        )
+        host._add_context_action(
+            menu,
+            "Split Down",
+            lambda tab_index=index: host.split_tab_down(tab_index),
+            icon=QStyle.StandardPixmap.SP_ArrowDown,
+        )
+        host._add_context_command_action(
+            menu,
+            "view.join_panes",
+            enabled=getattr(host.tabs, "pane_count", lambda: 1)() > 1,
         )

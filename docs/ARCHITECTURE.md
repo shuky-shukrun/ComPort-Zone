@@ -53,7 +53,7 @@ Qt-specific helpers may depend on Qt and theme/icon helpers. Pure services shoul
 
 The project is in an incremental redesign. `src/ComPort_Zone/app.py` is now a thin startup and compatibility module, while `src/ComPort_Zone/ui/main_window.py` owns the main window shell. The main window module is still large and still owns important UI assembly, some tab/session coordination, and many application commands. However, major behavior has already moved into focused modules. Serial and raw TCP LAN are now concrete transports behind the shared adapter contract.
 
-The workspace drawer is treated as app-level UI state: collapsed/expanded state, drawer width, and selected Quick Commands/Quick Files page are applied consistently to terminal tabs and embedded command-file editor tabs.
+The workspace drawer is treated as app-level UI state: collapsed/expanded state, drawer width, and selected Quick Commands/Quick Files page are applied consistently to terminal tabs and embedded command-file editor tabs. The top-level workspace now supports a two-pane split through `ui/split_workspace.py`, which owns one or two tab widgets while keeping terminal/editor widgets as live pages that can move between panes.
 
 Terminal command entry is integrated into the terminal surface through `IntegratedTerminalEdit` in `widgets.py`. The widget owns prompt/draft editing rules, while `ui/terminal_tab.py` coordinates send, history, autocomplete, font zoom, and context-menu conversion actions around it.
 
@@ -83,7 +83,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Main menu/action wiring | `ui/main_window_menus.py` | Same | Done | Top menu construction and shared QAction helpers are outside `MainWindow`. |
 | Tab context menus | `ui/tab_context_menus.py` | Same | Done | Terminal/editor/empty tab context menu construction is outside `MainWindow`. |
 | Command palette workspace entries | `ui/command_palette_entries.py` | Same | Done | Dynamic tab-switch entries are built outside `MainWindow`. |
-| Workspace tabs | `ui/tab_workspace.py` | `ui/tab_workspace.py` | Done | Owns typed lookup, duplicate/close behavior, session activation helpers. |
+| Workspace tabs | `ui/split_workspace.py`, `ui/tab_workspace.py` | Same | Done foundation | Split workspace owns one or two tab panes and live tab movement; tab workspace owns typed lookup, duplicate/close behavior, and session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Workspace drawer state | `ui/main_window.py`, terminal/editor tab drawer hooks | Future presenter/controller if it grows | Done foundation | Collapsed state, selected page, and width are global settings applied across terminal and editor tabs. |
 | Transport abstraction | `transports.py`, `serial_core.py`, `lan_core.py` | Same | Done foundation | Serial and raw TCP LAN adapters share the terminal controller/event contract. Future transports should add adapters, not rewrite UI. |
@@ -119,7 +119,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 
 ### Settings Save, Import, and Export
 
-`SettingsService` owns the application settings payload, schema, and minimum-compatible schema checks. `SettingsStore` only handles JSON file I/O, atomic replacement, and backup fallback. `WorkspaceStateService` captures runtime tab state into settings. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
+`SettingsService` owns the application settings payload, schema, and minimum-compatible schema checks. `SettingsStore` only handles JSON file I/O, atomic replacement, and backup fallback. `WorkspaceStateService` captures runtime tab state into settings, including split-pane layout metadata while continuing to write flat terminal/editor fallback lists. `WorkspaceSettingsController` coordinates save and imported-settings application around the live workspace through `MainWindow` callbacks. `AppSettingsController` owns the UI workflow for app-settings import/export. App settings import/export intentionally excludes quick actions; quick commands and quick files use their own CSV flows. Local app settings persist drawer collapsed state, drawer width, and selected drawer page.
 
 ### Commands, Menus, and Palette
 
@@ -146,6 +146,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 | Done | AppSettingsController workflow extraction | MainWindow delegates app-settings import/export UI workflow to the controller while keeping live workspace application local. |
 | Done | WorkspaceSettingsController save/apply extraction | MainWindow delegates settings capture/save and imported-settings live workspace application coordination. |
 | Done | Command-palette workspace entry extraction | Dynamic tab-switch entries now live in `ui/command_palette_entries.py`. |
+| Done | Split workspace v1 | `ui/split_workspace.py` supports two tab panes, live tab moves, split/join commands, and persisted layout metadata. |
 | Done | Terminal tab module-location extraction | `TerminalSessionWidget` now lives in `ui/terminal_tab.py`; `app.py` keeps a compatibility import. |
 | Done | Command-file parameter dialog extraction | Parameter review and per-line summary UI moved from `TerminalSessionWidget` into `ui/dialogs/command_file_parameters.py`. |
 | Done | MainWindow module-location extraction | `MainWindow` now lives in `ui/main_window.py`; `app.py` keeps startup, splash, and compatibility re-exports. |

@@ -18,7 +18,7 @@ RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
-SETTINGS_SCHEMA_VERSION = 3
+SETTINGS_SCHEMA_VERSION = 4
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 
 
@@ -307,6 +307,94 @@ class CommandFileTabState:
 
 
 @dataclass(slots=True)
+class WorkspaceTabState:
+    kind: str = "terminal"
+    terminal: TerminalSessionState | None = None
+    command_file: CommandFileTabState | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"kind": self.kind}
+        if self.kind == "command_file":
+            payload["command_file"] = (self.command_file or CommandFileTabState()).to_dict()
+        else:
+            payload["terminal"] = (self.terminal or TerminalSessionState()).to_dict()
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "WorkspaceTabState":
+        if not data:
+            return cls()
+        kind = str(data.get("kind", "terminal"))
+        if kind == "command_file":
+            return cls(
+                kind="command_file",
+                command_file=CommandFileTabState.from_dict(_dict_value(data.get("command_file"))),
+            )
+        return cls(
+            kind="terminal",
+            terminal=TerminalSessionState.from_dict(_dict_value(data.get("terminal"))),
+        )
+
+
+@dataclass(slots=True)
+class WorkspacePaneState:
+    tabs: list[WorkspaceTabState] = field(default_factory=list)
+    active_tab: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tabs": [tab.to_dict() for tab in self.tabs],
+            "active_tab": self.active_tab,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "WorkspacePaneState":
+        if not data:
+            return cls()
+        return cls(
+            tabs=[
+                WorkspaceTabState.from_dict(item)
+                for item in _list_value(data.get("tabs"))
+            ],
+            active_tab=max(0, int(data.get("active_tab", 0))),
+        )
+
+
+@dataclass(slots=True)
+class WorkspaceLayoutState:
+    orientation: str = "horizontal"
+    panes: list[WorkspacePaneState] = field(default_factory=list)
+    active_pane: int = 0
+    splitter_sizes: list[int] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        orientation = self.orientation if self.orientation in {"horizontal", "vertical"} else "horizontal"
+        return {
+            "orientation": orientation,
+            "panes": [pane.to_dict() for pane in self.panes],
+            "active_pane": self.active_pane,
+            "splitter_sizes": [int(size) for size in self.splitter_sizes],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "WorkspaceLayoutState":
+        if not data:
+            return cls()
+        orientation = str(data.get("orientation", "horizontal"))
+        if orientation not in {"horizontal", "vertical"}:
+            orientation = "horizontal"
+        return cls(
+            orientation=orientation,
+            panes=[
+                WorkspacePaneState.from_dict(item)
+                for item in _list_value(data.get("panes"))
+            ],
+            active_pane=max(0, int(data.get("active_pane", 0))),
+            splitter_sizes=[int(size) for size in _list_value(data.get("splitter_sizes"))],
+        )
+
+
+@dataclass(slots=True)
 class AppSettings:
     transport_kind: str = "serial"
     transport_profile: dict[str, Any] = field(default_factory=dict)
@@ -322,6 +410,7 @@ class AppSettings:
     quick_file_sort_mode: str = "Custom"
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
+    workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
     theme: str = "VS Code Dark"
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
@@ -406,6 +495,7 @@ class AppSettings:
                     command_file.to_dict()
                     for command_file in self.restored_command_files
                 ],
+                "layout": self.workspace_layout.to_dict(),
             },
         }
 
@@ -483,6 +573,7 @@ class AppSettings:
                 CommandFileTabState.from_dict(item)
                 for item in _list_value(workspace.get("command_file_tabs"))
             ],
+            workspace_layout=WorkspaceLayoutState.from_dict(_dict_value(workspace.get("layout"))),
             theme=str(app.get("theme", "VS Code Dark")),
             timestamps_enabled=bool(app.get("timestamps_enabled", True)),
             terminal_font_size=int(terminal_font.get("size", 10)),

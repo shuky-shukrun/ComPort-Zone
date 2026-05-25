@@ -4,7 +4,16 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
-from .models import AppSettings, CommandFileTabState, LanProfile, SerialProfile, TerminalSessionState
+from .models import (
+    AppSettings,
+    CommandFileTabState,
+    LanProfile,
+    SerialProfile,
+    TerminalSessionState,
+    WorkspaceLayoutState,
+    WorkspacePaneState,
+    WorkspaceTabState,
+)
 
 
 class TerminalStateSource(Protocol):
@@ -46,6 +55,12 @@ class WorkspaceRestoreTarget(Protocol):
     def workspace_tab_count(self) -> int:
         ...
 
+    def configure_workspace_layout(
+        self,
+        layout: WorkspaceLayoutState,
+    ) -> None:
+        ...
+
 
 def clone_serial_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
@@ -66,7 +81,10 @@ class WorkspaceStateService:
         command_history: Iterable[str],
         window_width: int,
         window_height: int,
+        workspace_layout: WorkspaceLayoutState | None = None,
     ) -> AppSettings:
+        terminal_sessions = list(terminal_sessions)
+        command_file_editors = list(command_file_editors)
         if active_session is not None:
             active_state = active_session.to_state()
             settings.transport_kind = active_state.transport_kind or "serial"
@@ -90,6 +108,23 @@ class WorkspaceStateService:
             self.command_file_state(editor)
             for editor in command_file_editors
         ]
+        if workspace_layout is not None:
+            settings.workspace_layout = workspace_layout
+        else:
+            settings.workspace_layout = WorkspaceLayoutState(
+                panes=[
+                    WorkspacePaneState(
+                        tabs=[
+                            WorkspaceTabState(kind="terminal", terminal=session.to_state())
+                            for session in terminal_sessions
+                        ]
+                        + [
+                            WorkspaceTabState(kind="command_file", command_file=self.command_file_state(editor))
+                            for editor in command_file_editors
+                        ],
+                    )
+                ]
+            )
         return settings
 
     def command_file_state(self, editor: CommandFileStateSource) -> CommandFileTabState:
@@ -108,6 +143,12 @@ class WorkspaceStateService:
         *,
         prompt_first_settings: bool = True,
     ) -> None:
+        if settings.workspace_layout.panes:
+            self._restore_layout(settings.workspace_layout, target)
+            if target.workspace_tab_count() == 0:
+                target.add_session(prompt_settings=False)
+            return
+
         terminal_states = list(settings.restored_tabs)
         if not terminal_states:
             target.add_session(
@@ -124,3 +165,26 @@ class WorkspaceStateService:
             target.add_command_file_tab(path=path, state=command_file_state)
         if target.workspace_tab_count() == 0:
             target.add_session(prompt_settings=False)
+
+    def _restore_layout(
+        self,
+        layout: WorkspaceLayoutState,
+        target: WorkspaceRestoreTarget,
+    ) -> None:
+        configure = getattr(target, "configure_workspace_layout", None)
+        select_pane = getattr(target, "select_workspace_pane", None)
+        finish = getattr(target, "finish_workspace_layout_restore", None)
+        if callable(configure):
+            configure(layout)
+        for pane_index, pane in enumerate(layout.panes[:2]):
+            if callable(select_pane):
+                select_pane(pane_index)
+            for tab in pane.tabs:
+                if tab.kind == "command_file":
+                    state = tab.command_file or CommandFileTabState()
+                    path = Path(state.path) if state.path else None
+                    target.add_command_file_tab(path=path, state=state)
+                else:
+                    target.add_session(tab.terminal or TerminalSessionState(), prompt_settings=False)
+        if callable(finish):
+            finish(layout)
