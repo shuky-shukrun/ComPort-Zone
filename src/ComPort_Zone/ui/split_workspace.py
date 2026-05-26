@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QDrag, QMouseEvent
-from PySide6.QtWidgets import QApplication, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QVBoxLayout, QWidget
 
 from .tab_workspace import TerminalTabWidget
 
@@ -36,6 +36,12 @@ class SplitWorkspaceWidget(QWidget):
         self._panes: list[TerminalTabWidget] = []
         self._active_pane: TerminalTabWidget | None = None
         self._drag_start: dict[TerminalTabWidget, QPoint] = {}
+        self.drop_preview = QLabel(self)
+        self.drop_preview.setObjectName("splitDropPreview")
+        self.drop_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_preview.setText("Release to move tab into the other pane")
+        self.drop_preview.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.drop_preview.hide()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.splitter)
@@ -247,14 +253,23 @@ class SplitWorkspaceWidget(QWidget):
     def _set_active_pane(self, pane: TerminalTabWidget) -> None:
         if pane in self._panes:
             self._active_pane = pane
+            self._refresh_active_pane_styles()
 
     def _activate_pane(self, pane: TerminalTabWidget) -> None:
         if pane not in self._panes:
             return
         was_active = self._active_pane is pane
         self._active_pane = pane
+        self._refresh_active_pane_styles()
         if not was_active:
             self.currentChanged.emit(self.currentIndex())
+
+    def _refresh_active_pane_styles(self) -> None:
+        for pane in self._panes:
+            pane.setProperty("activePane", pane is self._active_pane)
+            pane.style().unpolish(pane)
+            pane.style().polish(pane)
+            pane.update()
 
     def _pane_current_changed(self, pane: TerminalTabWidget) -> None:
         self._set_active_pane(pane)
@@ -335,6 +350,7 @@ class SplitWorkspaceWidget(QWidget):
             self._create_pane()
         if self._active_pane not in self._panes:
             self._active_pane = self._panes[0]
+        self._refresh_active_pane_styles()
 
     def _remove_pane(self, pane: TerminalTabWidget) -> None:
         if pane not in self._panes:
@@ -355,11 +371,22 @@ class SplitWorkspaceWidget(QWidget):
             current = current.parentWidget()
         return None
 
+    def _is_drawer_chrome(self, widget: QWidget) -> bool:
+        current: QWidget | None = widget
+        drawer_object_names = {"drawer", "drawerRail", "drawerPanel"}
+        while current is not None:
+            if current.objectName() in drawer_object_names:
+                return True
+            if current in self._panes:
+                return False
+            current = current.parentWidget()
+        return False
+
     def eventFilter(self, watched, event) -> bool:
         if isinstance(watched, QWidget) and event.type() in {
             QEvent.Type.FocusIn,
             QEvent.Type.MouseButtonPress,
-        }:
+        } and not self._is_drawer_chrome(watched):
             pane = self._pane_for_widget(watched)
             if pane is not None:
                 self._activate_pane(pane)
@@ -395,17 +422,24 @@ class SplitWorkspaceWidget(QWidget):
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasFormat(TAB_MIME_TYPE):
+            self._show_drop_preview(event)
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event) -> None:
         if event.mimeData().hasFormat(TAB_MIME_TYPE):
+            self._show_drop_preview(event)
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
 
+    def dragLeaveEvent(self, event) -> None:
+        self.drop_preview.hide()
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event) -> None:
+        self.drop_preview.hide()
         if not event.mimeData().hasFormat(TAB_MIME_TYPE):
             super().dropEvent(event)
             return
@@ -415,3 +449,36 @@ class SplitWorkspaceWidget(QWidget):
             return
         if self.move_tab_to_other_pane(index, orientation=Qt.Orientation.Horizontal):
             event.acceptProposedAction()
+
+    def _event_position(self, event) -> QPoint:
+        position = event.position() if hasattr(event, "position") else event.pos()
+        return position.toPoint() if hasattr(position, "toPoint") else position
+
+    def _dragged_ref_from_event(self, event) -> WorkspaceTabRef | None:
+        try:
+            index = int(bytes(event.mimeData().data(TAB_MIME_TYPE)).decode("ascii"))
+        except (AttributeError, ValueError):
+            return None
+        return self.tab_ref(index)
+
+    def _drop_preview_geometry(self, event) -> tuple[QRect, str]:
+        dragged_ref = self._dragged_ref_from_event(event)
+        if dragged_ref is not None:
+            if len(self._panes) == 1:
+                rect = self.rect()
+                midpoint = max(1, rect.width() // 2)
+                return QRect(midpoint, rect.top(), max(1, rect.width() - midpoint), rect.height()), "Release to split right"
+            target = self._panes[1] if self._panes[0] is dragged_ref.pane else self._panes[0]
+            return target.geometry(), "Release to move tab here"
+        position = self._event_position(event)
+        for pane in self._panes:
+            if pane.geometry().contains(position):
+                return pane.geometry(), "Release to move tab here"
+        return self.rect(), "Release to move tab into the other pane"
+
+    def _show_drop_preview(self, event) -> None:
+        geometry, message = self._drop_preview_geometry(event)
+        self.drop_preview.setText(message)
+        self.drop_preview.setGeometry(geometry.adjusted(8, 8, -8, -8))
+        self.drop_preview.raise_()
+        self.drop_preview.show()

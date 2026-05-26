@@ -102,6 +102,7 @@ class CommandEditorQuickActionCallbacks:
     reorder_quick_commands: Callable[[list[str], str], None] | None = None
     import_quick_commands_csv: Callable[[], None] | None = None
     export_quick_commands_csv: Callable[[], None] | None = None
+    dispatch_quick_command: Callable[[str], None] | None = None
     quick_files_supplier: Callable[[], list[QuickFile]] | None = None
     visible_quick_files_supplier: Callable[[], list[QuickFile]] | None = None
     quick_file_sort_mode_supplier: Callable[[], str] | None = None
@@ -113,6 +114,7 @@ class CommandEditorQuickActionCallbacks:
     reorder_quick_files: Callable[[list[str], str, bool], None] | None = None
     import_quick_files_csv: Callable[[], None] | None = None
     export_quick_files_csv: Callable[[], None] | None = None
+    dispatch_quick_file: Callable[[str], None] | None = None
 
 
 class LineNumberArea(QWidget):
@@ -533,7 +535,7 @@ class CommandFileEditorDialog(QDialog):
             toolbar.addWidget(button)
         toolbar.addStretch(1)
         toolbar.addWidget(self.warn_unknown)
-        if self.font_change_callback and not self._show_run_bar:
+        if self.font_change_callback and not self._show_run_bar and not self.embedded:
             self._add_font_controls(toolbar, self)
 
         header = QHBoxLayout()
@@ -549,8 +551,8 @@ class CommandFileEditorDialog(QDialog):
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
 
-        editor_column = QWidget(self)
-        editor_layout = QVBoxLayout(editor_column)
+        self.editor_column = QWidget(self)
+        editor_layout = QVBoxLayout(self.editor_column)
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.addLayout(header)
         editor_layout.addLayout(toolbar)
@@ -570,13 +572,13 @@ class CommandFileEditorDialog(QDialog):
             self.workspace_splitter.setHandleWidth(3)
             self.workspace_splitter.splitterMoved.connect(self._workspace_drawer_resized)
             self.workspace_splitter.addWidget(self._build_workspace_side_panel())
-            self.workspace_splitter.addWidget(editor_column)
+            self.workspace_splitter.addWidget(self.editor_column)
             self.workspace_splitter.setStretchFactor(0, 0)
             self.workspace_splitter.setStretchFactor(1, 1)
             root_layout.addWidget(self.workspace_splitter, 1)
         else:
             layout = QVBoxLayout(self)
-            layout.addWidget(editor_column, 1)
+            layout.addWidget(self.editor_column, 1)
 
         if self.path:
             self.load_path(self.path)
@@ -977,8 +979,8 @@ class CommandFileEditorDialog(QDialog):
     def _build_workspace_side_panel(self) -> QWidget:
         drawer = QuickActionsSidebar(
             actions=QuickActionsSidebarActions(
-                command_primary=self.insert_selected_quick_command,
-                file_primary=self.open_selected_quick_file,
+                command_primary=self.dispatch_selected_quick_command,
+                file_primary=self.dispatch_selected_quick_file,
                 add_command=lambda: self._run_optional_quick_action("add_quick_command"),
                 edit_command=self._edit_selected_quick_command,
                 delete_command=self._delete_selected_quick_command,
@@ -998,8 +1000,8 @@ class CommandFileEditorDialog(QDialog):
             file_primary_label="Open",
             command_tooltip="Right-click a saved command for actions. Press and drag to reorder.",
             file_tooltip="Double-click a saved command file to open it. Press and drag to reorder.",
-            command_double_clicked=self.insert_selected_quick_command,
-            file_double_clicked=self.open_selected_quick_file,
+            command_double_clicked=self.dispatch_selected_quick_command,
+            file_double_clicked=self.dispatch_selected_quick_file,
             command_sort_changed=self._quick_sort_changed,
             file_sort_changed=self._quick_file_sort_changed,
             command_order_changed=self._persist_quick_command_order,
@@ -1053,7 +1055,7 @@ class CommandFileEditorDialog(QDialog):
         layout.addWidget(label)
         layout.addWidget(self.run_target_combo)
         layout.addWidget(self.send_to_target_button)
-        if self.font_change_callback:
+        if self.font_change_callback and not self.embedded:
             self._add_font_controls(layout, bar)
         return bar
 
@@ -1273,6 +1275,32 @@ class CommandFileEditorDialog(QDialog):
             return
         if self.confirm_save_or_discard_if_dirty():
             self.load_path(Path(quick_file.path))
+
+    def dispatch_selected_quick_command(self) -> None:
+        callback = self._quick_action_callback("dispatch_quick_command")
+        if callback:
+            callback(self.selected_quick_command_id())
+            return
+        self.insert_selected_quick_command()
+
+    def dispatch_selected_quick_file(self) -> None:
+        callback = self._quick_action_callback("dispatch_quick_file")
+        if callback:
+            callback(self.selected_quick_file_id())
+            return
+        self.open_selected_quick_file()
+
+    def set_workspace_drawer_visible(self, visible: bool) -> None:
+        if not hasattr(self, "workspace_drawer"):
+            return
+        if visible:
+            self.workspace_drawer.setVisible(True)
+            return
+        self.workspace_drawer.setVisible(False)
+        self.workspace_drawer.setMinimumWidth(0)
+        self.workspace_drawer.setMaximumWidth(0)
+        if hasattr(self, "workspace_splitter"):
+            self.workspace_splitter.setSizes([0, max(700, self.width())])
 
     def send_to_selected_target(self) -> None:
         if not self.run_target_service:

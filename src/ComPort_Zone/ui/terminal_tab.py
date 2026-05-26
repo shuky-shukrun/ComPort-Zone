@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from queue import Empty
 
-from PySide6.QtCore import QSize, Qt, QStringListModel, QTimer
+from PySide6.QtCore import Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from ..batch import BatchParseError, parse_hex_payload
@@ -52,11 +53,21 @@ from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
 from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan, TerminalSessionController
 from ..terminal_view import TerminalView
 from ..transports import SerialTransportAdapter
-from ..widgets import ChevronComboBox, IntegratedTerminalEdit
+from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
 
 DRAWER_COLLAPSED_WIDTH = 48
+
+
+class TerminalConnectionStatusLabel(QLabel):
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event) -> None:
+        position = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(position):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 def clone_profile(profile: SerialProfile) -> SerialProfile:
@@ -192,13 +203,13 @@ class TerminalSessionWidget(QWidget):
         self.drawer_panel = self.drawer.panel
         self.drawer_pages = self.drawer.pages
 
-        terminal_column = QFrame(self)
-        terminal_column.setObjectName("terminalColumn")
-        terminal_layout = QVBoxLayout(terminal_column)
+        self.terminal_column = QFrame(self)
+        self.terminal_column.setObjectName("terminalColumn")
+        terminal_layout = QVBoxLayout(self.terminal_column)
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.setSpacing(0)
 
-        self.search_bar = QFrame(terminal_column)
+        self.search_bar = QFrame(self.terminal_column)
         self.search_bar.setObjectName("searchBar")
         search_layout = QHBoxLayout(self.search_bar)
         search_layout.setContentsMargins(8, 6, 8, 6)
@@ -224,7 +235,7 @@ class TerminalSessionWidget(QWidget):
         search_layout.addWidget(close_search)
         self.search_bar.hide()
 
-        self.terminal = IntegratedTerminalEdit(terminal_column)
+        self.terminal = IntegratedTerminalEdit(self.terminal_column)
         self.terminal.setObjectName("terminal")
         self.terminal.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -233,14 +244,23 @@ class TerminalSessionWidget(QWidget):
         self.command_input = self.terminal
         self.terminal.set_font_zoom_callback(lambda delta: self.host.change_font_size(delta))
 
-        self.command_bar = QFrame(terminal_column)
+        self.command_bar = QFrame(self.terminal_column)
         self.command_bar.setObjectName("commandBar")
         command_layout = QHBoxLayout(self.command_bar)
         command_layout.setContentsMargins(8, 6, 8, 6)
         command_layout.setSpacing(6)
 
-        self.status_label = QLabel("Disconnected", self)
-        self.status_label.hide()
+        self.status_label = TerminalConnectionStatusLabel("Disconnected", self.command_bar)
+        self.status_label.setObjectName("terminalConnectionStatus")
+        self.status_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.status_label.setMaximumWidth(520)
+        self.status_label.setToolTip("Click to open Connection Settings.")
+        self.status_label.clicked.connect(self.open_connection_settings)
+        self.connection_button = QPushButton("Connect", self.command_bar)
+        self.connection_button.setObjectName("terminalConnectionActionButton")
+        self.connection_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connection_button.clicked.connect(self.toggle_connection)
         self.mode_combo = ChevronComboBox(self.command_bar)
         self.mode_combo.addItems(SEND_MODES)
         self.mode_combo.setFixedWidth(118)
@@ -265,37 +285,21 @@ class TerminalSessionWidget(QWidget):
         self.line_ending_label = QLabel("", self.command_bar)
         self.log_label = QLabel("Log off", self.command_bar)
         self.pause_label = QLabel("", self.command_bar)
-        terminal_font_label = QLabel("Font", self.command_bar)
-        terminal_font_label.setObjectName("terminalFontControlsLabel")
-        terminal_font_label.setToolTip("Terminal font size")
-        font_down = QPushButton("-", self.command_bar)
-        font_down.setObjectName("terminalFontSizeButton")
-        font_down.setFixedSize(QSize(38, 34))
-        font_down.setToolTip("Decrease terminal font size")
-        font_down.setAccessibleName("Decrease terminal font size")
-        font_down.clicked.connect(lambda: self.host.change_font_size(-1))
-        font_up = QPushButton("+", self.command_bar)
-        font_up.setObjectName("terminalFontSizeButton")
-        font_up.setFixedSize(QSize(38, 34))
-        font_up.setToolTip("Increase terminal font size")
-        font_up.setAccessibleName("Increase terminal font size")
-        font_up.clicked.connect(lambda: self.host.change_font_size(1))
-
+        command_layout.addWidget(self.status_label)
+        command_layout.addWidget(self.connection_button)
+        command_layout.addStretch(1)
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.rx_display_combo)
         command_layout.addWidget(self.line_ending_label)
         command_layout.addWidget(self.log_label)
         command_layout.addWidget(self.pause_label)
-        command_layout.addWidget(terminal_font_label)
-        command_layout.addWidget(font_down)
-        command_layout.addWidget(font_up)
 
         terminal_layout.addWidget(self.search_bar)
         terminal_layout.addWidget(self.terminal, 1)
         terminal_layout.addWidget(self.command_bar)
 
         self.splitter.addWidget(self.drawer)
-        self.splitter.addWidget(terminal_column)
+        self.splitter.addWidget(self.terminal_column)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         root.addWidget(self.splitter)
@@ -303,8 +307,8 @@ class TerminalSessionWidget(QWidget):
     def _build_quick_actions_sidebar(self) -> QuickActionsSidebar:
         sidebar = QuickActionsSidebar(
             actions=QuickActionsSidebarActions(
-                command_primary=self.send_selected_quick_command,
-                file_primary=self.run_selected_quick_file,
+                command_primary=lambda: self.host.use_quick_command_from_sidebar(self),
+                file_primary=lambda: self.host.use_quick_file_from_sidebar(self),
                 add_command=self.host.add_quick_command,
                 edit_command=lambda: self.host.edit_quick_command(self.selected_quick_command_id()),
                 delete_command=lambda: self.host.delete_quick_command(self.selected_quick_command_id()),
@@ -324,8 +328,8 @@ class TerminalSessionWidget(QWidget):
             file_primary_label="Run",
             command_tooltip="Right-click a saved command for actions. Press and drag to reorder.",
             file_tooltip="Double-click a saved command file to run it. Press and drag to reorder.",
-            command_double_clicked=self.send_selected_quick_command,
-            file_double_clicked=self.run_selected_quick_file,
+            command_double_clicked=lambda: self.host.use_quick_command_from_sidebar(self),
+            file_double_clicked=lambda: self.host.use_quick_file_from_sidebar(self),
             command_context_menu_requested=self.show_quick_command_context_menu,
             file_context_menu_requested=self.show_quick_file_context_menu,
             command_sort_changed=self._quick_sort_changed,
@@ -399,6 +403,20 @@ class TerminalSessionWidget(QWidget):
         self.drawer.setMinimumWidth(220)
         self.drawer.setMaximumWidth(520)
         self.splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
+
+    def set_workspace_drawer_visible(self, visible: bool) -> None:
+        if visible:
+            self.drawer.setVisible(True)
+            self.apply_drawer_state(
+                self.host.settings.drawer_collapsed,
+                self.host.settings.drawer_width,
+                self.host.settings.drawer_page_index,
+            )
+            return
+        self.drawer.setVisible(False)
+        self.drawer.setMinimumWidth(0)
+        self.drawer.setMaximumWidth(0)
+        self.splitter.setSizes([0, max(700, self.width())])
 
     def _drawer_resized(self, pos: int, index: int) -> None:
         if self.host.settings.drawer_collapsed:
@@ -1038,6 +1056,9 @@ class TerminalSessionWidget(QWidget):
         command = self.host.quick_command_by_id(self.selected_quick_command_id())
         if not command:
             return
+        self.send_quick_command(command)
+
+    def send_quick_command(self, command: QuickCommand) -> None:
         try:
             self.controller.send_quick_command(command, record_command=self.host.record_command)
         except Exception as exc:
@@ -1421,7 +1442,19 @@ class TerminalSessionWidget(QWidget):
         self._connected = connected
         self._status_text = self.connection_state_label()
         status_text = self.connection_status_text()
+        state = self.connection_state()
         self.status_label.setText(status_text)
+        self.status_label.setToolTip(f"{self.connection_tooltip()}\nClick to open Connection Settings.")
+        set_widget_state(self.status_label, state)
+        self.connection_button.setText(self.connection_action_text())
+        self.connection_button.setToolTip(self.connection_tooltip())
+        action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
+        if state == "no-port":
+            action_icon = QStyle.StandardPixmap.SP_FileDialogDetailedView
+        if state == "connected":
+            action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
+        set_button_icon(self.connection_button, action_icon, 15)
+        set_button_role(self.connection_button, state)
         self.host.update_tab_titles()
         self.host.update_connection_status(self)
         if update_footer and self.host.tabs.currentWidget() is self:

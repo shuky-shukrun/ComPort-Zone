@@ -1,10 +1,23 @@
 import unittest
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QByteArray, QMimeData, QPointF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
-from ComPort_Zone.ui.split_workspace import SplitWorkspaceWidget
+from ComPort_Zone.ui.split_workspace import TAB_MIME_TYPE, SplitWorkspaceWidget
+
+
+class FakeDragEvent:
+    def __init__(self, index: int, position: QPointF) -> None:
+        self._mime = QMimeData()
+        self._mime.setData(TAB_MIME_TYPE, QByteArray(str(index).encode("ascii")))
+        self._position = position
+
+    def mimeData(self) -> QMimeData:
+        return self._mime
+
+    def position(self) -> QPointF:
+        return self._position
 
 
 class SplitWorkspaceWidgetTests(unittest.TestCase):
@@ -136,6 +149,24 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
         self.assertIs(workspace.active_pane(), workspace.panes()[1])
 
         workspace.deleteLater()
+
+    def test_drop_preview_shows_resulting_split_zone(self) -> None:
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        tab = QWidget()
+        workspace.addTab(tab, "Terminal")
+
+        workspace._show_drop_preview(FakeDragEvent(0, QPointF(20, 20)))
+        self.qt.processEvents()
+
+        self.assertTrue(workspace.drop_preview.isVisible())
+        self.assertEqual(workspace.drop_preview.text(), "Release to split right")
+        self.assertGreater(workspace.drop_preview.geometry().left(), workspace.width() // 2)
+
+        workspace.deleteLater()
+        tab.deleteLater()
 
 
 if __name__ == "__main__":
