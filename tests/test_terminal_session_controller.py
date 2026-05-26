@@ -1,7 +1,9 @@
 import unittest
 from pathlib import Path
 from queue import Queue
+from threading import Event, Thread
 
+from ComPort_Zone.batch import BatchRunSnapshot
 from ComPort_Zone.models import QuickCommand, SerialProfile
 from ComPort_Zone.serial_core import SerialEvent
 from ComPort_Zone.terminal_session_controller import TerminalSessionController
@@ -175,6 +177,28 @@ class TerminalSessionControllerTests(unittest.TestCase):
         self.assertEqual(notified, [True])
         self.assertIsNone(decision.event_to_render)
 
+    def test_script_lifecycle_methods_delegate_to_batch_runner(self) -> None:
+        controller = make_controller()
+        calls: list[str] = []
+        controller.batch_runner.pause = lambda: calls.append("pause") or True  # type: ignore[method-assign]
+        controller.batch_runner.resume = lambda: calls.append("resume") or True  # type: ignore[method-assign]
+        controller.batch_runner.stop = lambda: calls.append("stop")  # type: ignore[method-assign]
+        controller.batch_runner.snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
+            is_running=True,
+            is_paused=True,
+            pause_reason="user",
+            can_resume=True,
+        )
+
+        self.assertTrue(controller.pause_script())
+        self.assertTrue(controller.resume_script())
+        controller.stop_script()
+        snapshot = controller.script_snapshot()
+
+        self.assertEqual(calls, ["pause", "resume", "stop"])
+        self.assertTrue(snapshot.is_paused)
+        self.assertEqual(snapshot.pause_reason, "user")
+
     def test_render_plan_formats_rx_display_modes(self) -> None:
         controller = make_controller()
         event = SerialEvent(kind="rx", message="fallback", raw=b"\xffOK")
@@ -217,6 +241,27 @@ class TerminalSessionControllerTests(unittest.TestCase):
         self.assertEqual(result.status_text, "Running command file: C:/scripts/check.txt")
         self.assertEqual(last_paths, [Path("C:/scripts")])
         self.assertEqual([step.kind for step in started_steps[0]], ["send", "wait"])
+
+    def test_run_script_text_rejects_replacing_active_script(self) -> None:
+        controller = make_controller()
+        hold = Event()
+        thread = Thread(target=hold.wait, daemon=True)
+        thread.start()
+        controller.batch_runner._thread = thread
+        try:
+            result = controller.run_script_text(
+                "SEND *IDN?\n",
+                collect_parameter_values=lambda _occurrences: self.fail("unexpected parameter prompt"),
+                parameter_prompt=lambda _name, _line_number, _line_text: None,
+                set_last_script_path=lambda _path: None,
+            )
+
+            self.assertFalse(result.started)
+            self.assertTrue(result.busy)
+            self.assertIn("already running", result.status_text)
+        finally:
+            hold.set()
+            thread.join(timeout=1)
 
     def test_run_script_text_starts_parameterized_template(self) -> None:
         controller = make_controller()

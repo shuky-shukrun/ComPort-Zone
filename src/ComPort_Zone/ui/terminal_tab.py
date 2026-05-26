@@ -261,6 +261,28 @@ class TerminalSessionWidget(QWidget):
         self.connection_button.setObjectName("terminalConnectionActionButton")
         self.connection_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.connection_button.clicked.connect(self.toggle_connection)
+        self.script_run_button = QPushButton("Run", self.command_bar)
+        self.script_run_button.setObjectName("commandFileRunButton")
+        self.script_run_button.setToolTip("Run a command file in this terminal.")
+        set_button_icon(self.script_run_button, QStyle.StandardPixmap.SP_MediaPlay, 15)
+        self.script_run_button.clicked.connect(self.run_script)
+        self.script_pause_button = QPushButton("Pause", self.command_bar)
+        self.script_pause_button.setObjectName("commandFilePauseButton")
+        self.script_pause_button.setToolTip("Pause the running command file.")
+        set_button_icon(self.script_pause_button, QStyle.StandardPixmap.SP_MediaPause, 15)
+        self.script_pause_button.clicked.connect(self.pause_script)
+        self.script_resume_button = QPushButton("Resume", self.command_bar)
+        self.script_resume_button.setObjectName("commandFileResumeButton")
+        self.script_resume_button.setToolTip("Resume the paused command file.")
+        set_button_icon(self.script_resume_button, QStyle.StandardPixmap.SP_MediaPlay, 15)
+        self.script_resume_button.clicked.connect(self.resume_script)
+        self.script_stop_button = QPushButton("Stop", self.command_bar)
+        self.script_stop_button.setObjectName("commandFileStopButton")
+        self.script_stop_button.setToolTip("Stop the running command file.")
+        set_button_icon(self.script_stop_button, QStyle.StandardPixmap.SP_MediaStop, 15)
+        self.script_stop_button.clicked.connect(self.stop_script)
+        self.script_status_label = QLabel("File idle", self.command_bar)
+        self.script_status_label.setObjectName("commandFileStatusLabel")
         self.mode_combo = ChevronComboBox(self.command_bar)
         self.mode_combo.addItems(SEND_MODES)
         self.mode_combo.setFixedWidth(118)
@@ -287,6 +309,11 @@ class TerminalSessionWidget(QWidget):
         self.pause_label = QLabel("", self.command_bar)
         command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.connection_button)
+        command_layout.addWidget(self.script_run_button)
+        command_layout.addWidget(self.script_pause_button)
+        command_layout.addWidget(self.script_resume_button)
+        command_layout.addWidget(self.script_stop_button)
+        command_layout.addWidget(self.script_status_label)
         command_layout.addStretch(1)
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.rx_display_combo)
@@ -303,6 +330,7 @@ class TerminalSessionWidget(QWidget):
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         root.addWidget(self.splitter)
+        self._refresh_script_controls()
 
     def _build_quick_actions_sidebar(self) -> QuickActionsSidebar:
         sidebar = QuickActionsSidebar(
@@ -766,7 +794,7 @@ class TerminalSessionWidget(QWidget):
         row = self.quick_file_row(quick_file_id)
         self.host._add_context_action(
             menu,
-            "Send",
+            "Run",
             self.run_selected_quick_file,
             icon=QStyle.StandardPixmap.SP_ArrowForward,
         )
@@ -1110,10 +1138,16 @@ class TerminalSessionWidget(QWidget):
         if result.empty:
             QMessageBox.information(self, "Run Command File", "Command file is empty.")
             return False
+        if result.busy:
+            self.host.set_status(result.status_text)
+            QMessageBox.information(self, "Run Command File", result.status_text)
+            self._refresh_script_controls()
+            return False
         if not result.started:
             return False
         self.host.set_status(result.status_text)
         self.host.save_settings()
+        self._refresh_script_controls()
         return True
 
     def _collect_parameter_values(self, parameter_occurrences) -> tuple[dict[str, str], set[str]] | None:
@@ -1124,6 +1158,62 @@ class TerminalSessionWidget(QWidget):
 
     def stop_script(self) -> None:
         self.controller.stop_script()
+        self._refresh_script_controls()
+
+    def pause_script(self) -> None:
+        if self.controller.pause_script():
+            self._refresh_script_controls()
+
+    def resume_script(self) -> None:
+        if self.controller.resume_script():
+            self._refresh_script_controls()
+
+    def toggle_script_pause(self) -> None:
+        snapshot = self.controller.script_snapshot()
+        if snapshot.is_paused:
+            self.resume_script()
+            return
+        self.pause_script()
+
+    def _refresh_script_controls(self) -> None:
+        if not hasattr(self, "script_run_button"):
+            return
+        snapshot = self.controller.script_snapshot()
+        connected = self.transport.is_connected
+        active = snapshot.is_running or snapshot.is_stopping
+        paused = snapshot.is_paused
+        stopping = snapshot.is_stopping
+        self.script_run_button.setEnabled(connected and not active)
+        self.script_pause_button.setVisible(active and not paused)
+        self.script_pause_button.setEnabled(active and not stopping)
+        self.script_resume_button.setVisible(active and paused)
+        self.script_resume_button.setEnabled(snapshot.can_resume)
+        self.script_stop_button.setVisible(active)
+        self.script_stop_button.setEnabled(active and not stopping)
+        if stopping:
+            text = "File stopping"
+            tooltip = "Command file is stopping."
+        elif paused:
+            text = "File paused"
+            if snapshot.pause_reason == "connection":
+                tooltip = "Command file is paused after disconnect. Reconnect, then click Resume."
+            elif snapshot.pause_reason == "user+connection":
+                tooltip = "Command file is paused and the connection is closed. Reconnect, then click Resume."
+            else:
+                tooltip = "Command file is paused. Click Resume to continue."
+        elif active:
+            text = "File running"
+            tooltip = "Command file is running."
+        else:
+            text = "File idle"
+            tooltip = "No command file is running."
+        self.script_status_label.setText(text)
+        self.script_status_label.setToolTip(tooltip)
+        self.script_run_button.setToolTip(
+            "Run a command file in this terminal."
+            if connected
+            else "Connect before running a command file."
+        )
 
     def toggle_logging(self) -> None:
         if self.logger.enabled:
@@ -1146,7 +1236,7 @@ class TerminalSessionWidget(QWidget):
 
     def toggle_pause(self) -> None:
         paused, pending_events = self.controller.toggle_pause()
-        self.pause_label.setText("Paused" if paused else "")
+        self.pause_label.setText("RX paused" if paused else "")
         if not paused:
             for event in pending_events:
                 self._render_event(event)
@@ -1397,13 +1487,14 @@ class TerminalSessionWidget(QWidget):
             except Empty:
                 break
             self._handle_event(event)
+        self._refresh_script_controls()
 
     def _handle_event(self, event: SerialEvent) -> None:
         if event.kind == "tx" and self._consume_suppressed_tx_echo(event.message):
             return
         decision = self.controller.handle_event(event)
         if decision.paused_count is not None:
-            self.pause_label.setText(f"Paused ({decision.paused_count})")
+            self.pause_label.setText(f"RX paused ({decision.paused_count})")
             return
         if decision.event_to_render is not None:
             self._render_event(decision.event_to_render)
@@ -1455,6 +1546,7 @@ class TerminalSessionWidget(QWidget):
             action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
         set_button_icon(self.connection_button, action_icon, 15)
         set_button_role(self.connection_button, state)
+        self._refresh_script_controls()
         self.host.update_tab_titles()
         self.host.update_connection_status(self)
         if update_footer and self.host.tabs.currentWidget() is self:

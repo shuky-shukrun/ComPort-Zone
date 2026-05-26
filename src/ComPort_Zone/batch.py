@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import perf_counter
 
 from .serial_core import SerialEvent
@@ -52,6 +52,15 @@ class BatchParameterInputLine:
     line_number: int
     line_text: str
     parameters: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRunSnapshot:
+    is_running: bool
+    is_paused: bool = False
+    is_stopping: bool = False
+    pause_reason: str = ""
+    can_resume: bool = False
 
 
 BatchLineResolver = Callable[[str, int], str | None]
@@ -224,6 +233,10 @@ class BatchRunner:
         self._thread: Thread | None = None
         self._stop_event = Event()
         self._resume_event = Event()
+        self._state_lock = Lock()
+        self._user_paused = False
+        self._connection_paused = False
+        self._stopping = False
 
     @property
     def is_running(self) -> bool:
@@ -233,8 +246,11 @@ class BatchRunner:
         self.stop(emit_message=False)
         self._stop_event = Event()
         self._resume_event = Event()
-        if self._connected_supplier():
-            self._resume_event.set()
+        with self._state_lock:
+            self._user_paused = False
+            self._connection_paused = not self._connected_supplier()
+            self._stopping = False
+            self._refresh_resume_state_locked()
         self._thread = Thread(
             target=self._run_with_event_subscription,
             args=(self._run_steps, steps),
@@ -247,8 +263,11 @@ class BatchRunner:
         self.stop(emit_message=False)
         self._stop_event = Event()
         self._resume_event = Event()
-        if self._connected_supplier():
-            self._resume_event.set()
+        with self._state_lock:
+            self._user_paused = False
+            self._connection_paused = not self._connected_supplier()
+            self._stopping = False
+            self._refresh_resume_state_locked()
         self._thread = Thread(
             target=self._run_with_event_subscription,
             args=(self._run_template_steps, steps, resolve_line),
@@ -260,24 +279,104 @@ class BatchRunner:
     def stop(self, emit_message: bool = True) -> None:
         thread = self._thread
         if thread and thread.is_alive():
-            self._stop_event.set()
-            self._resume_event.set()
+            with self._state_lock:
+                self._stopping = True
+                self._stop_event.set()
+                self._resume_event.set()
             thread.join(timeout=1.5)
             if emit_message:
                 self._emit("status", "Batch run stopped.")
+            if thread.is_alive():
+                return
         self._thread = None
+        with self._state_lock:
+            self._stopping = False
+            self._user_paused = False
+            self._connection_paused = False
+            self._refresh_resume_state_locked()
+
+    def pause(self, reason: str = "user", emit_message: bool = True) -> bool:
+        if not self.is_running:
+            return False
+        reason = "connection" if reason == "connection" else "user"
+        with self._state_lock:
+            was_paused = self._user_paused or self._connection_paused
+            if reason == "connection":
+                self._connection_paused = True
+            else:
+                self._user_paused = True
+            self._refresh_resume_state_locked()
+        if emit_message and not was_paused:
+            self._emit("status", "Batch run paused.")
+        return True
+
+    def resume(self, emit_message: bool = True) -> bool:
+        if not self.is_running:
+            return False
+        if not self._connected_supplier():
+            with self._state_lock:
+                self._connection_paused = True
+                self._refresh_resume_state_locked()
+            if emit_message:
+                self._emit("status", "Connect before resuming batch run.")
+            return False
+        with self._state_lock:
+            was_paused = self._user_paused or self._connection_paused
+            self._user_paused = False
+            self._connection_paused = False
+            self._refresh_resume_state_locked()
+        if emit_message and was_paused:
+            self._emit("status", "Batch run resumed.")
+        return True
+
+    def snapshot(self) -> BatchRunSnapshot:
+        running = self.is_running
+        with self._state_lock:
+            paused = running and (self._user_paused or self._connection_paused)
+            reason = self._pause_reason_locked() if paused else ""
+            can_resume = paused and self._connected_supplier() and not self._stopping
+            return BatchRunSnapshot(
+                is_running=running,
+                is_paused=paused,
+                is_stopping=running and self._stopping,
+                pause_reason=reason,
+                can_resume=can_resume,
+            )
 
     def notify_connection_state(self, connected: bool) -> None:
         if not self.is_running:
             return
         if connected:
-            if not self._resume_event.is_set():
-                self._emit("status", "Connection restored. Resuming batch run.")
+            with self._state_lock:
+                was_connection_paused = self._connection_paused
+                self._refresh_resume_state_locked()
+            if was_connection_paused:
+                self._emit("status", "Connection restored. Batch run waiting for Resume.")
+            return
+        with self._state_lock:
+            was_paused = self._user_paused or self._connection_paused
+            self._connection_paused = True
+            self._refresh_resume_state_locked()
+        if not was_paused:
+            self._emit("status", "Connection lost. Batch run paused.")
+
+    def _refresh_resume_state_locked(self) -> None:
+        if self._stop_event.is_set():
             self._resume_event.set()
-        else:
-            if self._resume_event.is_set():
-                self._emit("status", "Connection lost. Batch run paused.")
+            return
+        if self._user_paused or self._connection_paused:
             self._resume_event.clear()
+            return
+        self._resume_event.set()
+
+    def _pause_reason_locked(self) -> str:
+        if self._user_paused and self._connection_paused:
+            return "user+connection"
+        if self._connection_paused:
+            return "connection"
+        if self._user_paused:
+            return "user"
+        return ""
 
     def _run_with_event_subscription(self, target, *args) -> None:
         self._rx_buffer = ""
@@ -291,6 +390,11 @@ class BatchRunner:
             self._rx_buffer = ""
             if queue is not None and self._event_queue_disposer is not None:
                 self._event_queue_disposer(queue)
+            with self._state_lock:
+                self._stopping = False
+                self._user_paused = False
+                self._connection_paused = False
+                self._refresh_resume_state_locked()
 
     def _run_steps(self, steps: list[BatchStep]) -> None:
         self._emit("status", f"Batch run started with {len(steps)} step(s).")
@@ -371,19 +475,24 @@ class BatchRunner:
         if queue is None:
             self._emit("error", "EXPECT is not available because RX events are not connected to the batch runner.")
             return False
-        deadline = perf_counter() + (self._expect_timeout_ms / 1000)
+        remaining_timeout = self._expect_timeout_ms / 1000
         while not self._stop_event.is_set():
-            remaining = deadline - perf_counter()
-            if remaining <= 0:
+            if not self._wait_for_connection():
+                return False
+            if remaining_timeout <= 0:
                 self._emit(
                     "error",
                     f"EXPECT timed out on line {line_number} after {self._expect_timeout_ms} ms: {expected}",
                 )
                 return False
+            wait_time = min(remaining_timeout, 0.05)
+            started_wait = perf_counter()
             try:
-                event = queue.get(timeout=min(remaining, 0.05))
+                event = queue.get(timeout=wait_time)
             except Empty:
+                remaining_timeout -= perf_counter() - started_wait
                 continue
+            remaining_timeout -= perf_counter() - started_wait
             if event.kind == "rx":
                 self._rx_buffer += event.message
                 if self._expected_text_available(expected):
@@ -418,20 +527,30 @@ class BatchRunner:
     def _sleep_interruptible(self, seconds: float) -> bool:
         if seconds <= 0:
             return not self._stop_event.is_set()
-        deadline = perf_counter() + seconds
-        while True:
-            remaining = deadline - perf_counter()
+        remaining = seconds
+        while remaining > 0:
+            if not self._wait_for_connection():
+                return False
             if remaining <= 0:
                 return True
             if self._stop_event.is_set():
                 return False
             if remaining <= HIGH_RES_WAIT_THRESHOLD_SECONDS:
-                return self._sleep_high_resolution(deadline)
+                started_wait = perf_counter()
+                slept = self._sleep_high_resolution(remaining)
+                remaining -= perf_counter() - started_wait
+                if not slept:
+                    return False
+                continue
             wait_time = min(remaining - HIGH_RES_WAIT_THRESHOLD_SECONDS, COARSE_WAIT_CHUNK_SECONDS)
+            started_wait = perf_counter()
             if self._stop_event.wait(max(wait_time, 0)):
                 return False
+            remaining -= perf_counter() - started_wait
+        return True
 
-    def _sleep_high_resolution(self, deadline: float) -> bool:
+    def _sleep_high_resolution(self, seconds: float) -> bool:
+        deadline = perf_counter() + seconds
         while True:
             if self._stop_event.is_set():
                 return False

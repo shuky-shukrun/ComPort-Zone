@@ -88,6 +88,7 @@ class MainWindowMenuBuilder:
         run_editor_menu.aboutToShow.connect(lambda menu=run_editor_menu: self.host.populate_run_editor_menu(menu))
         command_files_menu.addSeparator()
         self.add_registered_action(command_files_menu, "command_file.run")
+        self.add_registered_action(command_files_menu, "command_file.pause_resume")
         self.add_registered_action(command_files_menu, "command_file.stop")
 
         quick_commands_menu = tools_menu.addMenu("Quick Commands")

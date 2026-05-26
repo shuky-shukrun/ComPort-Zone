@@ -271,7 +271,14 @@ Committed RX, TX, status, and error transcript text is protected from normal typ
 
 ## Batch Script Format
 
-Plain text files can be run from `Tools > Command Files > Run Command File` or saved in the left drawer as quick files. Every non-empty bare line is sent as a command with the active session line-ending setting.
+Plain text files can be run from `Tools > Command Files > Run Command File`, from the Run button in a terminal tab, or from quick files in the left drawer. Every non-empty bare line is sent as a command with the active session line-ending setting.
+
+Each terminal tab has command-file controls in its bottom bar:
+
+- Run opens a command file and starts it in the active terminal.
+- Pause freezes the running command file before the next step; Resume continues it.
+- Stop cancels the current run. You can also use `Ctrl+.`.
+- If the port or LAN endpoint disconnects during a run, execution pauses. Reconnect the endpoint, then click Resume to continue; reconnect no longer silently resumes a command file.
 
 Use `Tools > Command Files > New Command File` or `Tools > Command Files > Open Command File Editor` to create and edit command files as workspace tabs inside ComPort Zone. Quick Files can also be opened in an editor tab from `Tools > Quick Files > Edit Selected File` or from the Quick Files right-click menu. The editor supports:
 
