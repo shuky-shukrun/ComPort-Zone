@@ -4,7 +4,7 @@ ComPort Zone is a Windows-first COM-port terminal for device bring-up, debugging
 
 The current UI is terminal-first: a menu bar, Windows Terminal-style tabs, one large terminal surface with an integrated `TX> ` command prompt, a compact control bar, and a foldable left drawer for quick commands and quick files.
 
-Current version: `0.3.1`.
+Current version: `0.3.2`.
 
 ## UI Preview
 
@@ -56,7 +56,7 @@ These screenshots and GIFs are captured from the current PySide UI with sample s
 - Optional terminal timestamps
 - Clear, copy, select all, pause/resume output, terminal font settings, Ctrl+mouse-wheel zoom, and line wrap controls
 - Terminal output context menu with Clear Terminal, Line Wrap, Show Timestamps, and selected text/hex show/replace helpers
-- Per-tab command file execution with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
+- Per-tab command-file Run, Pause, Resume, Stop, and status controls with `SEND`, `WAIT`, `HEX`, and response assertions via `EXPECT`
 - Per-tab logging to text files
 - Persisted settings for theme, drawer state and page, transport defaults, quick commands, font size, history, scrollback, restored tabs, and split workspace layout
 - Atomic local settings saves with a backup fallback if the primary settings file is corrupt or invalid

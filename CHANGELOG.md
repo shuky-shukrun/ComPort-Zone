@@ -2,6 +2,30 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.3.2 - 2026-05-26
+
+### Added
+
+- Add terminal command-file controls so each terminal tab can start a file run, pause it, resume it, stop it, and show the current file-run state from the command bar.
+- Add a split-workspace drop preview and clearer active-pane/active-tab styling so tab moves and split layouts are easier to follow.
+- Add editor-aware quick drawer dispatch so Quick Commands insert into command-file editors while Quick Files open there, and the same drawer still sends or runs items from terminal tabs.
+
+### Changed
+
+- Pause command-file execution when the serial port or LAN endpoint disconnects, then wait for the user to reconnect and click Resume instead of continuing automatically.
+- Keep command-file pause/resume separate from RX-output pause/resume, with distinct status text for each workflow.
+- Move shared font controls to the status bar and keep connection controls local to the active terminal when a terminal tab owns that state.
+
+### Fixed
+
+- Prevent starting a second command-file run in a terminal that already has one active.
+- Keep shared drawer chrome focused on one split pane, reducing duplicated drawer surfaces in split workspaces.
+- Improve command-file wait and EXPECT timing so paused runs do not burn timeout while waiting for a connection or user resume.
+
+### Tests
+
+- Added and expanded coverage for command-file pause/resume/stop behavior, disconnect pauses, busy-run rejection, EXPECT timing, split-workspace pane styling/drop preview behavior, and active-tab quick drawer dispatch.
+
 ## 0.3.1 - 2026-05-25
 
 ### Added

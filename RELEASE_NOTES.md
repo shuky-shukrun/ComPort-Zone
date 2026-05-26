@@ -1,3 +1,52 @@
+# ComPort Zone v0.3.2 Release Notes
+
+Release date: 2026-05-26
+
+ComPort Zone v0.3.2 focuses on command-file control during live terminal work and split-workspace polish. Terminal tabs now expose Run, Pause, Resume, Stop, and file-run status controls directly in the command bar. If a serial port or LAN endpoint disconnects during a command-file run, the run pauses and waits for an explicit Resume after reconnection, so long bring-up scripts do not silently continue at the wrong moment.
+
+## Highlights
+
+- Terminal tabs now include command-file Run, Pause, Resume, Stop, and status controls.
+- Disconnects pause active command-file runs; reconnecting no longer resumes the file automatically.
+- The app now rejects a second command-file run while one is already active in the same terminal.
+- Split workspaces show clearer active-pane and active-tab styling, plus a drop preview while moving tabs.
+- Quick Commands and Quick Files now dispatch according to the active tab: insert/open in command-file editors and send/run in terminal tabs.
+- Shared font controls now live in the status bar, while terminal connection controls stay with the active terminal surface.
+
+## What's New
+
+### Command-File Run Control
+
+- Added per-terminal controls to run a command file from the bottom command bar.
+- Added Pause, Resume, Stop, and file-run state feedback for command-file execution.
+- Kept command-file pause/resume separate from RX-output pause/resume so users can pause a script without confusing it with paused terminal display output.
+- When a connection drops during `WAIT` or `EXPECT`, the command-file run pauses and preserves its remaining wait or timeout until the user resumes.
+- Reconnect now reports that the run is waiting for Resume instead of continuing automatically.
+
+### Split Workspace Polish
+
+- Added active-pane and active-tab visual styling so the current terminal or editor is easier to identify in split layouts.
+- Added a drag-and-drop preview while moving a tab into another pane or splitting right.
+- Reduced duplicated drawer chrome by keeping the shared quick drawer on one split pane.
+- Quick drawer primary actions now follow the active tab type: Quick Commands insert into editors and send from terminals; Quick Files open in editors and run from terminals.
+
+## Validation
+
+The release added or expanded regression coverage for:
+
+- Command-file pause, resume, stop, connection-loss pause behavior, busy-run rejection, and status snapshots.
+- `WAIT` and `EXPECT` timing while a command-file run is paused.
+- Terminal command-bar controls, reconnect behavior, and quick drawer dispatch from terminal and editor tabs.
+- Split-workspace active pane styling, drop preview behavior, drawer visibility, and active-tab chrome.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.3.1 Release Notes
 
 Release date: 2026-05-25
