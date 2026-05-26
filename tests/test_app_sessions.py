@@ -552,6 +552,7 @@ class AppSessionTests(unittest.TestCase):
             window.show()
             self.qt.processEvents()
             sessions = window.iter_sessions()
+            window.set_drawer_collapsed(False)
 
             window.split_tab_right(window.tabs.indexOf(sessions[1]))
             self.qt.processEvents()
@@ -559,10 +560,36 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.tabs.pane_count(), 2)
             self.assertEqual([pane.count() for pane in window.tabs.panes()], [1, 1])
             self.assertIs(window.tabs.currentWidget(), sessions[1])
+            self.assertTrue(sessions[0].drawer.isVisible())
+            self.assertFalse(sessions[1].drawer.isVisible())
+            self.assertTrue(sessions[1].status_label.isVisible())
+            self.assertTrue(sessions[1].connection_button.isVisible())
+            self.assertFalse(window.connection_status_label.isVisible())
+            self.assertTrue(window.tabs.panes()[1].property("activePane"))
+            self.assertTrue(sessions[1].property("activeWorkspaceTab"))
             sizes = window.tabs.splitter.sizes()
             self.assertEqual(len(sizes), 2)
             self.assertGreater(sizes[0], 0)
             self.assertGreater(sizes[1], 0)
+
+            sent_commands: list[str] = []
+
+            def record_send(command: QuickCommand, *, record_command) -> None:
+                sent_commands.append(command.command)
+
+            sessions[1].controller.send_quick_command = record_send
+            sessions[0].quick_list.setCurrentRow(0)
+            window.tabs.setCurrentWidget(sessions[1])
+            send_button = next(
+                button
+                for button in sessions[0].drawer.findChildren(QPushButton, "drawerActionButton")
+                if button.text() == "Send"
+            )
+            QTest.mouseClick(send_button, Qt.MouseButton.LeftButton)
+            self.qt.processEvents()
+
+            self.assertEqual(sent_commands, [sessions[0].visible_quick_commands()[0].command])
+            self.assertIs(window.current_session(), sessions[1])
 
             QTest.mouseClick(
                 sessions[0].terminal.viewport(),
@@ -573,6 +600,9 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
 
             self.assertIs(window.current_session(), sessions[0])
+            self.assertTrue(window.tabs.panes()[0].property("activePane"))
+            self.assertTrue(sessions[0].property("activeWorkspaceTab"))
+            self.assertFalse(sessions[1].property("activeWorkspaceTab"))
             self.assertEqual(
                 window.connection_status_label.text(),
                 sessions[0].connection_status_text(),
@@ -581,6 +611,57 @@ class AppSessionTests(unittest.TestCase):
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
             app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_terminal_status_chip_is_compact_clickable_and_replaces_status_bar(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_terminal_status_chip.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        old_open_settings = main_window_module.TerminalSessionWidget.open_connection_settings
+        window = None
+        opened: list[tuple[object, bool]] = []
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        def fake_open_settings(session, *, connect_after_accept: bool = True) -> bool:
+            opened.append((session, connect_after_accept))
+            return True
+
+        main_window_module.TerminalSessionWidget.open_connection_settings = fake_open_settings
+        try:
+            window = app_module.MainWindow()
+            window.show()
+            self.qt.processEvents()
+            session = window.current_session()
+
+            self.assertTrue(window.connection_status_label.isHidden())
+            self.assertTrue(window.connection_action_button.isHidden())
+            self.assertTrue(session.status_label.isVisible())
+            self.assertEqual(session.status_label.maximumWidth(), 520)
+            self.assertIn("Click to open Connection Settings.", session.status_label.toolTip())
+
+            QTest.mouseClick(
+                session.status_label,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                session.status_label.rect().center(),
+            )
+            self.qt.processEvents()
+
+            self.assertEqual(opened, [(session, True)])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            main_window_module.TerminalSessionWidget.open_connection_settings = old_open_settings
             if window is not None:
                 for active_session in window.iter_sessions():
                     active_session.shutdown()
@@ -2029,16 +2110,19 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             session = window.current_session()
-            labels = session.command_bar.findChildren(QLabel, "terminalFontControlsLabel")
-            buttons = session.command_bar.findChildren(QPushButton, "terminalFontSizeButton")
+            labels = window.statusBar().findChildren(QLabel, "statusFontControlsLabel")
+            buttons = window.statusBar().findChildren(QPushButton, "statusFontSizeButton")
 
             self.assertEqual([label.text() for label in labels], ["Font"])
             self.assertEqual([button.text() for button in buttons], ["-", "+"])
-            self.assertTrue(all(button.width() >= 38 for button in buttons))
-            self.assertEqual(buttons[0].toolTip(), "Decrease terminal font size")
-            self.assertEqual(buttons[1].toolTip(), "Increase terminal font size")
-            self.assertEqual(buttons[0].accessibleName(), "Decrease terminal font size")
-            self.assertEqual(buttons[1].accessibleName(), "Increase terminal font size")
+            self.assertTrue(all(button.width() >= 34 for button in buttons))
+            self.assertEqual(buttons[0].toolTip(), "Decrease terminal and editor font size")
+            self.assertEqual(buttons[1].toolTip(), "Increase terminal and editor font size")
+            self.assertEqual(buttons[0].accessibleName(), "Decrease terminal and editor font size")
+            self.assertEqual(buttons[1].accessibleName(), "Increase terminal and editor font size")
+            self.assertEqual(session.command_bar.findChildren(QPushButton, "terminalFontSizeButton"), [])
+            editor = window.add_command_file_tab()
+            self.assertEqual(editor.findChildren(QPushButton, "editorFontSizeButton"), [])
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

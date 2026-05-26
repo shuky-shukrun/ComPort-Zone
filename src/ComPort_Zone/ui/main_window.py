@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStyle,
     QVBoxLayout,
+    QWidget,
 )
 
 from .. import __version__
@@ -218,12 +219,30 @@ class MainWindow(QMainWindow):
         self.connection_action_button.setObjectName("statusActionButton")
         self.connection_action_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.connection_action_button.clicked.connect(self.connection_status_action_clicked)
+        self.font_status_label = QLabel("Font", self)
+        self.font_status_label.setObjectName("statusFontControlsLabel")
+        self.font_status_label.setToolTip("Terminal and editor font size")
+        self.font_decrease_button = QPushButton("-", self)
+        self.font_decrease_button.setObjectName("statusFontSizeButton")
+        self.font_decrease_button.setFixedSize(QSize(34, 28))
+        self.font_decrease_button.setToolTip("Decrease terminal and editor font size")
+        self.font_decrease_button.setAccessibleName("Decrease terminal and editor font size")
+        self.font_decrease_button.clicked.connect(lambda: self.change_font_size(-1))
+        self.font_increase_button = QPushButton("+", self)
+        self.font_increase_button.setObjectName("statusFontSizeButton")
+        self.font_increase_button.setFixedSize(QSize(34, 28))
+        self.font_increase_button.setToolTip("Increase terminal and editor font size")
+        self.font_increase_button.setAccessibleName("Increase terminal and editor font size")
+        self.font_increase_button.clicked.connect(lambda: self.change_font_size(1))
         self.version_label = QLabel(f"ComPort Zone v{__version__}", self)
         self.version_label.setObjectName("versionInfo")
         self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.statusBar().addWidget(self.footer, 1)
         self.statusBar().addPermanentWidget(self.connection_status_label)
         self.statusBar().addPermanentWidget(self.connection_action_button)
+        self.statusBar().addPermanentWidget(self.font_status_label)
+        self.statusBar().addPermanentWidget(self.font_decrease_button)
+        self.statusBar().addPermanentWidget(self.font_increase_button)
         self.statusBar().addPermanentWidget(self.version_label)
 
     def _build_menus(self) -> None:
@@ -391,6 +410,7 @@ class MainWindow(QMainWindow):
                 ),
                 import_quick_commands_csv=self.import_quick_commands_csv,
                 export_quick_commands_csv=self.export_quick_commands_csv,
+                dispatch_quick_command=self.use_quick_command_id,
                 quick_files_supplier=self.quick_files_snapshot,
                 visible_quick_files_supplier=self.visible_quick_files_snapshot,
                 quick_file_sort_mode_supplier=self.quick_file_sort_mode_snapshot,
@@ -406,6 +426,7 @@ class MainWindow(QMainWindow):
                 ),
                 import_quick_files_csv=self.import_quick_files_csv,
                 export_quick_files_csv=self.export_quick_files_csv,
+                dispatch_quick_file=self.use_quick_file_id,
             ),
             run_target_service=self.command_file_runs.target_service,
             theme_palette=self.theme,
@@ -439,6 +460,7 @@ class MainWindow(QMainWindow):
         self.tab_workspace.attach_tab_close_button(index, editor)
         self.tabs.setCurrentIndex(index)
         self.update_tab_titles()
+        self.update_workspace_split_chrome()
         self.refresh_command_file_targets()
         self.save_settings()
         return editor
@@ -580,6 +602,7 @@ class MainWindow(QMainWindow):
     def split_tab_right(self, index: int) -> None:
         if self.tabs.move_tab_to_other_pane(index, orientation=Qt.Orientation.Horizontal):
             self.update_tab_titles()
+            self.update_workspace_split_chrome()
             self.save_settings()
 
     def split_current_tab_down(self) -> None:
@@ -588,22 +611,26 @@ class MainWindow(QMainWindow):
     def split_tab_down(self, index: int) -> None:
         if self.tabs.move_tab_to_other_pane(index, orientation=Qt.Orientation.Vertical):
             self.update_tab_titles()
+            self.update_workspace_split_chrome()
             self.save_settings()
 
     def move_tab_to_other_pane(self, index: int | None = None) -> None:
         target_index = self.tabs.currentIndex() if index is None else index
         if self.tabs.move_tab_to_other_pane(target_index):
             self.update_tab_titles()
+            self.update_workspace_split_chrome()
             self.save_settings()
 
     def join_workspace_panes(self) -> None:
         if self.tabs.join_panes():
             self.update_tab_titles()
+            self.update_workspace_split_chrome()
             self.save_settings()
 
     def _tab_moved_between_panes(self, widget, index: int) -> None:
         self.tab_workspace.attach_tab_close_button(index, widget)
         self.update_tab_titles()
+        self.update_workspace_split_chrome()
         self.save_settings()
 
     def add_session(self, state: TerminalSessionState | None = None, *, prompt_settings: bool = True) -> None:
@@ -620,6 +647,7 @@ class MainWindow(QMainWindow):
         self.update_tab_titles()
         if prompt_settings:
             self.prompt_session_settings(session)
+        self.update_workspace_split_chrome()
         if state.connected_on_launch and session.connection_endpoint():
             QTimer.singleShot(0, lambda target=session: self.restore_session_connection(target))
 
@@ -749,9 +777,45 @@ class MainWindow(QMainWindow):
     def update_tab_titles(self) -> None:
         self.workspace_status.update_tab_titles(self.theme)
 
+    def _shared_drawer_pane(self):
+        panes = self.tabs.panes()
+        for pane in panes:
+            if pane.count() > 0:
+                return pane
+        return panes[0] if panes else None
+
+    def _set_workspace_tab_active_property(self, widget: QWidget, active: bool) -> None:
+        targets = [widget]
+        for object_name in ("terminal", "commandFileEditor", "terminalColumn"):
+            targets.extend(widget.findChildren(QWidget, object_name))
+        for target in targets:
+            target.setProperty("activeWorkspaceTab", active)
+            target.style().unpolish(target)
+            target.style().polish(target)
+            target.update()
+
+    def update_workspace_split_chrome(self, *, drawer_source=None) -> None:
+        shared_drawer_pane = self._shared_drawer_pane()
+        active_widget = self.tabs.currentWidget()
+        for ref in self.tabs.iter_tab_refs():
+            widget = ref.widget
+            drawer_visible = shared_drawer_pane is None or ref.pane is shared_drawer_pane
+            if hasattr(widget, "set_workspace_drawer_visible"):
+                widget.set_workspace_drawer_visible(drawer_visible)
+            if drawer_visible and widget is not drawer_source and hasattr(widget, "apply_drawer_state"):
+                widget.apply_drawer_state(
+                    self.settings.drawer_collapsed,
+                    self.settings.drawer_width,
+                    self.normalized_drawer_page_index(),
+                )
+            self._set_workspace_tab_active_property(widget, widget is active_widget)
+        terminal_owns_status = isinstance(active_widget, TerminalSessionWidget)
+        self.connection_status_label.setVisible(not terminal_owns_status)
+        self.connection_action_button.setVisible(not terminal_owns_status)
+
     def sync_status_from_current_session(self) -> None:
-        self.apply_drawer_state_to_current_tab()
         self.workspace_status.sync_from_current(self.theme)
+        self.update_workspace_split_chrome()
 
     def connection_state_color(self, state: str) -> str:
         return connection_state_color(state, self.theme)
@@ -771,6 +835,7 @@ class MainWindow(QMainWindow):
         # The shared status bar belongs to the selected tab; background tab
         # updates should refresh shared targets without replacing it.
         self.workspace_status.sync_from_current(self.theme)
+        self.update_workspace_split_chrome()
 
     def set_status(self, text: str) -> None:
         self.workspace_status.set_status(text)
@@ -783,30 +848,10 @@ class MainWindow(QMainWindow):
         return max(0, min(int(page_index), 1))
 
     def apply_drawer_state_to_current_tab(self) -> None:
-        widget = self.tabs.currentWidget()
-        if hasattr(widget, "apply_drawer_state"):
-            widget.apply_drawer_state(
-                self.settings.drawer_collapsed,
-                self.settings.drawer_width,
-                self.normalized_drawer_page_index(),
-            )
+        self.update_workspace_split_chrome()
 
     def apply_drawer_state_to_tabs(self, *, source=None) -> None:
-        page_index = self.normalized_drawer_page_index()
-        for session in self.iter_sessions():
-            if session is not source:
-                session.apply_drawer_state(
-                    self.settings.drawer_collapsed,
-                    self.settings.drawer_width,
-                    page_index,
-                )
-        for editor in self.iter_command_file_editors():
-            if editor is not source:
-                editor.apply_drawer_state(
-                    self.settings.drawer_collapsed,
-                    self.settings.drawer_width,
-                    page_index,
-                )
+        self.update_workspace_split_chrome(drawer_source=source)
 
     def request_drawer_page(self, index: int) -> None:
         index = self.normalized_drawer_page_index(index)
@@ -937,6 +982,41 @@ class MainWindow(QMainWindow):
 
     def quick_file_by_id(self, quick_file_id: str) -> QuickFile | None:
         return self.quick_action_controller.quick_file_by_id(quick_file_id)
+
+    def use_quick_command_from_sidebar(self, source) -> None:
+        selected_id = getattr(source, "selected_quick_command_id", lambda: "")()
+        self.use_quick_command_id(selected_id)
+
+    def use_quick_command_id(self, command_id: str) -> None:
+        command = self.quick_command_by_id(command_id)
+        if not command:
+            return
+        editor = self.current_command_file_editor()
+        if editor is not None:
+            text = f"HEX {command.command}" if command.send_mode == "Hex Bytes" else command.command
+            editor.insert_text_at_cursor(text)
+            return
+        session = self.current_session()
+        if session is not None:
+            session.send_quick_command(command)
+
+    def use_quick_file_from_sidebar(self, source) -> None:
+        selected_id = getattr(source, "selected_quick_file_id", lambda: "")()
+        self.use_quick_file_id(selected_id)
+
+    def use_quick_file_id(self, quick_file_id: str) -> None:
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        path = Path(quick_file.path)
+        editor = self.current_command_file_editor()
+        if editor is not None:
+            if editor.confirm_save_or_discard_if_dirty():
+                editor.load_path(path)
+            return
+        session = self.current_session()
+        if session is not None:
+            session.run_script_path(path)
 
     def quick_command_group_names(self) -> list[str]:
         return self.quick_action_controller.quick_command_group_names()
@@ -1343,6 +1423,12 @@ class MainWindow(QMainWindow):
         QTabWidget::pane {{
             border: none;
         }}
+        QTabWidget[activePane="true"]::pane {{
+            border: 2px solid {theme.accent};
+        }}
+        QTabWidget[activePane="false"]::pane {{
+            border: 1px solid {theme.border};
+        }}
         QTabBar::tab {{
             background: {theme.surface_alt};
             color: {theme.text};
@@ -1358,6 +1444,9 @@ class MainWindow(QMainWindow):
             border-top: 2px solid {theme.accent};
             border-left: 1px solid {theme.border};
             border-right: 1px solid {theme.border};
+        }}
+        QTabWidget[activePane="true"] QTabBar::tab:selected {{
+            border-top: 3px solid {theme.accent};
         }}
         QTabBar::tab:hover:!selected {{
             background: {theme.surface};
@@ -1440,9 +1529,65 @@ class MainWindow(QMainWindow):
             color: {theme.text};
             border: none;
         }}
+        QTextEdit#terminal {{
+            border: 2px solid transparent;
+        }}
+        QTextEdit#terminal[activeWorkspaceTab="true"],
+        QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
+            border: 2px solid {theme.accent};
+        }}
         QFrame#commandBar, QFrame#searchBar {{
             background: {theme.window};
             border-top: 1px solid {theme.border};
+        }}
+        QLabel#terminalConnectionStatus {{
+            background: {theme.chip};
+            color: {theme.text};
+            border: 1px solid {theme.border};
+            border-radius: 7px;
+            padding: 3px 8px;
+        }}
+        QLabel#terminalConnectionStatus[state="connected"] {{
+            color: {theme.rx};
+            border-color: {theme.rx};
+        }}
+        QLabel#terminalConnectionStatus[state="retrying"] {{
+            color: {theme.status};
+            border-color: {theme.status};
+        }}
+        QLabel#terminalConnectionStatus[state="missing"] {{
+            color: {theme.error};
+            border-color: {theme.error};
+        }}
+        QLabel#terminalConnectionStatus[state="no-port"] {{
+            color: {theme.muted};
+            border-color: {theme.border};
+        }}
+        QPushButton#terminalConnectionActionButton {{
+            min-width: 84px;
+            padding: 3px 9px;
+            border-radius: 7px;
+            background: {theme.surface_alt};
+        }}
+        QPushButton#terminalConnectionActionButton[role="connected"] {{
+            color: {theme.rx};
+            border-color: {theme.rx};
+        }}
+        QPushButton#terminalConnectionActionButton[role="retrying"],
+        QPushButton#terminalConnectionActionButton[role="missing"] {{
+            color: {theme.error};
+            border-color: {theme.error};
+        }}
+        QPushButton#terminalConnectionActionButton[role="no-port"] {{
+            color: {theme.muted};
+        }}
+        QLabel#splitDropPreview {{
+            background: {theme.accent_soft};
+            color: {theme.text};
+            border: 2px dashed {theme.accent};
+            border-radius: 8px;
+            font-weight: 700;
+            padding: 12px;
         }}
         QLabel#connectionStatus {{
             background: {theme.chip};
@@ -1481,6 +1626,9 @@ class MainWindow(QMainWindow):
             border: 1px solid {theme.border};
             border-radius: 0px;
             selection-background-color: {theme.search_highlight};
+        }}
+        QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
+            border: 2px solid {theme.accent};
         }}
         QLabel#editorPathLabel, QLabel#editorStatusLabel {{
             color: {theme.muted};
@@ -1630,6 +1778,17 @@ class MainWindow(QMainWindow):
         QLabel#footer {{
             color: {theme.muted};
             padding-left: 4px;
+        }}
+        QLabel#statusFontControlsLabel {{
+            color: {theme.muted};
+            padding: 0 2px 0 8px;
+        }}
+        QPushButton#statusFontSizeButton {{
+            min-width: 34px;
+            max-width: 34px;
+            padding: 0;
+            border-radius: 7px;
+            background: {theme.surface_alt};
         }}
         QPushButton#statusActionButton {{
             min-width: 92px;
