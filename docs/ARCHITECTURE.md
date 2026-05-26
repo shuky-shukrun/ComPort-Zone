@@ -109,7 +109,7 @@ Serial events arrive from the transport event queue. The terminal widget drains 
 
 ### Command-File Run
 
-Command-file text may come from a file path, quick file, editor buffer, or run target menu. Parsing and execution use `batch.py` and the terminal session batch runner. Parameter prompts remain UI-owned by the terminal widget, while `TerminalSessionController` coordinates template substitution and starts the runner. `ui/command_file_targets.py` coordinates connected terminal targets, run-target menus, editor target refresh, and editor-to-terminal dispatch.
+Command-file text may come from a file path, quick file, editor buffer, terminal Run button, or run target menu. Parsing and execution use `batch.py` and the terminal session batch runner. Parameter prompts remain UI-owned by the terminal widget, while `TerminalSessionController` coordinates template substitution and starts the runner. `ui/command_file_targets.py` coordinates connected terminal targets, run-target menus, editor target refresh, and editor-to-terminal dispatch. Terminal tabs expose per-run Run, Pause, Resume, Stop, and status controls. Disconnects pause an active run, and reconnect waits for the user to resume instead of continuing automatically.
 
 ### Quick Actions
 

@@ -1,5 +1,7 @@
 import unittest
 from queue import Queue
+from threading import Event
+from time import perf_counter, sleep
 
 from ComPort_Zone.batch import (
     BatchParseError,
@@ -13,6 +15,15 @@ from ComPort_Zone.batch import (
     substitute_batch_parameters,
 )
 from ComPort_Zone.serial_core import SerialEvent
+
+
+def wait_until(predicate, timeout: float = 1.0) -> bool:
+    deadline = perf_counter() + timeout
+    while perf_counter() < deadline:
+        if predicate():
+            return True
+        sleep(0.01)
+    return predicate()
 
 
 class RecordingStopEvent:
@@ -135,6 +146,7 @@ class BatchParserTests(unittest.TestCase):
         )
         stop_event = RecordingStopEvent()
         runner._stop_event = stop_event
+        runner._resume_event.set()
 
         self.assertTrue(runner._sleep_interruptible(0.005))
         self.assertEqual(stop_event.wait_calls, [])
@@ -182,6 +194,148 @@ class BatchParserTests(unittest.TestCase):
         messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
         self.assertTrue(any(message.startswith("EXPECT timed out on line 2") for message in messages))
         self.assertNotIn("Batch run completed.", messages)
+
+    def test_user_pause_blocks_next_step_until_resume(self) -> None:
+        output_events: Queue = Queue()
+        first_sent = Event()
+        release_first_send = Event()
+        sent: list[str] = []
+
+        def send_text(text: str) -> None:
+            sent.append(text)
+            if text == "one":
+                first_sent.set()
+                release_first_send.wait(1)
+
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=send_text,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: True,
+        )
+        runner.start(parse_batch_script("SEND one\nSEND two"))
+        try:
+            self.assertTrue(first_sent.wait(1))
+            self.assertTrue(runner.pause())
+            release_first_send.set()
+            sleep(0.1)
+            self.assertEqual(sent, ["one"])
+            snapshot = runner.snapshot()
+            self.assertTrue(snapshot.is_paused)
+            self.assertEqual(snapshot.pause_reason, "user")
+
+            self.assertTrue(runner.resume())
+            self.assertTrue(wait_until(lambda: sent == ["one", "two"]))
+        finally:
+            runner.stop(emit_message=False)
+
+    def test_reconnect_requires_manual_resume(self) -> None:
+        output_events: Queue = Queue()
+        first_sent = Event()
+        release_first_send = Event()
+        connected = True
+        sent: list[str] = []
+
+        def is_connected() -> bool:
+            return connected
+
+        def send_text(text: str) -> None:
+            sent.append(text)
+            if text == "one":
+                first_sent.set()
+                release_first_send.wait(1)
+
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=send_text,
+            send_bytes=lambda data: None,
+            connected_supplier=is_connected,
+        )
+        runner.start(parse_batch_script("SEND one\nSEND two"))
+        try:
+            self.assertTrue(first_sent.wait(1))
+            connected = False
+            runner.notify_connection_state(False)
+            connected = True
+            runner.notify_connection_state(True)
+            release_first_send.set()
+            sleep(0.1)
+            self.assertEqual(sent, ["one"])
+            snapshot = runner.snapshot()
+            self.assertTrue(snapshot.is_paused)
+            self.assertEqual(snapshot.pause_reason, "connection")
+            self.assertTrue(snapshot.can_resume)
+
+            self.assertTrue(runner.resume())
+            self.assertTrue(wait_until(lambda: sent == ["one", "two"]))
+        finally:
+            runner.stop(emit_message=False)
+
+    def test_stop_works_while_connection_paused(self) -> None:
+        output_events: Queue = Queue()
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=lambda text: None,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: False,
+        )
+
+        runner.start(parse_batch_script("SEND never"))
+        try:
+            self.assertTrue(wait_until(lambda: runner.snapshot().is_paused))
+            self.assertEqual(runner.snapshot().pause_reason, "connection")
+            runner.stop()
+            self.assertFalse(runner.is_running)
+        finally:
+            runner.stop(emit_message=False)
+
+    def test_paused_wait_does_not_count_pause_time(self) -> None:
+        output_events: Queue = Queue()
+        sent: list[str] = []
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=sent.append,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: True,
+        )
+
+        runner.start(parse_batch_script("WAIT 120\nSEND done"))
+        try:
+            sleep(0.02)
+            self.assertTrue(runner.pause())
+            sleep(0.16)
+            self.assertEqual(sent, [])
+            self.assertTrue(runner.resume())
+            self.assertTrue(wait_until(lambda: sent == ["done"], timeout=0.5))
+        finally:
+            runner.stop(emit_message=False)
+
+    def test_paused_expect_does_not_timeout_until_resumed(self) -> None:
+        output_events: Queue = Queue()
+        rx_events: Queue = Queue()
+        runner = BatchRunner(
+            event_queue=output_events,
+            send_text=lambda text: None,
+            send_bytes=lambda data: None,
+            connected_supplier=lambda: True,
+            event_queue_factory=lambda: rx_events,
+            expect_timeout_ms=80,
+        )
+
+        runner.start(parse_batch_script("EXPECT OK"))
+        try:
+            sleep(0.02)
+            self.assertTrue(runner.pause())
+            sleep(0.12)
+            rx_events.put_nowait(SerialEvent(kind="rx", message="OK"))
+            self.assertTrue(runner.resume())
+            self.assertTrue(wait_until(lambda: not runner.is_running))
+            messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
+            self.assertIn("EXPECT matched on line 1: OK", messages)
+            self.assertIn("Batch run completed.", messages)
+            self.assertFalse(any(message.startswith("EXPECT timed out") for message in messages))
+        finally:
+            runner.stop(emit_message=False)
 
 
 if __name__ == "__main__":

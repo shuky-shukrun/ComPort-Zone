@@ -303,7 +303,7 @@ Rules:
 ```mermaid
 sequenceDiagram
     actor User
-    participant Source as Editor / Quick File / File Dialog
+    participant Source as Editor / Quick File / File Dialog / Terminal Run
     participant Main as ui/main_window.MainWindow
     participant Targets as ui/command_file_targets.CommandFileRunCoordinator
     participant Tab as ui/terminal_tab.TerminalSessionWidget
@@ -324,12 +324,17 @@ sequenceDiagram
     end
     Ctrl->>Batch: start runner/template runner
     Ctrl-->>Tab: started/status result
+    User->>Tab: Pause / Resume / Stop from terminal command bar
+    Tab->>Ctrl: pause_script() / resume_script() / stop_script()
     Tab->>Main: status and save settings
 ```
 
 Rules:
 
 - Command parsing/running belongs to `batch.py` and controller code.
+- A terminal may have only one active command-file run. Starting another run while one is active is rejected.
+- Any disconnect pauses the active command-file run. Reconnect does not resume automatically; the user must click Resume after the endpoint is connected.
+- Command-file pause/resume is separate from RX-output pause/resume, which only buffers displayed RX events.
 - Parameter review dialog is UI-owned in `ui/dialogs/command_file_parameters.py`.
 - Connected terminal target menus are coordinated by `ui/command_file_targets.py`.
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .batch import (
+    BatchRunSnapshot,
     BatchRunner,
     find_batch_parameters,
     parse_batch_script,
@@ -31,6 +32,7 @@ class ScriptRunResult:
     started: bool
     status_text: str = ""
     empty: bool = False
+    busy: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +234,13 @@ class TerminalSessionController:
         parameter_prompt: ParameterPrompt,
         set_last_script_path: Callable[[Path], None],
     ) -> ScriptRunResult:
+        snapshot = self.batch_runner.snapshot()
+        if snapshot.is_running or snapshot.is_stopping:
+            return ScriptRunResult(
+                started=False,
+                status_text="A command file is already running. Stop it before starting another.",
+                busy=True,
+            )
         if not script_text.strip():
             return ScriptRunResult(started=False, empty=True)
 
@@ -271,6 +280,15 @@ class TerminalSessionController:
 
     def stop_script(self) -> None:
         self.batch_runner.stop()
+
+    def pause_script(self) -> bool:
+        return self.batch_runner.pause()
+
+    def resume_script(self) -> bool:
+        return self.batch_runner.resume()
+
+    def script_snapshot(self) -> BatchRunSnapshot:
+        return self.batch_runner.snapshot()
 
     def start_logging(self, path: str | Path) -> None:
         self.logger.open(path)

@@ -8,6 +8,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
 
 from ComPort_Zone import app as app_module
+from ComPort_Zone.batch import BatchRunSnapshot
 from ComPort_Zone.lan_core import LanClient
 from ComPort_Zone.models import (
     AppSettings,
@@ -18,7 +19,7 @@ from ComPort_Zone.models import (
     SerialProfile,
     TerminalSessionState,
 )
-from ComPort_Zone.serial_core import SerialClient
+from ComPort_Zone.serial_core import SerialClient, SerialEvent
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
 from ComPort_Zone.ui import main_window as main_window_module
@@ -662,6 +663,82 @@ class AppSessionTests(unittest.TestCase):
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
             app_module.MainWindow.prompt_session_settings = old_prompt_session
             main_window_module.TerminalSessionWidget.open_connection_settings = old_open_settings
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_terminal_command_file_controls_follow_runner_state(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_command_file_controls.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+
+        class FakePort:
+            is_open = True
+
+            def close(self) -> None:
+                self.is_open = False
+
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.serial_client._serial = FakePort()
+            session._update_connection_ui(True)
+
+            self.assertTrue(session.script_run_button.isEnabled())
+            self.assertTrue(session.script_pause_button.isHidden())
+            self.assertTrue(session.script_resume_button.isHidden())
+            self.assertTrue(session.script_stop_button.isHidden())
+            self.assertEqual(session.script_status_label.text(), "File idle")
+
+            session.toggle_pause()
+            self.assertEqual(session.pause_label.text(), "RX paused")
+            session._handle_event(SerialEvent(kind="rx", message="OK", raw=b"OK"))
+            self.assertEqual(session.pause_label.text(), "RX paused (1)")
+            session.toggle_pause()
+            self.assertEqual(session.pause_label.text(), "")
+
+            session.controller.script_snapshot = lambda: BatchRunSnapshot(is_running=True)  # type: ignore[method-assign]
+            session._refresh_script_controls()
+            self.assertFalse(session.script_run_button.isEnabled())
+            self.assertFalse(session.script_pause_button.isHidden())
+            self.assertTrue(session.script_pause_button.isEnabled())
+            self.assertTrue(session.script_resume_button.isHidden())
+            self.assertFalse(session.script_stop_button.isHidden())
+            self.assertEqual(session.script_status_label.text(), "File running")
+
+            session.controller.script_snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
+                is_running=True,
+                is_paused=True,
+                pause_reason="connection",
+                can_resume=False,
+            )
+            session._refresh_script_controls()
+            self.assertTrue(session.script_pause_button.isHidden())
+            self.assertFalse(session.script_resume_button.isHidden())
+            self.assertFalse(session.script_resume_button.isEnabled())
+            self.assertIn("Reconnect", session.script_status_label.toolTip())
+
+            session.controller.script_snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
+                is_running=True,
+                is_paused=True,
+                pause_reason="connection",
+                can_resume=True,
+            )
+            session._refresh_script_controls()
+            self.assertTrue(session.script_resume_button.isEnabled())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
             if window is not None:
                 for active_session in window.iter_sessions():
                     active_session.shutdown()
@@ -1719,10 +1796,11 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Connect / Disconnect", titles)
             self.assertIn("Connection Settings", titles)
             self.assertIn("Run Command File", titles)
+            self.assertIn("Pause / Resume Command File", titles)
             self.assertIn("New Command File", titles)
             self.assertIn("Open Command File Editor", titles)
             self.assertIn("Stop Command File", titles)
-            self.assertIn("Send Selected Quick File", titles)
+            self.assertIn("Run Selected Quick File", titles)
             self.assertIn("Edit Selected Quick File", titles)
             self.assertIn("Add Quick File", titles)
             self.assertIn("Clear Terminal", titles)
@@ -1866,6 +1944,14 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Open Command File Editor", command_file_titles)
             self.assertIn("Run in Terminal", command_file_titles)
             self.assertIn("Run Command File", command_file_titles)
+            self.assertIn("Pause / Resume Command File", command_file_titles)
+            self.assertIn("Stop Command File", command_file_titles)
+            stop_file_actions = [
+                action
+                for action in window.findChildren(QAction)
+                if action.text() == "Stop Command File"
+            ]
+            self.assertTrue(any(action.shortcut().toString() == "Ctrl+." for action in stop_file_actions))
 
             quick_command_titles = [action.text() for action in window.quick_commands_menu.actions()]
             self.assertIn("Save Current Input", quick_command_titles)
@@ -2163,6 +2249,8 @@ class AppSessionTests(unittest.TestCase):
 
             session.quick_file_list.setCurrentRow(0)
             menu = session.build_quick_file_context_menu(session.selected_quick_file_id())
+            self.assertIn("Run", [action.text() for action in menu.actions()])
+            self.assertNotIn("Send", [action.text() for action in menu.actions()])
             self.assertIn("Show in Explorer", [action.text() for action in menu.actions()])
 
             session.run_selected_quick_file()
