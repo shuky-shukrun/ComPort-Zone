@@ -7,6 +7,7 @@ from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QVBoxLayout, QWidget
 
 from .tab_workspace import TerminalTabWidget
+from .tokens import SPLITTER_HANDLE
 
 
 TAB_MIME_TYPE = "application/x-comport-zone-tab"
@@ -32,7 +33,7 @@ class SplitWorkspaceWidget(QWidget):
         self.setAcceptDrops(True)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setHandleWidth(4)
+        self.splitter.setHandleWidth(SPLITTER_HANDLE)
         self._panes: list[TerminalTabWidget] = []
         self._active_pane: TerminalTabWidget | None = None
         self._drag_start: dict[TerminalTabWidget, QPoint] = {}

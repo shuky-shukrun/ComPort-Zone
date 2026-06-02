@@ -5,6 +5,7 @@ import re
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 
 from .command_editor_core import BATCH_KEYWORDS, CommandEditorSources
+from .themes import VS_CODE_DARK, ThemePalette
 
 
 class CommandFileHighlighter(QSyntaxHighlighter):
@@ -13,15 +14,21 @@ class CommandFileHighlighter(QSyntaxHighlighter):
         self.sources = sources
         self.warn_unknown = True
         self.keyword_format = QTextCharFormat()
-        self.keyword_format.setForeground(QColor("#4FC1FF"))
         self.keyword_format.setFontWeight(QFont.Weight.Bold)
         self.comment_format = QTextCharFormat()
-        self.comment_format.setForeground(QColor("#6A9955"))
         self.parameter_format = QTextCharFormat()
-        self.parameter_format.setForeground(QColor("#DCDCAA"))
         self.issue_format = QTextCharFormat()
-        self.issue_format.setUnderlineColor(QColor("#F14C4C"))
         self.issue_format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
+        # Seed from the default palette; the editor calls apply_theme on theme change.
+        self.apply_theme(VS_CODE_DARK)
+
+    def apply_theme(self, theme: ThemePalette) -> None:
+        """Recolor syntax formats from the active palette (derived from its tokens)."""
+        self.keyword_format.setForeground(QColor(theme.tx))
+        self.comment_format.setForeground(QColor(theme.rx))
+        self.parameter_format.setForeground(QColor(theme.status))
+        self.issue_format.setUnderlineColor(QColor(theme.error))
+        self.rehighlight()
 
     def set_warn_unknown(self, enabled: bool) -> None:
         self.warn_unknown = enabled

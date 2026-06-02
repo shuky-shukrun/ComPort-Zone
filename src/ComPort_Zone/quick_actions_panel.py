@@ -4,7 +4,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import Property, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -24,8 +25,11 @@ from PySide6.QtWidgets import (
 from .models import QuickCommand, QuickFile
 from .icons import set_button_icon
 from .quick_actions import quick_file_display_text, quick_group_name
+from .themes import VS_CODE_DARK
 
 QUICK_ACTION_ITEM_HEIGHT = 32
+QUICK_COMMAND_EMPTY_HINT = "No quick commands yet — click “Add Command” to create one."
+QUICK_FILE_EMPTY_HINT = "No quick files yet — click “Add File” to add one."
 
 
 def short_list_label(text: str, limit: int | None = None) -> str:
@@ -33,6 +37,54 @@ def short_list_label(text: str, limit: int | None = None) -> str:
     if limit is None or len(text) <= limit:
         return text
     return f"{text[: limit - 3]}..."
+
+
+class EmptyHintListWidget(QListWidget):
+    """A ``QListWidget`` that paints a centered, muted hint while it has no rows.
+
+    The hint is drawn straight onto the viewport rather than inserted as a
+    sentinel item, so row-reading helpers such as :func:`item_ids_in_order`
+    keep returning only genuine entries when the list is empty.
+    """
+
+    def __init__(
+        self,
+        *,
+        placeholder_text: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._placeholder_text = placeholder_text
+        self._placeholder_color = QColor(VS_CODE_DARK.muted)
+
+    def placeholderText(self) -> str:
+        return self._placeholder_text
+
+    def _placeholder_color_value(self) -> QColor:
+        return QColor(self._placeholder_color)
+
+    def _set_placeholder_color(self, color: QColor) -> None:
+        self._placeholder_color = QColor(color)
+        if self.count() == 0:
+            self.viewport().update()
+
+    # Exposed to QSS as ``qproperty-placeholderColor`` so the hint tracks the
+    # active theme's muted color whenever the stylesheet is reapplied.
+    placeholderColor = Property(QColor, _placeholder_color_value, _set_placeholder_color)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if self.count() != 0 or not self._placeholder_text:
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(self._placeholder_color)
+        flags = int(Qt.AlignmentFlag.AlignCenter.value | Qt.TextFlag.TextWordWrap.value)
+        painter.drawText(
+            self.viewport().rect().adjusted(16, 0, -16, 0),
+            flags,
+            self._placeholder_text,
+        )
+        painter.end()
 
 
 def create_quick_command_list(
@@ -43,7 +95,7 @@ def create_quick_command_list(
     context_menu_requested: Callable | None = None,
     drag_drop: bool = False,
 ) -> QListWidget:
-    quick_list = QListWidget(parent)
+    quick_list = EmptyHintListWidget(placeholder_text=QUICK_COMMAND_EMPTY_HINT, parent=parent)
     quick_list.setObjectName("quickCommandList")
     configure_quick_list(
         quick_list,
@@ -63,7 +115,7 @@ def create_quick_file_list(
     context_menu_requested: Callable | None = None,
     drag_drop: bool = False,
 ) -> QListWidget:
-    quick_list = QListWidget(parent)
+    quick_list = EmptyHintListWidget(placeholder_text=QUICK_FILE_EMPTY_HINT, parent=parent)
     quick_list.setObjectName("quickFileList")
     configure_quick_list(
         quick_list,

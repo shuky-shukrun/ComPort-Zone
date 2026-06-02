@@ -6,6 +6,8 @@ from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTextEdit, QWidget
 
+from .themes import VS_CODE_DARK
+
 
 TERMINAL_COMPLETION_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:*?.-")
 TERMINAL_COMPLETION_NAVIGATION_KEYS = {
@@ -75,9 +77,9 @@ class IntegratedTerminalEdit(QTextEdit):
         self._completer = None
         self._prompt_start = 0
         self._draft_start = 0
-        self._prompt_color = "#4fc1ff"
-        self._draft_color = "#4fc1ff"
-        self._transcript_color = "#d4d4d4"
+        self._prompt_color = VS_CODE_DARK.tx
+        self._draft_color = VS_CODE_DARK.tx
+        self._transcript_color = VS_CODE_DARK.text
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.setAcceptRichText(False)
         self.setUndoRedoEnabled(False)

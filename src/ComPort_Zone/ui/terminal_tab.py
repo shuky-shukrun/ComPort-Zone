@@ -56,6 +56,7 @@ from ..transports import SerialTransportAdapter
 from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
+from .tokens import DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
 
 DRAWER_COLLAPSED_WIDTH = 48
 
@@ -195,7 +196,7 @@ class TerminalSessionWidget(QWidget):
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setHandleWidth(3)
+        self.splitter.setHandleWidth(SPLITTER_HANDLE)
         self.splitter.splitterMoved.connect(self._drawer_resized)
 
         self.drawer = self._build_quick_actions_sidebar()
@@ -220,12 +221,16 @@ class TerminalSessionWidget(QWidget):
         self.search_input.returnPressed.connect(self.find_next)
         prev_button = QPushButton("Prev", self.search_bar)
         set_button_icon(prev_button, QStyle.StandardPixmap.SP_ArrowBack)
+        prev_button.setToolTip("Previous match")
         prev_button.clicked.connect(self.find_previous)
         next_button = QPushButton("Next", self.search_bar)
         set_button_icon(next_button, QStyle.StandardPixmap.SP_ArrowForward)
+        next_button.setToolTip("Next match (Enter)")
         next_button.clicked.connect(self.find_next)
         close_search = QPushButton("", self.search_bar)
         set_button_icon(close_search, QStyle.StandardPixmap.SP_DialogCloseButton)
+        close_search.setToolTip("Close search (Esc)")
+        close_search.setAccessibleName("Close search")
         close_search.clicked.connect(self.hide_search)
         self.search_count = QLabel("0", self.search_bar)
         search_layout.addWidget(self.search_input, 1)
@@ -428,8 +433,8 @@ class TerminalSessionWidget(QWidget):
             self.splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(700, self.width() - DRAWER_COLLAPSED_WIDTH)])
             return
         drawer_width = max(220, min(width, 520))
-        self.drawer.setMinimumWidth(220)
-        self.drawer.setMaximumWidth(520)
+        self.drawer.setMinimumWidth(DRAWER_MIN_W)
+        self.drawer.setMaximumWidth(DRAWER_MAX_W)
         self.splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
 
     def set_workspace_drawer_visible(self, visible: bool) -> None:
@@ -1430,7 +1435,9 @@ class TerminalSessionWidget(QWidget):
         self.terminal_view.find(self.search_input.text(), backward=backward)
 
     def _refresh_search_highlights(self, text: str) -> None:
-        self.terminal_view.refresh_search_highlights(text, self.host.theme.search_highlight)
+        self.terminal_view.refresh_search_highlights(
+            text, self.host.theme.search_highlight, self.host.theme.text
+        )
 
     def _navigate_history(self, direction: int) -> None:
         text = self.history_store.navigate(direction, self.command_input.text())

@@ -64,7 +64,8 @@ from .quick_actions_panel import (
     selected_item_id,
 )
 from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
-from .themes import ThemePalette
+from .themes import VS_CODE_DARK, ThemePalette
+from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
 from .widgets import ChevronComboBox
 
 COMPLETION_NAVIGATION_KEYS = {
@@ -141,12 +142,14 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.find_callback: Callable[[], None] | None = None
         self.replace_callback: Callable[[], None] | None = None
         self.search_extra_selections: list[QTextEdit.ExtraSelection] = []
-        self.line_number_background = QColor("#181818")
-        self.line_number_foreground = QColor("#858585")
-        self.current_line_background = QColor("#202020")
-        self.search_match_background = QColor("#264F78")
-        self.search_current_background = QColor("#515C6A")
-        self.search_match_foreground = QColor("#FFFFFF")
+        # Seed the gutter/search colors from the default palette so even the
+        # pre-theme first frame is on-theme; apply_theme_palette overrides on load.
+        self.line_number_background = QColor(VS_CODE_DARK.surface_alt)
+        self.line_number_foreground = QColor(VS_CODE_DARK.muted)
+        self.current_line_background = QColor(VS_CODE_DARK.chip)
+        self.search_match_background = QColor(VS_CODE_DARK.search_highlight)
+        self.search_current_background = QColor(VS_CODE_DARK.accent_soft)
+        self.search_match_foreground = QColor(VS_CODE_DARK.text)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
@@ -569,7 +572,7 @@ class CommandFileEditorDialog(QDialog):
             root_layout.setSpacing(0)
             self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal, self)
             self.workspace_splitter.setChildrenCollapsible(False)
-            self.workspace_splitter.setHandleWidth(3)
+            self.workspace_splitter.setHandleWidth(SPLITTER_HANDLE)
             self.workspace_splitter.splitterMoved.connect(self._workspace_drawer_resized)
             self.workspace_splitter.addWidget(self._build_workspace_side_panel())
             self.workspace_splitter.addWidget(self.editor_column)
@@ -615,8 +618,8 @@ class CommandFileEditorDialog(QDialog):
                     self.workspace_splitter.setSizes([rail_width, max(700, self.width() - rail_width)])
                 return
             drawer_width = max(220, min(width, 520))
-            self.workspace_drawer.setMinimumWidth(220)
-            self.workspace_drawer.setMaximumWidth(520)
+            self.workspace_drawer.setMinimumWidth(DRAWER_MIN_W)
+            self.workspace_drawer.setMaximumWidth(DRAWER_MAX_W)
             if hasattr(self, "workspace_splitter"):
                 self.workspace_splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
         finally:
@@ -1065,13 +1068,13 @@ class CommandFileEditorDialog(QDialog):
         font_label.setToolTip("Editor font size")
         font_down = QPushButton("-", parent)
         font_down.setObjectName("editorFontSizeButton")
-        font_down.setFixedSize(QSize(38, 34))
+        font_down.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         font_down.setAccessibleName("Decrease editor font size")
         font_down.setToolTip("Decrease editor font size")
         font_down.clicked.connect(lambda: self.font_change_callback(-1) if self.font_change_callback else None)
         font_up = QPushButton("+", parent)
         font_up.setObjectName("editorFontSizeButton")
-        font_up.setFixedSize(QSize(38, 34))
+        font_up.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         font_up.setAccessibleName("Increase editor font size")
         font_up.setToolTip("Increase editor font size")
         font_up.clicked.connect(lambda: self.font_change_callback(1) if self.font_change_callback else None)
@@ -1166,6 +1169,7 @@ class CommandFileEditorDialog(QDialog):
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.editor.apply_theme_palette(theme)
+        self.highlighter.apply_theme(theme)
 
     def restore_text(self, text: str, *, dirty: bool) -> None:
         self.editor.setPlainText(text)

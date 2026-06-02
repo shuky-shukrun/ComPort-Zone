@@ -22,6 +22,8 @@ class ThemePalette:
     rx: str
     error: str
     status: str
+    terminal_bg: str
+    on_accent: str
 
 
 VS_CODE_DARK = ThemePalette(
@@ -42,6 +44,8 @@ VS_CODE_DARK = ThemePalette(
     rx="#89d185",
     error="#f14c4c",
     status="#d7ba7d",
+    terminal_bg="#0c0c0c",
+    on_accent="#ffffff",
 )
 
 WINDOWS_TERMINAL = ThemePalette(
@@ -62,6 +66,8 @@ WINDOWS_TERMINAL = ThemePalette(
     rx="#b5cea8",
     error="#f44747",
     status="#dcdcaa",
+    terminal_bg="#0c0c0c",
+    on_accent="#04222e",
 )
 
 THEMES = {
@@ -87,6 +93,8 @@ THEMES = {
         rx="#0f8a4b",
         error="#c2410c",
         status="#9a6700",
+        terminal_bg="#ffffff",
+        on_accent="#ffffff",
     ),
     "Scope Amber": ThemePalette(
         name="Scope Amber",
@@ -106,5 +114,7 @@ THEMES = {
         rx="#95d5b2",
         error="#ff7b72",
         status="#ffb703",
+        terminal_bg="#140d07",
+        on_accent="#2a1a08",
     ),
 }

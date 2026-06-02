@@ -5,6 +5,9 @@ from PySide6.QtWidgets import QApplication, QPushButton, QStyle, QWidget
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.quick_actions_panel import (
     QUICK_ACTION_ITEM_HEIGHT,
+    QUICK_COMMAND_EMPTY_HINT,
+    QUICK_FILE_EMPTY_HINT,
+    EmptyHintListWidget,
     QuickActionsDrawer,
     QuickActionsDrawerPage,
     QuickActionsPanel,
@@ -64,6 +67,33 @@ class QuickActionsPanelTests(unittest.TestCase):
         finally:
             file_panel.deleteLater()
             panel.deleteLater()
+            parent.deleteLater()
+
+    def test_empty_quick_lists_expose_hint_without_adding_rows(self) -> None:
+        parent = QWidget()
+        command_list = create_quick_command_list(parent, tooltip="Commands")
+        file_list = create_quick_file_list(parent, tooltip="Files")
+        try:
+            # The hint is painted on the viewport, not inserted as a sentinel
+            # item, so an empty list still reports zero rows and the id helpers
+            # stay clean.
+            self.assertIsInstance(command_list, EmptyHintListWidget)
+            self.assertIsInstance(file_list, EmptyHintListWidget)
+            self.assertEqual(command_list.count(), 0)
+            self.assertEqual(file_list.count(), 0)
+            self.assertEqual(item_ids_in_order(command_list), [])
+            self.assertEqual(item_ids_in_order(file_list), [])
+            self.assertEqual(command_list.placeholderText(), QUICK_COMMAND_EMPTY_HINT)
+            self.assertEqual(file_list.placeholderText(), QUICK_FILE_EMPTY_HINT)
+
+            # Real rows are the only rows: populating yields exactly the ids fed in.
+            populate_quick_command_list(
+                command_list,
+                [QuickCommand(id="cmd-1", label="Identity", command="*IDN?", group="General")],
+            )
+            self.assertEqual(command_list.count(), 1)
+            self.assertEqual(item_ids_in_order(command_list), ["cmd-1"])
+        finally:
             parent.deleteLater()
 
     def test_drawer_switches_between_quick_action_pages(self) -> None:

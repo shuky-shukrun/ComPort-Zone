@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QSplashScreen
 
 from . import __version__
@@ -11,6 +11,8 @@ from . import quick_actions as _quick_actions
 from .models import LanProfile, SerialProfile
 from .serial_core import SerialEvent
 from .storage import default_config_path
+from .themes import VS_CODE_DARK
+from .ui.tokens import RADIUS_LG, SPACE_2XL
 from .ui.dialogs import (
     AppSettingsTransferDialog,
     BatchParameterPromptBridge,
@@ -91,42 +93,56 @@ def close_boot_splash(boot_splash) -> None:
 
 
 def create_startup_splash(message: str) -> QSplashScreen:
+    # Settings (and the chosen theme) are not loaded yet, so derive the splash
+    # chrome from the default palette and the shared design tokens.
+    theme = VS_CODE_DARK
     width = 520
     height = 320
     pixmap = QPixmap(width, height)
-    pixmap.fill(QColor("#111820"))
+    pixmap.fill(QColor(theme.window))
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#151c24"))
-    painter.drawRoundedRect(18, 18, width - 36, height - 36, 28, 28)
-    painter.setBrush(QColor("#1f2933"))
-    painter.drawRoundedRect(32, 32, width - 64, height - 64, 22, 22)
+
+    card = SPACE_2XL
+    painter.setPen(QPen(QColor(theme.border), 1))
+    painter.setBrush(QColor(theme.surface))
+    painter.drawRoundedRect(
+        card, card, width - 2 * card, height - 2 * card, RADIUS_LG * 2, RADIUS_LG * 2
+    )
 
     logo = QPixmap(str(APP_ICON_PATH))
     if not logo.isNull():
         logo = logo.scaled(
-            QSize(118, 118),
+            QSize(96, 96),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        painter.drawPixmap(int((width - logo.width()) / 2), 58, logo)
+        painter.drawPixmap(int((width - logo.width()) / 2), 52, logo)
 
     title_font = QFont(pick_ui_font())
     title_font.setPointSize(22)
     title_font.setBold(True)
     painter.setFont(title_font)
-    painter.setPen(QColor("#f4f7fb"))
-    painter.drawText(0, 190, width, 36, Qt.AlignmentFlag.AlignCenter, "ComPort Zone")
+    painter.setPen(QColor(theme.text))
+    painter.drawText(0, 166, width, 36, Qt.AlignmentFlag.AlignCenter, "ComPort Zone")
 
-    body_font = QFont(pick_ui_font())
-    body_font.setPointSize(10)
-    painter.setFont(body_font)
-    painter.setPen(QColor("#9fb0c2"))
-    painter.drawText(0, 232, width, 26, Qt.AlignmentFlag.AlignCenter, message)
-    painter.setPen(QColor("#4fd1c5"))
-    painter.drawLine(210, 274, 310, 274)
+    tagline_font = QFont(pick_ui_font())
+    tagline_font.setPointSize(10)
+    painter.setFont(tagline_font)
+    painter.setPen(QColor(theme.muted))
+    painter.drawText(
+        0, 204, width, 22, Qt.AlignmentFlag.AlignCenter,
+        "COM-port terminal for physical devices",
+    )
+    painter.setPen(QColor(theme.muted))
+    painter.drawText(0, 244, width, 22, Qt.AlignmentFlag.AlignCenter, message)
+
+    accent_pen = QPen(QColor(theme.accent), 3)
+    accent_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(accent_pen)
+    center_x = width // 2
+    painter.drawLine(center_x - 60, 280, center_x + 60, 280)
     painter.end()
 
     splash = QSplashScreen(pixmap)
@@ -138,6 +154,12 @@ def create_startup_splash(message: str) -> QSplashScreen:
 
 def run() -> int:
     set_windows_app_user_model_id()
+    if QApplication.instance() is None:
+        # Keep fractional display scales (125%/150%) intact so device-pixel icon
+        # rendering stays crisp instead of being rounded to the nearest integer.
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("ComPort Zone")
     app.setApplicationVersion(__version__)
@@ -149,14 +171,14 @@ def run() -> int:
     splash.showMessage(
         "Restoring sessions and settings...",
         Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
-        QColor("#9fb0c2"),
+        QColor(VS_CODE_DARK.muted),
     )
     app.processEvents()
     window = MainWindow(defer_startup_actions=True)
     splash.showMessage(
         "Opening terminal...",
         Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
-        QColor("#9fb0c2"),
+        QColor(VS_CODE_DARK.muted),
     )
     window.show()
     splash.finish(window)

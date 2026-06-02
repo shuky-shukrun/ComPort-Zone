@@ -31,7 +31,7 @@ from ..command_editor import CommandEditorQuickActionCallbacks, CommandEditorSou
 from ..command_registry import CommandPaletteEntry, CommandRegistry
 from ..command_run_targets import CommandRunRequest, CommandRunTarget
 from ..history import HistoryStore
-from ..icons import standard_icon
+from ..icons import retint_icons, set_icon_color, standard_icon
 from ..models import (
     AppSettings,
     CommandFileTabState,
@@ -65,6 +65,18 @@ from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui
 from .main_window_menus import MainWindowMenuBuilder
 from .split_workspace import SplitWorkspaceWidget
 from .tab_workspace import TabWorkspaceController
+from .tokens import (
+    FONT_BTN_H,
+    FONT_BTN_W,
+    RADIUS_LG,
+    RADIUS_MD,
+    RADIUS_SM,
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XL,
+    TAB_MIN_W,
+)
 from .tab_context_menus import TabContextMenuBuilder
 from .terminal_tab import TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
@@ -228,13 +240,13 @@ class MainWindow(QMainWindow):
         self.font_status_label.setToolTip("Terminal and editor font size")
         self.font_decrease_button = QPushButton("-", self)
         self.font_decrease_button.setObjectName("statusFontSizeButton")
-        self.font_decrease_button.setFixedSize(QSize(34, 28))
+        self.font_decrease_button.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         self.font_decrease_button.setToolTip("Decrease terminal and editor font size")
         self.font_decrease_button.setAccessibleName("Decrease terminal and editor font size")
         self.font_decrease_button.clicked.connect(lambda: self.change_font_size(-1))
         self.font_increase_button = QPushButton("+", self)
         self.font_increase_button.setObjectName("statusFontSizeButton")
-        self.font_increase_button.setFixedSize(QSize(34, 28))
+        self.font_increase_button.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         self.font_increase_button.setToolTip("Increase terminal and editor font size")
         self.font_increase_button.setAccessibleName("Increase terminal and editor font size")
         self.font_increase_button.clicked.connect(lambda: self.change_font_size(1))
@@ -1401,11 +1413,15 @@ class MainWindow(QMainWindow):
     def apply_theme(self, name: str, *, save: bool = True) -> None:
         self.theme = THEMES.get(name, THEMES["VS Code Dark"])
         self.settings.theme = self.theme.name
+        set_icon_color(self.theme.text)
         self.setStyleSheet(self._stylesheet(self.theme))
         for editor in self.iter_command_file_editors():
             editor.apply_theme_palette(self.theme)
         for session in self.iter_sessions():
             session.apply_theme_palette()
+        # Qt caches QIcon pixmaps, so persistent buttons and menu icons do not
+        # recolor on their own — re-tint them after the new color is in effect.
+        retint_icons(self)
         for theme_name, action in getattr(self, "theme_actions", {}).items():
             action.setChecked(theme_name == self.theme.name)
         self.update_tab_titles()
@@ -1414,7 +1430,7 @@ class MainWindow(QMainWindow):
             self.save_settings()
 
     def _stylesheet(self, theme: ThemePalette) -> str:
-        terminal_background = "#0c0c0c" if theme.name in {"VS Code Dark", "Windows Terminal"} else theme.field
+        terminal_background = theme.terminal_bg
         return f"""
         QMainWindow, QWidget {{
             background: {theme.window};
@@ -1427,20 +1443,20 @@ class MainWindow(QMainWindow):
             padding-left: 4px;
         }}
         QMenuBar::item {{
-            padding: 6px 11px;
-            border-radius: 6px;
+            padding: {SPACE_MD}px {SPACE_XL}px;
+            border-radius: {RADIUS_SM}px;
         }}
         QMenuBar::item:selected, QMenu {{
             background: {theme.surface_alt};
         }}
         QMenu {{
             border: 1px solid {theme.border};
-            border-radius: 8px;
+            border-radius: {RADIUS_MD}px;
             padding: 6px;
         }}
         QMenu::item {{
             padding: 7px 30px 7px 24px;
-            border-radius: 6px;
+            border-radius: {RADIUS_SM}px;
         }}
         QMenu::item:selected {{
             background: {theme.accent_soft};
@@ -1457,11 +1473,11 @@ class MainWindow(QMainWindow):
         QTabBar::tab {{
             background: {theme.surface_alt};
             color: {theme.text};
-            padding: 8px 8px 8px 16px;
-            min-width: 130px;
+            padding: {SPACE_LG}px {SPACE_XL}px;
+            min-width: {TAB_MIN_W}px;
             border: 1px solid transparent;
-            border-top-left-radius: 9px;
-            border-top-right-radius: 9px;
+            border-top-left-radius: {RADIUS_MD}px;
+            border-top-right-radius: {RADIUS_MD}px;
             margin: 5px 2px 0 2px;
         }}
         QTabBar::tab:selected {{
@@ -1480,7 +1496,7 @@ class MainWindow(QMainWindow):
             background: {theme.surface_alt};
             color: {theme.text};
             border: 1px solid {theme.border};
-            border-radius: 8px;
+            border-radius: {RADIUS_MD}px;
             font-size: 13pt;
             padding: 0;
         }}
@@ -1492,7 +1508,7 @@ class MainWindow(QMainWindow):
             background: transparent;
             color: {theme.muted};
             border: 1px solid transparent;
-            border-radius: 7px;
+            border-radius: {RADIUS_SM}px;
             padding: 0;
             margin-right: 2px;
         }}
@@ -1516,7 +1532,7 @@ class MainWindow(QMainWindow):
             background: transparent;
             color: {theme.text};
             border: 1px solid transparent;
-            border-radius: 10px;
+            border-radius: {RADIUS_LG}px;
         }}
         QToolButton#railButton:hover {{
             background: {theme.surface};
@@ -1565,84 +1581,76 @@ class MainWindow(QMainWindow):
             background: {theme.window};
             border-top: 1px solid {theme.border};
         }}
-        QLabel#terminalConnectionStatus {{
+        QLabel#connectionStatus, QLabel#terminalConnectionStatus {{
             background: {theme.chip};
             color: {theme.text};
             border: 1px solid {theme.border};
-            border-radius: 7px;
-            padding: 3px 8px;
+            border-radius: {RADIUS_SM}px;
+            padding: {SPACE_SM}px {SPACE_LG}px;
         }}
+        QLabel#connectionStatus[state="connected"],
         QLabel#terminalConnectionStatus[state="connected"] {{
             color: {theme.rx};
             border-color: {theme.rx};
         }}
+        QLabel#connectionStatus[state="retrying"],
         QLabel#terminalConnectionStatus[state="retrying"] {{
             color: {theme.status};
             border-color: {theme.status};
         }}
+        QLabel#connectionStatus[state="missing"],
         QLabel#terminalConnectionStatus[state="missing"] {{
             color: {theme.error};
             border-color: {theme.error};
         }}
+        QLabel#connectionStatus[state="no-port"],
         QLabel#terminalConnectionStatus[state="no-port"] {{
             color: {theme.muted};
             border-color: {theme.border};
         }}
-        QPushButton#terminalConnectionActionButton {{
-            min-width: 84px;
-            padding: 3px 9px;
-            border-radius: 7px;
+        QPushButton#statusActionButton, QPushButton#terminalConnectionActionButton {{
+            min-width: 92px;
+            padding: {SPACE_SM}px {SPACE_XL}px;
+            border-radius: {RADIUS_SM}px;
             background: {theme.surface_alt};
         }}
+        QPushButton#statusActionButton[role="connected"],
         QPushButton#terminalConnectionActionButton[role="connected"] {{
             color: {theme.rx};
             border-color: {theme.rx};
         }}
-        QPushButton#terminalConnectionActionButton[role="retrying"],
+        QPushButton#statusActionButton[role="retrying"],
+        QPushButton#terminalConnectionActionButton[role="retrying"] {{
+            color: {theme.status};
+            border-color: {theme.status};
+        }}
+        QPushButton#statusActionButton[role="missing"],
         QPushButton#terminalConnectionActionButton[role="missing"] {{
             color: {theme.error};
             border-color: {theme.error};
         }}
+        QPushButton#statusActionButton[role="no-port"],
         QPushButton#terminalConnectionActionButton[role="no-port"] {{
             color: {theme.muted};
+        }}
+        QPushButton#statusActionButton:hover,
+        QPushButton#terminalConnectionActionButton:hover {{
+            border-color: {theme.accent};
         }}
         QLabel#splitDropPreview {{
             background: {theme.accent_soft};
             color: {theme.text};
             border: 2px dashed {theme.accent};
-            border-radius: 8px;
+            border-radius: {RADIUS_MD}px;
             font-weight: 700;
             padding: 12px;
-        }}
-        QLabel#connectionStatus {{
-            background: {theme.chip};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 7px;
-            padding: 3px 9px;
-        }}
-        QLabel#connectionStatus[state="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QLabel#connectionStatus[state="retrying"] {{
-            color: {theme.status};
-            border-color: {theme.status};
-        }}
-        QLabel#connectionStatus[state="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QLabel#connectionStatus[state="no-port"] {{
-            color: {theme.muted};
-            border-color: {theme.border};
         }}
         QLineEdit, QComboBox, QListWidget {{
             background: {theme.field};
             color: {theme.text};
             border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 7px 9px;
+            border-radius: {RADIUS_MD}px;
+            padding: {SPACE_LG}px {SPACE_LG}px;
             selection-background-color: {theme.search_highlight};
         }}
         QPlainTextEdit#commandFileEditor {{
@@ -1666,7 +1674,7 @@ class MainWindow(QMainWindow):
             outline: none;
         }}
         QListWidget::item {{
-            border-radius: 7px;
+            border-radius: {RADIUS_SM}px;
             padding: 7px 8px;
             margin: 2px;
         }}
@@ -1680,10 +1688,11 @@ class MainWindow(QMainWindow):
         QListWidget#quickCommandList,
         QListWidget#quickFileList {{
             padding: 4px;
+            qproperty-placeholderColor: {theme.muted};
         }}
         QListWidget#quickCommandList::item,
         QListWidget#quickFileList::item {{
-            border-radius: 5px;
+            border-radius: {RADIUS_SM}px;
             padding: 3px 6px;
             margin: 1px 0;
         }}
@@ -1700,7 +1709,7 @@ class MainWindow(QMainWindow):
             background: {theme.surface_alt};
             color: {theme.muted};
             border: 1px solid {theme.border};
-            border-radius: 10px;
+            border-radius: {RADIUS_LG}px;
             padding: 10px;
         }}
         QDialog#commandPalette {{
@@ -1710,14 +1719,14 @@ class MainWindow(QMainWindow):
         QLineEdit#commandPaletteSearch {{
             font-size: 11pt;
             padding: 10px 12px;
-            border-radius: 10px;
+            border-radius: {RADIUS_LG}px;
         }}
         QListWidget#commandPaletteList {{
             padding: 6px;
-            border-radius: 10px;
+            border-radius: {RADIUS_LG}px;
         }}
         QListWidget#commandPaletteList::item {{
-            border-radius: 8px;
+            border-radius: {RADIUS_MD}px;
             padding: 7px 10px;
             margin: 2px;
         }}
@@ -1732,15 +1741,15 @@ class MainWindow(QMainWindow):
             width: 26px;
             border-left: 1px solid {theme.border};
             background: {theme.surface_alt};
-            border-top-right-radius: 8px;
-            border-bottom-right-radius: 8px;
+            border-top-right-radius: {RADIUS_MD}px;
+            border-bottom-right-radius: {RADIUS_MD}px;
         }}
         QPushButton {{
             background: {theme.surface_alt};
             color: {theme.text};
             border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 7px 11px;
+            border-radius: {RADIUS_MD}px;
+            padding: {SPACE_LG}px {SPACE_XL}px;
         }}
         QPushButton:hover {{
             background: {theme.surface};
@@ -1749,14 +1758,22 @@ class MainWindow(QMainWindow):
         QPushButton:pressed {{
             background: {theme.accent_soft};
         }}
+        QPushButton:focus {{
+            border-color: {theme.accent};
+        }}
+        QPushButton:disabled {{
+            color: {theme.muted};
+            border-color: {theme.border};
+            background: {theme.window_alt};
+        }}
         QPushButton[role="accent"] {{
             background: {theme.accent};
-            color: #ffffff;
+            color: {theme.on_accent};
             border-color: {theme.accent};
         }}
         QPushButton#drawerActionButton {{
             text-align: left;
-            border-radius: 9px;
+            border-radius: {RADIUS_MD}px;
             padding: 8px 10px;
         }}
         QPushButton#drawerActionButton[role="drawerPrimary"] {{
@@ -1775,8 +1792,8 @@ class MainWindow(QMainWindow):
             background: {theme.field};
             color: {theme.text};
             border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 7px 9px;
+            border-radius: {RADIUS_MD}px;
+            padding: {SPACE_LG}px {SPACE_LG}px;
         }}
         QToolButton#drawerMenuButton:hover {{
             background: {theme.surface};
@@ -1809,35 +1826,11 @@ class MainWindow(QMainWindow):
             padding: 0 2px 0 8px;
         }}
         QPushButton#statusFontSizeButton {{
-            min-width: 34px;
-            max-width: 34px;
+            min-width: {FONT_BTN_W}px;
+            max-width: {FONT_BTN_W}px;
             padding: 0;
-            border-radius: 7px;
+            border-radius: {RADIUS_SM}px;
             background: {theme.surface_alt};
-        }}
-        QPushButton#statusActionButton {{
-            min-width: 92px;
-            padding: 3px 10px;
-            border-radius: 7px;
-            background: {theme.surface_alt};
-        }}
-        QPushButton#statusActionButton[role="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QPushButton#statusActionButton[role="retrying"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QPushButton#statusActionButton[role="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QPushButton#statusActionButton[role="no-port"] {{
-            color: {theme.muted};
-        }}
-        QPushButton#statusActionButton:hover {{
-            border-color: {theme.accent};
         }}
         QLabel#versionInfo {{
             color: {theme.muted};

@@ -26,7 +26,9 @@ class TerminalView:
         self.terminal.setTextCursor(cursor)
         return self.terminal.find(query, flags)
 
-    def refresh_search_highlights(self, text: str, highlight_color: str) -> int:
+    def refresh_search_highlights(
+        self, text: str, highlight_color: str, highlight_foreground: str = "#ffffff"
+    ) -> int:
         query = text.strip()
         selections: list[QTextEdit.ExtraSelection] = []
         if query:
@@ -36,7 +38,7 @@ class TerminalView:
                 selection.cursor = cursor
                 fmt = QTextCharFormat()
                 fmt.setBackground(QColor(highlight_color))
-                fmt.setForeground(QColor("#ffffff"))
+                fmt.setForeground(QColor(highlight_foreground))
                 selection.format = fmt
                 selections.append(selection)
                 cursor = self.terminal.document().find(query, cursor)

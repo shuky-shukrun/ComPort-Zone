@@ -1,9 +1,35 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QSize, Qt
-from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QStyle
+from PySide6.QtWidgets import QAbstractButton, QApplication, QMenu, QStyle
+
+# Module-level icon tint. Icons are monochrome Tabler glyphs whose stroke color
+# must follow the active theme — otherwise the default light gray is invisible on
+# the light theme. ``MainWindow.apply_theme`` calls ``set_icon_color(theme.text)``
+# and re-tints the persistent buttons; menu/action icons rebuild on open.
+_ICON_COLOR = "#d4d4d4"
+
+
+def set_icon_color(color: str) -> None:
+    """Set the default stroke color for newly built icons (call on theme change)."""
+    global _ICON_COLOR
+    _ICON_COLOR = color
+
+
+def current_icon_color() -> str:
+    return _ICON_COLOR
+
+
+def _device_pixel_ratio() -> float:
+    """Render scale for the primary screen, or 1.0 before a QApplication exists."""
+    app = QApplication.instance()
+    if app is not None:
+        screen = app.primaryScreen()
+        if screen is not None:
+            return float(screen.devicePixelRatio())
+    return 1.0
 
 TABLER_ICON_PATHS = {
     "arrow-left": '<path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" />',
@@ -70,24 +96,85 @@ STYLE_ICON_MAP = {
 def standard_icon(
     pixmap: QStyle.StandardPixmap,
     size: int = 18,
-    color: str = "#d4d4d4",
+    color: str | None = None,
 ) -> QIcon:
     icon_name = STYLE_ICON_MAP.get(pixmap, "info-circle")
+    stroke = color if color is not None else _ICON_COLOR
     svg = f"""
-    <svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{stroke}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <path stroke="none" d="M0 0h24v24H0z" fill="none" />
         {TABLER_ICON_PATHS[icon_name]}
     </svg>
     """
-    pixmap_icon = QPixmap(size, size)
+    # Render at device-pixel resolution so glyphs stay crisp at 125%/150% scaling,
+    # then tag the logical size so layout still treats the icon as ``size`` px.
+    dpr = _device_pixel_ratio()
+    pixels = max(1, round(size * dpr))
+    pixmap_icon = QPixmap(pixels, pixels)
     pixmap_icon.fill(Qt.GlobalColor.transparent)
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
     painter = QPainter(pixmap_icon)
     renderer.render(painter)
     painter.end()
+    pixmap_icon.setDevicePixelRatio(dpr)
     return QIcon(pixmap_icon)
 
 
-def set_button_icon(button, pixmap: QStyle.StandardPixmap, size: int = 16) -> None:
-    button.setIcon(standard_icon(pixmap, size))
+class _IconSpec:
+    """Remembers how an icon was built so it can be re-tinted on theme change."""
+
+    __slots__ = ("pixmap", "size", "color")
+
+    def __init__(self, pixmap: QStyle.StandardPixmap, size: int, color: str | None) -> None:
+        self.pixmap = pixmap
+        self.size = size
+        self.color = color
+
+
+# Qt dynamic-property key under which the build spec is stashed on each widget/action.
+_ICON_SPEC_PROP = "_comportIconSpec"
+
+
+def set_button_icon(
+    button,
+    pixmap: QStyle.StandardPixmap,
+    size: int = 16,
+    color: str | None = None,
+) -> None:
+    button.setIcon(standard_icon(pixmap, size, color))
     button.setIconSize(QSize(size, size))
+    button.setProperty(_ICON_SPEC_PROP, _IconSpec(pixmap, size, color))
+
+
+def set_action_icon(
+    action,
+    pixmap: QStyle.StandardPixmap,
+    size: int = 18,
+    color: str | None = None,
+) -> None:
+    """Set a themed icon on a QAction or submenu QMenu and remember it for re-tint."""
+    action.setIcon(standard_icon(pixmap, size, color))
+    action.setProperty(_ICON_SPEC_PROP, _IconSpec(pixmap, size, color))
+
+
+def retint_icons(root) -> None:
+    """Rebuild every theme-colored icon under ``root`` with the current icon color.
+
+    Qt caches QIcon pixmaps, so persistent buttons, menu-bar actions, and submenu
+    icons do not recolor by themselves when the theme changes. We walk the object
+    tree and re-issue any icon that was built with the default tint (``color is
+    None``); state-colored icons (tab connection glyphs, run targets) keep their
+    explicit color and are refreshed by their own state logic.
+    """
+    children = (
+        *root.findChildren(QAbstractButton),
+        *root.findChildren(QAction),
+        *root.findChildren(QMenu),
+    )
+    for obj in children:
+        spec = obj.property(_ICON_SPEC_PROP)
+        if not isinstance(spec, _IconSpec) or spec.color is not None:
+            continue
+        obj.setIcon(standard_icon(spec.pixmap, spec.size, None))
+        if isinstance(obj, QAbstractButton):
+            obj.setIconSize(QSize(spec.size, spec.size))
