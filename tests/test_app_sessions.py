@@ -371,6 +371,51 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_deferred_startup_actions_prompt_before_update_check(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_deferred_startup.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=True)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_open_prompted_settings = app_module.MainWindow._open_prompted_session_settings
+            old_check_for_updates = app_module.MainWindow.check_for_updates
+            calls: list[str] = []
+            window = None
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow._open_prompted_session_settings = (
+                lambda self, session: calls.append("settings")
+            )
+            app_module.MainWindow.check_for_updates = (
+                lambda self, *, automatic=False: calls.append(f"update:{automatic}")
+            )
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                self.qt.processEvents()
+
+                self.assertEqual(calls, [])
+
+                window.run_startup_actions()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+
+                self.assertEqual(calls, ["settings", "update:True"])
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow._open_prompted_session_settings = old_open_prompted_settings
+                app_module.MainWindow.check_for_updates = old_check_for_updates
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_manual_update_check_suggests_enabling_startup_checks(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_update_check_suggest.json")
         settings_path.unlink(missing_ok=True)

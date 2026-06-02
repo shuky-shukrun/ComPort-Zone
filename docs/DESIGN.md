@@ -232,6 +232,8 @@ Notes:
 
 - `app.py` re-exports `MainWindow` for compatibility.
 - Tests may monkeypatch `ComPort_Zone.app.default_config_path`; `MainWindow.config_path_supplier` preserves this seam.
+- Normal app startup defers the first-run connection prompt and launch update check until after the startup splash has closed.
+- When that first-run connection prompt is shown, the launch update check is scheduled only after the prompt returns.
 - Restore should not prompt serial settings for restored tabs unless explicitly requested.
 - Restored connected tabs should skip auto-connect and report status when the saved COM port is not currently detected.
 

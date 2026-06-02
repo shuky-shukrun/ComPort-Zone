@@ -97,7 +97,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 
 ### Launch and Workspace Restore
 
-`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for connection settings. Restored connected serial tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected. Restored LAN tabs connect to the saved host and port directly because there is no endpoint discovery in v1.
+`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. During normal app launch, startup prompts and the automatic update check are deferred until after the main window is shown and the splash is closed; if the first-run connection settings prompt is needed, the update check waits until that prompt returns. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for connection settings. Restored connected serial tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected. Restored LAN tabs connect to the saved host and port directly because there is no endpoint discovery in v1.
 
 ### Terminal Send
 

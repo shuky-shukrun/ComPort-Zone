@@ -152,7 +152,7 @@ def run() -> int:
         QColor("#9fb0c2"),
     )
     app.processEvents()
-    window = MainWindow()
+    window = MainWindow(defer_startup_actions=True)
     splash.showMessage(
         "Opening terminal...",
         Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
@@ -160,4 +160,5 @@ def run() -> int:
     )
     window.show()
     splash.finish(window)
+    window.run_startup_actions()
     return app.exec()

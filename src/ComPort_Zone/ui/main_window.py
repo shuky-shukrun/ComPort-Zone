@@ -99,7 +99,7 @@ class ConnectionStatusLabel(QLabel):
 class MainWindow(QMainWindow):
     config_path_supplier: ClassVar[Callable[[], Path]] = staticmethod(default_config_path)
 
-    def __init__(self) -> None:
+    def __init__(self, *, defer_startup_actions: bool = False) -> None:
         super().__init__()
         self.settings_store = SettingsStore(self.config_path_supplier())
         self.settings_service = SettingsService(self.settings_store)
@@ -153,6 +153,10 @@ class MainWindow(QMainWindow):
         self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
         self._session_counter = 0
         self._loading = True
+        self._deferred_startup_actions_pending = defer_startup_actions
+        self._deferred_startup_prompt_settings = (
+            defer_startup_actions and self._should_prompt_first_session_settings()
+        )
         self.version_check_network = QNetworkAccessManager(self)
         self._version_check_reply: QNetworkReply | None = None
         self._version_check_previous_status: str | None = None
@@ -189,11 +193,11 @@ class MainWindow(QMainWindow):
         )
         self._build_menus()
         self.apply_theme(self.theme.name)
-        self.restore_sessions()
+        self.restore_sessions(prompt_first_settings=not defer_startup_actions)
         self._loading = False
         self.set_status("Ready")
-        if self.settings.check_for_updates_on_launch:
-            QTimer.singleShot(0, lambda: self.check_for_updates(automatic=True))
+        if not defer_startup_actions:
+            self._schedule_launch_update_check()
 
     def _build_ui(self) -> None:
         self.tabs = SplitWorkspaceWidget(self)
@@ -547,6 +551,27 @@ class MainWindow(QMainWindow):
             self,
             prompt_first_settings=prompt_first_settings,
         )
+
+    def _should_prompt_first_session_settings(self) -> bool:
+        return not self.settings.workspace_layout.panes and not self.settings.restored_tabs
+
+    def run_startup_actions(self) -> None:
+        if not self._deferred_startup_actions_pending:
+            return
+        self._deferred_startup_actions_pending = False
+        QTimer.singleShot(0, self._run_deferred_startup_actions)
+
+    def _run_deferred_startup_actions(self) -> None:
+        if self._deferred_startup_prompt_settings:
+            self._deferred_startup_prompt_settings = False
+            session = self.current_session()
+            if session:
+                self._open_prompted_session_settings(session)
+        self._schedule_launch_update_check()
+
+    def _schedule_launch_update_check(self) -> None:
+        if self.settings.check_for_updates_on_launch:
+            QTimer.singleShot(0, lambda: self.check_for_updates(automatic=True))
 
     def configure_workspace_layout(self, layout: WorkspaceLayoutState) -> None:
         if len(layout.panes) < 2:
