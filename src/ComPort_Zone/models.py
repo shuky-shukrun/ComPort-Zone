@@ -454,7 +454,7 @@ class AppSettings:
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
     terminal_font_family: str = ""
-    line_wrap_enabled: bool = False
+    line_wrap_enabled: bool = True
     scrollback_size: int = 10000
     receive_display_mode: str = "Text"
     drawer_collapsed: bool = True

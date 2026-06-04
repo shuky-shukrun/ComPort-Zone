@@ -18,6 +18,7 @@ TX=green / RX=blue semantics) maps directly onto the same tokens the prototype u
 
 from __future__ import annotations
 
+from ..icons import checked_checkbox_image_path
 from ..themes import ThemePalette, mix_hex, rgba
 from .tokens import (
     CONTROL_H,
@@ -78,6 +79,8 @@ def build_stylesheet(theme: ThemePalette) -> str:
     red = theme.error
     on_accent = theme.on_accent
     grad = brand_gradient(theme)
+    # A real tick for checked checkboxes (QSS-styled indicators drop the native one).
+    check_img = checked_checkbox_image_path(accent, "#ffffff", 16, RADIUS_SM)
 
     # --- precomputed blends (Qt has no color-mix) ---------------------------
     line_hover = rgba(tx, 0.05)
@@ -555,7 +558,8 @@ def build_stylesheet(theme: ThemePalette) -> str:
         width: 16px; height: 16px; border-radius: {RADIUS_SM}px;
         border: 1px solid {bd_strong}; background: {field};
     }}
-    QCheckBox::indicator:checked {{ background: {accent}; border-color: {accent}; }}
+    QCheckBox::indicator:checked {{ border: none; image: url({check_img}); }}
+    QCheckBox::indicator:checked:hover {{ image: url({check_img}); }}
     """)
 
     return "\n".join(parts)

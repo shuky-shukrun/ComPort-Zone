@@ -1233,7 +1233,15 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def toggle_line_wrap(self) -> None:
-        self.settings.line_wrap_enabled = self.wrap_action.isChecked()
+        self.set_line_wrap_enabled(self.wrap_action.isChecked())
+
+    def set_line_wrap_enabled(self, enabled: bool) -> None:
+        self.settings.line_wrap_enabled = bool(enabled)
+        if hasattr(self, "wrap_action"):
+            self.wrap_action.blockSignals(True)
+            self.wrap_action.setChecked(self.settings.line_wrap_enabled)
+            self.wrap_action.blockSignals(False)
+        # Re-apply so terminals re-wrap and every command-bar wrap toggle tracks it.
         for session in self.iter_sessions():
             session.apply_settings()
         self.save_settings()

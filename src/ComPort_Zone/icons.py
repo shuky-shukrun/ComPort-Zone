@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QPainter, QPixmap
+import os
+import tempfile
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QAbstractButton, QApplication, QMenu, QStyle
 
@@ -72,6 +76,7 @@ MOCKUP_ICONS = {
     "sort":        (16, 1.3, '<path d="M3 4.5h10M3 8h6.5M3 11.5h3.5" />', False),
     "star":        (16, 1.3, '<path d="M8 2l1.7 3.9 4.3.4-3.2 2.8 1 4.2L8 11.1 4.2 13.3l1-4.2L2 6.3l4.3-.4z" />', False),
     "star-fill":   (16, 1.0, '<path d="M8 2l1.7 3.9 4.3.4-3.2 2.8 1 4.2L8 11.1 4.2 13.3l1-4.2L2 6.3l4.3-.4z" />', True),
+    "wrap":        (24, 1.8, '<path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-4M16 16l-2 2 2 2M3 18h7" />', False),
 }
 
 STYLE_ICON_MAP = {
@@ -174,6 +179,43 @@ def build_icon(source, size: int = 18, color: str | None = None) -> QIcon:
     if isinstance(source, str):
         return themed_icon(source, size, color)
     return standard_icon(source, size, color)
+
+
+_CHECKBOX_CACHE: dict[tuple, str] = {}
+
+
+def checked_checkbox_image_path(
+    accent: str, check_color: str = "#ffffff", size: int = 16, radius: int = 4
+) -> str:
+    """Render a checked checkbox indicator (accent rounded square + tick) to a cached
+    PNG and return a forward-slashed path for QSS ``image: url(...)``.
+
+    QSS-styled ``QCheckBox::indicator`` rules drop the native tick, so the checked
+    state needs an explicit image — a flat tick reads far better than a bare square.
+    """
+    key = (accent, check_color, size, radius)
+    cached = _CHECKBOX_CACHE.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(accent))
+    painter.drawRoundedRect(0, 0, size, size, radius, radius)
+    inset = round(size * 0.16)
+    QSvgRenderer(QByteArray(_icon_svg("check", size, check_color).encode("utf-8"))).render(
+        painter, QRectF(inset, inset, size - 2 * inset, size - 2 * inset)
+    )
+    painter.end()
+    cache_dir = Path(tempfile.gettempdir()) / "comport-zone-ui"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"checkbox-{accent.lstrip('#')}-{check_color.lstrip('#')}-{size}.png"
+    pixmap.save(str(path), "PNG")
+    result = str(path).replace("\\", "/")
+    _CHECKBOX_CACHE[key] = result
+    return result
 
 
 class _IconSpec:

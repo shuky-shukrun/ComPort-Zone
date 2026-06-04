@@ -318,6 +318,9 @@ class TerminalSessionWidget(QWidget):
         self.timestamp_toggle = self._make_status_toggle(
             "clock", "Show timestamps on received lines", self._toggle_timestamps_clicked
         )
+        self.wrap_toggle = self._make_status_toggle(
+            "wrap", "Wrap long lines", self._toggle_wrap_clicked
+        )
         self.hex_toggle = self._make_status_toggle(
             "hex", "Show received data as hex", self._toggle_hex_clicked
         )
@@ -355,6 +358,7 @@ class TerminalSessionWidget(QWidget):
         command_layout.addWidget(self.line_ending_label)
         command_layout.addWidget(self.command_overflow_button)
         command_layout.addWidget(self.timestamp_toggle)
+        command_layout.addWidget(self.wrap_toggle)
         command_layout.addWidget(self.hex_toggle)
         command_layout.addWidget(self.log_toggle)
         command_layout.addWidget(self.pause_label)
@@ -389,6 +393,7 @@ class TerminalSessionWidget(QWidget):
             self.connection_button,
             self.script_status_label,
             self.timestamp_toggle,
+            self.wrap_toggle,
             self.hex_toggle,
             self.log_toggle,
         ]
@@ -438,6 +443,9 @@ class TerminalSessionWidget(QWidget):
     def _toggle_timestamps_clicked(self, checked: bool) -> None:
         self.host.set_timestamps_enabled(checked)
 
+    def _toggle_wrap_clicked(self, checked: bool) -> None:
+        self.host.set_line_wrap_enabled(checked)
+
     def _toggle_hex_clicked(self, checked: bool) -> None:
         self.host.set_receive_display_mode("Hex" if checked else "Text")
 
@@ -453,6 +461,7 @@ class TerminalSessionWidget(QWidget):
         theme = self.host.theme
         for button, on in (
             (self.timestamp_toggle, bool(settings.timestamps_enabled)),
+            (self.wrap_toggle, bool(settings.line_wrap_enabled)),
             (self.hex_toggle, settings.receive_display_mode in ("Hex", "Text + Hex")),
             (self.log_toggle, bool(self.logger.enabled)),
         ):
