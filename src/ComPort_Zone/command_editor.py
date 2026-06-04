@@ -54,7 +54,7 @@ from .command_run_targets import (
     CommandRunTargetService,
 )
 from .command_search import CommandSearchState, find_search_matches, replace_all_matches
-from .icons import standard_icon
+from .icons import build_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES, QuickCommand, QuickFile
 from .quick_actions import quick_file_display_text, quick_group_name
 from .quick_actions_panel import (
@@ -455,6 +455,7 @@ class CommandFileEditorDialog(QDialog):
         theme_palette: ThemePalette | None = None,
         workspace_drawer_page_callback: Callable[[int], None] | None = None,
         workspace_drawer_width_callback: Callable[[int, object], None] | None = None,
+        command_palette_callback: Callable[[], None] | None = None,
         embedded: bool = False,
         show_run_button: bool = True,
         show_workspace_side_panel: bool = False,
@@ -471,6 +472,7 @@ class CommandFileEditorDialog(QDialog):
         self.run_target_service = run_target_service
         self.workspace_drawer_page_callback = workspace_drawer_page_callback
         self.workspace_drawer_width_callback = workspace_drawer_width_callback
+        self.command_palette_callback = command_palette_callback
         self._show_run_bar = self.run_target_service is not None and self.run_target_service.is_configured()
         self.embedded = embedded
         self.show_workspace_side_panel = show_workspace_side_panel
@@ -806,7 +808,7 @@ class CommandFileEditorDialog(QDialog):
     ) -> QAction:
         action = QAction(text, menu)
         if icon is not None:
-            action.setIcon(standard_icon(icon))
+            action.setIcon(build_icon(icon))
         action.setEnabled(enabled)
         action.triggered.connect(lambda _checked=False, callback=callback: callback())
         menu.addAction(action)
@@ -1016,6 +1018,7 @@ class CommandFileEditorDialog(QDialog):
             file_order_changed=self._persist_quick_file_order,
             command_selection_changed=self._refresh_quick_action_buttons,
             file_selection_changed=self._refresh_quick_action_buttons,
+            settings_callback=self.command_palette_callback,
             on_page_requested=self._select_workspace_drawer_page,
             parent=self,
         )

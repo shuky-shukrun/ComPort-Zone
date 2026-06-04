@@ -606,8 +606,10 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.tabs.pane_count(), 2)
             self.assertEqual([pane.count() for pane in window.tabs.panes()], [1, 1])
             self.assertIs(window.tabs.currentWidget(), sessions[1])
-            self.assertTrue(sessions[0].drawer.isVisible())
-            self.assertFalse(sessions[1].drawer.isVisible())
+            # The drawer is now one shared full-height side bar; per-tab drawers hidden.
+            self.assertTrue(window.shared_drawer.isVisible())
+            self.assertTrue(sessions[0].drawer.isHidden())
+            self.assertTrue(sessions[1].drawer.isHidden())
             self.assertTrue(sessions[1].status_label.isVisible())
             self.assertTrue(sessions[1].connection_button.isVisible())
             self.assertFalse(window.connection_status_label.isVisible())
@@ -1065,56 +1067,42 @@ class AppSessionTests(unittest.TestCase):
             first_session._select_drawer_page(1)
             self.qt.processEvents()
 
+            # A single, shared, full-height side bar serves every tab; the page
+            # selected from one tab is the page shown for all of them.
+            self.assertIs(window.central_splitter.widget(0), window.shared_drawer)
             self.assertEqual(window.settings.drawer_page_index, 1)
-            self.assertEqual(first_session.drawer_pages.currentIndex(), 1)
-            self.assertEqual(second_session.drawer_pages.currentIndex(), 1)
-            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
-            self.assertFalse(first_session.drawer_panel.isHidden())
-            self.assertFalse(second_session.drawer_panel.isHidden())
-            self.assertFalse(editor.workspace_drawer.panel.isHidden())
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 1)
+            self.assertFalse(window.shared_drawer.panel.isHidden())
 
-            second_drawer_updates: list[tuple[bool, int, int | None]] = []
-            original_second_apply_drawer_state = second_session.apply_drawer_state
-
-            def record_second_drawer_update(collapsed: bool, width: int, page_index: int | None = None) -> None:
-                second_drawer_updates.append((collapsed, width, page_index))
-                original_second_apply_drawer_state(collapsed, width, page_index)
-
-            second_session.apply_drawer_state = record_second_drawer_update
+            # Width changes from one tab persist and resize the one shared drawer.
             window.set_drawer_width(360, source=first_session)
             window.tabs.setCurrentWidget(second_session)
             self.qt.processEvents()
-
             self.assertEqual(window.settings.drawer_width, 360)
-            self.assertIn((False, 360, 1), second_drawer_updates)
+            self.assertEqual(window.shared_drawer.maximumWidth(), 520)
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 1)
+
+            # Switching to the editor keeps the same shared drawer; per-tab docks
+            # stay hidden so they never compete with it.
             window.tabs.setCurrentWidget(editor)
             self.qt.processEvents()
-            self.assertGreater(editor.workspace_splitter.sizes()[0], 48)
-            self.assertEqual(editor.workspace_drawer.maximumWidth(), 520)
+            self.assertFalse(window.shared_drawer.panel.isHidden())
+            self.assertTrue(first_session.drawer.isHidden())
+            self.assertTrue(second_session.drawer.isHidden())
+            self.assertTrue(editor.workspace_drawer.isHidden())
 
-            first_drawer_updates: list[tuple[bool, int, int | None]] = []
-            original_first_apply_drawer_state = first_session.apply_drawer_state
+            # Collapsing from any tab collapses the shared drawer everywhere.
+            window.set_drawer_collapsed(True)
+            self.qt.processEvents()
+            self.assertTrue(window.settings.drawer_collapsed)
+            self.assertTrue(window.shared_drawer.panel.isHidden())
 
-            def record_first_drawer_update(collapsed: bool, width: int, page_index: int | None = None) -> None:
-                first_drawer_updates.append((collapsed, width, page_index))
-                original_first_apply_drawer_state(collapsed, width, page_index)
-
-            first_session.apply_drawer_state = record_first_drawer_update
-            editor.workspace_splitter.setSizes([420, 900])
-            editor._workspace_drawer_resized(420, 0)
-            # The shared drawer width is the clamped, persisted value.
-            editor_drawer_width = window.settings.drawer_width
-
-            self.assertEqual(window.settings.drawer_width, editor_drawer_width)
-            self.assertIn((False, editor_drawer_width, 1), first_drawer_updates)
-
+            # Re-opening, then re-selecting the active page, toggles it shut again.
+            window.set_drawer_collapsed(False)
             second_session._select_drawer_page(1)
             self.qt.processEvents()
-
             self.assertTrue(window.settings.drawer_collapsed)
-            self.assertTrue(first_session.drawer_panel.isHidden())
-            self.assertTrue(second_session.drawer_panel.isHidden())
-            self.assertTrue(editor.workspace_drawer.panel.isHidden())
+            self.assertTrue(window.shared_drawer.panel.isHidden())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1423,8 +1411,11 @@ class AppSessionTests(unittest.TestCase):
             self.assertIs(window.current_command_file_editor(), editor)
             self.assertIn("Untitled", window.tabs.tabText(window.tabs.indexOf(editor)))
             self.assertIn("*", window.tabs.tabText(window.tabs.indexOf(editor)))
-            self.assertIn("Command file", window.connection_status_label.text())
-            self.assertFalse(window.connection_action_button.isEnabled())
+            # Editor tabs are connectionless: the shared connection chip/button are
+            # hidden (no duplicated/cut-off status line); the editor pane shows its
+            # own status. (Footer routing is covered by test_workspace_status.)
+            self.assertTrue(window.connection_status_label.isHidden())
+            self.assertTrue(window.connection_action_button.isHidden())
             self.assertTrue(hasattr(editor, "quick_command_list"))
             self.assertTrue(hasattr(editor, "quick_file_list"))
             self.assertEqual(editor.workspace_drawer_pages.count(), 3)
@@ -1433,7 +1424,11 @@ class AppSessionTests(unittest.TestCase):
                 button.toolTip()
                 for button in editor.workspace_drawer_rail.findChildren(QToolButton)
             ]
-            self.assertEqual(rail_tooltips, ["All quick actions", "Quick commands", "Quick files"])
+            # The editor rail now includes the settings/command-palette cog too.
+            self.assertEqual(
+                rail_tooltips,
+                ["All quick actions", "Quick commands", "Quick files", "Settings & commands"],
+            )
             # Editor primaries are inline now (insert command / open file); grid removed.
             self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(0)), [])
             self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(1)), [])
@@ -1442,7 +1437,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertNotIn("Validate", [button.text() for button in editor.findChildren(QPushButton)])
             self.assertNotIn("Quick command suggestions", [label.text() for label in editor.findChildren(QLabel)])
             editor._select_workspace_drawer_page(1)
-            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 1)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -2261,7 +2256,7 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(session.drawer_pages.count(), 4)
             session._select_drawer_page(2)  # Quick Files mode
-            self.assertEqual(session.drawer_pages.currentIndex(), 2)
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 2)
 
             window.add_quick_file(QuickFile(label="Bring-up", path=str(script_path)))
             self.assertEqual(session.quick_file_list.count(), 1)

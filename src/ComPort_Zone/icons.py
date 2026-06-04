@@ -47,7 +47,7 @@ MOCKUP_ICONS = {
     "bolt":        (16, 1.2, '<path d="M8.5 1.5L3 9h4l-1 5.5L12 7H7.5l1-5.5z" />', False),
     "file":        (16, 1.2, '<path d="M4 1.5h5l3 3V14a.5 .5 0 0 1 -.5 .5h-7A.5 .5 0 0 1 4 14V1.5z" /><path d="M9 1.5V4.5h3" />', False),
     "term":        (16, 1.2, '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M4 6l2 2-2 2M8 10.5h4" />', False),
-    "cog":         (16, 1.2, '<circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" />', False),
+    "cog":         (24, 1.8, '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" />', False),
     "search":      (16, 1.3, '<circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5l3 3" />', False),
     "trash":       (16, 1.2, '<path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9.5h6.8L12 4" />', False),
     "save":        (16, 1.2, '<path d="M2.5 2.5h9l2 2v9h-11v-11z" /><path d="M5 2.5v3h5v-3M5 13v-4h6v4" />', False),
@@ -88,7 +88,7 @@ STYLE_ICON_MAP = {
     QStyle.StandardPixmap.SP_DirOpenIcon: "file",
     QStyle.StandardPixmap.SP_DriveHDIcon: "database",
     QStyle.StandardPixmap.SP_FileDialogContentsView: "search",
-    QStyle.StandardPixmap.SP_FileDialogDetailedView: "cog",
+    QStyle.StandardPixmap.SP_FileDialogDetailedView: "edit",
     QStyle.StandardPixmap.SP_FileDialogInfoView: "clock",
     QStyle.StandardPixmap.SP_FileDialogListView: "list",
     QStyle.StandardPixmap.SP_FileDialogNewFolder: "plus",
@@ -149,13 +149,20 @@ def _render_svg_icon(svg: str, size: int) -> QIcon:
     return QIcon(pixmap_icon)
 
 
+def build_icon(source, size: int = 18, color: str | None = None) -> QIcon:
+    """Build a themed icon from a mockup icon name (str) or a ``QStyle`` pixmap enum."""
+    if isinstance(source, str):
+        return themed_icon(source, size, color)
+    return standard_icon(source, size, color)
+
+
 class _IconSpec:
     """Remembers how an icon was built so it can be re-tinted on theme change."""
 
-    __slots__ = ("pixmap", "size", "color")
+    __slots__ = ("source", "size", "color")
 
-    def __init__(self, pixmap: QStyle.StandardPixmap, size: int, color: str | None) -> None:
-        self.pixmap = pixmap
+    def __init__(self, source, size: int, color: str | None) -> None:
+        self.source = source
         self.size = size
         self.color = color
 
@@ -166,24 +173,24 @@ _ICON_SPEC_PROP = "_comportIconSpec"
 
 def set_button_icon(
     button,
-    pixmap: QStyle.StandardPixmap,
+    source,
     size: int = 16,
     color: str | None = None,
 ) -> None:
-    button.setIcon(standard_icon(pixmap, size, color))
+    button.setIcon(build_icon(source, size, color))
     button.setIconSize(QSize(size, size))
-    button.setProperty(_ICON_SPEC_PROP, _IconSpec(pixmap, size, color))
+    button.setProperty(_ICON_SPEC_PROP, _IconSpec(source, size, color))
 
 
 def set_action_icon(
     action,
-    pixmap: QStyle.StandardPixmap,
+    source,
     size: int = 18,
     color: str | None = None,
 ) -> None:
     """Set a themed icon on a QAction or submenu QMenu and remember it for re-tint."""
-    action.setIcon(standard_icon(pixmap, size, color))
-    action.setProperty(_ICON_SPEC_PROP, _IconSpec(pixmap, size, color))
+    action.setIcon(build_icon(source, size, color))
+    action.setProperty(_ICON_SPEC_PROP, _IconSpec(source, size, color))
 
 
 def retint_icons(root) -> None:
@@ -204,6 +211,6 @@ def retint_icons(root) -> None:
         spec = obj.property(_ICON_SPEC_PROP)
         if not isinstance(spec, _IconSpec) or spec.color is not None:
             continue
-        obj.setIcon(standard_icon(spec.pixmap, spec.size, None))
+        obj.setIcon(build_icon(spec.source, spec.size, None))
         if isinstance(obj, QAbstractButton):
             obj.setIconSize(QSize(spec.size, spec.size))

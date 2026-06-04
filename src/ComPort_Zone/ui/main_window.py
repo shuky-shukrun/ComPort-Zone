@@ -14,12 +14,14 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QInputDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -27,6 +29,14 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from .. import quick_actions as _quick_actions
+from ..quick_actions_panel import (
+    item_ids_in_order,
+    populate_quick_command_list,
+    populate_quick_file_list,
+    populate_quick_history_list,
+    selected_item_id,
+)
+from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..app_settings_controller import AppSettingsController
 from ..command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from ..command_registry import CommandPaletteEntry, CommandRegistry
@@ -68,9 +78,9 @@ from .split_workspace import SplitWorkspaceWidget
 from .stylesheet import build_stylesheet
 from .tab_workspace import TabWorkspaceController
 from .title_bar import TitleBar, WindowResizeGrips
-from .tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W
+from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
 from .tab_context_menus import TabContextMenuBuilder
-from .terminal_tab import TerminalSessionWidget
+from .terminal_tab import DRAWER_COLLAPSED_WIDTH, TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
 
 APP_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "comport-zone-icon.png"
@@ -204,6 +214,8 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self.apply_theme(self.theme.name)
         self.restore_sessions(prompt_first_settings=not defer_startup_actions)
+        self.refresh_shared_drawer()
+        self._apply_shared_drawer_state()
         self._loading = False
         self.set_status("Ready")
         if not defer_startup_actions:
@@ -232,7 +244,20 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
         self.tabs.tabContextMenuRequested.connect(self.show_tab_context_menu)
         self.tabs.tabMovedBetweenPanes.connect(self._tab_moved_between_panes)
-        self.setCentralWidget(self.tabs)
+        # The drawer is one shared full-height side bar to the left of the tabs
+        # (the mockup's app-body: rail | side panel | main column). Its actions
+        # dispatch to the active tab; per-tab drawers are hidden.
+        self.shared_drawer = self._build_shared_drawer()
+        self.central_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.central_splitter.setObjectName("centralSplitter")
+        self.central_splitter.setChildrenCollapsible(False)
+        self.central_splitter.setHandleWidth(SPLITTER_HANDLE)
+        self.central_splitter.addWidget(self.shared_drawer)
+        self.central_splitter.addWidget(self.tabs)
+        self.central_splitter.setStretchFactor(0, 0)
+        self.central_splitter.setStretchFactor(1, 1)
+        self.central_splitter.splitterMoved.connect(self._shared_drawer_resized)
+        self.setCentralWidget(self.central_splitter)
 
         self.footer = QLabel("Ready", self)
         self.footer.setObjectName("footer")
@@ -301,6 +326,151 @@ class MainWindow(QMainWindow):
         else:
             self.title_bar.set_subtitle(segments[0] if segments else "Disconnected")
             self.title_bar.set_live(False)
+
+    # ------------------------------------------------------------------ #
+    # Shared full-height side bar (one drawer for the whole window; its    #
+    # actions dispatch to the active tab via use_quick_command_id, etc.).  #
+    # ------------------------------------------------------------------ #
+    def _build_shared_drawer(self) -> QuickActionsSidebar:
+        drawer = QuickActionsSidebar(
+            actions=QuickActionsSidebarActions(
+                command_primary=self._shared_use_command,
+                file_primary=self._shared_use_file,
+                add_command=self.add_quick_command,
+                edit_command=lambda: self.edit_quick_command(self._shared_command_id()),
+                delete_command=lambda: self.delete_quick_command(self._shared_command_id()),
+                move_command_up=lambda: self.move_quick_command(self._shared_command_id(), -1),
+                move_command_down=lambda: self.move_quick_command(self._shared_command_id(), 1),
+                import_commands=self.import_quick_commands_csv,
+                export_commands=self.export_quick_commands_csv,
+                add_file=self.add_quick_file,
+                edit_file=lambda: self.edit_quick_file(self._shared_file_id()),
+                delete_file=lambda: self.delete_quick_file(self._shared_file_id()),
+                move_file_up=lambda: self.move_quick_file(self._shared_file_id(), -1),
+                move_file_down=lambda: self.move_quick_file(self._shared_file_id(), 1),
+                import_files=self.import_quick_files_csv,
+                export_files=self.export_quick_files_csv,
+            ),
+            command_primary_label="Send",
+            file_primary_label="Run",
+            command_double_clicked=self._shared_use_command,
+            file_double_clicked=self._shared_use_file,
+            command_sort_changed=self._shared_command_sort_changed,
+            file_sort_changed=self._shared_file_sort_changed,
+            command_order_changed=self._shared_persist_command_order,
+            file_order_changed=self._shared_persist_file_order,
+            include_history=True,
+            history_primary=self._shared_resend_history,
+            settings_callback=self.show_command_palette,
+            on_page_requested=self.request_drawer_page,
+            rail_width=DRAWER_COLLAPSED_WIDTH,
+            parent=self,
+        )
+        group_menu = QMenu(drawer.quick_group_button)
+        group_menu.aboutToShow.connect(self._populate_shared_group_menu)
+        drawer.quick_group_button.setMenu(group_menu)
+        self.drawer_rail = drawer.rail
+        self.drawer_panel = drawer.panel
+        self.drawer_pages = drawer.pages
+        return drawer
+
+    def _shared_command_id(self) -> str:
+        return selected_item_id(self.shared_drawer.quick_command_list)
+
+    def _shared_file_id(self) -> str:
+        return selected_item_id(self.shared_drawer.quick_file_list)
+
+    def _shared_use_command(self) -> None:
+        self.use_quick_command_id(self._shared_command_id())
+
+    def _shared_use_file(self) -> None:
+        self.use_quick_file_id(self._shared_file_id())
+
+    def _shared_resend_history(self, command: str) -> None:
+        session = self.current_session()
+        if session is not None:
+            session.resend_command(command)
+
+    def _shared_command_sort_changed(self) -> None:
+        mode = self.shared_drawer.quick_sort_combo.currentData()
+        if mode:
+            self.set_quick_command_sort_mode(str(mode))
+
+    def _shared_file_sort_changed(self) -> None:
+        mode = self.shared_drawer.quick_file_sort_combo.currentData()
+        if mode:
+            self.set_quick_file_sort_mode(str(mode))
+
+    def _shared_persist_command_order(self) -> None:
+        self.reorder_quick_commands(
+            item_ids_in_order(self.shared_drawer.quick_command_list),
+            selected_id=self._shared_command_id(),
+        )
+
+    def _shared_persist_file_order(self) -> None:
+        self.reorder_quick_files(
+            item_ids_in_order(self.shared_drawer.quick_file_list),
+            selected_id=self._shared_file_id(),
+            force_custom=True,
+        )
+
+    def _populate_shared_group_menu(self) -> None:
+        menu = self.shared_drawer.quick_group_button.menu()
+        menu.clear()
+        hidden = set(self.quick_command_hidden_groups_snapshot())
+        for group in self.quick_command_group_names():
+            action = menu.addAction(group)
+            action.setCheckable(True)
+            action.setChecked(group not in hidden)
+            action.toggled.connect(
+                lambda checked, g=group: (
+                    self.set_quick_command_group_visible(g, checked),
+                    self.refresh_quick_commands_everywhere(),
+                )
+            )
+        menu.addSeparator()
+        menu.addAction("Show all", lambda: (self.show_all_quick_command_groups(), self.refresh_quick_commands_everywhere()))
+        menu.addAction("Hide all", lambda: (self.hide_all_quick_command_groups(), self.refresh_quick_commands_everywhere()))
+
+    def refresh_shared_drawer(self) -> None:
+        if not hasattr(self, "shared_drawer"):
+            return
+        populate_quick_command_list(
+            self.shared_drawer.quick_command_list,
+            self.visible_quick_commands_snapshot(),
+            selected_id=self._shared_command_id(),
+            label_limit=30,
+            group_limit=10,
+            draggable=True,
+        )
+        populate_quick_file_list(
+            self.shared_drawer.quick_file_list,
+            self.visible_quick_files_snapshot(),
+            selected_id=self._shared_file_id(),
+            label_limit=30,
+            draggable=True,
+        )
+        populate_quick_history_list(
+            self.shared_drawer.quick_history_list,
+            list(reversed(self.history_catalog.all_commands()))[:80],
+        )
+        self._sync_shared_sort_combos()
+
+    def _sync_shared_sort_combos(self) -> None:
+        for combo, mode in (
+            (self.shared_drawer.quick_sort_combo, self.quick_command_sort_mode_snapshot()),
+            (self.shared_drawer.quick_file_sort_combo, self.quick_file_sort_mode_snapshot()),
+        ):
+            combo.blockSignals(True)
+            index = combo.findData(mode)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+        groups = self.quick_command_group_names()
+        hidden = set(self.quick_command_hidden_groups_snapshot())
+        visible = [g for g in groups if g not in hidden]
+        label = "All" if len(visible) == len(groups) else f"{len(visible)}/{len(groups)}"
+        self.shared_drawer.quick_group_button.setText(f" Groups: {label}")
 
     def _build_menus(self) -> None:
         self.menu_builder.build().install_on(self)
@@ -489,6 +659,7 @@ class MainWindow(QMainWindow):
             theme_palette=self.theme,
             workspace_drawer_page_callback=self.request_drawer_page,
             workspace_drawer_width_callback=lambda width, source: self.set_drawer_width(width, source=source),
+            command_palette_callback=self.show_command_palette,
             embedded=True,
             show_run_button=False,
             show_workspace_side_panel=True,
@@ -855,13 +1026,6 @@ class MainWindow(QMainWindow):
     def update_tab_titles(self) -> None:
         self.workspace_status.update_tab_titles(self.theme)
 
-    def _shared_drawer_pane(self):
-        panes = self.tabs.panes()
-        for pane in panes:
-            if pane.count() > 0:
-                return pane
-        return panes[0] if panes else None
-
     def _set_workspace_tab_active_property(self, widget: QWidget, active: bool) -> None:
         targets = [widget]
         for object_name in ("terminal", "commandFileEditor", "terminalColumn"):
@@ -873,23 +1037,24 @@ class MainWindow(QMainWindow):
             target.update()
 
     def update_workspace_split_chrome(self, *, drawer_source=None) -> None:
-        shared_drawer_pane = self._shared_drawer_pane()
         active_widget = self.tabs.currentWidget()
         for ref in self.tabs.iter_tab_refs():
             widget = ref.widget
-            drawer_visible = shared_drawer_pane is None or ref.pane is shared_drawer_pane
+            # The side bar is a single shared drawer to the left of the tabs; the
+            # per-tab drawers stay hidden so the tabs sit only over the terminal.
             if hasattr(widget, "set_workspace_drawer_visible"):
-                widget.set_workspace_drawer_visible(drawer_visible)
-            if drawer_visible and widget is not drawer_source and hasattr(widget, "apply_drawer_state"):
-                widget.apply_drawer_state(
-                    self.settings.drawer_collapsed,
-                    self.settings.drawer_width,
-                    self.normalized_drawer_page_index(),
-                )
+                widget.set_workspace_drawer_visible(False)
             self._set_workspace_tab_active_property(widget, widget is active_widget)
+        self._apply_shared_drawer_state()
         terminal_owns_status = isinstance(active_widget, TerminalSessionWidget)
-        self.connection_status_label.setVisible(not terminal_owns_status)
-        self.connection_action_button.setVisible(not terminal_owns_status)
+        # The shared connection chip/button are terminal-specific: terminals show
+        # their own in the command bar, and editors are connectionless (their status
+        # lives in the footer). Hide the shared widgets for both so the status line
+        # is not duplicated or cut off while an editor tab is active.
+        is_editor = isinstance(active_widget, CommandFileEditorDialog)
+        show_shared_connection = not terminal_owns_status and not is_editor
+        self.connection_status_label.setVisible(show_shared_connection)
+        self.connection_action_button.setVisible(show_shared_connection)
 
     def sync_status_from_current_session(self) -> None:
         self.workspace_status.sync_from_current(self.theme)
@@ -958,6 +1123,35 @@ class MainWindow(QMainWindow):
         self.apply_drawer_state_to_tabs(source=source)
         if not self._loading:
             self.save_settings()
+
+    def _apply_shared_drawer_state(self) -> None:
+        if not hasattr(self, "shared_drawer"):
+            return
+        collapsed = self.settings.drawer_collapsed
+        self.shared_drawer.select_page(self.normalized_drawer_page_index())
+        self.shared_drawer.panel.setVisible(not collapsed)
+        if collapsed:
+            self.shared_drawer.setMinimumWidth(DRAWER_COLLAPSED_WIDTH)
+            self.shared_drawer.setMaximumWidth(DRAWER_COLLAPSED_WIDTH)
+            self.central_splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(200, self.width() - DRAWER_COLLAPSED_WIDTH)])
+        else:
+            width = max(DRAWER_MIN_W, min(self.settings.drawer_width, DRAWER_MAX_W))
+            self.shared_drawer.setMinimumWidth(DRAWER_MIN_W)
+            self.shared_drawer.setMaximumWidth(DRAWER_MAX_W)
+            self.central_splitter.setSizes([width, max(200, self.width() - width)])
+
+    def _shared_drawer_resized(self, pos: int, index: int) -> None:
+        # Persist a manual drag of the side bar; auto-collapse below the floor.
+        if self.settings.drawer_collapsed or self._loading:
+            return
+        sizes = self.central_splitter.sizes()
+        if not sizes:
+            return
+        if sizes[0] < DRAWER_COLLAPSE_AT:
+            self.set_drawer_collapsed(True)
+            return
+        self.settings.drawer_width = max(DRAWER_MIN_W, min(sizes[0], DRAWER_MAX_W))
+        self.save_settings()
 
     def change_font_size(self, delta: int) -> None:
         self.settings.terminal_font_size = max(
@@ -1055,6 +1249,8 @@ class MainWindow(QMainWindow):
                 self.settings.drawer_width,
                 self.settings.drawer_page_index,
             )
+        self.refresh_shared_drawer()
+        self._apply_shared_drawer_state()
         self.update_tab_titles()
         self.sync_status_from_current_session()
 
@@ -1237,18 +1433,21 @@ class MainWindow(QMainWindow):
             editor.highlighter.rehighlight()
             editor.update_validation_status()
             editor.refresh_workspace_side_panel()
+        self.refresh_shared_drawer()
 
     def refresh_quick_files_everywhere(self, selected_id: str | None = None) -> None:
         for session in self.iter_sessions():
             session.refresh_quick_files(selected_id)
         for editor in self.iter_command_file_editors():
             editor.refresh_workspace_side_panel()
+        self.refresh_shared_drawer()
 
     def record_command(self, command: str) -> None:
         self.history_catalog.add(command)
         for session in self.iter_sessions():
             session.history_store.add(command)
             session._update_completion_model()
+        self.refresh_shared_drawer()
         self.save_settings()
 
     def remove_command_from_history(self, command: str) -> bool:

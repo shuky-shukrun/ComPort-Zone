@@ -654,7 +654,7 @@ class QuickActionsDrawer(QFrame):
             cog.setFixedSize(36, 36)
             cog.setToolTip("Settings & commands")
             cog.setCursor(Qt.CursorShape.PointingHandCursor)
-            set_button_icon(cog, QStyle.StandardPixmap.SP_FileDialogDetailedView, 18)
+            set_button_icon(cog, "cog", 18)
             cog.clicked.connect(lambda _checked=False: settings_callback())
             rail_layout.addWidget(cog)
             self.settings_button = cog

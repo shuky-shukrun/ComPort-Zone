@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu, QStyle
 
 from ..command_registry import CommandRegistry
-from ..icons import set_action_icon, standard_icon
+from ..icons import build_icon, set_action_icon
 from ..models import THEME_OPTIONS
 
 
@@ -177,7 +177,7 @@ class MainWindowMenuBuilder:
     ) -> QAction:
         action = QAction(text, self.host)
         if icon is not None:
-            action.setIcon(standard_icon(icon))
+            action.setIcon(build_icon(icon))
         action.setEnabled(enabled)
         action.triggered.connect(lambda _checked=False: callback())
         menu.addAction(action)

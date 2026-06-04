@@ -118,7 +118,7 @@ class WorkspaceStatusPresenter:
         self.connection_action_button.setToolTip(session.connection_tooltip())
         action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
         if state == "no-port":
-            action_icon = QStyle.StandardPixmap.SP_FileDialogDetailedView
+            action_icon = "cog"
         if state == "connected":
             action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
         set_button_icon(self.connection_action_button, action_icon, 15)
@@ -151,12 +151,6 @@ class WorkspaceStatusPresenter:
         return tab_ref.local_index if tab_ref is not None else index
 
     def _show_command_file_status(self, tab: CommandFileStatusTab) -> None:
-        status = tab.status_summary()
-        self.connection_status_label.setText(status)
-        self.connection_status_label.setToolTip("Command-file editor tab")
-        set_widget_state(self.connection_status_label, "no-port")
-        self.connection_action_button.setEnabled(False)
-        self.connection_action_button.setText("Terminal only")
-        set_button_icon(self.connection_action_button, QStyle.StandardPixmap.SP_FileIcon, 15)
-        set_button_role(self.connection_action_button, "no-port")
-        self.set_status(status)
+        # The shared connection chip/button are hidden for editor tabs (see
+        # MainWindow.update_workspace_split_chrome); the footer carries the status.
+        self.set_status(tab.status_summary())

@@ -468,6 +468,10 @@ class TerminalSessionWidget(QWidget):
             return
         self._send_integrated_input(text, self.mode_combo.currentText())
 
+    def resend_command(self, command: str) -> None:
+        """Send a previous command again (used by the shared History panel)."""
+        self._resend_history_command(command)
+
     def refresh_quick_history(self) -> None:
         history = list(reversed(self.host.history_catalog.all_commands()))
         populate_quick_history_list(self.quick_history_list, history[:80])
@@ -1647,7 +1651,7 @@ class TerminalSessionWidget(QWidget):
         self.connection_button.setToolTip(self.connection_tooltip())
         action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
         if state == "no-port":
-            action_icon = QStyle.StandardPixmap.SP_FileDialogDetailedView
+            action_icon = "cog"
         if state == "connected":
             action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
         set_button_icon(self.connection_button, action_icon, 15)
