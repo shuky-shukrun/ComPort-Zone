@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from queue import Empty
 
-from PySide6.QtCore import Qt, QStringListModel, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStyle,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
     QSizePolicy,
@@ -57,7 +58,7 @@ from ..transports import SerialTransportAdapter
 from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
-from .tokens import DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
+from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
 
 DRAWER_COLLAPSED_WIDTH = 48
 
@@ -260,7 +261,7 @@ class TerminalSessionWidget(QWidget):
         self.status_label.setObjectName("terminalConnectionStatus")
         self.status_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.status_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self.status_label.setMaximumWidth(520)
+        self.status_label.setMaximumWidth(220)
         self.status_label.setToolTip("Click to open Connection Settings.")
         self.status_label.clicked.connect(self.open_connection_settings)
         self.connection_button = QPushButton("Connect", self.command_bar)
@@ -313,6 +314,25 @@ class TerminalSessionWidget(QWidget):
         self.line_ending_label = QLabel("", self.command_bar)
         self.log_label = QLabel("Log off", self.command_bar)
         self.pause_label = QLabel("", self.command_bar)
+        # Overflow for the IO controls: when the command bar is too narrow they
+        # collapse into this "⋯" menu so the terminal can keep shrinking.
+        self.command_overflow_button = QToolButton(self.command_bar)
+        self.command_overflow_button.setObjectName("commandBarOverflow")
+        self.command_overflow_button.setText("⋯")
+        self.command_overflow_button.setToolTip("Send mode, receive display, line ending")
+        self.command_overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_overflow_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.command_overflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._command_overflow_menu = QMenu(self.command_overflow_button)
+        self._command_overflow_menu.aboutToShow.connect(self._build_command_overflow_menu)
+        self.command_overflow_button.setMenu(self._command_overflow_menu)
+        self.command_overflow_button.hide()
+        self._command_secondary = [
+            self.mode_combo,
+            self.rx_display_combo,
+            self.line_ending_label,
+            self.log_label,
+        ]
         command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.connection_button)
         command_layout.addWidget(self.script_run_button)
@@ -326,6 +346,8 @@ class TerminalSessionWidget(QWidget):
         command_layout.addWidget(self.line_ending_label)
         command_layout.addWidget(self.log_label)
         command_layout.addWidget(self.pause_label)
+        command_layout.addWidget(self.command_overflow_button)
+        self.command_bar.installEventFilter(self)
 
         terminal_layout.addWidget(self.search_bar)
         terminal_layout.addWidget(self.terminal, 1)
@@ -337,6 +359,56 @@ class TerminalSessionWidget(QWidget):
         self.splitter.setStretchFactor(1, 1)
         root.addWidget(self.splitter)
         self._refresh_script_controls()
+
+    def eventFilter(self, obj, event):
+        if obj is self.command_bar and event.type() == QEvent.Type.Resize:
+            self._relayout_command_bar()
+        return super().eventFilter(obj, event)
+
+    def _relayout_command_bar(self) -> None:
+        """Collapse the IO controls into the overflow menu when the bar is narrow."""
+        if not hasattr(self, "command_overflow_button"):
+            return
+        layout = self.command_bar.layout()
+        spacing = layout.spacing()
+        margins = layout.contentsMargins()
+        essentials = [
+            self.status_label,
+            self.connection_button,
+            self.script_run_button,
+            self.script_status_label,
+        ]
+        for button in (self.script_pause_button, self.script_resume_button, self.script_stop_button):
+            if button.isVisible():
+                essentials.append(button)
+        needed = margins.left() + margins.right() + 16
+        for widget in essentials + self._command_secondary:
+            needed += widget.sizeHint().width() + spacing
+        collapse = self.command_bar.width() < needed
+        for widget in self._command_secondary:
+            widget.setVisible(not collapse)
+        self.command_overflow_button.setVisible(collapse)
+
+    def _build_command_overflow_menu(self) -> None:
+        menu = self._command_overflow_menu
+        menu.clear()
+        send_menu = menu.addMenu("Send mode")
+        for index in range(self.mode_combo.count()):
+            action = send_menu.addAction(self.mode_combo.itemText(index))
+            action.setCheckable(True)
+            action.setChecked(index == self.mode_combo.currentIndex())
+            action.triggered.connect(lambda _checked=False, idx=index: self.mode_combo.setCurrentIndex(idx))
+        receive_menu = menu.addMenu("Receive display")
+        for index in range(self.rx_display_combo.count()):
+            action = receive_menu.addAction(self.rx_display_combo.itemText(index))
+            action.setCheckable(True)
+            action.setChecked(index == self.rx_display_combo.currentIndex())
+            action.triggered.connect(lambda _checked=False, idx=index: self.rx_display_combo.setCurrentIndex(idx))
+        menu.addSeparator()
+        line_ending = self.line_ending_label.text().strip()
+        if line_ending:
+            menu.addAction(line_ending).setEnabled(False)
+        menu.addAction(self.log_label.text().strip() or "Log off").setEnabled(False)
 
     def _build_quick_actions_sidebar(self) -> QuickActionsSidebar:
         sidebar = QuickActionsSidebar(
@@ -450,12 +522,12 @@ class TerminalSessionWidget(QWidget):
         if collapsed:
             self.drawer.setMinimumWidth(DRAWER_COLLAPSED_WIDTH)
             self.drawer.setMaximumWidth(DRAWER_COLLAPSED_WIDTH)
-            self.splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(700, self.width() - DRAWER_COLLAPSED_WIDTH)])
+            self.splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(200, self.width() - DRAWER_COLLAPSED_WIDTH)])
             return
-        drawer_width = max(220, min(width, 520))
+        drawer_width = max(DRAWER_MIN_W, min(width, DRAWER_MAX_W))
         self.drawer.setMinimumWidth(DRAWER_MIN_W)
         self.drawer.setMaximumWidth(DRAWER_MAX_W)
-        self.splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
+        self.splitter.setSizes([drawer_width, max(200, self.width() - drawer_width)])
 
     def set_workspace_drawer_visible(self, visible: bool) -> None:
         if visible:
@@ -475,8 +547,14 @@ class TerminalSessionWidget(QWidget):
         if self.host.settings.drawer_collapsed:
             return
         sizes = self.splitter.sizes()
-        if sizes:
-            self.host.set_drawer_width(sizes[0], source=self)
+        if not sizes:
+            return
+        # Dragging the handle below the open-drawer floor auto-collapses to the rail
+        # rather than clipping the rows' send/play affordance.
+        if sizes[0] < DRAWER_COLLAPSE_AT:
+            self.host.set_drawer_collapsed(True)
+            return
+        self.host.set_drawer_width(sizes[0], source=self)
 
     def _quick_sort_changed(self) -> None:
         mode = self.quick_sort_combo.currentData()
@@ -1559,9 +1637,10 @@ class TerminalSessionWidget(QWidget):
     def _update_connection_ui(self, connected: bool, *, update_footer: bool = True) -> None:
         self._connected = connected
         self._status_text = self.connection_state_label()
-        status_text = self.connection_status_text()
         state = self.connection_state()
-        self.status_label.setText(status_text)
+        # Command-bar chip stays compact (state + endpoint) so the terminal can be
+        # narrow; the full profile lives in the shared status bar + this tooltip.
+        self.status_label.setText(self.connection_chip_text())
         self.status_label.setToolTip(f"{self.connection_tooltip()}\nClick to open Connection Settings.")
         set_widget_state(self.status_label, state)
         self.connection_button.setText(self.connection_action_text())
@@ -1647,6 +1726,11 @@ class TerminalSessionWidget(QWidget):
                 log_status,
             ]
         )
+
+    def connection_chip_text(self) -> str:
+        endpoint = self.connection_endpoint()
+        label = self.connection_state_label()
+        return f"{label} · {endpoint}" if endpoint else label
 
     def _profile_summary(self) -> str:
         endpoint = self.connection_endpoint()

@@ -68,7 +68,7 @@ from .split_workspace import SplitWorkspaceWidget
 from .stylesheet import build_stylesheet
 from .tab_workspace import TabWorkspaceController
 from .title_bar import TitleBar, WindowResizeGrips
-from .tokens import FONT_BTN_H, FONT_BTN_W
+from .tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W
 from .tab_context_menus import TabContextMenuBuilder
 from .terminal_tab import TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
@@ -171,6 +171,9 @@ class MainWindow(QMainWindow):
         # Frameless: the design ships a bespoke title bar; native drag/resize/snap is
         # re-delegated to the OS from ui/title_bar.py.
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        # Keep the floor low so the app fits small screens and a split workspace
+        # (two panes) never forces the window past the screen edge.
+        self.setMinimumSize(680, 460)
         self.resize(self.settings.window_width, self.settings.window_height)
         self._build_ui()
         self.tab_workspace = TabWorkspaceController(
@@ -951,7 +954,7 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def set_drawer_width(self, width: int, *, source=None) -> None:
-        self.settings.drawer_width = max(220, min(width, 520))
+        self.settings.drawer_width = max(DRAWER_MIN_W, min(width, DRAWER_MAX_W))
         self.apply_drawer_state_to_tabs(source=source)
         if not self._loading:
             self.save_settings()

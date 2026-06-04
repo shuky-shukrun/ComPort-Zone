@@ -484,7 +484,12 @@ class CommandFileEditorDialog(QDialog):
         if self.embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle("Command File Editor")
-        self.setMinimumSize(860, 640)
+        # Embedded as a workspace tab the minimum must stay small, otherwise a split
+        # (two panes side by side) forces the whole window past the screen edge.
+        if self.embedded:
+            self.setMinimumSize(320, 220)
+        else:
+            self.setMinimumSize(620, 420)
 
         self.path_label = QLabel(self)
         self.path_label.setObjectName("editorPathLabel")
@@ -1050,7 +1055,8 @@ class CommandFileEditorDialog(QDialog):
 
         label = QLabel("Send file to", bar)
         self.run_target_combo = ChevronComboBox(bar)
-        self.run_target_combo.setMinimumWidth(220)
+        self.run_target_combo.setMinimumWidth(120)
+        self.run_target_combo.setMaximumWidth(260)
         self.run_target_combo.setToolTip("Connected terminal target")
         self.send_to_target_button = QPushButton("Send", bar)
         self.send_to_target_button.clicked.connect(self.send_to_selected_target)

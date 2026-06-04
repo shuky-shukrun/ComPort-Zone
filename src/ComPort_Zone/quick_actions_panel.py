@@ -487,9 +487,10 @@ class QuickActionsPanel(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("quickActionPage")
-        self.setMinimumWidth(232)
-        self.setMaximumWidth(380)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        # Low floor so the dock can be narrow (the row send/play glyph and the
+        # header +/⋯ stay visible; the title elides). Fills the dock width.
+        self.setMinimumWidth(132)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.quick_list = quick_list
 
         layout = QVBoxLayout(self)

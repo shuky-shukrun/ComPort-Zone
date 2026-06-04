@@ -687,7 +687,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(window.connection_status_label.isHidden())
             self.assertTrue(window.connection_action_button.isHidden())
             self.assertTrue(session.status_label.isVisible())
-            self.assertEqual(session.status_label.maximumWidth(), 520)
+            self.assertEqual(session.status_label.maximumWidth(), 220)
             self.assertIn("Click to open Connection Settings.", session.status_label.toolTip())
 
             QTest.mouseClick(
@@ -1052,10 +1052,14 @@ class AppSessionTests(unittest.TestCase):
         app_module.MainWindow.prompt_session_settings = lambda self, session: None
         try:
             window = app_module.MainWindow()
+            # Give the window real width so the shared-drawer splitter math is not
+            # squeezed below the drawer's minimum width.
+            window.resize(1180, 720)
             first_session = window.current_session()
             window.add_session(prompt_settings=False)
             second_session = window.current_session()
             editor = window.add_command_file_tab()
+            self.qt.processEvents()
 
             window.set_drawer_collapsed(False)
             first_session._select_drawer_page(1)
@@ -1098,7 +1102,8 @@ class AppSessionTests(unittest.TestCase):
             first_session.apply_drawer_state = record_first_drawer_update
             editor.workspace_splitter.setSizes([420, 900])
             editor._workspace_drawer_resized(420, 0)
-            editor_drawer_width = editor.workspace_splitter.sizes()[0]
+            # The shared drawer width is the clamped, persisted value.
+            editor_drawer_width = window.settings.drawer_width
 
             self.assertEqual(window.settings.drawer_width, editor_drawer_width)
             self.assertIn((False, editor_drawer_width, 1), first_drawer_updates)

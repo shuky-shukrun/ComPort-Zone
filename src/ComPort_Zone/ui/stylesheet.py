@@ -410,6 +410,12 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLabel#commandFileStatusLabel, QLabel#editorStatusLabel, QLabel#editorPathLabel {{
         color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px;
     }}
+    QToolButton#commandBarOverflow {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px;
+        color: {tx2}; font-size: 15px; font-weight: 700; padding: 0 6px; min-width: 22px;
+    }}
+    QToolButton#commandBarOverflow:hover {{ background: {hover}; color: {tx}; }}
+    QToolButton#commandBarOverflow::menu-indicator {{ image: none; width: 0; }}
     """)
 
     # =====================================================================

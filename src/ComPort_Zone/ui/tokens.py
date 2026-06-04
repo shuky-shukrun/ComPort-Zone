@@ -41,9 +41,14 @@ FONT_BTN_H = 30
 
 # --- Layout -----------------------------------------------------------------
 SPLITTER_HANDLE = 6
-TAB_MIN_W = 150
-DRAWER_MIN_W = 220
+TAB_MIN_W = 120
+# Open-drawer floor: wide enough that a row's send/play affordance and the panel
+# header's +/⋯ buttons stay visible (title elides). Dragging below this collapses
+# the drawer to the rail (see TerminalSessionWidget._drawer_resized).
+DRAWER_MIN_W = 180
 DRAWER_MAX_W = 520
+# Below this dragged width the drawer auto-collapses to the activity rail.
+DRAWER_COLLAPSE_AT = 188
 FONT_UI_PT = 10
 
 # --- Modern-IDE window shell (from styles/app.css) --------------------------
