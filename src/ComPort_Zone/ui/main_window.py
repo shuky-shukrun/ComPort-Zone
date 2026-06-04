@@ -1207,9 +1207,12 @@ class MainWindow(QMainWindow):
             self.timestamps_action.blockSignals(True)
             self.timestamps_action.setChecked(self.settings.timestamps_enabled)
             self.timestamps_action.blockSignals(False)
-        # Re-sync each tab so the command-bar timestamp toggles track the setting.
+        # Re-sync each tab so the command-bar timestamp toggles track the setting,
+        # then re-render history so the detached timestamp column toggles for all.
         for session in self.iter_sessions():
             session.apply_settings()
+            if hasattr(session, "rerender_transcript"):
+                session.rerender_transcript()
         self.save_settings()
 
     def toggle_line_wrap(self) -> None:
@@ -1241,6 +1244,8 @@ class MainWindow(QMainWindow):
         self.settings.receive_display_mode = mode
         for session in self.iter_sessions():
             session.apply_settings()
+            if hasattr(session, "rerender_transcript"):
+                session.rerender_transcript()
         self.save_settings()
 
     def default_serial_profile(self) -> SerialProfile:

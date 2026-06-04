@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QPainter, QPen, QTextBlockFormat, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTextEdit, QWidget
 
 from .themes import VS_CODE_DARK
@@ -125,6 +125,31 @@ class IntegratedTerminalEdit(QTextEdit):
         cursor = QTextCursor(self.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(text, self._format(color))
+        self._insert_prompt(draft, cursor_offset)
+        self.ensureCursorVisible()
+
+    def append_committed_runs(self, runs, *, hang_indent: float = 0.0) -> None:
+        """Append colored runs ``(text, color[, italic])`` to the committed
+        transcript (before the prompt). When ``hang_indent`` (px) is set, the block
+        where insertion begins gets a hanging indent so soft-wrapped lines align
+        under the message column — the mockup's timestamp/direction layout."""
+        runs = [run for run in runs if run and run[0]]
+        if not runs:
+            return
+        draft = self.text()
+        cursor_offset = self.cursorPosition()
+        self._remove_prompt()
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if hang_indent > 0:
+            block_format = QTextBlockFormat()
+            block_format.setLeftMargin(hang_indent)
+            block_format.setTextIndent(-hang_indent)
+            cursor.mergeBlockFormat(block_format)
+        for run in runs:
+            color = run[1]
+            italic = run[2] if len(run) > 2 else False
+            cursor.insertText(run[0], self._format(color, italic=italic))
         self._insert_prompt(draft, cursor_offset)
         self.ensureCursorVisible()
 
@@ -533,9 +558,11 @@ class IntegratedTerminalEdit(QTextEdit):
     def _has_prompt(self) -> bool:
         return self._draft_start >= len(self.prompt)
 
-    def _format(self, color: str) -> QTextCharFormat:
+    def _format(self, color: str, *, italic: bool = False) -> QTextCharFormat:
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
+        if italic:
+            fmt.setFontItalic(True)
         return fmt
 
 

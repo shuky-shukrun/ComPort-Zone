@@ -35,6 +35,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="tx", message="SINK:CURR?"),
                 message="SINK:CURR?",
                 prefix="TX> ",
+                direction="TX",
                 color_role="tx",
                 ensure_line_break=True,
             ),
@@ -48,6 +49,7 @@ class TerminalViewTests(unittest.TestCase):
             TerminalRenderPlan(
                 event=SerialEvent(kind="rx", message="1", raw=b"1"),
                 message="1",
+                direction="RX",
                 color_role="rx",
                 stream_text=True,
             ),
@@ -61,6 +63,7 @@ class TerminalViewTests(unittest.TestCase):
             TerminalRenderPlan(
                 event=SerialEvent(kind="rx", message="67.00\r\n", raw=b"67.00\r\n"),
                 message="67.00\r\n",
+                direction="RX",
                 color_role="rx",
                 stream_text=True,
             ),
@@ -71,7 +74,7 @@ class TerminalViewTests(unittest.TestCase):
             search_highlight="#333333",
         )
 
-        self.assertEqual(terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
+        self.assertEqual(terminal.toPlainText(), "TX  SINK:CURR?\nRX  167.00\n")
 
     def test_render_plan_streams_rx_hex_with_spaces_between_chunks(self) -> None:
         view, terminal, _ = self.make_view()
@@ -115,6 +118,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="progress", message="Auto-reconnect armed. Retrying every 1000 ms."),
                 message="Auto-reconnect armed. Retrying every 1000 ms.",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 stream_text=True,
             ),
@@ -129,6 +133,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="progress", message="."),
                 message=".",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 stream_text=True,
             ),
@@ -143,6 +148,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="progress", message="."),
                 message=".",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 stream_text=True,
             ),
@@ -157,6 +163,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="status", message="Auto-reconnect succeeded."),
                 message="Auto-reconnect succeeded.",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 ensure_line_break=True,
             ),

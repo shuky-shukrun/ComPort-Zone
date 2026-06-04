@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QTextBlockFormat,
+    QTextCharFormat,
+    QTextCursor,
+    QTextDocument,
+)
 from PySide6.QtWidgets import QLabel, QTextEdit
 
 from .serial_core import SerialEvent
 from .terminal_session_controller import TerminalRenderPlan
+
+# Direction column ("TX"/"RX") padded to align with "SYS"/"ERR".
+_DIR_WIDTH = 3
 
 
 class TerminalView:
@@ -57,128 +67,115 @@ class TerminalView:
         search_highlight: str,
     ) -> None:
         if plan.stream_text:
-            self._render_stream_plan(
-                plan,
-                color=colors.get(plan.color_role, colors.get("default", "#d4d4d4")),
-                timestamps_enabled=timestamps_enabled,
-                search_visible=search_visible,
-                search_text=search_text,
-                search_highlight=search_highlight,
-            )
-            return
-        if plan.ensure_line_break:
-            self._ensure_terminal_line_break(colors.get("default", "#d4d4d4"))
-        message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
-        if timestamps_enabled:
-            stamp = plan.event.timestamp.astimezone().strftime("%H:%M:%S.%f")[:-3]
-            rendered = "".join(
-                f"[{stamp}] {plan.prefix}{line}\n"
-                for line in message.split("\n")
-                if line != ""
-            )
+            self._render_stream_plan(plan, colors=colors, timestamps_enabled=timestamps_enabled)
         else:
-            rendered = "".join(
-                f"{plan.prefix}{line}\n"
-                for line in message.split("\n")
-                if line != ""
+            self._render_line_plan(plan, colors=colors, timestamps_enabled=timestamps_enabled)
+        if search_visible:
+            self.refresh_search_highlights(search_text, search_highlight)
+
+    def _render_line_plan(
+        self,
+        plan: TerminalRenderPlan,
+        *,
+        colors: Mapping[str, str],
+        timestamps_enabled: bool,
+    ) -> None:
+        if plan.ensure_line_break:
+            self._ensure_terminal_line_break()
+        message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
+        body_color, italic = self._body_format(plan, colors)
+        for line in message.split("\n"):
+            if line == "":
+                continue
+            leader = self._leader_runs(plan, timestamps_enabled, colors)
+            self._insert_runs(
+                [*leader, (line + "\n", body_color, italic)],
+                hang_indent=self._leader_width(leader),
             )
-        self.insert_text(
-            rendered,
-            colors.get(plan.color_role, colors.get("default", "#d4d4d4")),
-            search_visible=search_visible,
-            search_text=search_text,
-            search_highlight=search_highlight,
-        )
 
     def _render_stream_plan(
         self,
         plan: TerminalRenderPlan,
         *,
-        color: str,
+        colors: Mapping[str, str],
         timestamps_enabled: bool,
-        search_visible: bool,
-        search_text: str,
-        search_highlight: str,
     ) -> None:
         message = plan.message.replace("\r\n", "\n").replace("\r", "\n")
         if not message:
             return
-        separator = (
-            plan.stream_separator
-            if (
-                plan.stream_separator
-                and not self._terminal_at_line_start()
-                and not message.startswith("\n")
-            )
-            else ""
-        )
-        rendered = self._leadered_stream(message, plan, timestamps_enabled=timestamps_enabled)
-        self.insert_text(
-            f"{separator}{rendered}",
-            color,
-            search_visible=search_visible,
-            search_text=search_text,
-            search_highlight=search_highlight,
-        )
+        body_color, italic = self._body_format(plan, colors)
+        at_line_start = self._terminal_at_line_start()
+        if plan.stream_separator and not at_line_start and not message.startswith("\n"):
+            self._insert_runs([(plan.stream_separator, body_color, italic)], hang_indent=0.0)
+        for chunk in message.splitlines(keepends=True):
+            if at_line_start and chunk != "\n":
+                leader = self._leader_runs(plan, timestamps_enabled, colors)
+                self._insert_runs(leader, hang_indent=self._leader_width(leader))
+            self._insert_runs([(chunk, body_color, italic)], hang_indent=0.0)
+            at_line_start = chunk.endswith("\n")
 
-    def insert_text(
+    def _leader_runs(
         self,
-        text: str,
-        color: str,
-        *,
-        search_visible: bool,
-        search_text: str,
-        search_highlight: str,
-    ) -> None:
-        append_committed_text = getattr(self.terminal, "append_committed_text", None)
-        if callable(append_committed_text):
-            append_committed_text(text, color)
-            if search_visible:
-                self.refresh_search_highlights(search_text, search_highlight)
+        plan: TerminalRenderPlan,
+        timestamps_enabled: bool,
+        colors: Mapping[str, str],
+    ) -> list[tuple]:
+        """The detached leader: a gray timestamp + a coloured direction column.
+        Decoupled from the message so toggling timestamps re-renders cleanly."""
+        runs: list[tuple] = []
+        if timestamps_enabled:
+            stamp = plan.event.timestamp.astimezone().strftime("%H:%M:%S.%f")[:-3]
+            runs.append((f"{stamp} ", colors.get("timestamp", colors.get("default", "#5e6a7e"))))
+        direction = (plan.direction or "").strip()
+        if direction:
+            dir_color = colors.get(plan.color_role, colors.get("default", "#d4d4d4"))
+            runs.append((f"{direction.ljust(_DIR_WIDTH)} ", dir_color))
+        return runs
+
+    def _body_format(self, plan: TerminalRenderPlan, colors: Mapping[str, str]) -> tuple[str, bool]:
+        role = plan.color_role
+        body_color = colors.get(f"{role}_body", colors.get(role, colors.get("default", "#d4d4d4")))
+        return body_color, role == "status"
+
+    def _leader_width(self, leader_runs: list[tuple]) -> float:
+        if not leader_runs:
+            return 0.0
+        text = "".join(run[0] for run in leader_runs)
+        return float(QFontMetrics(self.terminal.font()).horizontalAdvance(text))
+
+    def _insert_runs(self, runs: list[tuple], *, hang_indent: float) -> None:
+        runs = [run for run in runs if run and run[0]]
+        if not runs:
+            return
+        appender = getattr(self.terminal, "append_committed_runs", None)
+        if callable(appender):
+            appender(runs, hang_indent=hang_indent)
             return
         cursor = self.terminal.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-        cursor.insertText(text, fmt)
+        if hang_indent > 0:
+            block_format = QTextBlockFormat()
+            block_format.setLeftMargin(hang_indent)
+            block_format.setTextIndent(-hang_indent)
+            cursor.mergeBlockFormat(block_format)
+        for run in runs:
+            italic = run[2] if len(run) > 2 else False
+            cursor.insertText(run[0], self._char_format(run[1], italic))
         self.terminal.setTextCursor(cursor)
         self.terminal.ensureCursorVisible()
-        if search_visible:
-            self.refresh_search_highlights(search_text, search_highlight)
 
-    def _leadered_stream(
-        self,
-        message: str,
-        plan: TerminalRenderPlan,
-        *,
-        timestamps_enabled: bool,
-    ) -> str:
-        stamp = (
-            f"[{plan.event.timestamp.astimezone().strftime('%H:%M:%S.%f')[:-3]}] "
-            if timestamps_enabled
-            else ""
-        )
-        leader = f"{stamp}{plan.prefix}"
-        rendered: list[str] = []
-        at_line_start = self._terminal_at_line_start()
-        for chunk in message.splitlines(keepends=True):
-            if at_line_start and chunk != "\n":
-                rendered.append(leader)
-            rendered.append(chunk)
-            at_line_start = chunk.endswith("\n")
-        return "".join(rendered)
+    def _char_format(self, color: str, italic: bool = False) -> QTextCharFormat:
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        if italic:
+            fmt.setFontItalic(True)
+        return fmt
 
     def _terminal_at_line_start(self) -> bool:
         text = self.terminal.toPlainText()
         return not text or text.endswith("\n")
 
-    def _ensure_terminal_line_break(self, color: str) -> None:
+    def _ensure_terminal_line_break(self) -> None:
         if self._terminal_at_line_start():
             return
-        self.insert_text(
-            "\n",
-            color,
-            search_visible=False,
-            search_text="",
-            search_highlight="#000000",
-        )
+        self._insert_runs([("\n", "#d4d4d4")], hang_indent=0.0)

@@ -54,6 +54,7 @@ from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActi
 from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
 from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan, TerminalSessionController
 from ..terminal_view import TerminalView
+from ..themes import mix_hex
 from ..transports import SerialTransportAdapter
 from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
@@ -61,6 +62,8 @@ from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
 from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
 
 DRAWER_COLLAPSED_WIDTH = 48
+# Scrollback cap for the stored transcript that backs timestamp/hex re-rendering.
+TRANSCRIPT_EVENT_CAP = 5000
 
 
 class TerminalConnectionStatusLabel(QLabel):
@@ -116,6 +119,9 @@ class TerminalSessionWidget(QWidget):
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
         self._suppressed_tx_echoes: list[str] = []
+        # Stored transcript entries so timestamp/hex toggles re-render all history.
+        self._transcript: list[tuple] = []
+        self._replaying = False
 
         self._build_ui()
         self.refresh_ports()
@@ -1206,24 +1212,16 @@ class TerminalSessionWidget(QWidget):
     def _render_user_send(self, message: str, *, color_role: str) -> None:
         if not message:
             return
-        self.terminal_view.render_plan(
-            TerminalRenderPlan(
-                event=SerialEvent(kind="tx", message=message),
-                message=message,
-                prefix="TX> ",
-                color_role=color_role,
-                ensure_line_break=True,
-            ),
-            colors={
-                "tx": self.host.theme.tx,
-                "error": self.host.theme.error,
-                "default": self.host.theme.text,
-            },
-            timestamps_enabled=self.host.settings.timestamps_enabled,
-            search_visible=self.search_bar.isVisible(),
-            search_text=self.search_input.text(),
-            search_highlight=self.host.theme.search_highlight,
+        plan = TerminalRenderPlan(
+            event=SerialEvent(kind="tx", message=message),
+            message=message,
+            prefix="TX> ",
+            direction="TX",
+            color_role=color_role,
+            ensure_line_break=True,
         )
+        self._emit_plan(plan)
+        self._store_transcript(("plan", plan))
 
     def _suppress_tx_echo(self, message: str) -> None:
         self._suppressed_tx_echoes.append(message)
@@ -1673,21 +1671,63 @@ class TerminalSessionWidget(QWidget):
             )
 
     def _render_event(self, event: SerialEvent) -> None:
-        plan = self.controller.render_plan(event, self.host.settings.receive_display_mode)
+        self._emit_plan(self.controller.render_plan(event, self.host.settings.receive_display_mode))
+        self._store_transcript(("event", event))
+
+    def _emit_plan(self, plan: TerminalRenderPlan) -> None:
         self.terminal_view.render_plan(
             plan,
-            colors={
-                "rx": self.host.theme.rx,
-                "tx": self.host.theme.tx,
-                "status": self.host.theme.status,
-                "error": self.host.theme.error,
-                "default": self.host.theme.text,
-            },
+            colors=self._terminal_colors(),
             timestamps_enabled=self.host.settings.timestamps_enabled,
             search_visible=self.search_bar.isVisible(),
             search_text=self.search_input.text(),
             search_highlight=self.host.theme.search_highlight,
         )
+
+    def _terminal_colors(self) -> dict[str, str]:
+        theme = self.host.theme
+        text = theme.text
+        faint = theme.text_faint or theme.muted
+        timestamp = mix_hex(faint, theme.terminal_bg, 0.62)
+        return {
+            # direction-column colours
+            "rx": theme.rx,
+            "tx": theme.tx,
+            "status": timestamp,  # SYS leader is faint, like the mockup
+            "error": theme.error,
+            "default": text,
+            # message-body colours, softened toward the terminal ink
+            "rx_body": mix_hex(theme.rx, text, 0.5),
+            "tx_body": mix_hex(theme.tx, text, 0.58),
+            "status_body": faint,
+            "error_body": theme.error,
+            "default_body": text,
+            # detached timestamp column
+            "timestamp": timestamp,
+        }
+
+    def _store_transcript(self, entry: tuple) -> None:
+        if self._replaying:
+            return
+        self._transcript.append(entry)
+        if len(self._transcript) > TRANSCRIPT_EVENT_CAP:
+            del self._transcript[: len(self._transcript) - TRANSCRIPT_EVENT_CAP]
+
+    def rerender_transcript(self) -> None:
+        """Rebuild the transcript with the current settings (timestamp on/off,
+        receive-display mode) so a toggle applies to all history — and restores."""
+        self.terminal.clear_transcript()
+        if not self._transcript:
+            return
+        self._replaying = True
+        try:
+            for kind, payload in self._transcript:
+                if kind == "event":
+                    self._emit_plan(self.controller.render_plan(payload, self.host.settings.receive_display_mode))
+                else:
+                    self._emit_plan(payload)
+        finally:
+            self._replaying = False
 
     def display_message_for_event(self, event: SerialEvent) -> str:
         return self.controller.display_message_for_event(event, self.host.settings.receive_display_mode)

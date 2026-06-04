@@ -814,7 +814,7 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(sent, ["status"])
             self.assertEqual(session.command_input.text(), "")
-            self.assertEqual(session.terminal.toPlainText(), "TX> status\n")
+            self.assertEqual(session.terminal.toPlainText(), "TX  status\n")
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -857,7 +857,7 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(sent, ["ok", "bad"])
             self.assertEqual(session.command_input.text(), "")
-            self.assertEqual(session.terminal.toPlainText(), "TX> ok\nTX> bad\nTX> later\n")
+            self.assertEqual(session.terminal.toPlainText(), "TX  ok\nTX  bad\nTX  later\n")
             display_text = session.terminal.display_text()
 
             def color_for(fragment: str) -> str:
@@ -866,7 +866,10 @@ class AppSessionTests(unittest.TestCase):
                 cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
                 return cursor.charFormat().foreground().color().name().lower()
 
-            self.assertEqual(color_for("ok"), window.theme.tx.lower())
+            from ComPort_Zone.themes import mix_hex
+
+            # TX body is softened toward the terminal ink (mockup data tone).
+            self.assertEqual(color_for("ok"), mix_hex(window.theme.tx, window.theme.text, 0.58).lower())
             self.assertEqual(color_for("bad"), window.theme.error.lower())
             self.assertEqual(color_for("later"), window.theme.error.lower())
         finally:
@@ -1677,7 +1680,7 @@ class AppSessionTests(unittest.TestCase):
             session._render_event(app_module.SerialEvent(kind="rx", message="1", raw=b"1"))
             session._render_event(app_module.SerialEvent(kind="rx", message="67.00\r\n", raw=b"67.00\r\n"))
 
-            self.assertEqual(session.terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
+            self.assertEqual(session.terminal.toPlainText(), "TX  SINK:CURR?\nRX  167.00\n")
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -2210,8 +2213,12 @@ class AppSessionTests(unittest.TestCase):
                 cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
                 return cursor.charFormat().foreground().color().name().lower()
 
-            self.assertEqual(color_for("status"), window.theme.tx.lower())
-            self.assertEqual(color_for("OK"), window.theme.rx.lower())
+            # Message bodies are softened toward the terminal ink (mockup data tone);
+            # the TX/RX/ERR direction column carries the full role colour.
+            from ComPort_Zone.themes import mix_hex
+
+            self.assertEqual(color_for("status"), mix_hex(window.theme.tx, window.theme.text, 0.58).lower())
+            self.assertEqual(color_for("OK"), mix_hex(window.theme.rx, window.theme.text, 0.5).lower())
             self.assertEqual(color_for("write failed"), window.theme.error.lower())
         finally:
             app_module.default_config_path = old_config_path
