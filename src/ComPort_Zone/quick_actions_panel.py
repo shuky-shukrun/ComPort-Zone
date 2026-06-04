@@ -65,7 +65,7 @@ def action_zones(rect: QRect, count: int) -> list[QRect]:
     ]
 
 QUICK_ACTION_ITEM_HEIGHT = 32
-QUICK_COMMAND_EMPTY_HINT = "No quick commands yet — click “Add Command” to create one."
+FAVORITES_EMPTY_HINT = "No favorites yet — click the star icon next to saved commands or history items to add them."
 QUICK_FILE_EMPTY_HINT = "No quick files yet — click “Add File” to add one."
 
 
@@ -333,7 +333,7 @@ def create_quick_command_list(
     context_menu_requested: Callable | None = None,
     drag_drop: bool = False,
 ) -> QListWidget:
-    quick_list = QuickActionList(placeholder_text=QUICK_COMMAND_EMPTY_HINT, parent=parent)
+    quick_list = QuickActionList(placeholder_text=FAVORITES_EMPTY_HINT, parent=parent)
     quick_list.setObjectName("quickCommandList")
     configure_quick_list(
         quick_list,

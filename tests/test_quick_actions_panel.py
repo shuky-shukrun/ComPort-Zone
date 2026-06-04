@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication, QStyle, QWidget
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.quick_actions_panel import (
     QUICK_ACTION_ITEM_HEIGHT,
-    QUICK_COMMAND_EMPTY_HINT,
+    FAVORITES_EMPTY_HINT,
     QUICK_FILE_EMPTY_HINT,
     ROLE_BADGE,
     EmptyHintListWidget,
@@ -81,7 +81,7 @@ class QuickActionsPanelTests(unittest.TestCase):
             self.assertEqual(file_list.count(), 0)
             self.assertEqual(item_ids_in_order(command_list), [])
             self.assertEqual(item_ids_in_order(file_list), [])
-            self.assertEqual(command_list.placeholderText(), QUICK_COMMAND_EMPTY_HINT)
+            self.assertEqual(command_list.placeholderText(), FAVORITES_EMPTY_HINT)
             self.assertEqual(file_list.placeholderText(), QUICK_FILE_EMPTY_HINT)
 
             # Real rows are the only rows: populating yields exactly the ids fed in.
