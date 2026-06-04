@@ -1060,6 +1060,12 @@ class MainWindow(QMainWindow):
 
     def update_tab_titles(self) -> None:
         self.workspace_status.update_tab_titles(self.theme)
+        # The input prompt echoes the tab name, so refresh it whenever a title
+        # changes (endpoint connects, rename, …).
+        for session in self.iter_sessions():
+            sync = getattr(session, "_sync_prompt_context", None)
+            if callable(sync):
+                sync()
 
     def _set_workspace_tab_active_property(self, widget: QWidget, active: bool) -> None:
         targets = [widget]

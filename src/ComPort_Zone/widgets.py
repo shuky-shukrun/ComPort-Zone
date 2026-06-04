@@ -2,8 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTextBlockFormat, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPen,
+    QTextBlockFormat,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTextEdit, QWidget
 
 from .themes import VS_CODE_DARK
@@ -70,32 +79,62 @@ class IntegratedTerminalEdit(QTextEdit):
     deleteHistoryRequested = Signal()
     textEdited = Signal(str)
 
-    prompt = "TX> "
+    # Bare chevron until a tab supplies its name + timestamp state via
+    # ``set_prompt_text`` — see ``terminal_view.prompt_leader_text``.
+    DEFAULT_PROMPT = "> "
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._completer = None
         self._prompt_start = 0
         self._draft_start = 0
+        self.prompt = self.DEFAULT_PROMPT
+        self._placeholder = ""
         self._prompt_color = VS_CODE_DARK.tx
         self._draft_color = VS_CODE_DARK.tx
         self._transcript_color = VS_CODE_DARK.text
+        # Muted ink for the placeholder hint + the inline completion ghost.
+        self._hint_color = "#6b7689"
+        self._ghost_color = "#6b7689"
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.setAcceptRichText(False)
         self.setUndoRedoEnabled(False)
         self.setAcceptDrops(False)
         self._replace_document("", "", 0)
 
-    def set_terminal_colors(self, *, prompt: str, draft: str) -> None:
+    def set_terminal_colors(self, *, prompt: str, draft: str, hint: str | None = None) -> None:
         self._prompt_color = prompt
         self._draft_color = prompt
         self._transcript_color = draft
+        if hint is not None:
+            self._hint_color = hint
+            self._ghost_color = hint
         self._reformat_prompt_and_draft()
+        self.viewport().update()
+
+    def set_prompt_text(self, text: str) -> None:
+        """Swap the prompt leader (e.g. ``COM3   >``) in place, keeping the
+        committed transcript's colours, the draft text, and the caret offset —
+        unlike a full re-render, which would flatten the transcript to one ink."""
+        text = str(text)
+        if text == self.prompt:
+            return
+        draft_offset = self.cursorPosition()
+        self.prompt = text
+        prompt_start = self._safe_prompt_start()
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(prompt_start)
+        cursor.setPosition(self._safe_draft_start(), QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(text, self._format(self._prompt_color))
+        self._draft_start = prompt_start + len(text)
+        self.setCursorPosition(draft_offset)
+        self.viewport().update()
 
     def setCompleter(self, completer) -> None:
         self._completer = completer
         completer.setWidget(self)
         completer.popup().installEventFilter(self)
+        completer.highlighted.connect(self._refresh_inline_overlay)
 
     def set_font_zoom_callback(self, callback: Callable[[int], None]) -> None:
         self.font_zoom_callback = callback
@@ -103,8 +142,14 @@ class IntegratedTerminalEdit(QTextEdit):
     def completer(self):
         return self._completer
 
-    def setPlaceholderText(self, _text: str) -> None:
-        return
+    def setPlaceholderText(self, text: str) -> None:
+        # The document always holds the prompt, so Qt's native placeholder never
+        # fires — we store the hint and paint it ourselves (see ``paintEvent``).
+        self._placeholder = str(text or "")
+        self.viewport().update()
+
+    def placeholderText(self) -> str:
+        return self._placeholder
 
     def toPlainText(self) -> str:
         return super().toPlainText()[: self._safe_prompt_start()]
@@ -252,6 +297,7 @@ class IntegratedTerminalEdit(QTextEdit):
         index = model.index(target_row, 0)
         if index.isValid():
             popup.setCurrentIndex(index)
+        self._refresh_inline_overlay()
 
     def show_completions(self, *, forced: bool = False) -> None:
         if not self._completer:
@@ -273,6 +319,7 @@ class IntegratedTerminalEdit(QTextEdit):
         width = popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width()
         rect.setWidth(max(width, self.fontMetrics().horizontalAdvance(token) + 96))
         self._completer.complete(rect)
+        self._refresh_inline_overlay()
 
     def selection_within_draft(self) -> bool:
         cursor = self.textCursor()
@@ -334,6 +381,14 @@ class IntegratedTerminalEdit(QTextEdit):
 
     def eventFilter(self, watched, event) -> bool:
         popup = self._completer.popup() if self._completer else None
+        if (
+            popup is not None
+            and watched is popup
+            and event.type() in (QEvent.Type.Show, QEvent.Type.Hide)
+        ):
+            # Repaint the terminal so the inline ghost preview appears with the
+            # popup and clears the moment it dismisses.
+            self._refresh_inline_overlay()
         if (
             popup is not None
             and watched is popup
@@ -445,6 +500,8 @@ class IntegratedTerminalEdit(QTextEdit):
                 self.show_completions()
             elif self._completer:
                 self._completer.popup().hide()
+            # Toggle the placeholder hint as the draft empties / fills.
+            self._refresh_inline_overlay()
 
     def _replace_document(self, transcript: str, draft: str, cursor_offset: int) -> None:
         super().setPlainText("")
@@ -564,6 +621,84 @@ class IntegratedTerminalEdit(QTextEdit):
         if italic:
             fmt.setFontItalic(True)
         return fmt
+
+    # -- inline overlays: placeholder hint + IDE-style completion ghost ---------
+
+    def _refresh_inline_overlay(self, *_args) -> None:
+        self.viewport().update()
+
+    def _popup_visible(self) -> bool:
+        return bool(self._completer and self._completer.popup().isVisible())
+
+    def _active_completion(self) -> str:
+        """The completion currently highlighted in the popup (falling back to the
+        first match) while it is visible — otherwise an empty string."""
+        if not self._popup_visible():
+            return ""
+        popup = self._completer.popup()
+        index = popup.currentIndex()
+        completion = str(index.data() or "") if index.isValid() else ""
+        if not completion:
+            completion = self._completer.currentCompletion()
+        if not completion:
+            first = self._completer.completionModel().index(0, 0)
+            completion = str(first.data() or "") if first.isValid() else ""
+        return completion
+
+    def _ghost_suffix(self) -> str:
+        """The not-yet-typed tail of the active completion, shown inline as a
+        ghost. Only when the caret sits at the draft end (no selection) and the
+        completion extends the token under the caret — so it appends cleanly."""
+        completion = self._active_completion()
+        if not completion or self.textCursor().hasSelection():
+            return ""
+        if self.cursorPosition() != len(self.text()):
+            return ""
+        token = self.token_under_cursor()
+        if token and not completion.lower().startswith(token.lower()):
+            return ""
+        return completion[len(token):]
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        ghost = self._ghost_suffix()
+        if ghost:
+            self._paint_inline_overlay(
+                self.cursorRect(),
+                [
+                    (ghost, self._ghost_color, True),
+                    ("   ⇥ Tab to autocomplete", self._hint_color, True),
+                ],
+            )
+            return
+        if not self.text() and self._placeholder and not self._popup_visible():
+            cursor = QTextCursor(self.document())
+            cursor.setPosition(self._safe_draft_start())
+            self._paint_inline_overlay(
+                self.cursorRect(cursor),
+                [(self._placeholder, self._hint_color, True)],
+            )
+
+    def _paint_inline_overlay(self, rect, segments) -> None:
+        painter = QPainter(self.viewport())
+        try:
+            base_font = self.font()
+            x = float(rect.left())
+            top = rect.top()
+            height = rect.height()
+            align = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            for text, color, italic in segments:
+                if not text:
+                    continue
+                font = QFont(base_font)
+                font.setItalic(italic)
+                painter.setFont(font)
+                advance = QFontMetrics(font).horizontalAdvance(text)
+                painter.setPen(QColor(color))
+                painter.drawText(QRect(round(x), top, advance + 4, height), align, text)
+                x += advance
+        finally:
+            painter.end()
 
 
 class ChevronComboBox(QComboBox):

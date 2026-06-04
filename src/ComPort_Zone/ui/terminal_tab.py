@@ -53,7 +53,7 @@ from ..quick_actions_panel import (
 from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
 from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan, TerminalSessionController
-from ..terminal_view import TerminalView
+from ..terminal_view import TerminalView, prompt_leader_text
 from ..themes import mix_hex
 from ..transports import SerialTransportAdapter
 from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
@@ -64,6 +64,8 @@ from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HAN
 DRAWER_COLLAPSED_WIDTH = 48
 # Scrollback cap for the stored transcript that backs timestamp/hex re-rendering.
 TRANSCRIPT_EVENT_CAP = 5000
+# Ghosted hint shown in the empty input line, mirroring the design mockup.
+TERMINAL_INPUT_PLACEHOLDER = "type a command — ↑ recalls history"
 
 
 class TerminalConnectionStatusLabel(QLabel):
@@ -555,7 +557,12 @@ class TerminalSessionWidget(QWidget):
         self.terminal.setFont(terminal_font)
         self.terminal.document().setDefaultFont(terminal_font)
         if hasattr(self.terminal, "set_terminal_colors"):
-            self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
+            self.terminal.set_terminal_colors(
+                prompt=self.host.theme.tx,
+                draft=self.host.theme.text,
+                hint=self._terminal_colors()["timestamp"],
+            )
+        self._sync_prompt_context()
         receive_mode = (
             self.host.settings.receive_display_mode
             if self.host.settings.receive_display_mode in RECEIVE_DISPLAY_MODES
@@ -571,10 +578,33 @@ class TerminalSessionWidget(QWidget):
 
     def apply_theme_palette(self) -> None:
         if hasattr(self.terminal, "set_terminal_colors"):
-            self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
+            self.terminal.set_terminal_colors(
+                prompt=self.host.theme.tx,
+                draft=self.host.theme.text,
+                hint=self._terminal_colors()["timestamp"],
+            )
+        self._sync_prompt_context()
         if hasattr(self, "drawer") and hasattr(self.drawer, "apply_theme_palette"):
             self.drawer.apply_theme_palette(self.host.theme)
         self._sync_status_toggles()
+
+    def _sync_prompt_context(self) -> None:
+        """Mirror the tab name + timestamp state onto the input prompt:
+        ``<tab name>  >`` aligned under the transcript columns (just ``>`` when
+        timestamps are off), plus the placeholder hint."""
+        if not hasattr(self, "terminal"):
+            return
+        set_prompt = getattr(self.terminal, "set_prompt_text", None)
+        if callable(set_prompt):
+            set_prompt(
+                prompt_leader_text(
+                    self.tab_title,
+                    timestamps_enabled=self.host.settings.timestamps_enabled,
+                )
+            )
+        set_placeholder = getattr(self.terminal, "setPlaceholderText", None)
+        if callable(set_placeholder):
+            set_placeholder(TERMINAL_INPUT_PLACEHOLDER)
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()

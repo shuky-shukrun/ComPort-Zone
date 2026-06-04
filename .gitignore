@@ -230,4 +230,4 @@ __marimo__/
 # Local UI-redesign verification artifacts (design handoff + offscreen previews)
 .handoff-extract/
 .preview/
-scripts/_preview.py
+scripts/_preview*.py

@@ -17,6 +17,33 @@ from .terminal_session_controller import TerminalRenderPlan
 
 # Direction column ("TX"/"RX") padded to align with "SYS"/"ERR".
 _DIR_WIDTH = 3
+# Timestamp column renders "HH:MM:SS.mmm" (12 cells); the input prompt borrows
+# that same width so the tab-name label aligns under the history timestamps.
+_TIMESTAMP_WIDTH = 12
+
+
+def clamp_prompt_label(label: str, width: int = _TIMESTAMP_WIDTH) -> str:
+    """Collapse whitespace and clamp ``label`` to ``width`` cells, eliding with …
+    so the prompt's tab name never overflows the timestamp column."""
+    label = " ".join(str(label).split())
+    if len(label) <= width:
+        return label
+    if width <= 1:
+        return label[:width]
+    return label[: width - 1] + "…"
+
+
+def prompt_leader_text(label: str, *, timestamps_enabled: bool) -> str:
+    """Columnar leader for the input prompt, mirroring :meth:`_leader_runs`.
+
+    The tab name fills the timestamp column and a ``>`` sits in the direction
+    column, so the caret lines up under the transcript message column. With
+    timestamps off there is no timestamp column, so only the ``>`` shows."""
+    chevron = ">".ljust(_DIR_WIDTH)
+    label = clamp_prompt_label(label)
+    if timestamps_enabled and label:
+        return f"{label.ljust(_TIMESTAMP_WIDTH)} {chevron} "
+    return f"{chevron} "
 
 
 class TerminalView:
