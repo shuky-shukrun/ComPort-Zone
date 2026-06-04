@@ -138,13 +138,12 @@ def build_stylesheet(theme: ThemePalette) -> str:
         background: {panel};
         color: {tx2};
         border: none;
-        padding: 2px 5px;
-        min-height: {MENU_BAR_H}px;
+        padding: 0px 5px;
         font-size: {UI_FS}px;
     }}
     QMenuBar::item {{
         background: transparent;
-        padding: 4px 9px;
+        padding: 2px 9px;
         border-radius: {RADIUS_SM}px;
         color: {tx2};
     }}
@@ -416,6 +415,15 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QToolButton#commandBarOverflow:hover {{ background: {hover}; color: {tx}; }}
     QToolButton#commandBarOverflow::menu-indicator {{ image: none; width: 0; }}
+
+    /* status-area view/IO toggles (timestamps, hex, log): ghost until active */
+    QToolButton#statusToggleButton {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px;
+        color: {tx2}; padding: 0; min-width: 26px; max-width: 30px; min-height: 24px;
+    }}
+    QToolButton#statusToggleButton:hover {{ background: {hover}; color: {tx}; }}
+    QToolButton#statusToggleButton:checked {{ background: {ghost_on_bg}; color: {accent}; }}
+    QToolButton#statusToggleButton:checked:hover {{ background: {press_bg}; }}
     """)
 
     # =====================================================================

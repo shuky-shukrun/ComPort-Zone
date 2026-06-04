@@ -53,7 +53,7 @@ FONT_UI_PT = 10
 
 # --- Modern-IDE window shell (from styles/app.css) --------------------------
 TITLE_BAR_H = 38          # .cpz-title
-MENU_BAR_H = 28           # .cpz-menu
+MENU_BAR_H = 26           # .cpz-menu (compact; tighter than the 28px mock)
 TOOLBAR_H = 44            # .app-toolbar  (ctrl-h + 16)
 STATUS_BAR_H = 30         # .cpz-status (24 in design; +6 to seat font controls)
 RAIL_W = 46               # .app-rail

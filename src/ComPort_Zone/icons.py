@@ -101,6 +101,23 @@ STYLE_ICON_MAP = {
     QStyle.StandardPixmap.SP_TrashIcon: "trash",
 }
 
+# Connection-action button state -> themed icon name. Shared by the terminal command
+# bar and the window status-bar action button so the two stay identical:
+# Connect/Disconnect read as a power plug, Stop-Retry as a stop square, a vanished
+# port as a reconnect arrow, and "no endpoint yet" as the settings cog.
+CONNECTION_STATE_ICONS = {
+    "connected": "plug",     # Disconnect
+    "retrying": "stop",      # Stop Retry
+    "missing": "refresh",    # Reconnect (port dropped out)
+    "no-port": "cog",        # Set Port / Set Endpoint
+    "closed": "plug",        # Connect
+}
+
+
+def connection_state_icon(state: str) -> str:
+    """Themed icon name for a connection-action button in ``state``."""
+    return CONNECTION_STATE_ICONS.get(state, "plug")
+
 
 def _icon_svg(name: str, size: int, stroke: str) -> str:
     viewbox, stroke_width, body, filled = MOCKUP_ICONS.get(name, MOCKUP_ICONS["info"])

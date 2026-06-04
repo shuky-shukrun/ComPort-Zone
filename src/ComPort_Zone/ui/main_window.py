@@ -77,8 +77,16 @@ from .main_window_menus import MainWindowMenuBuilder
 from .split_workspace import SplitWorkspaceWidget
 from .stylesheet import build_stylesheet
 from .tab_workspace import TabWorkspaceController
-from .title_bar import TitleBar, WindowResizeGrips
-from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
+from .title_bar import TitleBar, WindowResizeGrips, apply_rounded_corners
+from .tokens import (
+    DRAWER_COLLAPSE_AT,
+    DRAWER_MAX_W,
+    DRAWER_MIN_W,
+    FONT_BTN_H,
+    FONT_BTN_W,
+    MENU_BAR_H,
+    SPLITTER_HANDLE,
+)
 from .tab_context_menus import TabContextMenuBuilder
 from .terminal_tab import DRAWER_COLLAPSED_WIDTH, TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
@@ -224,6 +232,9 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         # --- frameless window chrome: custom title bar + relocated menu bar ---
         self._app_menu_bar = QMenuBar(self)
+        # Keep the relocated menu bar tight — a plain QMenuBar otherwise grows
+        # well past the design's compact row.
+        self._app_menu_bar.setFixedHeight(MENU_BAR_H)
         self.title_bar = TitleBar(self, APP_ICON_PATH)
         chrome = QWidget(self)
         chrome.setObjectName("windowChrome")
@@ -304,6 +315,13 @@ class MainWindow(QMainWindow):
         # both the menu builder and the test-suite read it through this override.
         bar = getattr(self, "_app_menu_bar", None)
         return bar if bar is not None else super().menuBar()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Round the frameless shell's outer corners to the subtle Win11 radius.
+        # Applied on show (the native window is guaranteed to exist by now) and
+        # re-applied on every show so it survives a platform-window recreation.
+        apply_rounded_corners(self)
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
@@ -1181,7 +1199,17 @@ class MainWindow(QMainWindow):
             editor.apply_editor_font(self.editor_font())
 
     def toggle_timestamps(self) -> None:
-        self.settings.timestamps_enabled = self.timestamps_action.isChecked()
+        self.set_timestamps_enabled(self.timestamps_action.isChecked())
+
+    def set_timestamps_enabled(self, enabled: bool) -> None:
+        self.settings.timestamps_enabled = bool(enabled)
+        if hasattr(self, "timestamps_action"):
+            self.timestamps_action.blockSignals(True)
+            self.timestamps_action.setChecked(self.settings.timestamps_enabled)
+            self.timestamps_action.blockSignals(False)
+        # Re-sync each tab so the command-bar timestamp toggles track the setting.
+        for session in self.iter_sessions():
+            session.apply_settings()
         self.save_settings()
 
     def toggle_line_wrap(self) -> None:

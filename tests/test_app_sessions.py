@@ -1860,6 +1860,83 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_connection_state_icons_map_to_themed_glyphs(self) -> None:
+        from ComPort_Zone.icons import connection_state_icon
+
+        self.assertEqual(connection_state_icon("connected"), "plug")
+        self.assertEqual(connection_state_icon("closed"), "plug")
+        self.assertEqual(connection_state_icon("retrying"), "stop")
+        self.assertEqual(connection_state_icon("missing"), "refresh")
+        self.assertEqual(connection_state_icon("no-port"), "cog")
+
+    def test_command_bar_status_toggles_drive_timestamps_hex_and_log(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_status_toggles.json")
+        log_path = settings_path.with_name("_tmp_status_toggles.log")
+        settings_path.unlink(missing_ok=True)
+        log_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.timestamps_enabled = False
+            window.settings.receive_display_mode = "Text"
+            window.apply_settings_to_ui()
+            session = window.current_session()
+
+            # A fresh, text-mode session shows all three toggles off.
+            self.assertFalse(session.timestamp_toggle.isChecked())
+            self.assertFalse(session.hex_toggle.isChecked())
+            self.assertFalse(session.log_toggle.isChecked())
+
+            # The hex toggle flips the global receive-display mode and back.
+            session.hex_toggle.click()
+            self.qt.processEvents()
+            self.assertEqual(window.settings.receive_display_mode, "Hex")
+            self.assertTrue(session.hex_toggle.isChecked())
+            session.hex_toggle.click()
+            self.qt.processEvents()
+            self.assertEqual(window.settings.receive_display_mode, "Text")
+            self.assertFalse(session.hex_toggle.isChecked())
+
+            # The timestamp toggle flips the setting and the menu action with it.
+            session.timestamp_toggle.click()
+            self.qt.processEvents()
+            self.assertTrue(window.settings.timestamps_enabled)
+            self.assertTrue(window.timestamps_action.isChecked())
+
+            # A second tab mirrors the shared timestamp/hex state.
+            window.add_session(prompt_settings=False)
+            second = window.current_session()
+            self.assertTrue(second.timestamp_toggle.isChecked())
+            window.set_receive_display_mode("Hex")
+            self.qt.processEvents()
+            self.assertTrue(session.hex_toggle.isChecked())
+            self.assertTrue(second.hex_toggle.isChecked())
+
+            # The log toggle tracks the session logger (no file dialog needed).
+            session.controller.start_logging(str(log_path))
+            session._sync_status_toggles()
+            self.assertTrue(session.log_toggle.isChecked())
+            session.controller.stop_logging()
+            session._sync_status_toggles()
+            self.assertFalse(session.log_toggle.isChecked())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            log_path.unlink(missing_ok=True)
+
     def test_terminal_view_context_menu_includes_terminal_controls(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_terminal_context_menu.json")
         settings_path.unlink(missing_ok=True)

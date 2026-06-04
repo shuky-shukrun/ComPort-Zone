@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..batch import BatchParseError, parse_hex_payload
-from ..icons import set_button_icon
+from ..icons import connection_state_icon, set_button_icon
 from ..models import (
     LanProfile,
     QUICK_COMMAND_SORT_MODES,
@@ -312,7 +312,17 @@ class TerminalSessionWidget(QWidget):
         completer.activated.connect(self._apply_completion)
         self.command_input.setCompleter(completer)
         self.line_ending_label = QLabel("", self.command_bar)
-        self.log_label = QLabel("Log off", self.command_bar)
+        # Compact view/IO toggles that sit in the status area: timestamps, hex view,
+        # and session logging. They stay visible even when the bar is narrow.
+        self.timestamp_toggle = self._make_status_toggle(
+            "clock", "Show timestamps on received lines", self._toggle_timestamps_clicked
+        )
+        self.hex_toggle = self._make_status_toggle(
+            "hex", "Show received data as hex", self._toggle_hex_clicked
+        )
+        self.log_toggle = self._make_status_toggle(
+            "save", "Log this session to a file", self._toggle_log_clicked
+        )
         self.pause_label = QLabel("", self.command_bar)
         # Overflow for the IO controls: when the command bar is too narrow they
         # collapse into this "⋯" menu so the terminal can keep shrinking.
@@ -331,7 +341,6 @@ class TerminalSessionWidget(QWidget):
             self.mode_combo,
             self.rx_display_combo,
             self.line_ending_label,
-            self.log_label,
         ]
         command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.connection_button)
@@ -344,10 +353,13 @@ class TerminalSessionWidget(QWidget):
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.rx_display_combo)
         command_layout.addWidget(self.line_ending_label)
-        command_layout.addWidget(self.log_label)
-        command_layout.addWidget(self.pause_label)
         command_layout.addWidget(self.command_overflow_button)
+        command_layout.addWidget(self.timestamp_toggle)
+        command_layout.addWidget(self.hex_toggle)
+        command_layout.addWidget(self.log_toggle)
+        command_layout.addWidget(self.pause_label)
         self.command_bar.installEventFilter(self)
+        self._sync_status_toggles()
 
         terminal_layout.addWidget(self.search_bar)
         terminal_layout.addWidget(self.terminal, 1)
@@ -377,6 +389,9 @@ class TerminalSessionWidget(QWidget):
             self.connection_button,
             self.script_run_button,
             self.script_status_label,
+            self.timestamp_toggle,
+            self.hex_toggle,
+            self.log_toggle,
         ]
         for button in (self.script_pause_button, self.script_resume_button, self.script_stop_button):
             if button.isVisible():
@@ -408,7 +423,46 @@ class TerminalSessionWidget(QWidget):
         line_ending = self.line_ending_label.text().strip()
         if line_ending:
             menu.addAction(line_ending).setEnabled(False)
-        menu.addAction(self.log_label.text().strip() or "Log off").setEnabled(False)
+
+    def _make_status_toggle(self, icon_name: str, tooltip: str, slot) -> QToolButton:
+        """A compact checkable icon button for the command bar's status toggles."""
+        button = QToolButton(self.command_bar)
+        button.setObjectName("statusToggleButton")
+        button.setCheckable(True)
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setProperty("iconName", icon_name)
+        button.clicked.connect(slot)
+        return button
+
+    def _toggle_timestamps_clicked(self, checked: bool) -> None:
+        self.host.set_timestamps_enabled(checked)
+
+    def _toggle_hex_clicked(self, checked: bool) -> None:
+        self.host.set_receive_display_mode("Hex" if checked else "Text")
+
+    def _toggle_log_clicked(self, _checked: bool = False) -> None:
+        # Logging owns its real state (file dialog / logger); re-sync from it.
+        self.toggle_logging()
+
+    def _sync_status_toggles(self) -> None:
+        """Reflect timestamp / hex / logging state on the command-bar toggles."""
+        if not hasattr(self, "log_toggle"):
+            return
+        settings = self.host.settings
+        theme = self.host.theme
+        for button, on in (
+            (self.timestamp_toggle, bool(settings.timestamps_enabled)),
+            (self.hex_toggle, settings.receive_display_mode in ("Hex", "Text + Hex")),
+            (self.log_toggle, bool(self.logger.enabled)),
+        ):
+            if button.isChecked() != on:
+                button.blockSignals(True)
+                button.setChecked(on)
+                button.blockSignals(False)
+            # SVG icons are pixmaps, so tint explicitly: accent when active, else muted.
+            set_button_icon(button, str(button.property("iconName")), 15, theme.accent if on else theme.muted)
 
     def _build_quick_actions_sidebar(self) -> QuickActionsSidebar:
         sidebar = QuickActionsSidebar(
@@ -505,12 +559,14 @@ class TerminalSessionWidget(QWidget):
             self.rx_display_combo.setCurrentIndex(receive_mode_index)
         self.rx_display_combo.blockSignals(False)
         self._update_line_ending_label()
+        self._sync_status_toggles()
 
     def apply_theme_palette(self) -> None:
         if hasattr(self.terminal, "set_terminal_colors"):
             self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
         if hasattr(self, "drawer") and hasattr(self.drawer, "apply_theme_palette"):
             self.drawer.apply_theme_palette(self.host.theme)
+        self._sync_status_toggles()
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()
@@ -1325,19 +1381,20 @@ class TerminalSessionWidget(QWidget):
     def toggle_logging(self) -> None:
         if self.logger.enabled:
             path = self.controller.stop_logging()
-            self.log_label.setText("Log off")
             self.host.update_connection_status(self)
+            self._sync_status_toggles()
             self._append_status(f"Logging stopped: {path}" if path else "Logging stopped.")
             return
         default_dir = Path(self.host.settings.log_path).parent if self.host.settings.log_path else Path.cwd()
         default_name = f"comport-zone-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
         path, _ = QFileDialog.getSaveFileName(self, "Choose Log File", str(default_dir / default_name), "Log Files (*.log *.txt);;All Files (*)")
         if not path:
+            self._sync_status_toggles()  # user cancelled — revert the toggled button
             return
         self.controller.start_logging(path)
         self.host.settings.log_path = path
-        self.log_label.setText("Logging")
         self.host.update_connection_status(self)
+        self._sync_status_toggles()
         self._append_status(f"Logging to {path}")
         self.host.save_settings()
 
@@ -1649,12 +1706,7 @@ class TerminalSessionWidget(QWidget):
         set_widget_state(self.status_label, state)
         self.connection_button.setText(self.connection_action_text())
         self.connection_button.setToolTip(self.connection_tooltip())
-        action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
-        if state == "no-port":
-            action_icon = "cog"
-        if state == "connected":
-            action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
-        set_button_icon(self.connection_button, action_icon, 15)
+        set_button_icon(self.connection_button, connection_state_icon(state), 15)
         set_button_role(self.connection_button, state)
         self._refresh_script_controls()
         self.host.update_tab_titles()

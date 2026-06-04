@@ -13,6 +13,7 @@ panels) would otherwise swallow edge mouse events.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt
@@ -28,6 +29,41 @@ _GLYPH_RESTORE = ""
 _GLYPH_CLOSE = ""
 _ICON_FAMILY = "Segoe Fluent Icons"
 QFont.insertSubstitution(_ICON_FAMILY, "Segoe MDL2 Assets")
+
+# DWM (Win11) window-attribute + corner-preference constants (dwmapi.h).
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWCP_ROUND = 2       # standard app-window radius (~8px)
+_DWMWCP_ROUNDSMALL = 3  # tighter radius (~4px), used by menus/tooltips
+
+
+def apply_rounded_corners(widget: QWidget, *, small: bool = True) -> None:
+    """Ask Windows 11's DWM to round a frameless window's outer corners.
+
+    Our chrome is custom (``FramelessWindowHint``), so the OS won't round the
+    shell on its own. Setting ``DWMWA_WINDOW_CORNER_PREFERENCE`` to ``ROUND``
+    gives the subtle, compositor-anti-aliased Windows 11 radius — minimal and
+    elegant — and DWM keeps a maximized window square automatically.
+
+    No-op off win32, on pre-Win11, or if the call is otherwise unavailable. Safe
+    to call repeatedly (e.g. on every show); the attribute is idempotent.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        pref = ctypes.c_int(_DWMWCP_ROUNDSMALL if small else _DWMWCP_ROUND)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(int(widget.winId())),
+            ctypes.c_uint(_DWMWA_WINDOW_CORNER_PREFERENCE),
+            ctypes.byref(pref),
+            ctypes.sizeof(pref),
+        )
+    except Exception:
+        # Older Windows without the attribute, or a sandbox without dwmapi —
+        # square corners are a fine fallback, never worth raising for.
+        pass
 
 
 class TitleBar(QWidget):

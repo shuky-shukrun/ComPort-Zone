@@ -5,7 +5,7 @@ from typing import Protocol
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QPushButton, QStyle, QTabWidget, QWidget
 
-from ..icons import set_button_icon, standard_icon
+from ..icons import connection_state_icon, set_button_icon, standard_icon
 from ..themes import ThemePalette
 from ..widgets import set_button_role, set_widget_state
 
@@ -116,12 +116,7 @@ class WorkspaceStatusPresenter:
         self.connection_action_button.setEnabled(True)
         self.connection_action_button.setText(session.connection_action_text())
         self.connection_action_button.setToolTip(session.connection_tooltip())
-        action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
-        if state == "no-port":
-            action_icon = "cog"
-        if state == "connected":
-            action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
-        set_button_icon(self.connection_action_button, action_icon, 15)
+        set_button_icon(self.connection_action_button, connection_state_icon(state), 15)
         set_button_role(self.connection_action_button, state)
 
     def _update_terminal_tab(self, index: int, tab: TerminalStatusTab, theme: ThemePalette) -> None:
