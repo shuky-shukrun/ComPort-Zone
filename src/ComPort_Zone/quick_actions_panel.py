@@ -239,11 +239,11 @@ class QuickRowDelegate(QStyledItemDelegate):
             name, color = "send", (pal.accent if on else pal.muted)
         elif key == "play":
             name, color = "play", (pal.tx if on else pal.muted)
-        elif key == "star":
+        elif key in ("star", "favorite"):
+            # Filled amber when the row's command is a favourite (history rows reflect
+            # this too, so adding from history visibly fills the star).
             name = "star-fill" if favorite else "star"
             color = (pal.accent if on else pal.status) if favorite else (pal.status if on else pal.muted)
-        elif key == "favorite":
-            name, color = "star", (pal.status if on else pal.muted)
         elif key == "save":
             name, color = "plus", (pal.accent if on else pal.muted)
         elif key == "remove":
@@ -510,6 +510,7 @@ def populate_quick_history_list(
     quick_list: QListWidget,
     commands: Iterable[str],
     *,
+    favorite_commands: set[str] | frozenset[str] = frozenset(),
     item_height: int | None = QUICK_ACTION_ITEM_HEIGHT,
 ) -> None:
     quick_list.clear()
@@ -520,6 +521,8 @@ def populate_quick_history_list(
         item = QListWidgetItem(text)
         item.setData(ROLE_ID, str(index))
         item.setData(ROLE_KIND, "history")
+        # Reflect favourite state so the history star shows filled once added.
+        item.setData(ROLE_FAVORITE, text in favorite_commands)
         item.setToolTip(text)
         if item_height is not None:
             item.setSizeHint(QSize(0, item_height))

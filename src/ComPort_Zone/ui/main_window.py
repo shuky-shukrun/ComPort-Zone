@@ -487,6 +487,7 @@ class MainWindow(QMainWindow):
         populate_quick_history_list(
             self.shared_drawer.quick_history_list,
             list(reversed(self.history_catalog.all_commands()))[:80],
+            favorite_commands={command.command.strip() for command in self.favorite_quick_commands_snapshot()},
         )
         self._sync_shared_sort_combos()
 

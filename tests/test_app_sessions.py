@@ -1089,6 +1089,10 @@ class AppSessionTests(unittest.TestCase):
             drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:C"), "favorite")
             self.assertEqual(drawer.quick_command_list.count(), saved0 + 3)
             self.assertEqual(drawer.favorite_command_list.count(), fav0 + 3)
+            # The history row's star shows filled (favourite) right after adding it.
+            from ComPort_Zone.quick_actions_panel import ROLE_FAVORITE
+
+            self.assertTrue(bool(item_named(drawer.quick_history_list, "FAVT:C").data(ROLE_FAVORITE)))
 
             # Saving an already-saved command from history does not duplicate it.
             window.record_command("FAVT:B")
