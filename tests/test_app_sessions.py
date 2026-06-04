@@ -1015,13 +1015,16 @@ class AppSessionTests(unittest.TestCase):
             window = app_module.MainWindow()
             session = window.current_session()
             quick_page = session.drawer_pages.widget(0)
-            # CSV import/export moved off the button grid into the header overflow (⋯) menu.
-            overflow_actions = [
-                action.text()
-                for button in quick_page.findChildren(QToolButton, "quickPanelHeaderButton")
-                if button.menu() is not None
-                for action in button.menu().actions()
-            ]
+            # CSV import/export moved off the button grid into the header overflow (⋯)
+            # menu, which is now built lazily (aboutToShow) so it can fold in the
+            # sort/group controls when collapsed.
+            overflow_actions = []
+            for button in quick_page.findChildren(QToolButton, "quickPanelHeaderButton"):
+                menu = button.menu()
+                if menu is None:
+                    continue
+                menu.aboutToShow.emit()
+                overflow_actions.extend(action.text() for action in menu.actions())
             self.assertIn("Import CSV…", overflow_actions)
             self.assertIn("Export CSV…", overflow_actions)
             # The legacy 8-button grid is gone; primary actions are inline now.

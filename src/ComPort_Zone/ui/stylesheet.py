@@ -101,6 +101,9 @@ def build_stylesheet(theme: ThemePalette) -> str:
         background: {bg};
         color: {tx};
     }}
+    /* Labels carry no surface of their own — they show their container's colour
+       (so header icons/titles match the panel). Chips re-add a background by id. */
+    QLabel {{ background: transparent; }}
     QToolTip {{
         background: {elevated};
         color: {tx};
@@ -288,6 +291,13 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QFrame#drawerRail {{ background: {bg}; border-right: 1px solid {bd_soft}; }}
     QFrame#drawerPanel, QFrame#editorSidePanel {{ background: {panel}; }}
     QFrame#editorSidePanel {{ border-right: 1px solid {bd_soft}; }}
+    /* Let the side panel's {panel} colour show through its scroll/content layers
+       instead of the generic QWidget base — otherwise the dock reads as base black. */
+    QScrollArea#drawerScroll {{ background: transparent; border: none; }}
+    QWidget#drawerViewport {{ background: transparent; }}
+    QWidget#drawerContent {{ background: transparent; }}
+    QWidget#drawerListViewport {{ background: transparent; }}
+    QFrame#quickActionPage {{ background: transparent; }}
 
     QToolButton#railButton {{
         background: transparent;
@@ -323,14 +333,14 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QLabel#quickPanelTitle {{ color: {tx3}; font-size: {LABEL_FS}px; font-weight: 700; }}
     QLabel#quickPanelCount {{
-        color: {tx_faint}; background: {field};
-        border-radius: 8px; padding: 1px 7px; min-width: 12px;
+        color: {tx3}; background: transparent;
+        padding: 1px 5px; min-width: 12px;
         font-family: {MONO}; font-size: 10px;
     }}
     QToolButton#quickPanelHeaderButton {{
         background: transparent; border: none; border-radius: {RADIUS_SM}px;
         color: {tx3}; font-size: 15px; font-weight: 600; padding: 0;
-        min-width: 22px; max-width: 26px; min-height: 22px;
+        min-width: 20px; max-width: 22px; min-height: 22px;
     }}
     QToolButton#quickPanelHeaderButton:hover {{ background: {hover}; color: {tx}; }}
     QToolButton#quickPanelHeaderButton::menu-indicator {{ image: none; width: 0; }}

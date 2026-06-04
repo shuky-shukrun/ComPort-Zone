@@ -83,11 +83,15 @@ class QuickActionsSidebar(QuickActionsDrawer):
         history_primary: Callable[[str], None] | None = None,
         history_context_menu_requested: Callable | None = None,
         settings_callback: Callable[[], None] | None = None,
+        group_menu_provider: Callable | None = None,
         on_page_requested: Callable[[int], None] | None = None,
         rail_width: int = 48,
         parent: QWidget | None = None,
     ) -> None:
         self.actions = actions
+        # Populates a groups menu (used by both the group button and the ⋯ overflow
+        # when the group button is collapsed). Host-supplied; None on hidden drawers.
+        self._group_menu_provider = group_menu_provider
 
         self.quick_command_list = create_quick_command_list(
             parent,
@@ -120,15 +124,20 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.quick_history_list.actionTriggered.connect(lambda item: history_primary(item.text()))
             self.quick_history_list.itemDoubleClicked.connect(lambda item: history_primary(item.text()))
 
+        # Sort state lives in hidden combos; the header carries icon buttons whose
+        # popup menus mirror them (Custom order / A–Z / …).
         self.quick_sort_combo = self._command_sort_combo(parent)
+        self.quick_sort_combo.setVisible(False)
         if command_sort_changed is not None:
             self.quick_sort_combo.currentIndexChanged.connect(command_sort_changed)
-        self.quick_group_button = self._group_button(parent)
-        command_controls = self._command_controls(parent)
-
         self.quick_file_sort_combo = self._file_sort_combo(parent)
+        self.quick_file_sort_combo.setVisible(False)
         if file_sort_changed is not None:
             self.quick_file_sort_combo.currentIndexChanged.connect(file_sort_changed)
+
+        self.quick_sort_button = self._sort_button(self.quick_sort_combo, "Sort quick commands", parent)
+        self.quick_file_sort_button = self._sort_button(self.quick_file_sort_combo, "Sort quick files", parent)
+        self.quick_group_button = self._group_button(parent)
 
         # Legacy action buttons — kept (hidden) for existing enable-state wiring.
         self.command_primary_button = self._drawer_action(command_primary_label, command_primary_icon, actions.command_primary, parent, role="drawerPrimary")
@@ -155,6 +164,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             title=command_title,
             quick_list=self.quick_command_list,
             header_icon=QStyle.StandardPixmap.SP_CommandLink,
+            collapsible_buttons=(self.quick_sort_button, self.quick_group_button),
             header_buttons=(
                 self._header_button("+", "Add command", actions.add_command, parent),
                 self._overflow_button(parent, [
@@ -166,15 +176,15 @@ class QuickActionsSidebar(QuickActionsDrawer):
                     None,
                     ("Import CSV…", actions.import_commands),
                     ("Export CSV…", actions.export_commands),
-                ]),
+                ], extra_provider=self._command_overflow_extras),
             ),
-            controls=command_controls,
             parent=parent,
         )
         file_page = QuickActionsPanel(
             title=file_title,
             quick_list=self.quick_file_list,
             header_icon=QStyle.StandardPixmap.SP_DirOpenIcon,
+            collapsible_buttons=(self.quick_file_sort_button,),
             header_buttons=(
                 self._header_button("+", "Add file", actions.add_file, parent),
                 self._overflow_button(parent, [
@@ -186,9 +196,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
                     None,
                     ("Import CSV…", actions.import_files),
                     ("Export CSV…", actions.export_files),
-                ]),
+                ], extra_provider=self._file_overflow_extras),
             ),
-            controls=self.quick_file_sort_combo,
             parent=parent,
         )
 
@@ -255,7 +264,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
         button.clicked.connect(callback)
         return button
 
-    def _overflow_button(self, parent: QWidget | None, items: list) -> QToolButton:
+    def _overflow_button(self, parent: QWidget | None, items: list, *, extra_provider=None) -> QToolButton:
         button = QToolButton(parent)
         button.setObjectName("quickPanelHeaderButton")
         button.setText("⋯")  # horizontal ellipsis
@@ -264,6 +273,16 @@ class QuickActionsSidebar(QuickActionsDrawer):
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(button)
+        # Rebuilt on open so collapsed sort/group controls can fold in (see extras).
+        menu.aboutToShow.connect(lambda m=menu, it=items, ep=extra_provider: self._populate_overflow(m, it, ep))
+        button.setMenu(menu)
+        button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        return button
+
+    def _populate_overflow(self, menu: QMenu, items: list, extra_provider) -> None:
+        menu.clear()
+        if extra_provider is not None:
+            extra_provider(menu)
         for entry in items:
             if entry is None:
                 menu.addSeparator()
@@ -272,9 +291,22 @@ class QuickActionsSidebar(QuickActionsDrawer):
             action = QAction(label, menu)
             action.triggered.connect(lambda _checked=False, cb=callback: cb())
             menu.addAction(action)
-        button.setMenu(menu)
-        button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
-        return button
+
+    def _command_overflow_extras(self, menu: QMenu) -> None:
+        added = False
+        if self.quick_sort_button.isHidden():
+            self._populate_sort_menu(menu.addMenu("Sort"), self.quick_sort_combo)
+            added = True
+        if self.quick_group_button.isHidden() and self._group_menu_provider is not None:
+            self._group_menu_provider(menu.addMenu("Groups"))
+            added = True
+        if added:
+            menu.addSeparator()
+
+    def _file_overflow_extras(self, menu: QMenu) -> None:
+        if self.quick_file_sort_button.isHidden():
+            self._populate_sort_menu(menu.addMenu("Sort"), self.quick_file_sort_combo)
+            menu.addSeparator()
 
     def _drawer_action(
         self,
@@ -313,24 +345,37 @@ class QuickActionsSidebar(QuickActionsDrawer):
 
     def _group_button(self, parent: QWidget | None) -> QToolButton:
         button = QToolButton(parent)
-        button.setObjectName("drawerMenuButton")
+        button.setObjectName("quickPanelHeaderButton")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         button.setToolTip("Show or hide quick command groups")
-        set_button_icon(button, QStyle.StandardPixmap.SP_FileDialogListView)
+        set_button_icon(button, "list", 14)
+        button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
         return button
 
-    def _command_controls(self, parent: QWidget | None) -> QWidget:
-        from PySide6.QtWidgets import QHBoxLayout
+    def _sort_button(self, combo: ChevronComboBox, tooltip: str, parent: QWidget | None) -> QToolButton:
+        button = QToolButton(parent)
+        button.setObjectName("quickPanelHeaderButton")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        button.setToolTip(tooltip)
+        set_button_icon(button, "sort", 14)
+        menu = QMenu(button)
+        menu.aboutToShow.connect(lambda m=menu, c=combo: self._populate_sort_menu(m, c))
+        button.setMenu(menu)
+        button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        return button
 
-        controls = QWidget(parent)
-        layout = QHBoxLayout(controls)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        layout.addWidget(self.quick_sort_combo, 1)
-        layout.addWidget(self.quick_group_button, 1)
-        return controls
+    def _populate_sort_menu(self, menu: QMenu, combo: ChevronComboBox) -> None:
+        menu.clear()
+        for index in range(combo.count()):
+            action = menu.addAction(combo.itemText(index))
+            action.setCheckable(True)
+            action.setChecked(index == combo.currentIndex())
+            action.triggered.connect(lambda _checked=False, idx=index, c=combo: c.setCurrentIndex(idx))
 
     def _connect_list_signals(
         self,

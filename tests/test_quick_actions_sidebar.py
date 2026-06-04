@@ -82,6 +82,55 @@ class QuickActionsSidebarTests(unittest.TestCase):
             sidebar.deleteLater()
             parent.deleteLater()
 
+    def test_sort_and_group_are_header_icons_that_collapse_into_overflow(self) -> None:
+        from PySide6.QtWidgets import QToolButton
+
+        parent = QWidget()
+        calls: list[str] = []
+        sidebar = QuickActionsSidebar(
+            actions=make_actions(calls),
+            command_primary_label="Insert",
+            file_primary_label="Open",
+            group_menu_provider=lambda menu: menu.addAction("Boot"),
+            parent=parent,
+        )
+        try:
+            # Sort/group are compact header icon buttons; the combos persist hidden.
+            # (The group button's menu is host-supplied, so it is not asserted here.)
+            self.assertIsNotNone(sidebar.quick_sort_button.menu())
+            self.assertTrue(sidebar.quick_sort_combo.isHidden())
+            self.assertTrue(sidebar.quick_file_sort_combo.isHidden())
+
+            # The sort popup mirrors the hidden combo's modes.
+            sort_menu = sidebar.quick_sort_button.menu()
+            sort_menu.aboutToShow.emit()
+            self.assertEqual(
+                [action.text() for action in sort_menu.actions()],
+                [sidebar.quick_sort_combo.itemText(i) for i in range(sidebar.quick_sort_combo.count())],
+            )
+
+            command_header = sidebar.sections["command"]._header
+            overflow = next(b for b in command_header.findChildren(QToolButton) if b.text() == "⋯")
+
+            # Visible icons -> overflow has no Sort/Groups submenus.
+            sidebar.quick_sort_button.setVisible(True)
+            sidebar.quick_group_button.setVisible(True)
+            overflow.menu().aboutToShow.emit()
+            wide = [a.text() for a in overflow.menu().actions()]
+            self.assertNotIn("Sort", wide)
+            self.assertNotIn("Groups", wide)
+
+            # Collapsed icons -> overflow folds in Sort + Groups submenus.
+            sidebar.quick_sort_button.setVisible(False)
+            sidebar.quick_group_button.setVisible(False)
+            overflow.menu().aboutToShow.emit()
+            collapsed = [a.text() for a in overflow.menu().actions()]
+            self.assertIn("Sort", collapsed)
+            self.assertIn("Groups", collapsed)
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
     def test_inline_row_action_selects_then_dispatches_primary(self) -> None:
         parent = QWidget()
         calls: list[str] = []

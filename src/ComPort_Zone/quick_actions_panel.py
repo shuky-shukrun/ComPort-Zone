@@ -344,6 +344,9 @@ def configure_quick_list(
     context_menu_requested: Callable | None = None,
     drag_drop: bool = False,
 ) -> None:
+    # The list's own background is transparent, but its scroll viewport otherwise
+    # falls back to the base colour; name it so the side panel tone shows through.
+    quick_list.viewport().setObjectName("drawerListViewport")
     quick_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     quick_list.setDragEnabled(drag_drop)
     quick_list.setAcceptDrops(drag_drop)
@@ -474,6 +477,31 @@ def populate_quick_history_list(
         quick_list.addItem(item)
 
 
+class _ElidedLabel(QLabel):
+    """A label that elides to its current width and never demands its full text
+    width — so it yields space to the header's controls and shows ``…`` instead of
+    a hard clip when the dock is narrow."""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = text
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._apply_elision()
+
+    def setText(self, text: str) -> None:  # type: ignore[override]
+        self._full_text = text
+        self._apply_elision()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_elision()
+
+    def _apply_elision(self) -> None:
+        metrics = QFontMetrics(self.font())
+        QLabel.setText(self, metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, max(0, self.width())))
+
+
 class QuickActionsPanel(QFrame):
     def __init__(
         self,
@@ -482,6 +510,7 @@ class QuickActionsPanel(QFrame):
         quick_list: QListWidget,
         header_icon: QStyle.StandardPixmap | None = None,
         header_buttons: tuple[QWidget, ...] = (),
+        collapsible_buttons: tuple[QWidget, ...] = (),
         controls: QWidget | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -492,6 +521,8 @@ class QuickActionsPanel(QFrame):
         self.setMinimumWidth(132)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.quick_list = quick_list
+        # Buttons that fold into the ⋯ overflow when the header runs out of room.
+        self._collapsible_buttons = tuple(collapsible_buttons)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -499,27 +530,35 @@ class QuickActionsPanel(QFrame):
 
         header = QFrame(self)
         header.setObjectName("quickPanelHeader")
+        self._header = header
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(11, 0, 6, 0)
-        header_layout.setSpacing(7)
+        header_layout.setContentsMargins(10, 0, 5, 0)
+        header_layout.setSpacing(4)
+        self._header_pinned: list[QWidget] = []
         if header_icon is not None:
             icon_label = QLabel(header)
             icon_label.setObjectName("quickPanelIcon")
             icon_label.setPixmap(standard_icon(header_icon, 13).pixmap(13, 13))
             header_layout.addWidget(icon_label)
-        title_label = QLabel(title.upper(), header)
+            self._header_pinned.append(icon_label)
+        # The title elides and yields width so the header's controls stay on one row.
+        title_label = _ElidedLabel(title.upper(), header)
         title_label.setObjectName("quickPanelTitle")
-        header_layout.addWidget(title_label)
-        header_layout.addStretch(1)
+        header_layout.addWidget(title_label, 1)
         self.count_label = QLabel("0", header)
         self.count_label.setObjectName("quickPanelCount")
         header_layout.addWidget(self.count_label)
+        self._header_pinned.append(self.count_label)
+        for button in self._collapsible_buttons:
+            header_layout.addWidget(button)
         for button in header_buttons:
             header_layout.addWidget(button)
+            self._header_pinned.append(button)
         layout.addWidget(header)
 
         if controls is not None:
             controls_holder = QWidget(self)
+            controls_holder.setObjectName("drawerContent")
             controls_layout = QVBoxLayout(controls_holder)
             controls_layout.setContentsMargins(8, 0, 8, 0)
             controls_layout.setSpacing(6)
@@ -527,6 +566,7 @@ class QuickActionsPanel(QFrame):
             layout.addWidget(controls_holder)
 
         list_holder = QWidget(self)
+        list_holder.setObjectName("drawerContent")
         list_layout = QVBoxLayout(list_holder)
         list_layout.setContentsMargins(4, 0, 4, 6)
         list_layout.setSpacing(0)
@@ -538,6 +578,26 @@ class QuickActionsPanel(QFrame):
         model.rowsRemoved.connect(self._update_count)
         model.modelReset.connect(self._update_count)
         self._update_count()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._relayout_header()
+
+    def _relayout_header(self) -> None:
+        """Fold the collapsible header buttons away when the row is too narrow."""
+        if not self._collapsible_buttons:
+            return
+        header_layout = self._header.layout()
+        margins = header_layout.contentsMargins()
+        spacing = header_layout.spacing()
+        # Collapse only when even an elided title can't keep the buttons on one row:
+        # room for the pinned bits + the collapsible icons + a sliver of title.
+        needed = margins.left() + margins.right() + 10
+        for widget in (*self._header_pinned, *self._collapsible_buttons):
+            needed += widget.sizeHint().width() + spacing
+        collapse = self._header.width() < needed
+        for widget in self._collapsible_buttons:
+            widget.setVisible(not collapse)
 
     def _update_count(self, *args) -> None:
         self.count_label.setText(str(self.quick_list.count()))
@@ -666,6 +726,7 @@ class QuickActionsDrawer(QFrame):
         panel_layout.setSpacing(8)
 
         self.content = QWidget(self.panel)
+        self.content.setObjectName("drawerContent")
         content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(12)
@@ -675,6 +736,9 @@ class QuickActionsDrawer(QFrame):
 
         scroll = QScrollArea(self.panel)
         scroll.setObjectName("drawerScroll")
+        # Name the internal viewport so the panel colour shows through it (a bare
+        # ``QScrollArea > QWidget`` selector does not reliably reach the viewport).
+        scroll.viewport().setObjectName("drawerViewport")
         scroll.setWidget(self.content)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)

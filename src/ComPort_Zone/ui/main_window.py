@@ -380,12 +380,13 @@ class MainWindow(QMainWindow):
             include_history=True,
             history_primary=self._shared_resend_history,
             settings_callback=self.show_command_palette,
+            group_menu_provider=self._populate_group_menu,
             on_page_requested=self.request_drawer_page,
             rail_width=DRAWER_COLLAPSED_WIDTH,
             parent=self,
         )
         group_menu = QMenu(drawer.quick_group_button)
-        group_menu.aboutToShow.connect(self._populate_shared_group_menu)
+        group_menu.aboutToShow.connect(lambda m=group_menu: self._populate_group_menu(m))
         drawer.quick_group_button.setMenu(group_menu)
         self.drawer_rail = drawer.rail
         self.drawer_panel = drawer.panel
@@ -432,8 +433,7 @@ class MainWindow(QMainWindow):
             force_custom=True,
         )
 
-    def _populate_shared_group_menu(self) -> None:
-        menu = self.shared_drawer.quick_group_button.menu()
+    def _populate_group_menu(self, menu) -> None:
         menu.clear()
         hidden = set(self.quick_command_hidden_groups_snapshot())
         for group in self.quick_command_group_names():
@@ -488,7 +488,7 @@ class MainWindow(QMainWindow):
         hidden = set(self.quick_command_hidden_groups_snapshot())
         visible = [g for g in groups if g not in hidden]
         label = "All" if len(visible) == len(groups) else f"{len(visible)}/{len(groups)}"
-        self.shared_drawer.quick_group_button.setText(f" Groups: {label}")
+        self.shared_drawer.quick_group_button.setToolTip(f"Quick command groups — showing {label}")
 
     def _build_menus(self) -> None:
         self.menu_builder.build().install_on(self)
