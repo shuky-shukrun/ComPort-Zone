@@ -154,6 +154,43 @@ class QuickActionsSidebarTests(unittest.TestCase):
             sidebar.deleteLater()
             parent.deleteLater()
 
+    def test_file_star_toggles_favorite_and_play_runs_by_id(self) -> None:
+        from ComPort_Zone.models import QuickFile
+        from ComPort_Zone.quick_actions_panel import populate_quick_file_list
+
+        parent = QWidget()
+        calls: list[str] = []
+        toggles: list[tuple[str, bool]] = []
+        runs: list[str] = []
+        actions = make_actions(calls)
+        actions.file_favorite_toggle = lambda fid, fav: toggles.append((fid, fav))
+        actions.file_use_by_id = lambda fid: runs.append(fid)
+        sidebar = QuickActionsSidebar(
+            actions=actions,
+            command_primary_label="Send",
+            file_primary_label="Run",
+            parent=parent,
+        )
+        try:
+            populate_quick_file_list(
+                sidebar.quick_file_list,
+                [QuickFile(id="f1", label="Bring-up", path="C:/bringup.cpz", favorite=False)],
+            )
+            item = sidebar.quick_file_list.item(0)
+            # The star is the favourite toggle (file was not a favourite).
+            sidebar.quick_file_list.actionTriggered.emit(item, "star")
+            self.assertEqual(toggles, [("f1", True)])
+            # Play runs the file by id (works for the favourites list too).
+            sidebar.quick_file_list.actionTriggered.emit(item, "play")
+            self.assertEqual(runs, ["f1"])
+            # Favorites surfaces its own command + file panels.
+            self.assertEqual(sidebar.rail_buttons[0].toolTip(), "Favorites")
+            self.assertTrue(sidebar.favorite_file_list.dragEnabled())
+            self.assertTrue(sidebar.favorite_command_list.dragEnabled())
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
     def test_history_page_is_added_and_resends(self) -> None:
         parent = QWidget()
         calls: list[str] = []
@@ -170,7 +207,7 @@ class QuickActionsSidebarTests(unittest.TestCase):
             self.assertEqual(sidebar.pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in sidebar.rail_buttons],
-                ["Quick Access", "Saved Commands", "Quick files", "History"],
+                ["Favorites", "Saved Commands", "Files", "History"],
             )
             populate_quick_history_list(sidebar.quick_history_list, ["*IDN?", "MEAS:VOLT?"])
             self.assertEqual(sidebar.quick_history_list.count(), 2)

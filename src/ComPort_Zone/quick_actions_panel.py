@@ -43,14 +43,14 @@ ACTION_ICON = 14
 
 
 def row_action_keys(kind: str, favorite: bool = False) -> list[str]:
-    """Inline action keys for a row, ordered left-to-right (send stays rightmost).
+    """Inline action keys for a row, ordered left-to-right (send/play stays rightmost).
 
     * saved / favourite command -> star (favourite toggle) + send
-    * quick file                -> play
+    * quick file                -> star (favourite toggle) + play
     * history                   -> remove · favourite · save · send
     """
     if kind == "file":
-        return ["play"]
+        return ["star", "play"]
     if kind == "history":
         return ["remove", "favorite", "save", "send"]
     return ["star", "send"]
@@ -493,6 +493,7 @@ def populate_quick_file_list(
         item.setData(ROLE_ID, quick_file.id)
         item.setData(ROLE_KIND, "file")
         item.setData(ROLE_SECONDARY, Path(quick_file.path).parent.name)
+        item.setData(ROLE_FAVORITE, bool(quick_file.favorite))
         item.setToolTip(quick_file.path)
         if item_height is not None:
             item.setSizeHint(QSize(0, item_height))
@@ -686,7 +687,7 @@ class QuickActionsRailMode:
     """A rail button mapped to the set of panel sections it reveals."""
 
     key: str
-    icon: QStyle.StandardPixmap
+    icon: QStyle.StandardPixmap | str
     tooltip: str
     sections: tuple[str, ...]
 

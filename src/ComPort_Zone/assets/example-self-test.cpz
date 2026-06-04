@@ -1,0 +1,18 @@
+# Self-test sequence — shows how "EXPECT" verifies replies.
+# "EXPECT <text>" waits for matching text in the response before moving on;
+# the run stops with an error if it does not arrive in time.
+# Run it with the play icon, or open it in the editor to tweak.
+
+# Reset to a known state, then confirm the instrument identifies itself.
+*RST
+*IDN?
+EXPECT ComPort
+
+# Clear the error queue and confirm it reports no error.
+SYST:ERR?
+EXPECT 0,"No error"
+
+# Wait for pending operations, then confirm completion.
+WAIT 250
+*OPC?
+EXPECT 1

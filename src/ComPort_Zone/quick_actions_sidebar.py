@@ -43,6 +43,9 @@ class QuickActionsSidebarActions:
     # Favorites / history actions (optional; wired by the shared drawer host).
     command_use_by_id: Callable[[str], None] | None = None        # inline send by command id
     command_favorite_toggle: Callable[[str, bool], None] | None = None  # (command_id, favorite)
+    file_use_by_id: Callable[[str], None] | None = None           # inline run by file id
+    file_open_by_id: Callable[[str], None] | None = None          # open-in-editor by file id (double-click)
+    file_favorite_toggle: Callable[[str, bool], None] | None = None     # (quick_file_id, favorite)
     history_favorite: Callable[[str], None] | None = None         # add history text to favorites
     history_save: Callable[[str], None] | None = None             # add history text to saved
     history_remove: Callable[[str], None] | None = None           # remove history text
@@ -86,6 +89,10 @@ class QuickActionsSidebar(QuickActionsDrawer):
         file_sort_changed: Callable[[], None] | None = None,
         command_order_changed: Callable[[], None] | None = None,
         file_order_changed: Callable[[], None] | None = None,
+        favorite_command_sort_changed: Callable[[], None] | None = None,
+        favorite_file_sort_changed: Callable[[], None] | None = None,
+        favorite_command_order_changed: Callable[[], None] | None = None,
+        favorite_file_order_changed: Callable[[], None] | None = None,
         command_selection_changed: Callable[[], None] | None = None,
         file_selection_changed: Callable[[], None] | None = None,
         include_history: bool = False,
@@ -103,23 +110,33 @@ class QuickActionsSidebar(QuickActionsDrawer):
         self._group_menu_provider = group_menu_provider
 
         self._history_primary = history_primary
+        # Fallback no-arg double-click (used when no id-based callback is wired —
+        # e.g. the editor / per-tab drawers that only drive a single file list).
+        self._file_double_clicked = file_double_clicked
         self.quick_command_list = create_quick_command_list(
             parent,
             tooltip=command_tooltip,
             context_menu_requested=command_context_menu_requested,
             drag_drop=True,
         )
-        # Favorites: a filtered view of saved commands (star toggles membership).
+        # Favorites: a curated view of saved commands (star toggles membership);
+        # drag-reorder writes an independent favourites order.
         self.favorite_command_list = create_quick_command_list(
             parent,
-            tooltip="Click the arrow to send · click the star to remove from favorites.",
+            tooltip="Send · star removes from favorites · drag to reorder favorites.",
             context_menu_requested=command_context_menu_requested,
-            drag_drop=False,
+            drag_drop=True,
         )
         self.quick_file_list = create_quick_file_list(
             parent,
             tooltip=file_tooltip,
-            double_clicked=file_double_clicked,
+            context_menu_requested=file_context_menu_requested,
+            drag_drop=True,
+        )
+        # Favorite files: the star-filtered file view (mirrors favourite commands).
+        self.favorite_file_list = create_quick_file_list(
+            parent,
+            tooltip="Run · star removes from favorites · drag to reorder favorites.",
             context_menu_requested=file_context_menu_requested,
             drag_drop=True,
         )
@@ -137,9 +154,13 @@ class QuickActionsSidebar(QuickActionsDrawer):
             command_list.itemDoubleClicked.connect(
                 lambda item, lst=command_list: self._on_command_action(lst, item, "send")
             )
-        self.quick_file_list.actionTriggered.connect(
-            lambda item, key: self._trigger_inline(self.quick_file_list, item, actions.file_primary)
-        )
+        for file_list in (self.quick_file_list, self.favorite_file_list):
+            file_list.actionTriggered.connect(
+                lambda item, key, lst=file_list: self._on_file_action(lst, item, key)
+            )
+            file_list.itemDoubleClicked.connect(
+                lambda item, lst=file_list: self._on_file_double_clicked(lst, item)
+            )
         self.quick_history_list.actionTriggered.connect(self._on_history_action)
         if history_primary is not None:
             self.quick_history_list.itemDoubleClicked.connect(lambda item: history_primary(item.text()))
@@ -157,7 +178,20 @@ class QuickActionsSidebar(QuickActionsDrawer):
 
         self.quick_sort_button = self._sort_button(self.quick_sort_combo, "Sort quick commands", parent)
         self.quick_file_sort_button = self._sort_button(self.quick_file_sort_combo, "Sort quick files", parent)
-        self.quick_group_button = self._group_button(parent)
+        self.quick_group_button = self._group_button(parent, "Show or hide favourite + saved command groups")
+
+        # Favourites carry their own sort + group controls (independent order).
+        self.favorite_sort_combo = self._command_sort_combo(parent)
+        self.favorite_sort_combo.setVisible(False)
+        if favorite_command_sort_changed is not None:
+            self.favorite_sort_combo.currentIndexChanged.connect(favorite_command_sort_changed)
+        self.favorite_file_sort_combo = self._file_sort_combo(parent)
+        self.favorite_file_sort_combo.setVisible(False)
+        if favorite_file_sort_changed is not None:
+            self.favorite_file_sort_combo.currentIndexChanged.connect(favorite_file_sort_changed)
+        self.favorite_sort_button = self._sort_button(self.favorite_sort_combo, "Sort favorites", parent)
+        self.favorite_file_sort_button = self._sort_button(self.favorite_file_sort_combo, "Sort favorite files", parent)
+        self.favorite_group_button = self._group_button(parent, "Show or hide favourite command groups")
 
         # Legacy action buttons — kept (hidden) for existing enable-state wiring.
         self.command_primary_button = self._drawer_action(command_primary_label, command_primary_icon, actions.command_primary, parent, role="drawerPrimary")
@@ -183,7 +217,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
         command_page = QuickActionsPanel(
             title=command_title,
             quick_list=self.quick_command_list,
-            header_icon=QStyle.StandardPixmap.SP_CommandLink,
+            header_icon="term",
             collapsible_buttons=(self.quick_sort_button, self.quick_group_button),
             header_buttons=(
                 self._header_button("+", "Add command", actions.add_command, parent),
@@ -203,7 +237,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
         file_page = QuickActionsPanel(
             title=file_title,
             quick_list=self.quick_file_list,
-            header_icon=QStyle.StandardPixmap.SP_DirOpenIcon,
+            header_icon="file",
             collapsible_buttons=(self.quick_file_sort_button,),
             header_buttons=(
                 self._header_button("+", "Add file", actions.add_file, parent),
@@ -223,10 +257,19 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent=parent,
         )
 
+        # Favorites rail surfaces two curated panels: favourite commands + files.
         favorites_page = QuickActionsPanel(
-            title="Favorites",
+            title="Favorite Commands",
             quick_list=self.favorite_command_list,
             header_icon="star",
+            collapsible_buttons=(self.favorite_sort_button, self.favorite_group_button),
+            parent=parent,
+        )
+        favorite_files_page = QuickActionsPanel(
+            title="Favorite Files",
+            quick_list=self.favorite_file_list,
+            header_icon="star",
+            collapsible_buttons=(self.favorite_file_sort_button,),
             parent=parent,
         )
         history_page = QuickActionsPanel(
@@ -237,15 +280,17 @@ class QuickActionsSidebar(QuickActionsDrawer):
         )
         sections = {
             "favorites": favorites_page,
+            "favorite_file": favorite_files_page,
             "command": command_page,
             "file": file_page,
             "history": history_page,
         }
-        # Quick Access surfaces Favorites + Files; Saved Commands is the full list.
+        # Favorites surfaces starred commands + files; the other rails hold the
+        # full Saved Commands / Files lists (where you star items).
         rail_modes = [
-            QuickActionsRailMode("all", QStyle.StandardPixmap.SP_ComputerIcon, "Quick Access", ("favorites", "file")),
-            QuickActionsRailMode("commands", QStyle.StandardPixmap.SP_CommandLink, "Saved Commands", ("command",)),
-            QuickActionsRailMode("files", QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", ("file",)),
+            QuickActionsRailMode("all", "star", "Favorites", ("favorites", "favorite_file")),
+            QuickActionsRailMode("commands", "term", "Saved Commands", ("command",)),
+            QuickActionsRailMode("files", "file", "Files", ("file",)),
         ]
         if include_history:
             rail_modes.append(
@@ -255,6 +300,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
         self._connect_list_signals(
             command_order_changed=command_order_changed,
             file_order_changed=file_order_changed,
+            favorite_command_order_changed=favorite_command_order_changed,
+            favorite_file_order_changed=favorite_file_order_changed,
             command_selection_changed=command_selection_changed,
             file_selection_changed=file_selection_changed,
         )
@@ -273,6 +320,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.quick_command_list,
             self.favorite_command_list,
             self.quick_file_list,
+            self.favorite_file_list,
             self.quick_history_list,
         ):
             quick_list.apply_theme_palette(palette)
@@ -289,6 +337,29 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.actions.command_use_by_id(command_id)
         else:
             self.actions.command_primary()
+
+    def _on_file_action(self, quick_list, item, key: str) -> None:
+        quick_list.setCurrentItem(item)
+        file_id = str(item.data(ROLE_ID) or "")
+        if key == "star":
+            toggle = self.actions.file_favorite_toggle
+            if toggle is not None and file_id:
+                toggle(file_id, not bool(item.data(ROLE_FAVORITE)))
+            return
+        # play -> run by id (works from either file list); fall back to the
+        # selection-based primary for drawers that only drive one list.
+        if self.actions.file_use_by_id is not None and file_id:
+            self.actions.file_use_by_id(file_id)
+        else:
+            self.actions.file_primary()
+
+    def _on_file_double_clicked(self, quick_list, item) -> None:
+        quick_list.setCurrentItem(item)
+        file_id = str(item.data(ROLE_ID) or "")
+        if self.actions.file_open_by_id is not None and file_id:
+            self.actions.file_open_by_id(file_id)
+        elif self._file_double_clicked is not None:
+            self._file_double_clicked()
 
     def _on_history_action(self, item, key: str) -> None:
         text = item.text()
@@ -407,14 +478,14 @@ class QuickActionsSidebar(QuickActionsDrawer):
         combo.setToolTip("Sort quick files")
         return combo
 
-    def _group_button(self, parent: QWidget | None) -> QToolButton:
+    def _group_button(self, parent: QWidget | None, tooltip: str = "Show or hide quick command groups") -> QToolButton:
         button = QToolButton(parent)
         button.setObjectName("quickPanelHeaderButton")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        button.setToolTip("Show or hide quick command groups")
+        button.setToolTip(tooltip)
         set_button_icon(button, "list", 14)
         button.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
         return button
@@ -446,6 +517,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
         *,
         command_order_changed: Callable[[], None] | None,
         file_order_changed: Callable[[], None] | None,
+        favorite_command_order_changed: Callable[[], None] | None,
+        favorite_file_order_changed: Callable[[], None] | None,
         command_selection_changed: Callable[[], None] | None,
         file_selection_changed: Callable[[], None] | None,
     ) -> None:
@@ -459,3 +532,13 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.quick_command_list.model().rowsRemoved.connect(lambda *_: QTimer.singleShot(0, command_order_changed))
         if file_order_changed is not None:
             self.quick_file_list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, file_order_changed))
+        # Favourites persist on an actual drag (rowsMoved) only — a programmatic
+        # repopulate (rowsInserted/Removed) must not flip the sort to Custom.
+        if favorite_command_order_changed is not None:
+            self.favorite_command_list.model().rowsMoved.connect(
+                lambda *_: QTimer.singleShot(0, favorite_command_order_changed)
+            )
+        if favorite_file_order_changed is not None:
+            self.favorite_file_list.model().rowsMoved.connect(
+                lambda *_: QTimer.singleShot(0, favorite_file_order_changed)
+            )

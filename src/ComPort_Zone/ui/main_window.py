@@ -370,6 +370,9 @@ class MainWindow(QMainWindow):
                 export_files=self.export_quick_files_csv,
                 command_use_by_id=self.use_quick_command_id,
                 command_favorite_toggle=self.set_quick_command_favorite,
+                file_use_by_id=self.run_quick_file_id,
+                file_open_by_id=self.open_quick_file_in_editor_id,
+                file_favorite_toggle=self.set_quick_file_favorite,
                 history_favorite=lambda text: self.add_saved_command_from_text(text, favorite=True),
                 history_save=lambda text: self.add_saved_command_from_text(text, favorite=False),
                 history_remove=self.remove_command_from_history,
@@ -383,6 +386,10 @@ class MainWindow(QMainWindow):
             file_sort_changed=self._shared_file_sort_changed,
             command_order_changed=self._shared_persist_command_order,
             file_order_changed=self._shared_persist_file_order,
+            favorite_command_sort_changed=self._shared_favorite_command_sort_changed,
+            favorite_file_sort_changed=self._shared_favorite_file_sort_changed,
+            favorite_command_order_changed=self._shared_persist_favorite_command_order,
+            favorite_file_order_changed=self._shared_persist_favorite_file_order,
             include_history=True,
             history_primary=self._shared_resend_history,
             settings_callback=self.show_command_palette,
@@ -391,9 +398,10 @@ class MainWindow(QMainWindow):
             rail_width=DRAWER_COLLAPSED_WIDTH,
             parent=self,
         )
-        group_menu = QMenu(drawer.quick_group_button)
-        group_menu.aboutToShow.connect(lambda m=group_menu: self._populate_group_menu(m))
-        drawer.quick_group_button.setMenu(group_menu)
+        for group_button in (drawer.quick_group_button, drawer.favorite_group_button):
+            group_menu = QMenu(group_button)
+            group_menu.aboutToShow.connect(lambda m=group_menu: self._populate_group_menu(m))
+            group_button.setMenu(group_menu)
         self.drawer_rail = drawer.rail
         self.drawer_panel = drawer.panel
         self.drawer_pages = drawer.pages
@@ -442,6 +450,34 @@ class MainWindow(QMainWindow):
             force_custom=True,
         )
 
+    def _shared_favorite_command_id(self) -> str:
+        return selected_item_id(self.shared_drawer.favorite_command_list)
+
+    def _shared_favorite_file_id(self) -> str:
+        return selected_item_id(self.shared_drawer.favorite_file_list)
+
+    def _shared_favorite_command_sort_changed(self) -> None:
+        mode = self.shared_drawer.favorite_sort_combo.currentData()
+        if mode:
+            self.set_favorite_command_sort_mode(str(mode))
+
+    def _shared_favorite_file_sort_changed(self) -> None:
+        mode = self.shared_drawer.favorite_file_sort_combo.currentData()
+        if mode:
+            self.set_favorite_file_sort_mode(str(mode))
+
+    def _shared_persist_favorite_command_order(self) -> None:
+        self.reorder_favorite_commands(
+            item_ids_in_order(self.shared_drawer.favorite_command_list),
+            selected_id=self._shared_favorite_command_id(),
+        )
+
+    def _shared_persist_favorite_file_order(self) -> None:
+        self.reorder_favorite_files(
+            item_ids_in_order(self.shared_drawer.favorite_file_list),
+            selected_id=self._shared_favorite_file_id(),
+        )
+
     def _populate_group_menu(self, menu) -> None:
         menu.clear()
         hidden = set(self.quick_command_hidden_groups_snapshot())
@@ -473,14 +509,22 @@ class MainWindow(QMainWindow):
         populate_quick_command_list(
             self.shared_drawer.favorite_command_list,
             self.favorite_quick_commands_snapshot(),
+            selected_id=self._shared_favorite_command_id(),
             label_limit=30,
             group_limit=10,
-            draggable=False,
+            draggable=True,
         )
         populate_quick_file_list(
             self.shared_drawer.quick_file_list,
             self.visible_quick_files_snapshot(),
             selected_id=self._shared_file_id(),
+            label_limit=30,
+            draggable=True,
+        )
+        populate_quick_file_list(
+            self.shared_drawer.favorite_file_list,
+            self.favorite_quick_files_snapshot(),
+            selected_id=self._shared_favorite_file_id(),
             label_limit=30,
             draggable=True,
         )
@@ -495,6 +539,8 @@ class MainWindow(QMainWindow):
         for combo, mode in (
             (self.shared_drawer.quick_sort_combo, self.quick_command_sort_mode_snapshot()),
             (self.shared_drawer.quick_file_sort_combo, self.quick_file_sort_mode_snapshot()),
+            (self.shared_drawer.favorite_sort_combo, self.favorite_command_sort_mode_snapshot()),
+            (self.shared_drawer.favorite_file_sort_combo, self.favorite_file_sort_mode_snapshot()),
         ):
             combo.blockSignals(True)
             index = combo.findData(mode)
@@ -505,7 +551,11 @@ class MainWindow(QMainWindow):
         hidden = set(self.quick_command_hidden_groups_snapshot())
         visible = [g for g in groups if g not in hidden]
         label = "All" if len(visible) == len(groups) else f"{len(visible)}/{len(groups)}"
-        self.shared_drawer.quick_group_button.setToolTip(f"Quick command groups — showing {label}")
+        for group_button in (
+            self.shared_drawer.quick_group_button,
+            self.shared_drawer.favorite_group_button,
+        ):
+            group_button.setToolTip(f"Quick command groups — showing {label}")
 
     def _build_menus(self) -> None:
         self.menu_builder.build().install_on(self)
@@ -576,6 +626,10 @@ class MainWindow(QMainWindow):
             command_sort_mode=self.settings.quick_command_sort_mode,
             command_hidden_groups=self.settings.quick_command_hidden_groups,
             file_sort_mode=self.settings.quick_file_sort_mode,
+            favorite_command_order=self.settings.favorite_command_order,
+            favorite_file_order=self.settings.favorite_file_order,
+            favorite_command_sort_mode=self.settings.favorite_command_sort_mode,
+            favorite_file_sort_mode=self.settings.favorite_file_sort_mode,
         )
 
     def _sync_quick_actions_to_settings(self) -> None:
@@ -584,6 +638,10 @@ class MainWindow(QMainWindow):
         self.settings.quick_command_sort_mode = self.quick_actions.command_sort_mode
         self.settings.quick_command_hidden_groups = list(self.quick_actions.command_hidden_groups)
         self.settings.quick_file_sort_mode = self.quick_actions.file_sort_mode
+        self.settings.favorite_command_order = list(self.quick_actions.favorite_command_order)
+        self.settings.favorite_file_order = list(self.quick_actions.favorite_file_order)
+        self.settings.favorite_command_sort_mode = self.quick_actions.favorite_command_sort_mode
+        self.settings.favorite_file_sort_mode = self.quick_actions.favorite_file_sort_mode
 
     def _refresh_quick_actions_from_settings(self) -> None:
         self.quick_actions = self._quick_action_library_from_settings()
@@ -1429,6 +1487,30 @@ class MainWindow(QMainWindow):
 
     def set_quick_command_favorite(self, command_id: str, favorite: bool) -> None:
         self.quick_action_controller.set_quick_command_favorite(command_id, favorite)
+
+    def favorite_quick_files_snapshot(self) -> list[QuickFile]:
+        return self.quick_action_controller.favorite_quick_files_snapshot()
+
+    def set_quick_file_favorite(self, quick_file_id: str, favorite: bool) -> None:
+        self.quick_action_controller.set_quick_file_favorite(quick_file_id, favorite)
+
+    def favorite_command_sort_mode_snapshot(self) -> str:
+        return self.quick_action_controller.favorite_command_sort_mode_snapshot()
+
+    def favorite_file_sort_mode_snapshot(self) -> str:
+        return self.quick_action_controller.favorite_file_sort_mode_snapshot()
+
+    def set_favorite_command_sort_mode(self, mode: str) -> None:
+        self.quick_action_controller.set_favorite_command_sort_mode(mode)
+
+    def set_favorite_file_sort_mode(self, mode: str) -> None:
+        self.quick_action_controller.set_favorite_file_sort_mode(mode)
+
+    def reorder_favorite_commands(self, command_ids: list[str], *, selected_id: str = "") -> None:
+        self.quick_action_controller.reorder_favorite_commands(command_ids, selected_id=selected_id)
+
+    def reorder_favorite_files(self, quick_file_ids: list[str], *, selected_id: str = "") -> None:
+        self.quick_action_controller.reorder_favorite_files(quick_file_ids, selected_id=selected_id)
 
     def add_saved_command_from_text(self, text: str, *, favorite: bool = False) -> None:
         # Saving/favouriting from history reuses a matching saved command (no dupes).

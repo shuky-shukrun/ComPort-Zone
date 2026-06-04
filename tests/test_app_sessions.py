@@ -1136,8 +1136,8 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             session = window.current_session()
-            # Page 0 is Quick Access (Favorites + Files); the Saved Commands page (with
-            # the CSV import/export overflow) is page 1.
+            # Page 0 is Favorites (favourite commands + files); the Saved Commands
+            # page (with the CSV import/export overflow) is page 1.
             quick_page = session.drawer_pages.widget(1)
             # CSV import/export moved off the button grid into the header overflow (⋯)
             # menu, which is now built lazily (aboutToShow) so it can fold in the
@@ -1156,7 +1156,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(session.drawer_pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in session.drawer.rail_buttons],
-                ["Quick Access", "Saved Commands", "Quick files", "History"],
+                ["Favorites", "Saved Commands", "Files", "History"],
             )
         finally:
             app_module.default_config_path = old_config_path
@@ -1554,7 +1554,7 @@ class AppSessionTests(unittest.TestCase):
             # The editor rail now includes the settings/command-palette cog too.
             self.assertEqual(
                 rail_tooltips,
-                ["Quick Access", "Saved Commands", "Quick files", "Settings & commands"],
+                ["Favorites", "Saved Commands", "Files", "Settings & commands"],
             )
             # Editor primaries are inline now (insert command / open file); grid removed.
             self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(0)), [])

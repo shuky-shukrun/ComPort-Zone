@@ -26,8 +26,12 @@ RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
-# Example command file shipped alongside the package (installation folder).
-EXAMPLE_COMMAND_FILE = Path(__file__).resolve().parent / "assets" / "example-commands.cpz"
+# Example command files shipped alongside the package (installation folder).
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
+# Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
+EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
+EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
 SETTINGS_SCHEMA_VERSION = 4
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 
@@ -198,6 +202,7 @@ class QuickFile:
     id: str = field(default_factory=lambda: uuid4().hex)
     label: str = ""
     path: str = ""
+    favorite: bool = False
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -209,6 +214,7 @@ class QuickFile:
             "id": self.id,
             "label": self.label,
             "path": self.path,
+            "favorite": self.favorite,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -224,6 +230,7 @@ class QuickFile:
             id=str(data.get("id", uuid4().hex)),
             label=label,
             path=path,
+            favorite=bool(data.get("favorite", False)),
             created_at=str(data.get("created_at", utc_now_iso())),
             updated_at=str(data.get("updated_at", utc_now_iso())),
         )
@@ -431,8 +438,15 @@ def default_quick_commands() -> list[QuickCommand]:
 
 
 def default_quick_files() -> list[QuickFile]:
-    """Quick files seeded on first run — the bundled example command file."""
-    return [QuickFile(label="Example Commands", path=str(EXAMPLE_COMMAND_FILE))]
+    """Quick files seeded on first run — the bundled example command files.
+
+    Only the basic example is favourited by default; the richer EXPECT /
+    parameter samples are saved but left for the user to star."""
+    return [
+        QuickFile(label="Example Commands", path=str(EXAMPLE_COMMAND_FILE), favorite=True),
+        QuickFile(label="Self-Test (EXPECT)", path=str(EXAMPLE_SELF_TEST_FILE)),
+        QuickFile(label="Measurement (parameters)", path=str(EXAMPLE_MEASUREMENT_FILE)),
+    ]
 
 
 @dataclass(slots=True)
@@ -447,6 +461,12 @@ class AppSettings:
     quick_command_sort_mode: str = "Custom"
     quick_command_hidden_groups: list[str] = field(default_factory=list)
     quick_file_sort_mode: str = "Custom"
+    # Favourites keep an independent order + sort mode, separate from the full
+    # Saved Commands / Files lists (a curated arrangement the user controls).
+    favorite_command_order: list[str] = field(default_factory=list)
+    favorite_file_order: list[str] = field(default_factory=list)
+    favorite_command_sort_mode: str = "Custom"
+    favorite_file_sort_mode: str = "Custom"
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
@@ -527,6 +547,10 @@ class AppSettings:
                 "quick_command_sort_mode": self.quick_command_sort_mode,
                 "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
                 "quick_file_sort_mode": self.quick_file_sort_mode,
+                "favorite_command_order": list(self.favorite_command_order),
+                "favorite_file_order": list(self.favorite_file_order),
+                "favorite_command_sort_mode": self.favorite_command_sort_mode,
+                "favorite_file_sort_mode": self.favorite_file_sort_mode,
             },
             "workspace": {
                 "terminal_tabs": [session.to_dict() for session in self.restored_tabs],
@@ -591,6 +615,12 @@ class AppSettings:
         quick_file_sort_mode = str(libraries.get("quick_file_sort_mode", "Custom"))
         if quick_file_sort_mode not in QUICK_FILE_SORT_MODES:
             quick_file_sort_mode = "Custom"
+        favorite_command_sort_mode = str(libraries.get("favorite_command_sort_mode", "Custom"))
+        if favorite_command_sort_mode not in QUICK_COMMAND_SORT_MODES:
+            favorite_command_sort_mode = "Custom"
+        favorite_file_sort_mode = str(libraries.get("favorite_file_sort_mode", "Custom"))
+        if favorite_file_sort_mode not in QUICK_FILE_SORT_MODES:
+            favorite_file_sort_mode = "Custom"
         settings = cls(
             transport_kind=transport_kind,
             transport_profile=dict(
@@ -609,6 +639,18 @@ class AppSettings:
                 if str(group).strip()
             ],
             quick_file_sort_mode=quick_file_sort_mode,
+            favorite_command_order=[
+                str(item).strip()
+                for item in _list_value(libraries.get("favorite_command_order"))
+                if str(item).strip()
+            ],
+            favorite_file_order=[
+                str(item).strip()
+                for item in _list_value(libraries.get("favorite_file_order"))
+                if str(item).strip()
+            ],
+            favorite_command_sort_mode=favorite_command_sort_mode,
+            favorite_file_sort_mode=favorite_file_sort_mode,
             restored_tabs=[
                 TerminalSessionState.from_dict(item)
                 for item in _list_value(workspace.get("terminal_tabs"))

@@ -214,8 +214,17 @@ class MalformedCsvTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         settings = SettingsService(SettingsStore(self.settings_path)).load()
         labels = sorted(qf.label for qf in settings.quick_files)
-        # A fresh config seeds the bundled example command file.
-        self.assertEqual(labels, ["Bring-up", "Example Commands", "Smoke"])
+        # A fresh config seeds the bundled example command files.
+        self.assertEqual(
+            labels,
+            [
+                "Bring-up",
+                "Example Commands",
+                "Measurement (parameters)",
+                "Self-Test (EXPECT)",
+                "Smoke",
+            ],
+        )
 
 
 class JsonListOutputTests(unittest.TestCase):

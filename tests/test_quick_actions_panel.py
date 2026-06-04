@@ -8,6 +8,7 @@ from ComPort_Zone.quick_actions_panel import (
     FAVORITES_EMPTY_HINT,
     QUICK_FILE_EMPTY_HINT,
     ROLE_BADGE,
+    ROLE_FAVORITE,
     EmptyHintListWidget,
     QuickActionsDrawer,
     QuickActionsRailMode,
@@ -17,6 +18,7 @@ from ComPort_Zone.quick_actions_panel import (
     item_ids_in_order,
     populate_quick_command_list,
     populate_quick_file_list,
+    row_action_keys,
     selected_item_id,
 )
 
@@ -65,6 +67,26 @@ class QuickActionsPanelTests(unittest.TestCase):
         finally:
             file_panel.deleteLater()
             panel.deleteLater()
+            parent.deleteLater()
+
+    def test_file_rows_expose_star_then_play_and_carry_favorite_state(self) -> None:
+        # Files are favouritable now: a star (toggle) sits left of the play glyph.
+        self.assertEqual(row_action_keys("file"), ["star", "play"])
+        self.assertEqual(row_action_keys("command"), ["star", "send"])
+
+        parent = QWidget()
+        try:
+            quick_list = create_quick_file_list(parent, tooltip="")
+            populate_quick_file_list(
+                quick_list,
+                [
+                    QuickFile(id="a", label="Fav", path="C:/a.cpz", favorite=True),
+                    QuickFile(id="b", label="Plain", path="C:/b.cpz", favorite=False),
+                ],
+            )
+            self.assertTrue(bool(quick_list.item(0).data(ROLE_FAVORITE)))
+            self.assertFalse(bool(quick_list.item(1).data(ROLE_FAVORITE)))
+        finally:
             parent.deleteLater()
 
     def test_empty_quick_lists_expose_hint_without_adding_rows(self) -> None:

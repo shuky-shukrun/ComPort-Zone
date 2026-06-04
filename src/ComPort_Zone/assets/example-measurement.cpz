@@ -1,0 +1,17 @@
+# Parameterised measurement — shows "{{ parameters }}" with EXPECT.
+#   {{ name }}         prompts you for a value each run
+#   {{ name=default }} offers a default you can accept or override
+# A value is asked once, then reused everywhere the same name appears.
+
+# Select the channel and range (defaults shown — press Enter to accept).
+INST:SEL CH{{ channel=1 }}
+CONF:VOLT:DC {{ range=10 }}
+
+# Apply the setpoint, then read it back and confirm it stuck.
+SOUR:VOLT {{ setpoint }}
+SOUR:VOLT?
+EXPECT {{ setpoint }}
+
+# Let the output settle, then take the measurement.
+WAIT 500
+MEAS:VOLT:DC?

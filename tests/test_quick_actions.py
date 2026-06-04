@@ -45,6 +45,60 @@ class QuickActionLibraryTests(unittest.TestCase):
         self.assertEqual(library.file_sort_mode, "Custom")
         self.assertEqual([quick_file.id for quick_file in library.visible_files()], ["a", "b"])
 
+    def test_favorite_commands_use_independent_order_and_respect_hidden_groups(self) -> None:
+        library = QuickActionLibrary(
+            quick_commands=[
+                QuickCommand(id="a", label="A", command="a", favorite=True, group="General"),
+                QuickCommand(id="b", label="B", command="b", favorite=False, group="General"),
+                QuickCommand(id="c", label="C", command="c", favorite=True, group="Factory"),
+            ],
+        )
+        # Favourites follow the saved order until the user drags them.
+        self.assertEqual([c.id for c in library.favorite_commands()], ["a", "c"])
+
+        # Drag-reorder writes an independent favourites order + forces Custom.
+        self.assertTrue(library.reorder_favorite_commands(["c", "a"]))
+        self.assertEqual(library.favorite_command_sort_mode, "Custom")
+        self.assertEqual([c.id for c in library.favorite_commands()], ["c", "a"])
+        # The full Saved list order is untouched by the favourites drag.
+        self.assertEqual([c.id for c in library.quick_commands], ["a", "b", "c"])
+
+        # Hiding a group folds its favourites away too (shared group control).
+        library.command_hidden_groups = ["Factory"]
+        self.assertEqual([c.id for c in library.favorite_commands()], ["a"])
+
+    def test_favorite_order_sync_prunes_and_appends(self) -> None:
+        library = QuickActionLibrary(
+            quick_commands=[
+                QuickCommand(id="a", label="A", command="a", favorite=True),
+                QuickCommand(id="b", label="B", command="b", favorite=True),
+            ],
+            favorite_command_order=["b", "a", "ghost"],
+        )
+        # A stale id ("ghost") is pruned; present favourites keep the saved order.
+        library.sync_favorite_command_order()
+        self.assertEqual(library.favorite_command_order, ["b", "a"])
+
+        # Newly favouriting a command appends it to the order.
+        library.quick_commands.append(QuickCommand(id="c", label="C", command="c", favorite=True))
+        library.sync_favorite_command_order()
+        self.assertEqual(library.favorite_command_order, ["b", "a", "c"])
+
+    def test_favorite_files_use_independent_order(self) -> None:
+        library = QuickActionLibrary(
+            quick_files=[
+                QuickFile(id="a", label="A", path="C:/a.cpz", favorite=True),
+                QuickFile(id="b", label="B", path="C:/b.cpz", favorite=False),
+                QuickFile(id="c", label="C", path="C:/c.cpz", favorite=True),
+            ],
+        )
+        self.assertEqual([f.id for f in library.favorite_files()], ["a", "c"])
+        self.assertTrue(library.reorder_favorite_files(["c", "a"]))
+        self.assertEqual(library.favorite_file_sort_mode, "Custom")
+        self.assertEqual([f.id for f in library.favorite_files()], ["c", "a"])
+        # Saved Files order is independent of the favourites drag.
+        self.assertEqual([f.id for f in library.quick_files], ["a", "b", "c"])
+
     def test_command_csv_append_replace_and_duplicate_detection(self) -> None:
         csv_path = Path(__file__).with_name("_tmp_quick_commands.csv")
         csv_path.unlink(missing_ok=True)
