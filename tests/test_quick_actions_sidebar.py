@@ -146,7 +146,7 @@ class QuickActionsSidebarTests(unittest.TestCase):
                 [QuickCommand(id="a", command="*RST"), QuickCommand(id="b", command="*IDN?")],
             )
             item = sidebar.quick_command_list.item(1)
-            sidebar.quick_command_list.actionTriggered.emit(item)
+            sidebar.quick_command_list.actionTriggered.emit(item, "send")
             self.assertEqual(calls, ["command-primary"])
             # The inline affordance acts on the clicked row, so it is selected.
             self.assertIs(sidebar.quick_command_list.currentItem(), item)
@@ -170,11 +170,11 @@ class QuickActionsSidebarTests(unittest.TestCase):
             self.assertEqual(sidebar.pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in sidebar.rail_buttons],
-                ["All quick actions", "Quick commands", "Quick files", "History"],
+                ["Quick Access", "Saved Commands", "Quick files", "History"],
             )
             populate_quick_history_list(sidebar.quick_history_list, ["*IDN?", "MEAS:VOLT?"])
             self.assertEqual(sidebar.quick_history_list.count(), 2)
-            sidebar.quick_history_list.actionTriggered.emit(sidebar.quick_history_list.item(0))
+            sidebar.quick_history_list.actionTriggered.emit(sidebar.quick_history_list.item(0), "send")
             self.assertEqual(resends, ["*IDN?"])
         finally:
             sidebar.deleteLater()

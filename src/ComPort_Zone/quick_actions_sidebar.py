@@ -10,6 +10,8 @@ from PySide6.QtWidgets import QMenu, QPushButton, QStyle, QToolButton, QWidget
 from .icons import set_button_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES
 from .quick_actions_panel import (
+    ROLE_FAVORITE,
+    ROLE_ID,
     QuickActionsDrawer,
     QuickActionsPanel,
     QuickActionsRailMode,
@@ -38,6 +40,12 @@ class QuickActionsSidebarActions:
     move_file_down: Callable[[], None]
     import_files: Callable[[], None]
     export_files: Callable[[], None]
+    # Favorites / history actions (optional; wired by the shared drawer host).
+    command_use_by_id: Callable[[str], None] | None = None        # inline send by command id
+    command_favorite_toggle: Callable[[str, bool], None] | None = None  # (command_id, favorite)
+    history_favorite: Callable[[str], None] | None = None         # add history text to favorites
+    history_save: Callable[[str], None] | None = None             # add history text to saved
+    history_remove: Callable[[str], None] | None = None           # remove history text
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -63,7 +71,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
         actions: QuickActionsSidebarActions,
         command_primary_label: str,
         file_primary_label: str,
-        command_title: str = "Quick Send",
+        command_title: str = "Saved Commands",
         file_title: str = "Quick Files",
         command_primary_icon: QStyle.StandardPixmap = QStyle.StandardPixmap.SP_ArrowForward,
         file_primary_icon: QStyle.StandardPixmap = QStyle.StandardPixmap.SP_ArrowForward,
@@ -93,12 +101,19 @@ class QuickActionsSidebar(QuickActionsDrawer):
         # when the group button is collapsed). Host-supplied; None on hidden drawers.
         self._group_menu_provider = group_menu_provider
 
+        self._history_primary = history_primary
         self.quick_command_list = create_quick_command_list(
             parent,
             tooltip=command_tooltip,
-            double_clicked=command_double_clicked,
             context_menu_requested=command_context_menu_requested,
             drag_drop=True,
+        )
+        # Favorites: a filtered view of saved commands (star toggles membership).
+        self.favorite_command_list = create_quick_command_list(
+            parent,
+            tooltip="Click the arrow to send · click the star to remove from favorites.",
+            context_menu_requested=command_context_menu_requested,
+            drag_drop=False,
         )
         self.quick_file_list = create_quick_file_list(
             parent,
@@ -109,19 +124,23 @@ class QuickActionsSidebar(QuickActionsDrawer):
         )
         self.quick_history_list = create_quick_history_list(
             parent,
-            tooltip="Click the arrow to resend a previous command.",
+            tooltip="Send · remove from history · add to favorites · add to saved.",
             context_menu_requested=history_context_menu_requested,
         )
 
-        # Inline row affordance: select the clicked row, then run the primary action.
-        self.quick_command_list.actionTriggered.connect(
-            lambda item: self._trigger_inline(self.quick_command_list, item, actions.command_primary)
-        )
+        # Inline row affordances: select the clicked row, then run the chosen action.
+        for command_list in (self.quick_command_list, self.favorite_command_list):
+            command_list.actionTriggered.connect(
+                lambda item, key, lst=command_list: self._on_command_action(lst, item, key)
+            )
+            command_list.itemDoubleClicked.connect(
+                lambda item, lst=command_list: self._on_command_action(lst, item, "send")
+            )
         self.quick_file_list.actionTriggered.connect(
-            lambda item: self._trigger_inline(self.quick_file_list, item, actions.file_primary)
+            lambda item, key: self._trigger_inline(self.quick_file_list, item, actions.file_primary)
         )
+        self.quick_history_list.actionTriggered.connect(self._on_history_action)
         if history_primary is not None:
-            self.quick_history_list.actionTriggered.connect(lambda item: history_primary(item.text()))
             self.quick_history_list.itemDoubleClicked.connect(lambda item: history_primary(item.text()))
 
         # Sort state lives in hidden combos; the header carries icon buttons whose
@@ -201,17 +220,28 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent=parent,
         )
 
+        favorites_page = QuickActionsPanel(
+            title="Favorites",
+            quick_list=self.favorite_command_list,
+            header_icon="star",
+            parent=parent,
+        )
         history_page = QuickActionsPanel(
             title="History",
             quick_list=self.quick_history_list,
             header_icon=QStyle.StandardPixmap.SP_FileDialogInfoView,
             parent=parent,
         )
-        sections = {"command": command_page, "file": file_page, "history": history_page}
-        # Rail glyphs match the handoff RAIL map: all=terminal, qs=bolt, files=file, history=clock.
+        sections = {
+            "favorites": favorites_page,
+            "command": command_page,
+            "file": file_page,
+            "history": history_page,
+        }
+        # Quick Access surfaces Favorites + Files; Saved Commands is the full list.
         rail_modes = [
-            QuickActionsRailMode("all", QStyle.StandardPixmap.SP_ComputerIcon, "All quick actions", ("command", "file")),
-            QuickActionsRailMode("commands", QStyle.StandardPixmap.SP_CommandLink, "Quick commands", ("command",)),
+            QuickActionsRailMode("all", QStyle.StandardPixmap.SP_ComputerIcon, "Quick Access", ("favorites", "file")),
+            QuickActionsRailMode("commands", QStyle.StandardPixmap.SP_CommandLink, "Saved Commands", ("command",)),
             QuickActionsRailMode("files", QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", ("file",)),
         ]
         if include_history:
@@ -236,8 +266,37 @@ class QuickActionsSidebar(QuickActionsDrawer):
         )
 
     def apply_theme_palette(self, palette) -> None:
-        for quick_list in (self.quick_command_list, self.quick_file_list, self.quick_history_list):
+        for quick_list in (
+            self.quick_command_list,
+            self.favorite_command_list,
+            self.quick_file_list,
+            self.quick_history_list,
+        ):
             quick_list.apply_theme_palette(palette)
+
+    def _on_command_action(self, quick_list, item, key: str) -> None:
+        quick_list.setCurrentItem(item)
+        command_id = str(item.data(ROLE_ID) or "")
+        if key == "star":
+            toggle = self.actions.command_favorite_toggle
+            if toggle is not None and command_id:
+                toggle(command_id, not bool(item.data(ROLE_FAVORITE)))
+            return
+        if self.actions.command_use_by_id is not None and command_id:
+            self.actions.command_use_by_id(command_id)
+        else:
+            self.actions.command_primary()
+
+    def _on_history_action(self, item, key: str) -> None:
+        text = item.text()
+        callback = {
+            "send": self._history_primary,
+            "favorite": self.actions.history_favorite,
+            "save": self.actions.history_save,
+            "remove": self.actions.history_remove,
+        }.get(key)
+        if callback is not None:
+            callback(text)
 
     @staticmethod
     def _trigger_inline(quick_list, item, primary: Callable[[], None]) -> None:

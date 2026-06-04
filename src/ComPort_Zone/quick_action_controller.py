@@ -146,6 +146,43 @@ class QuickActionController:
         self.library.quick_commands.append(command)
         self._commit_commands()
 
+    def favorite_quick_commands_snapshot(self) -> list[QuickCommand]:
+        self._refresh_from_settings()
+        return self.library.favorite_commands()
+
+    def set_quick_command_favorite(self, command_id: str, favorite: bool) -> None:
+        self._refresh_from_settings()
+        command = self.library.command_by_id(command_id)
+        if command is None or command.favorite == bool(favorite):
+            return
+        command.favorite = bool(favorite)
+        command.updated_at = utc_now_iso()
+        self._commit_commands(command_id)
+
+    def add_command_from_text(self, text: str, *, favorite: bool = False) -> QuickCommand | None:
+        """Save a raw command (from history). De-duplicates by command text: an
+        existing match is reused (only flipped to favourite when needed)."""
+        self._refresh_from_settings()
+        text = text.strip()
+        if not text:
+            return None
+        existing = self.library.command_by_text(text)
+        if existing is not None:
+            if favorite and not existing.favorite:
+                existing.favorite = True
+                existing.updated_at = utc_now_iso()
+                self._commit_commands(existing.id)
+            else:
+                self._set_status(f"Already in saved commands: {_short_label(existing.display_label(), 32)}")
+            return existing
+        command = QuickCommand(label=text, command=text, favorite=favorite)
+        self.library.quick_commands.append(command)
+        self._commit_commands(command.id)
+        self._set_status(
+            f"{'Favourited' if favorite else 'Saved'} command: {_short_label(text, 32)}"
+        )
+        return command
+
     def edit_quick_command(self, command_id: str) -> None:
         command = self.quick_command_by_id(command_id)
         if not command:

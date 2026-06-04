@@ -629,7 +629,7 @@ class AppSessionTests(unittest.TestCase):
             sessions[0].quick_list.setCurrentRow(0)
             window.tabs.setCurrentWidget(sessions[1])
             # The Send affordance is now the inline row action (clickable arrow).
-            sessions[0].quick_list.actionTriggered.emit(sessions[0].quick_list.item(0))
+            sessions[0].quick_list.actionTriggered.emit(sessions[0].quick_list.item(0), "send")
             self.qt.processEvents()
 
             self.assertEqual(sent_commands, [sessions[0].visible_quick_commands()[0].command])
@@ -1004,6 +1004,78 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_favorites_are_a_starred_subset_of_saved_commands(self) -> None:
+        from ComPort_Zone.models import QuickCommand
+        from ComPort_Zone.quick_actions_panel import ROLE_ID
+
+        settings_path = Path(__file__).with_name("_tmp_settings_favorites.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        def item_named(quick_list, text):
+            return next(
+                quick_list.item(i) for i in range(quick_list.count()) if quick_list.item(i).text() == text
+            )
+
+        try:
+            window = app_module.MainWindow()
+            drawer = window.shared_drawer
+            # Count deltas (the app may ship seeded sample commands).
+            saved0 = drawer.quick_command_list.count()
+            fav0 = drawer.favorite_command_list.count()
+
+            window.add_quick_command(QuickCommand(command="FAVT:A", favorite=True))
+            window.add_quick_command(QuickCommand(command="FAVT:B"))
+
+            # Favorites is the starred subset of saved commands.
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 2)
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 1)
+
+            # The star on a saved row toggles favorite membership.
+            drawer.quick_command_list.actionTriggered.emit(item_named(drawer.quick_command_list, "FAVT:B"), "star")
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 2)
+
+            # Favoriting from history adds the command to saved *and* favorites.
+            window.record_command("FAVT:C")
+            drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:C"), "favorite")
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 3)
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 3)
+
+            # Saving an already-saved command from history does not duplicate it.
+            window.record_command("FAVT:B")
+            drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:B"), "save")
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 3)
+
+            # Removing a favorited command from saved also removes it from favorites.
+            window.delete_quick_command(str(item_named(drawer.quick_command_list, "FAVT:A").data(ROLE_ID)))
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 2)
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 2)
+            self.assertNotIn(
+                "FAVT:A",
+                [drawer.favorite_command_list.item(i).text() for i in range(drawer.favorite_command_list.count())],
+            )
+
+            # Removing from history drops the row.
+            history_before = drawer.quick_history_list.count()
+            drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:C"), "remove")
+            self.assertEqual(drawer.quick_history_list.count(), history_before - 1)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_quick_command_sidebar_has_csv_import_export_actions(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_command_sidebar_csv.json")
         settings_path.unlink(missing_ok=True)
@@ -1017,7 +1089,9 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             session = window.current_session()
-            quick_page = session.drawer_pages.widget(0)
+            # Page 0 is Quick Access (Favorites + Files); the Saved Commands page (with
+            # the CSV import/export overflow) is page 1.
+            quick_page = session.drawer_pages.widget(1)
             # CSV import/export moved off the button grid into the header overflow (⋯)
             # menu, which is now built lazily (aboutToShow) so it can fold in the
             # sort/group controls when collapsed.
@@ -1035,7 +1109,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(session.drawer_pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in session.drawer.rail_buttons],
-                ["All quick actions", "Quick commands", "Quick files", "History"],
+                ["Quick Access", "Saved Commands", "Quick files", "History"],
             )
         finally:
             app_module.default_config_path = old_config_path
@@ -1433,7 +1507,7 @@ class AppSessionTests(unittest.TestCase):
             # The editor rail now includes the settings/command-palette cog too.
             self.assertEqual(
                 rail_tooltips,
-                ["All quick actions", "Quick commands", "Quick files", "Settings & commands"],
+                ["Quick Access", "Saved Commands", "Quick files", "Settings & commands"],
             )
             # Editor primaries are inline now (insert command / open file); grid removed.
             self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(0)), [])

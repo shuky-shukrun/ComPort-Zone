@@ -368,6 +368,11 @@ class MainWindow(QMainWindow):
                 move_file_down=lambda: self.move_quick_file(self._shared_file_id(), 1),
                 import_files=self.import_quick_files_csv,
                 export_files=self.export_quick_files_csv,
+                command_use_by_id=self.use_quick_command_id,
+                command_favorite_toggle=self.set_quick_command_favorite,
+                history_favorite=lambda text: self.add_saved_command_from_text(text, favorite=True),
+                history_save=lambda text: self.add_saved_command_from_text(text, favorite=False),
+                history_remove=self.remove_command_from_history,
             ),
             command_primary_label="Send",
             file_primary_label="Run",
@@ -460,6 +465,13 @@ class MainWindow(QMainWindow):
             label_limit=30,
             group_limit=10,
             draggable=True,
+        )
+        populate_quick_command_list(
+            self.shared_drawer.favorite_command_list,
+            self.favorite_quick_commands_snapshot(),
+            label_limit=30,
+            group_limit=10,
+            draggable=False,
         )
         populate_quick_file_list(
             self.shared_drawer.quick_file_list,
@@ -1361,6 +1373,17 @@ class MainWindow(QMainWindow):
     def copy_quick_command_text(self, command_id: str) -> None:
         self.quick_action_controller.copy_quick_command_text(command_id)
 
+    # --- Favorites (a subset of saved commands flagged ``favorite``) ----------
+    def favorite_quick_commands_snapshot(self) -> list[QuickCommand]:
+        return self.quick_action_controller.favorite_quick_commands_snapshot()
+
+    def set_quick_command_favorite(self, command_id: str, favorite: bool) -> None:
+        self.quick_action_controller.set_quick_command_favorite(command_id, favorite)
+
+    def add_saved_command_from_text(self, text: str, *, favorite: bool = False) -> None:
+        # Saving/favouriting from history reuses a matching saved command (no dupes).
+        self.quick_action_controller.add_command_from_text(text, favorite=favorite)
+
     def add_quick_file(self, quick_file: QuickFile | None = None) -> None:
         self.quick_action_controller.add_quick_file(quick_file)
 
@@ -1489,6 +1512,7 @@ class MainWindow(QMainWindow):
             session.history_store.remove(command)
             session._update_completion_model()
         if removed:
+            self.refresh_shared_drawer()
             self.save_settings()
         return removed
 

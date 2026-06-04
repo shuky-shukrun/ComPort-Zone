@@ -247,13 +247,7 @@ class QuickActionLibrary:
                 seen.add(key)
         return sorted(groups, key=str.casefold)
 
-    def visible_commands(self) -> list[QuickCommand]:
-        hidden = {group.casefold() for group in self.command_hidden_groups}
-        commands = [
-            command
-            for command in self.quick_commands
-            if quick_group_name(command.group).casefold() not in hidden
-        ]
+    def _sort_commands(self, commands: list[QuickCommand]) -> list[QuickCommand]:
         if self.command_sort_mode == "Title":
             return sorted(
                 commands,
@@ -272,7 +266,33 @@ class QuickActionLibrary:
                     command.command.casefold(),
                 ),
             )
-        return commands
+        return list(commands)
+
+    def visible_commands(self) -> list[QuickCommand]:
+        hidden = {group.casefold() for group in self.command_hidden_groups}
+        return self._sort_commands(
+            [
+                command
+                for command in self.quick_commands
+                if quick_group_name(command.group).casefold() not in hidden
+            ]
+        )
+
+    def favorite_commands(self) -> list[QuickCommand]:
+        """Favourited saved commands (subset), in the active sort order.
+
+        Group-hiding does not apply — favouriting is an explicit per-command choice,
+        so a favourite stays visible in Quick Access even if its group is hidden.
+        """
+        return self._sort_commands([command for command in self.quick_commands if command.favorite])
+
+    def command_by_text(self, text: str) -> QuickCommand | None:
+        """First saved command whose command text matches (used to de-duplicate
+        when saving/favouriting from history)."""
+        text = text.strip()
+        if not text:
+            return None
+        return next((command for command in self.quick_commands if command.command.strip() == text), None)
 
     def visible_files(self) -> list[QuickFile]:
         quick_files = list(self.quick_files)

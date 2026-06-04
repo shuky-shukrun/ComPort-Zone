@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import QuickCommand, QuickFile
-from .icons import set_button_icon, standard_icon
+from .icons import build_icon, set_button_icon, standard_icon, themed_icon
 from .quick_actions import quick_file_display_text, quick_group_name
 from .themes import COMPORT_DARK, VS_CODE_DARK, ThemePalette
 
@@ -34,10 +34,35 @@ ROLE_ID = Qt.ItemDataRole.UserRole
 ROLE_BADGE = Qt.ItemDataRole.UserRole + 1
 ROLE_SECONDARY = Qt.ItemDataRole.UserRole + 2
 ROLE_KIND = Qt.ItemDataRole.UserRole + 3  # "command" | "file" | "history"
+ROLE_FAVORITE = Qt.ItemDataRole.UserRole + 4  # bool: command row is favourited (star fill)
 
-# Right-aligned inline action hit zone (send / run-file glyph).
-ACTION_W = 30
+# Each row carries one or more right-aligned inline action glyphs, hit-tested by
+# QuickActionList and emitted via actionTriggered(item, key).
+ACTION_W = 24
 ACTION_ICON = 14
+
+
+def row_action_keys(kind: str, favorite: bool = False) -> list[str]:
+    """Inline action keys for a row, ordered left-to-right (send stays rightmost).
+
+    * saved / favourite command -> star (favourite toggle) + send
+    * quick file                -> play
+    * history                   -> remove · favourite · save · send
+    """
+    if kind == "file":
+        return ["play"]
+    if kind == "history":
+        return ["remove", "favorite", "save", "send"]
+    return ["star", "send"]
+
+
+def action_zones(rect: QRect, count: int) -> list[QRect]:
+    """Right-aligned hit/paint zones for ``count`` inline actions in ``rect``."""
+    cluster_left = rect.right() - count * ACTION_W
+    return [
+        QRect(cluster_left + i * ACTION_W, rect.top(), ACTION_W, rect.height())
+        for i in range(count)
+    ]
 
 QUICK_ACTION_ITEM_HEIGHT = 32
 QUICK_COMMAND_EMPTY_HINT = "No quick commands yet — click “Add Command” to create one."
@@ -119,7 +144,7 @@ class QuickRowDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.palette = palette
         self.hover_row = -1
-        self.hover_action = False
+        self.hover_action = -1  # index into the row's action list, -1 = none
 
     def set_palette(self, palette: ThemePalette) -> None:
         self.palette = palette
@@ -173,22 +198,16 @@ class QuickRowDelegate(QStyledItemDelegate):
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge)
             x += badge_w + 9
 
-        action_rect = QRect(rect.right() - ACTION_W, rect.top(), ACTION_W, rect.height())
-        on_action = hovered and self.hover_action
-        # The affordance is always visible (muted) and lights up under the cursor —
-        # commands send (accent arrow), files run (green play).
-        if kind == "file":
-            glyph, color = QStyle.StandardPixmap.SP_MediaPlay, (pal.tx if on_action else pal.muted)
-        else:
-            glyph, color = QStyle.StandardPixmap.SP_ArrowForward, (pal.accent if on_action else pal.muted)
-        painter.drawPixmap(
-            action_rect.center().x() - ACTION_ICON // 2,
-            cy - ACTION_ICON // 2,
-            standard_icon(glyph, ACTION_ICON, color).pixmap(ACTION_ICON, ACTION_ICON),
-        )
+        # One or more right-aligned inline affordances (always visible, muted; the
+        # one under the cursor lights up). Star toggles favourite, send/play act.
+        favorite = bool(index.data(ROLE_FAVORITE))
+        actions = row_action_keys(kind, favorite)
+        zones = action_zones(rect, len(actions))
+        for action_index, (key, zone) in enumerate(zip(actions, zones)):
+            self._paint_action(painter, zone, key, favorite, hovered and action_index == self.hover_action, pal)
 
         text_left = x
-        text_right = action_rect.left() - 4
+        text_right = (zones[0].left() if zones else rect.right()) - 4
         avail = max(10, text_right - text_left)
         pfont = self._font()
         painter.setFont(pfont)
@@ -215,11 +234,32 @@ class QuickRowDelegate(QStyledItemDelegate):
                 )
         painter.restore()
 
+    def _paint_action(self, painter, zone: QRect, key: str, favorite: bool, on: bool, pal: ThemePalette) -> None:
+        if key == "send":
+            name, color = "send", (pal.accent if on else pal.muted)
+        elif key == "play":
+            name, color = "play", (pal.tx if on else pal.muted)
+        elif key == "star":
+            name = "star-fill" if favorite else "star"
+            color = (pal.accent if on else pal.status) if favorite else (pal.status if on else pal.muted)
+        elif key == "favorite":
+            name, color = "star", (pal.status if on else pal.muted)
+        elif key == "save":
+            name, color = "plus", (pal.accent if on else pal.muted)
+        elif key == "remove":
+            name, color = "x", (pal.error if on else pal.muted)
+        else:
+            return
+        pix = themed_icon(name, ACTION_ICON, color).pixmap(ACTION_ICON, ACTION_ICON)
+        painter.drawPixmap(zone.center().x() - ACTION_ICON // 2, zone.center().y() - ACTION_ICON // 2, pix)
+
 
 class QuickActionList(EmptyHintListWidget):
-    """Quick-action list whose rows expose an inline send/run affordance."""
+    """Quick-action list whose rows expose inline action affordances."""
 
-    actionTriggered = Signal(QListWidgetItem)
+    # Emitted with the row item and the action key ("send"/"star"/"play"/
+    # "favorite"/"save"/"remove") of the clicked inline glyph.
+    actionTriggered = Signal(QListWidgetItem, str)
 
     def __init__(
         self,
@@ -237,41 +277,49 @@ class QuickActionList(EmptyHintListWidget):
         self.row_delegate.set_palette(palette)
         self.viewport().update()
 
-    def _action_rect(self, index) -> QRect:
-        rect = self.visualRect(index)
-        return QRect(rect.right() - ACTION_W, rect.top(), ACTION_W, rect.height())
+    def _row_action_keys(self, index) -> list[str]:
+        return row_action_keys(str(index.data(ROLE_KIND) or "command"), bool(index.data(ROLE_FAVORITE)))
 
-    def _hit_test(self, pos) -> tuple[int, bool]:
+    def _hit_test(self, pos) -> tuple[int, int]:
+        """Return (row, action_index); action_index is -1 when not over a glyph."""
         index = self.indexAt(pos)
         if not index.isValid():
-            return -1, False
-        return index.row(), self._action_rect(index).contains(pos)
+            return -1, -1
+        zones = action_zones(self.visualRect(index), len(self._row_action_keys(index)))
+        for action_index, zone in enumerate(zones):
+            if zone.contains(pos):
+                return index.row(), action_index
+        return index.row(), -1
 
     def mouseMoveEvent(self, event) -> None:
-        row, on_action = self._hit_test(event.position().toPoint())
+        row, action = self._hit_test(event.position().toPoint())
         delegate = self.row_delegate
-        if row != delegate.hover_row or on_action != delegate.hover_action:
+        if row != delegate.hover_row or action != delegate.hover_action:
             delegate.hover_row = row
-            delegate.hover_action = on_action
+            delegate.hover_action = action
             self.viewport().update()
         self.viewport().setCursor(
-            Qt.CursorShape.PointingHandCursor if on_action else Qt.CursorShape.ArrowCursor
+            Qt.CursorShape.PointingHandCursor if action >= 0 else Qt.CursorShape.ArrowCursor
         )
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event) -> None:
         self.row_delegate.hover_row = -1
-        self.row_delegate.hover_action = False
+        self.row_delegate.hover_action = -1
         self.viewport().update()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            row, on_action = self._hit_test(event.position().toPoint())
-            if on_action and row >= 0:
+            row, action = self._hit_test(event.position().toPoint())
+            if action >= 0 and row >= 0:
                 item = self.item(row)
                 if item is not None:
-                    self.actionTriggered.emit(item)
+                    keys = row_action_keys(
+                        str(item.data(ROLE_KIND) or "command"), bool(item.data(ROLE_FAVORITE))
+                    )
+                    if 0 <= action < len(keys):
+                        self.actionTriggered.emit(item, keys[action])
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -412,6 +460,7 @@ def populate_quick_command_list(
             "" if group.casefold() == "general" else short_list_label(group, group_limit),
         )
         item.setData(ROLE_SECONDARY, command.description.strip())
+        item.setData(ROLE_FAVORITE, bool(command.favorite))
         item.setToolTip(command.description.strip() or f"{group} | {command.command}")
         if item_height is not None:
             item.setSizeHint(QSize(0, item_height))
@@ -508,7 +557,7 @@ class QuickActionsPanel(QFrame):
         *,
         title: str,
         quick_list: QListWidget,
-        header_icon: QStyle.StandardPixmap | None = None,
+        header_icon: QStyle.StandardPixmap | str | None = None,
         header_buttons: tuple[QWidget, ...] = (),
         collapsible_buttons: tuple[QWidget, ...] = (),
         controls: QWidget | None = None,
@@ -538,7 +587,7 @@ class QuickActionsPanel(QFrame):
         if header_icon is not None:
             icon_label = QLabel(header)
             icon_label.setObjectName("quickPanelIcon")
-            icon_label.setPixmap(standard_icon(header_icon, 13).pixmap(13, 13))
+            icon_label.setPixmap(build_icon(header_icon, 13).pixmap(13, 13))
             header_layout.addWidget(icon_label)
             self._header_pinned.append(icon_label)
         # The title elides and yields width so the header's controls stay on one row.

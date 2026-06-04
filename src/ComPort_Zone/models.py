@@ -148,6 +148,7 @@ class QuickCommand:
     send_mode: str = "Text"
     group: str = "General"
     line_ending_override: str = ""
+    favorite: bool = False
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -163,6 +164,7 @@ class QuickCommand:
             "send_mode": self.send_mode,
             "group": self.group,
             "line_ending_override": self.line_ending_override,
+            "favorite": self.favorite,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -182,6 +184,7 @@ class QuickCommand:
             send_mode=str(data.get("send_mode", "Text")),
             group=str(data.get("group", "General")) or "General",
             line_ending_override=str(data.get("line_ending_override", "")),
+            favorite=bool(data.get("favorite", False)),
             created_at=str(data.get("created_at", utc_now_iso())),
             updated_at=str(data.get("updated_at", utc_now_iso())),
         )
