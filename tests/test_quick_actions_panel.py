@@ -1,15 +1,16 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication, QPushButton, QStyle, QWidget
+from PySide6.QtWidgets import QApplication, QStyle, QWidget
 
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.quick_actions_panel import (
     QUICK_ACTION_ITEM_HEIGHT,
     QUICK_COMMAND_EMPTY_HINT,
     QUICK_FILE_EMPTY_HINT,
+    ROLE_BADGE,
     EmptyHintListWidget,
     QuickActionsDrawer,
-    QuickActionsDrawerPage,
+    QuickActionsRailMode,
     QuickActionsPanel,
     create_quick_command_list,
     create_quick_file_list,
@@ -39,16 +40,12 @@ class QuickActionsPanelTests(unittest.TestCase):
         panel_files = create_quick_file_list(parent, tooltip="Files")
         panel = QuickActionsPanel(
             title="Quick Commands",
-            section_title="Saved Commands",
             quick_list=panel_commands,
-            action_rows=((QPushButton("Insert", parent),),),
             parent=parent,
         )
         file_panel = QuickActionsPanel(
             title="Quick Files",
-            section_title="Saved Files",
             quick_list=panel_files,
-            action_rows=((QPushButton("Open", parent),),),
             parent=parent,
         )
         try:
@@ -58,7 +55,8 @@ class QuickActionsPanelTests(unittest.TestCase):
 
             self.assertEqual(item_ids_in_order(standalone_commands), ["cmd-1", "cmd-2"])
             self.assertEqual(item_ids_in_order(panel.quick_list), ["cmd-1", "cmd-2"])
-            self.assertEqual(standalone_commands.item(1).text(), "Boot: Wake")
+            self.assertEqual(standalone_commands.item(1).text(), "Wake")
+            self.assertEqual(standalone_commands.item(1).data(ROLE_BADGE), "Boot")
             self.assertEqual(panel.quick_list.item(1).toolTip(), "Boot | 55 AA")
             self.assertEqual(panel.quick_list.item(0).sizeHint().height(), QUICK_ACTION_ITEM_HEIGHT)
             self.assertEqual(file_panel.quick_list.item(0).sizeHint().height(), QUICK_ACTION_ITEM_HEIGHT)
@@ -96,39 +94,45 @@ class QuickActionsPanelTests(unittest.TestCase):
         finally:
             parent.deleteLater()
 
-    def test_drawer_switches_between_quick_action_pages(self) -> None:
+    def test_drawer_modes_toggle_section_visibility(self) -> None:
         parent = QWidget()
         command_page = QuickActionsPanel(
             title="Quick Commands",
-            section_title="Saved Commands",
             quick_list=create_quick_command_list(parent, tooltip="Commands"),
-            action_rows=((QPushButton("Insert", parent),),),
             parent=parent,
         )
         file_page = QuickActionsPanel(
             title="Quick Files",
-            section_title="Saved Files",
             quick_list=create_quick_file_list(parent, tooltip="Files"),
-            action_rows=((QPushButton("Open", parent),),),
             parent=parent,
         )
         drawer = QuickActionsDrawer(
-            pages=(
-                QuickActionsDrawerPage(QStyle.StandardPixmap.SP_CommandLink, "Quick commands", command_page),
-                QuickActionsDrawerPage(QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", file_page),
-            ),
+            sections={"command": command_page, "file": file_page},
+            rail_modes=[
+                QuickActionsRailMode("all", QStyle.StandardPixmap.SP_FileDialogListView, "All", ("command", "file")),
+                QuickActionsRailMode("commands", QStyle.StandardPixmap.SP_CommandLink, "Quick commands", ("command",)),
+                QuickActionsRailMode("files", QStyle.StandardPixmap.SP_DirOpenIcon, "Quick files", ("file",)),
+            ],
             parent=parent,
         )
         try:
-            self.assertEqual(drawer.pages.count(), 2)
-            self.assertEqual([button.toolTip() for button in drawer.rail_buttons], ["Quick commands", "Quick files"])
+            self.assertEqual(drawer.pages.count(), 3)
+            self.assertEqual([button.toolTip() for button in drawer.rail_buttons], ["All", "Quick commands", "Quick files"])
+            # Default 'All' shows both sections.
             self.assertEqual(drawer.pages.currentIndex(), 0)
-
+            self.assertFalse(command_page.isHidden())
+            self.assertFalse(file_page.isHidden())
+            # 'Quick commands' hides the file section.
             drawer.rail_buttons[1].click()
-
             self.assertEqual(drawer.pages.currentIndex(), 1)
+            self.assertFalse(command_page.isHidden())
+            self.assertTrue(file_page.isHidden())
+            # 'Quick files' hides the command section.
+            drawer.rail_buttons[2].click()
+            self.assertTrue(command_page.isHidden())
+            self.assertFalse(file_page.isHidden())
             drawer.select_page(99)
-            self.assertEqual(drawer.pages.currentIndex(), 1)
+            self.assertEqual(drawer.pages.currentIndex(), 2)
             drawer.select_page(-1)
             self.assertEqual(drawer.pages.currentIndex(), 0)
         finally:

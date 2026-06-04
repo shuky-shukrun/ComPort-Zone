@@ -13,7 +13,14 @@ LINE_ENDINGS = {
 }
 
 FLOW_CONTROL_OPTIONS = ("None", "RTS/CTS", "XON/XOFF", "DSR/DTR")
-THEME_OPTIONS = ("VS Code Dark", "Windows Terminal", "Bench Light", "Scope Amber")
+THEME_OPTIONS = (
+    "ComPort Zone Dark",
+    "ComPort Zone Light",
+    "VS Code Dark",
+    "Windows Terminal",
+    "Bench Light",
+    "Scope Amber",
+)
 RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
@@ -411,7 +418,7 @@ class AppSettings:
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
-    theme: str = "VS Code Dark"
+    theme: str = "ComPort Zone Dark"
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
     terminal_font_family: str = ""
@@ -574,7 +581,7 @@ class AppSettings:
                 for item in _list_value(workspace.get("command_file_tabs"))
             ],
             workspace_layout=WorkspaceLayoutState.from_dict(_dict_value(workspace.get("layout"))),
-            theme=str(app.get("theme", "VS Code Dark")),
+            theme=str(app.get("theme", "ComPort Zone Dark")),
             timestamps_enabled=bool(app.get("timestamps_enabled", True)),
             terminal_font_size=int(terminal_font.get("size", 10)),
             terminal_font_family=str(terminal_font.get("family", "")),

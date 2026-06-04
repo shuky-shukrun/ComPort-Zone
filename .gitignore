@@ -226,3 +226,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local UI-redesign verification artifacts (design handoff + offscreen previews)
+.handoff-extract/
+.preview/
+scripts/_preview.py

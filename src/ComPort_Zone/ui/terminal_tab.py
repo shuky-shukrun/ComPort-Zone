@@ -45,6 +45,7 @@ from ..quick_actions_panel import (
     item_ids_in_order,
     populate_quick_command_list,
     populate_quick_file_list,
+    populate_quick_history_list,
     row_for_item_id,
     selected_item_id,
 )
@@ -369,12 +370,16 @@ class TerminalSessionWidget(QWidget):
             file_sort_changed=self._quick_file_sort_changed,
             command_order_changed=self.persist_quick_command_order,
             file_order_changed=self.persist_quick_file_order,
+            include_history=True,
+            history_primary=self._resend_history_command,
+            settings_callback=self.host.show_command_palette,
             on_page_requested=self._select_drawer_page,
             rail_width=DRAWER_COLLAPSED_WIDTH,
             parent=self,
         )
         self.quick_list = sidebar.quick_command_list
         self.quick_file_list = sidebar.quick_file_list
+        self.quick_history_list = sidebar.quick_history_list
         self.quick_sort_combo = sidebar.quick_sort_combo
         self.quick_group_button = sidebar.quick_group_button
         self.quick_file_sort_combo = sidebar.quick_file_sort_combo
@@ -382,7 +387,18 @@ class TerminalSessionWidget(QWidget):
         self.quick_move_down_button = sidebar.quick_command_move_down_button
         self.quick_file_move_up_button = sidebar.quick_file_move_up_button
         self.quick_file_move_down_button = sidebar.quick_file_move_down_button
+        self.refresh_quick_history()
         return sidebar
+
+    def _resend_history_command(self, command: str) -> None:
+        text = command.strip()
+        if not text:
+            return
+        self._send_integrated_input(text, self.mode_combo.currentText())
+
+    def refresh_quick_history(self) -> None:
+        history = list(reversed(self.host.history_catalog.all_commands()))
+        populate_quick_history_list(self.quick_history_list, history[:80])
 
     def _select_drawer_page(self, index: int) -> None:
         self.host.request_drawer_page(index)
@@ -417,6 +433,8 @@ class TerminalSessionWidget(QWidget):
     def apply_theme_palette(self) -> None:
         if hasattr(self.terminal, "set_terminal_colors"):
             self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
+        if hasattr(self, "drawer") and hasattr(self.drawer, "apply_theme_palette"):
+            self.drawer.apply_theme_palette(self.host.theme)
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()
@@ -427,6 +445,8 @@ class TerminalSessionWidget(QWidget):
         if page_index is not None and self.drawer_pages.count() > 0:
             self.drawer_pages.setCurrentIndex(max(0, min(page_index, self.drawer_pages.count() - 1)))
         self.drawer_panel.setVisible(not collapsed)
+        if not collapsed and hasattr(self, "quick_history_list"):
+            self.refresh_quick_history()
         if collapsed:
             self.drawer.setMinimumWidth(DRAWER_COLLAPSED_WIDTH)
             self.drawer.setMaximumWidth(DRAWER_COLLAPSED_WIDTH)

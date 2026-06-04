@@ -626,12 +626,8 @@ class AppSessionTests(unittest.TestCase):
             sessions[1].controller.send_quick_command = record_send
             sessions[0].quick_list.setCurrentRow(0)
             window.tabs.setCurrentWidget(sessions[1])
-            send_button = next(
-                button
-                for button in sessions[0].drawer.findChildren(QPushButton, "drawerActionButton")
-                if button.text() == "Send"
-            )
-            QTest.mouseClick(send_button, Qt.MouseButton.LeftButton)
+            # The Send affordance is now the inline row action (clickable arrow).
+            sessions[0].quick_list.actionTriggered.emit(sessions[0].quick_list.item(0))
             self.qt.processEvents()
 
             self.assertEqual(sent_commands, [sessions[0].visible_quick_commands()[0].command])
@@ -1017,25 +1013,22 @@ class AppSessionTests(unittest.TestCase):
             window = app_module.MainWindow()
             session = window.current_session()
             quick_page = session.drawer_pages.widget(0)
-            button_texts = [button.text() for button in quick_page.findChildren(QPushButton)]
-
-            self.assertIn("Import CSV", button_texts)
-            self.assertIn("Export CSV", button_texts)
-            self.assertEqual(
-                drawer_action_rows(quick_page),
-                [
-                    ["Send", "Add Command"],
-                    ["Edit", "Delete"],
-                    ["Move Up", "Move Down"],
-                    ["Import CSV", "Export CSV"],
-                ],
-            )
-            self.assertEqual(session.drawer_pages.count(), 2)
-            rail_tooltips = [
-                button.toolTip()
-                for button in session.drawer_rail.findChildren(QToolButton)
+            # CSV import/export moved off the button grid into the header overflow (⋯) menu.
+            overflow_actions = [
+                action.text()
+                for button in quick_page.findChildren(QToolButton, "quickPanelHeaderButton")
+                if button.menu() is not None
+                for action in button.menu().actions()
             ]
-            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files"])
+            self.assertIn("Import CSV…", overflow_actions)
+            self.assertIn("Export CSV…", overflow_actions)
+            # The legacy 8-button grid is gone; primary actions are inline now.
+            self.assertEqual(drawer_action_rows(quick_page), [])
+            self.assertEqual(session.drawer_pages.count(), 4)
+            self.assertEqual(
+                [button.toolTip() for button in session.drawer.rail_buttons],
+                ["All quick actions", "Quick commands", "Quick files", "History"],
+            )
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1429,41 +1422,18 @@ class AppSessionTests(unittest.TestCase):
             self.assertFalse(window.connection_action_button.isEnabled())
             self.assertTrue(hasattr(editor, "quick_command_list"))
             self.assertTrue(hasattr(editor, "quick_file_list"))
-            self.assertEqual(editor.workspace_drawer_pages.count(), 2)
+            self.assertEqual(editor.workspace_drawer_pages.count(), 3)
             self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 0)
             rail_tooltips = [
                 button.toolTip()
                 for button in editor.workspace_drawer_rail.findChildren(QToolButton)
             ]
-            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files"])
-            command_buttons = [
-                button.text()
-                for button in editor.workspace_drawer_pages.widget(0).findChildren(QPushButton)
-            ]
-            file_buttons = [
-                button.text()
-                for button in editor.workspace_drawer_pages.widget(1).findChildren(QPushButton)
-            ]
-            self.assertEqual(
-                drawer_action_rows(editor.workspace_drawer_pages.widget(0)),
-                [
-                    ["Insert", "Add Command"],
-                    ["Edit", "Delete"],
-                    ["Move Up", "Move Down"],
-                    ["Import CSV", "Export CSV"],
-                ],
-            )
-            self.assertEqual(
-                drawer_action_rows(editor.workspace_drawer_pages.widget(1)),
-                [
-                    ["Open", "Add File"],
-                    ["Edit", "Delete"],
-                    ["Move Up", "Move Down"],
-                    ["Import CSV", "Export CSV"],
-                ],
-            )
-            self.assertIn("Insert", command_buttons)
-            self.assertIn("Open", file_buttons)
+            self.assertEqual(rail_tooltips, ["All quick actions", "Quick commands", "Quick files"])
+            # Editor primaries are inline now (insert command / open file); grid removed.
+            self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(0)), [])
+            self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(1)), [])
+            self.assertEqual(editor.insert_quick_command_button.text(), "Insert")
+            self.assertEqual(editor.open_quick_file_button.text(), "Open")
             self.assertNotIn("Validate", [button.text() for button in editor.findChildren(QPushButton)])
             self.assertNotIn("Quick command suggestions", [label.text() for label in editor.findChildren(QLabel)])
             editor._select_workspace_drawer_page(1)
@@ -2284,9 +2254,9 @@ class AppSessionTests(unittest.TestCase):
             session = window.current_session()
             session.batch_runner.start = lambda steps: started_steps.append(steps)
 
-            self.assertEqual(session.drawer_pages.count(), 2)
-            session._select_drawer_page(1)
-            self.assertEqual(session.drawer_pages.currentIndex(), 1)
+            self.assertEqual(session.drawer_pages.count(), 4)
+            session._select_drawer_page(2)  # Quick Files mode
+            self.assertEqual(session.drawer_pages.currentIndex(), 2)
 
             window.add_quick_file(QuickFile(label="Bring-up", path=str(script_path)))
             self.assertEqual(session.quick_file_list.count(), 1)
@@ -2414,15 +2384,7 @@ class AppSessionTests(unittest.TestCase):
                 window.set_quick_file_sort_mode("Custom")
                 self.assertEqual(visible_ids(), ["zebra", "cable", "alpha"])
                 self.assertTrue(session.quick_file_list.dragEnabled())
-                self.assertEqual(
-                    drawer_action_rows(session.drawer_pages.widget(1)),
-                    [
-                        ["Run", "Add File"],
-                        ["Edit", "Delete"],
-                        ["Move Up", "Move Down"],
-                        ["Import CSV", "Export CSV"],
-                    ],
-                )
+                self.assertEqual(drawer_action_rows(session.drawer_pages.widget(1)), [])
 
                 window.move_quick_file("cable", -1)
                 self.assertEqual(visible_ids(), ["cable", "zebra", "alpha"])

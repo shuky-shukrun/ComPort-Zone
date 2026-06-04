@@ -6,7 +6,7 @@ from html import escape
 from pathlib import Path
 from typing import ClassVar, cast
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QPushButton,
     QStyle,
@@ -64,19 +65,10 @@ from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog, VersionUp
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
 from .split_workspace import SplitWorkspaceWidget
+from .stylesheet import build_stylesheet
 from .tab_workspace import TabWorkspaceController
-from .tokens import (
-    FONT_BTN_H,
-    FONT_BTN_W,
-    RADIUS_LG,
-    RADIUS_MD,
-    RADIUS_SM,
-    SPACE_LG,
-    SPACE_MD,
-    SPACE_SM,
-    SPACE_XL,
-    TAB_MIN_W,
-)
+from .title_bar import TitleBar, WindowResizeGrips
+from .tokens import FONT_BTN_H, FONT_BTN_W
 from .tab_context_menus import TabContextMenuBuilder
 from .terminal_tab import TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
@@ -162,7 +154,7 @@ class MainWindow(QMainWindow):
             confirm_bulk_delete=lambda title, message: self._confirm_bulk_delete(title, message),
         )
         self.history_catalog = HistoryStore(self.settings.command_history)
-        self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
+        self.theme = THEMES.get(self.settings.theme, THEMES["ComPort Zone Dark"])
         self._session_counter = 0
         self._loading = True
         self._deferred_startup_actions_pending = defer_startup_actions
@@ -176,6 +168,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ComPort Zone")
         self.setWindowIcon(app_icon())
         self.setFont(pick_ui_font())
+        # Frameless: the design ships a bespoke title bar; native drag/resize/snap is
+        # re-delegated to the OS from ui/title_bar.py.
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.resize(self.settings.window_width, self.settings.window_height)
         self._build_ui()
         self.tab_workspace = TabWorkspaceController(
@@ -212,6 +207,18 @@ class MainWindow(QMainWindow):
             self._schedule_launch_update_check()
 
     def _build_ui(self) -> None:
+        # --- frameless window chrome: custom title bar + relocated menu bar ---
+        self._app_menu_bar = QMenuBar(self)
+        self.title_bar = TitleBar(self, APP_ICON_PATH)
+        chrome = QWidget(self)
+        chrome.setObjectName("windowChrome")
+        chrome_layout = QVBoxLayout(chrome)
+        chrome_layout.setContentsMargins(0, 0, 0, 0)
+        chrome_layout.setSpacing(0)
+        chrome_layout.addWidget(self.title_bar)
+        chrome_layout.addWidget(self._app_menu_bar)
+        self.setMenuWidget(chrome)
+
         self.tabs = SplitWorkspaceWidget(self)
         self.tabs.setDocumentMode(True)
         self.tabs.setMovable(True)
@@ -260,6 +267,37 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.font_decrease_button)
         self.statusBar().addPermanentWidget(self.font_increase_button)
         self.statusBar().addPermanentWidget(self.version_label)
+
+        # Native edge/corner resize for the frameless window.
+        self._resize_grips = WindowResizeGrips(self)
+
+    def menuBar(self) -> QMenuBar:
+        # The menu bar lives inside the custom title-bar chrome (see _build_ui), so
+        # both the menu builder and the test-suite read it through this override.
+        bar = getattr(self, "_app_menu_bar", None)
+        return bar if bar is not None else super().menuBar()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "title_bar"):
+            self.title_bar.refresh_maximize_glyph()
+
+    def _refresh_title_subtitle(self) -> None:
+        if not hasattr(self, "title_bar"):
+            return
+        session = self.current_session()
+        if session is None:
+            self.title_bar.set_subtitle("")
+            self.title_bar.set_live(False)
+            return
+        state = session.connection_state()
+        segments = [part.strip() for part in session.connection_status_text().split("|") if part.strip()]
+        if state == "connected":
+            self.title_bar.set_subtitle(" · ".join(segments[:3]))
+            self.title_bar.set_live(True)
+        else:
+            self.title_bar.set_subtitle(segments[0] if segments else "Disconnected")
+            self.title_bar.set_live(False)
 
     def _build_menus(self) -> None:
         self.menu_builder.build().install_on(self)
@@ -853,6 +891,7 @@ class MainWindow(QMainWindow):
     def sync_status_from_current_session(self) -> None:
         self.workspace_status.sync_from_current(self.theme)
         self.update_workspace_split_chrome()
+        self._refresh_title_subtitle()
 
     def connection_state_color(self, state: str) -> str:
         return connection_state_color(state, self.theme)
@@ -873,6 +912,7 @@ class MainWindow(QMainWindow):
         # updates should refresh shared targets without replacing it.
         self.workspace_status.sync_from_current(self.theme)
         self.update_workspace_split_chrome()
+        self._refresh_title_subtitle()
 
     def set_status(self, text: str) -> None:
         self.workspace_status.set_status(text)
@@ -881,8 +921,9 @@ class MainWindow(QMainWindow):
         self.set_drawer_collapsed(not self.settings.drawer_collapsed)
 
     def normalized_drawer_page_index(self, index: int | None = None) -> int:
+        # Rail modes: All (0), Quick Send (1), Command Files (2), History (3).
         page_index = self.settings.drawer_page_index if index is None else index
-        return max(0, min(int(page_index), 1))
+        return max(0, min(int(page_index), 3))
 
     def apply_drawer_state_to_current_tab(self) -> None:
         self.update_workspace_split_chrome()
@@ -1300,7 +1341,7 @@ class MainWindow(QMainWindow):
     def _rebuild_runtime_state_from_settings(self, settings: AppSettings) -> None:
         self.quick_actions = self._quick_action_library_from_settings()
         self.history_catalog = HistoryStore(settings.command_history)
-        self.theme = THEMES.get(settings.theme, THEMES["VS Code Dark"])
+        self.theme = THEMES.get(settings.theme, THEMES["ComPort Zone Dark"])
         self.resize(settings.window_width, settings.window_height)
 
     def show_about(self) -> None:
@@ -1411,7 +1452,7 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def apply_theme(self, name: str, *, save: bool = True) -> None:
-        self.theme = THEMES.get(name, THEMES["VS Code Dark"])
+        self.theme = THEMES.get(name, THEMES["ComPort Zone Dark"])
         self.settings.theme = self.theme.name
         set_icon_color(self.theme.text)
         self.setStyleSheet(self._stylesheet(self.theme))
@@ -1430,413 +1471,7 @@ class MainWindow(QMainWindow):
             self.save_settings()
 
     def _stylesheet(self, theme: ThemePalette) -> str:
-        terminal_background = theme.terminal_bg
-        return f"""
-        QMainWindow, QWidget {{
-            background: {theme.window};
-            color: {theme.text};
-        }}
-        QMenuBar {{
-            background: {theme.window};
-            color: {theme.text};
-            border-bottom: 1px solid {theme.border};
-            padding-left: 4px;
-        }}
-        QMenuBar::item {{
-            padding: {SPACE_MD}px {SPACE_XL}px;
-            border-radius: {RADIUS_SM}px;
-        }}
-        QMenuBar::item:selected, QMenu {{
-            background: {theme.surface_alt};
-        }}
-        QMenu {{
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_MD}px;
-            padding: 6px;
-        }}
-        QMenu::item {{
-            padding: 7px 30px 7px 24px;
-            border-radius: {RADIUS_SM}px;
-        }}
-        QMenu::item:selected {{
-            background: {theme.accent_soft};
-        }}
-        QTabWidget::pane {{
-            border: none;
-        }}
-        QTabWidget[activePane="true"]::pane {{
-            border: 2px solid {theme.accent};
-        }}
-        QTabWidget[activePane="false"]::pane {{
-            border: 1px solid {theme.border};
-        }}
-        QTabBar::tab {{
-            background: {theme.surface_alt};
-            color: {theme.text};
-            padding: {SPACE_LG}px {SPACE_XL}px;
-            min-width: {TAB_MIN_W}px;
-            border: 1px solid transparent;
-            border-top-left-radius: {RADIUS_MD}px;
-            border-top-right-radius: {RADIUS_MD}px;
-            margin: 5px 2px 0 2px;
-        }}
-        QTabBar::tab:selected {{
-            background: {theme.window};
-            border-top: 2px solid {theme.accent};
-            border-left: 1px solid {theme.border};
-            border-right: 1px solid {theme.border};
-        }}
-        QTabWidget[activePane="true"] QTabBar::tab:selected {{
-            border-top: 3px solid {theme.accent};
-        }}
-        QTabBar::tab:hover:!selected {{
-            background: {theme.surface};
-        }}
-        QToolButton#newTabButton {{
-            background: {theme.surface_alt};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_MD}px;
-            font-size: 13pt;
-            padding: 0;
-        }}
-        QToolButton#newTabButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.accent};
-        }}
-        QToolButton#tabCloseButton {{
-            background: transparent;
-            color: {theme.muted};
-            border: 1px solid transparent;
-            border-radius: {RADIUS_SM}px;
-            padding: 0;
-            margin-right: 2px;
-        }}
-        QToolButton#tabCloseButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.border};
-        }}
-        QToolButton#tabCloseButton:pressed {{
-            background: {theme.accent_soft};
-            border-color: {theme.accent};
-        }}
-        QFrame#drawer {{
-            background: {theme.window_alt};
-            border-right: 1px solid {theme.border};
-        }}
-        QFrame#drawerRail {{
-            background: {theme.surface_alt};
-            border-right: 1px solid {theme.border};
-        }}
-        QToolButton#railButton {{
-            background: transparent;
-            color: {theme.text};
-            border: 1px solid transparent;
-            border-radius: {RADIUS_LG}px;
-        }}
-        QToolButton#railButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.border};
-        }}
-        QToolButton#railButton:pressed {{
-            background: {theme.accent_soft};
-            border-color: {theme.accent};
-        }}
-        QFrame#drawerPanel {{
-            background: {theme.window_alt};
-        }}
-        QFrame#editorSidePanel {{
-            background: {theme.window_alt};
-            border-right: 1px solid {theme.border};
-        }}
-        QLabel#drawerTitle {{
-            font-weight: 650;
-            color: {theme.text};
-            padding: 1px 2px 4px 2px;
-        }}
-        QLabel#drawerSection {{
-            color: {theme.muted};
-            font-size: 8pt;
-            font-weight: 700;
-            padding: 9px 3px 1px 3px;
-        }}
-        QLabel#drawerHelpText {{
-            color: {theme.muted};
-            line-height: 1.3;
-            padding: 2px 3px 6px 3px;
-        }}
-        QFrame#terminalColumn, QTextEdit#terminal {{
-            background: {terminal_background};
-            color: {theme.text};
-            border: none;
-        }}
-        QTextEdit#terminal {{
-            border: 2px solid transparent;
-        }}
-        QTextEdit#terminal[activeWorkspaceTab="true"],
-        QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
-            border: 2px solid {theme.accent};
-        }}
-        QFrame#commandBar, QFrame#searchBar {{
-            background: {theme.window};
-            border-top: 1px solid {theme.border};
-        }}
-        QLabel#connectionStatus, QLabel#terminalConnectionStatus {{
-            background: {theme.chip};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_SM}px;
-            padding: {SPACE_SM}px {SPACE_LG}px;
-        }}
-        QLabel#connectionStatus[state="connected"],
-        QLabel#terminalConnectionStatus[state="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QLabel#connectionStatus[state="retrying"],
-        QLabel#terminalConnectionStatus[state="retrying"] {{
-            color: {theme.status};
-            border-color: {theme.status};
-        }}
-        QLabel#connectionStatus[state="missing"],
-        QLabel#terminalConnectionStatus[state="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QLabel#connectionStatus[state="no-port"],
-        QLabel#terminalConnectionStatus[state="no-port"] {{
-            color: {theme.muted};
-            border-color: {theme.border};
-        }}
-        QPushButton#statusActionButton, QPushButton#terminalConnectionActionButton {{
-            min-width: 92px;
-            padding: {SPACE_SM}px {SPACE_XL}px;
-            border-radius: {RADIUS_SM}px;
-            background: {theme.surface_alt};
-        }}
-        QPushButton#statusActionButton[role="connected"],
-        QPushButton#terminalConnectionActionButton[role="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QPushButton#statusActionButton[role="retrying"],
-        QPushButton#terminalConnectionActionButton[role="retrying"] {{
-            color: {theme.status};
-            border-color: {theme.status};
-        }}
-        QPushButton#statusActionButton[role="missing"],
-        QPushButton#terminalConnectionActionButton[role="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QPushButton#statusActionButton[role="no-port"],
-        QPushButton#terminalConnectionActionButton[role="no-port"] {{
-            color: {theme.muted};
-        }}
-        QPushButton#statusActionButton:hover,
-        QPushButton#terminalConnectionActionButton:hover {{
-            border-color: {theme.accent};
-        }}
-        QLabel#splitDropPreview {{
-            background: {theme.accent_soft};
-            color: {theme.text};
-            border: 2px dashed {theme.accent};
-            border-radius: {RADIUS_MD}px;
-            font-weight: 700;
-            padding: 12px;
-        }}
-        QLineEdit, QComboBox, QListWidget {{
-            background: {theme.field};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_MD}px;
-            padding: {SPACE_LG}px {SPACE_LG}px;
-            selection-background-color: {theme.search_highlight};
-        }}
-        QPlainTextEdit#commandFileEditor {{
-            background: {terminal_background};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 0px;
-            selection-background-color: {theme.search_highlight};
-        }}
-        QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
-            border: 2px solid {theme.accent};
-        }}
-        QLabel#editorPathLabel, QLabel#editorStatusLabel {{
-            color: {theme.muted};
-            padding: 4px 2px;
-        }}
-        QLineEdit:focus, QComboBox:focus, QListWidget:focus {{
-            border-color: {theme.accent};
-        }}
-        QListWidget {{
-            outline: none;
-        }}
-        QListWidget::item {{
-            border-radius: {RADIUS_SM}px;
-            padding: 7px 8px;
-            margin: 2px;
-        }}
-        QListWidget::item:hover {{
-            background: {theme.surface};
-        }}
-        QListWidget::item:selected {{
-            background: {theme.accent_soft};
-            color: {theme.text};
-        }}
-        QListWidget#quickCommandList,
-        QListWidget#quickFileList {{
-            padding: 4px;
-            qproperty-placeholderColor: {theme.muted};
-        }}
-        QListWidget#quickCommandList::item,
-        QListWidget#quickFileList::item {{
-            border-radius: {RADIUS_SM}px;
-            padding: 3px 6px;
-            margin: 1px 0;
-        }}
-        QDialog {{
-            background: {theme.window};
-            color: {theme.text};
-        }}
-        QLabel#dialogTitle {{
-            font-size: 13pt;
-            font-weight: 700;
-            color: {theme.text};
-        }}
-        QLabel#dialogHint {{
-            background: {theme.surface_alt};
-            color: {theme.muted};
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_LG}px;
-            padding: 10px;
-        }}
-        QDialog#commandPalette {{
-            background: {theme.window};
-            color: {theme.text};
-        }}
-        QLineEdit#commandPaletteSearch {{
-            font-size: 11pt;
-            padding: 10px 12px;
-            border-radius: {RADIUS_LG}px;
-        }}
-        QListWidget#commandPaletteList {{
-            padding: 6px;
-            border-radius: {RADIUS_LG}px;
-        }}
-        QListWidget#commandPaletteList::item {{
-            border-radius: {RADIUS_MD}px;
-            padding: 7px 10px;
-            margin: 2px;
-        }}
-        QLabel#commandPaletteHint {{
-            color: {theme.muted};
-            padding: 0 4px;
-        }}
-        QComboBox {{
-            padding-right: 28px;
-        }}
-        QComboBox::drop-down {{
-            width: 26px;
-            border-left: 1px solid {theme.border};
-            background: {theme.surface_alt};
-            border-top-right-radius: {RADIUS_MD}px;
-            border-bottom-right-radius: {RADIUS_MD}px;
-        }}
-        QPushButton {{
-            background: {theme.surface_alt};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_MD}px;
-            padding: {SPACE_LG}px {SPACE_XL}px;
-        }}
-        QPushButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.accent};
-        }}
-        QPushButton:pressed {{
-            background: {theme.accent_soft};
-        }}
-        QPushButton:focus {{
-            border-color: {theme.accent};
-        }}
-        QPushButton:disabled {{
-            color: {theme.muted};
-            border-color: {theme.border};
-            background: {theme.window_alt};
-        }}
-        QPushButton[role="accent"] {{
-            background: {theme.accent};
-            color: {theme.on_accent};
-            border-color: {theme.accent};
-        }}
-        QPushButton#drawerActionButton {{
-            text-align: left;
-            border-radius: {RADIUS_MD}px;
-            padding: 8px 10px;
-        }}
-        QPushButton#drawerActionButton[role="drawerPrimary"] {{
-            background: {theme.chip};
-            border-color: {theme.accent_soft};
-        }}
-        QPushButton#drawerActionButton[role="drawerPrimary"]:hover {{
-            background: {theme.accent_soft};
-            border-color: {theme.accent};
-        }}
-        QPushButton#drawerActionButton[role="drawerDanger"]:hover {{
-            background: {theme.surface};
-            border-color: {theme.error};
-        }}
-        QToolButton#drawerMenuButton {{
-            background: {theme.field};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: {RADIUS_MD}px;
-            padding: {SPACE_LG}px {SPACE_LG}px;
-        }}
-        QToolButton#drawerMenuButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.accent};
-        }}
-        QToolButton#drawerMenuButton::menu-indicator {{
-            image: none;
-            width: 0px;
-        }}
-        QSplitter::handle {{
-            background: {theme.border};
-        }}
-        QSplitter::handle:hover {{
-            background: {theme.accent};
-        }}
-        QSplashScreen {{
-            color: {theme.text};
-        }}
-        QStatusBar {{
-            background: {theme.window_alt};
-            color: {theme.text};
-            border-top: 1px solid {theme.border};
-        }}
-        QLabel#footer {{
-            color: {theme.muted};
-            padding-left: 4px;
-        }}
-        QLabel#statusFontControlsLabel {{
-            color: {theme.muted};
-            padding: 0 2px 0 8px;
-        }}
-        QPushButton#statusFontSizeButton {{
-            min-width: {FONT_BTN_W}px;
-            max-width: {FONT_BTN_W}px;
-            padding: 0;
-            border-radius: {RADIUS_SM}px;
-            background: {theme.surface_alt};
-        }}
-        QLabel#versionInfo {{
-            color: {theme.muted};
-            padding: 0 8px;
-        }}
-        """
+        return build_stylesheet(theme)
 
     def save_settings(self) -> None:
         self.workspace_settings_controller.save_settings()

@@ -31,66 +31,96 @@ def _device_pixel_ratio() -> float:
             return float(screen.devicePixelRatio())
     return 1.0
 
-TABLER_ICON_PATHS = {
-    "arrow-left": '<path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" />',
-    "arrow-right": '<path d="M5 12l14 0" /><path d="M13 18l6 -6" /><path d="M13 6l6 6" />',
-    "check": '<path d="M5 12l5 5l10 -10" />',
-    "chevron-down": '<path d="M6 9l6 6l6 -6" />',
-    "chevron-up": '<path d="M6 15l6 -6l6 6" />',
-    "clock": '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 7v5l3 3" />',
-    "clipboard-list": '<path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" /><path d="M9 5a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2" /><path d="M9 12l.01 0" /><path d="M13 12l2 0" /><path d="M9 16l.01 0" /><path d="M13 16l2 0" />',
-    "command": '<path d="M7 9a2 2 0 1 1 2 -2v10a2 2 0 1 1 -2 -2h10a2 2 0 1 1 -2 2v-10a2 2 0 1 1 2 2h-10" />',
-    "copy": '<path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" /><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />',
-    "database": '<path d="M4 6a8 3 0 1 0 16 0a8 3 0 1 0 -16 0" /><path d="M4 6v6a8 3 0 0 0 16 0v-6" /><path d="M4 12v6a8 3 0 0 0 16 0v-6" />',
-    "device-floppy": '<path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" /><path d="M10 14a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M14 4l0 4l-6 0l0 -4" />',
-    "file-export": '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M11.5 21h-4.5a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v5m-5 6h7m-3 -3l3 3l-3 3" />',
-    "file-import": '<path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 13v-8a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2h-5.5m-9.5 -2h7m-3 -3l3 3l-3 3" />',
-    "folder-open": '<path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2" />',
-    "info-circle": '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 9h.01" /><path d="M11 12h1v4h1" />',
-    "list": '<path d="M9 6l11 0" /><path d="M9 12l11 0" /><path d="M9 18l11 0" /><path d="M5 6l0 .01" /><path d="M5 12l0 .01" /><path d="M5 18l0 .01" />',
-    "pencil": '<path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" />',
-    "player-pause": '<path d="M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" /><path d="M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12" />',
-    "player-play": '<path d="M7 4v16l13 -8l-13 -8" />',
-    "player-stop": '<path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10" />',
-    "plus": '<path d="M12 5l0 14" /><path d="M5 12l14 0" />',
-    "refresh": '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />',
-    "search": '<path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" />',
-    "send": '<path d="M10 14l11 -11" /><path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5" />',
-    "settings": '<path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" /><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />',
-    "terminal-2": '<path d="M8 9l3 3l-3 3" /><path d="M13 15l3 0" /><path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />',
-    "trash": '<path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />',
-    "x": '<path d="M18 6l-12 12" /><path d="M6 6l12 12" />',
+# Icon set transcribed from the design handoff (``project/icons.jsx``) plus a few
+# extra glyphs drawn in the same thin-line house style for actions the mockup did
+# not enumerate. Each entry is ``(viewbox, stroke_width, body, filled)``; ``filled``
+# glyphs paint with ``fill`` and no stroke (e.g. the play triangle).
+MOCKUP_ICONS = {
+    # --- exact from the handoff ---
+    "x":           (12, 1.3, '<path d="M3 3l6 6M9 3l-6 6" />', False),
+    "chevron-down": (12, 1.3, '<path d="M3 4.5L6 7.5 9 4.5" />', False),
+    "chevron-up":  (12, 1.3, '<path d="M3 7.5L6 4.5 9 7.5" />', False),
+    "plug":        (16, 1.3, '<path d="M5 2v3M11 2v3M3.5 5h9v3a4.5 4.5 0 0 1 -9 0V5zM8 12.5V15" />', False),
+    "send":        (16, 1.4, '<path d="M2.5 8h9M8 4l4 4-4 4" />', False),
+    "arrow-right": (16, 1.4, '<path d="M2.5 8h9M8 4l4 4-4 4" />', False),
+    "arrow-left":  (16, 1.4, '<path d="M13.5 8h-9M8 4l-4 4 4 4" />', False),
+    "bolt":        (16, 1.2, '<path d="M8.5 1.5L3 9h4l-1 5.5L12 7H7.5l1-5.5z" />', False),
+    "file":        (16, 1.2, '<path d="M4 1.5h5l3 3V14a.5 .5 0 0 1 -.5 .5h-7A.5 .5 0 0 1 4 14V1.5z" /><path d="M9 1.5V4.5h3" />', False),
+    "term":        (16, 1.2, '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M4 6l2 2-2 2M8 10.5h4" />', False),
+    "cog":         (16, 1.2, '<circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" />', False),
+    "search":      (16, 1.3, '<circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5l3 3" />', False),
+    "trash":       (16, 1.2, '<path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9.5h6.8L12 4" />', False),
+    "save":        (16, 1.2, '<path d="M2.5 2.5h9l2 2v9h-11v-11z" /><path d="M5 2.5v3h5v-3M5 13v-4h6v4" />', False),
+    "play":        (16, 0.0, '<path d="M4 3l9 5-9 5V3z" />', True),
+    "clock":       (16, 1.2, '<circle cx="8" cy="8" r="6" /><path d="M8 5v3.2L10 10" />', False),
+    "arrows":      (16, 1.2, '<path d="M4 6l2-2 2 2M6 4v6M12 10l-2 2-2-2M10 12V6" />', False),
+    "hex":         (16, 1.2, '<path d="M8 1.5l5.5 3.2v6.6L8 14.5 2.5 11.3V4.7L8 1.5z" />', False),
+    "pin":         (16, 1.2, '<path d="M6 1.5h4l-.5 4 2 2-1 1H5.5l-1-1 2-2L6 1.5zM8 9.5V14.5" />', False),
+    # --- house-style extras (not enumerated in the mockup) ---
+    "plus":        (16, 1.5, '<path d="M8 3.5v9M3.5 8h9" />', False),
+    "pause":       (16, 0.0, '<path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z" />', True),
+    "stop":        (16, 0.0, '<rect x="4" y="4" width="8" height="8" rx="1.2" />', True),
+    "list":        (16, 1.3, '<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.8 4h.01M2.8 8h.01M2.8 12h.01" />', False),
+    "folder":      (16, 1.3, '<path d="M2 4.5a1 1 0 0 1 1 -1h3l1.5 1.5h5a1 1 0 0 1 1 1V12a1 1 0 0 1 -1 1H3a1 1 0 0 1 -1 -1V4.5z" />', False),
+    "copy":        (16, 1.3, '<rect x="5" y="5" width="8" height="8" rx="1.2" /><path d="M3 9.5V4a1 1 0 0 1 1 -1h5" />', False),
+    "edit":        (16, 1.3, '<path d="M3 13l1-3 7-7 2 2-7 7-3 1z" /><path d="M9.5 4.5l2 2" />', False),
+    "check":       (16, 1.5, '<path d="M3.5 8.5l3 3 6-7" />', False),
+    "info":        (16, 1.3, '<circle cx="8" cy="8" r="6.2" /><path d="M8 7.3v3.7M8 5.2h.01" />', False),
+    "import":      (16, 1.3, '<path d="M8 2v7M5 6.5l3 3 3-3" /><path d="M3 11.5v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1" />', False),
+    "database":    (16, 1.2, '<path d="M2.5 4c0-1 2.5-1.8 5.5-1.8S13.5 3 13.5 4 11 5.8 8 5.8 2.5 5 2.5 4z" /><path d="M2.5 4v8c0 1 2.5 1.8 5.5 1.8s5.5-.8 5.5-1.8V4" />', False),
+    "refresh":     (16, 1.3, '<path d="M13 5.5A5.5 5.5 0 0 0 3 6.5M3 3v3.5h3.5" /><path d="M3 10.5A5.5 5.5 0 0 0 13 9.5M13 13v-3.5h-3.5" />', False),
 }
 
 STYLE_ICON_MAP = {
     QStyle.StandardPixmap.SP_ArrowBack: "arrow-left",
     QStyle.StandardPixmap.SP_ArrowDown: "chevron-down",
-    QStyle.StandardPixmap.SP_ArrowForward: "arrow-right",
+    QStyle.StandardPixmap.SP_ArrowForward: "send",
     QStyle.StandardPixmap.SP_ArrowLeft: "arrow-left",
     QStyle.StandardPixmap.SP_ArrowRight: "arrow-right",
     QStyle.StandardPixmap.SP_ArrowUp: "chevron-up",
     QStyle.StandardPixmap.SP_BrowserReload: "refresh",
-    QStyle.StandardPixmap.SP_CommandLink: "command",
-    QStyle.StandardPixmap.SP_ComputerIcon: "terminal-2",
+    QStyle.StandardPixmap.SP_CommandLink: "bolt",
+    QStyle.StandardPixmap.SP_ComputerIcon: "term",
     QStyle.StandardPixmap.SP_DialogApplyButton: "check",
     QStyle.StandardPixmap.SP_DialogCloseButton: "x",
-    QStyle.StandardPixmap.SP_DialogOpenButton: "file-import",
-    QStyle.StandardPixmap.SP_DialogSaveButton: "device-floppy",
-    QStyle.StandardPixmap.SP_DirOpenIcon: "folder-open",
+    QStyle.StandardPixmap.SP_DialogOpenButton: "import",
+    QStyle.StandardPixmap.SP_DialogSaveButton: "save",
+    QStyle.StandardPixmap.SP_DirOpenIcon: "file",
     QStyle.StandardPixmap.SP_DriveHDIcon: "database",
     QStyle.StandardPixmap.SP_FileDialogContentsView: "search",
-    QStyle.StandardPixmap.SP_FileDialogDetailedView: "settings",
+    QStyle.StandardPixmap.SP_FileDialogDetailedView: "cog",
     QStyle.StandardPixmap.SP_FileDialogInfoView: "clock",
     QStyle.StandardPixmap.SP_FileDialogListView: "list",
     QStyle.StandardPixmap.SP_FileDialogNewFolder: "plus",
-    QStyle.StandardPixmap.SP_FileIcon: "copy",
-    QStyle.StandardPixmap.SP_MediaPause: "player-pause",
-    QStyle.StandardPixmap.SP_MediaPlay: "player-play",
-    QStyle.StandardPixmap.SP_MediaStop: "player-stop",
-    QStyle.StandardPixmap.SP_MessageBoxInformation: "info-circle",
+    QStyle.StandardPixmap.SP_FileIcon: "file",
+    QStyle.StandardPixmap.SP_MediaPause: "pause",
+    QStyle.StandardPixmap.SP_MediaPlay: "play",
+    QStyle.StandardPixmap.SP_MediaStop: "stop",
+    QStyle.StandardPixmap.SP_MessageBoxInformation: "info",
     QStyle.StandardPixmap.SP_TitleBarCloseButton: "x",
     QStyle.StandardPixmap.SP_TrashIcon: "trash",
 }
+
+
+def _icon_svg(name: str, size: int, stroke: str) -> str:
+    viewbox, stroke_width, body, filled = MOCKUP_ICONS.get(name, MOCKUP_ICONS["info"])
+    if filled:
+        paint = f'fill="{stroke}" stroke="none"'
+    else:
+        paint = (
+            f'fill="none" stroke="{stroke}" stroke-width="{stroke_width}" '
+            'stroke-linecap="round" stroke-linejoin="round"'
+        )
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+        f'viewBox="0 0 {viewbox} {viewbox}" {paint}>{body}</svg>'
+    )
+
+
+def themed_icon(name: str, size: int = 16, color: str | None = None) -> QIcon:
+    """Build a themed mockup icon by name (e.g. ``"bolt"``, ``"play"``)."""
+    stroke = color if color is not None else _ICON_COLOR
+    return _render_svg_icon(_icon_svg(name, size, stroke), size)
 
 
 def standard_icon(
@@ -98,14 +128,13 @@ def standard_icon(
     size: int = 18,
     color: str | None = None,
 ) -> QIcon:
-    icon_name = STYLE_ICON_MAP.get(pixmap, "info-circle")
+    icon_name = STYLE_ICON_MAP.get(pixmap, "info")
     stroke = color if color is not None else _ICON_COLOR
-    svg = f"""
-    <svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="{stroke}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-        {TABLER_ICON_PATHS[icon_name]}
-    </svg>
-    """
+    svg = _icon_svg(icon_name, size, stroke)
+    return _render_svg_icon(svg, size)
+
+
+def _render_svg_icon(svg: str, size: int) -> QIcon:
     # Render at device-pixel resolution so glyphs stay crisp at 125%/150% scaling,
     # then tag the logical size so layout still treats the icon as ``size`` px.
     dpr = _device_pixel_ratio()
