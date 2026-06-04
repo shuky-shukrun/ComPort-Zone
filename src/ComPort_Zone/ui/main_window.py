@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
         drawer = QuickActionsSidebar(
             actions=QuickActionsSidebarActions(
                 command_primary=self._shared_use_command,
-                file_primary=self._shared_use_file,
+                file_primary=self._shared_run_file,
                 add_command=self.add_quick_command,
                 edit_command=lambda: self.edit_quick_command(self._shared_command_id()),
                 delete_command=lambda: self.delete_quick_command(self._shared_command_id()),
@@ -373,11 +373,12 @@ class MainWindow(QMainWindow):
                 history_favorite=lambda text: self.add_saved_command_from_text(text, favorite=True),
                 history_save=lambda text: self.add_saved_command_from_text(text, favorite=False),
                 history_remove=self.remove_command_from_history,
+                run_file=self.run_command_file_dialog,
             ),
             command_primary_label="Send",
             file_primary_label="Run",
             command_double_clicked=self._shared_use_command,
-            file_double_clicked=self._shared_use_file,
+            file_double_clicked=self._shared_open_file,
             command_sort_changed=self._shared_command_sort_changed,
             file_sort_changed=self._shared_file_sort_changed,
             command_order_changed=self._shared_persist_command_order,
@@ -407,8 +408,11 @@ class MainWindow(QMainWindow):
     def _shared_use_command(self) -> None:
         self.use_quick_command_id(self._shared_command_id())
 
-    def _shared_use_file(self) -> None:
-        self.use_quick_file_id(self._shared_file_id())
+    def _shared_run_file(self) -> None:
+        self.run_quick_file_id(self._shared_file_id())
+
+    def _shared_open_file(self) -> None:
+        self.open_quick_file_in_editor_id(self._shared_file_id())
 
     def _shared_resend_history(self, command: str) -> None:
         session = self.current_session()
@@ -631,7 +635,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Open Command File Editor",
                 start_dir,
-                "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+                "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)",
             )
             if not selected:
                 return
@@ -1339,6 +1343,37 @@ class MainWindow(QMainWindow):
         session = self.current_session()
         if session is not None:
             session.run_script_path(path)
+
+    def run_quick_file_id(self, quick_file_id: str) -> None:
+        """Run a quick file in a terminal (the row's play affordance). Falls back to
+        the first terminal when the active tab is an editor."""
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        session = self.current_session() or next(iter(self.iter_sessions()), None)
+        if session is not None:
+            session.run_script_path(Path(quick_file.path))
+
+    def open_quick_file_in_editor_id(self, quick_file_id: str) -> None:
+        """Open a quick file in the active editor, or a new one when none is active
+        (the row's double-click)."""
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        path = Path(quick_file.path)
+        editor = self.current_command_file_editor()
+        if editor is not None:
+            if editor.confirm_save_or_discard_if_dirty():
+                editor.load_path(path)
+            return
+        self.add_command_file_tab(path=path)
+
+    def run_command_file_dialog(self) -> None:
+        """Pick and run a command file in the active terminal without saving it as a
+        quick file (the Quick Files ⋯ "Run file…" action)."""
+        session = self.current_session() or next(iter(self.iter_sessions()), None)
+        if session is not None:
+            session.run_script()
 
     def quick_command_group_names(self) -> list[str]:
         return self.quick_action_controller.quick_command_group_names()

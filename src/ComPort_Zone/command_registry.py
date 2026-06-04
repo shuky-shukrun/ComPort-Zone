@@ -56,7 +56,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "file.new_tab",
         lambda host: lambda: host.add_session(prompt_settings=True),
-        menu_text="New Tab",
+        menu_text="New Terminal",
         shortcut="Ctrl+T",
         icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
     ),

@@ -45,6 +45,18 @@ class ModelsAndStorageTests(unittest.TestCase):
             ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"],
         )
         self.assertEqual([command.group for command in settings.quick_commands], ["General"] * 3)
+        # Every default command has a description; *IDN? and SYST:ERR:ALL? ship favourited.
+        self.assertTrue(all(command.description for command in settings.quick_commands))
+        self.assertEqual(
+            [command.command for command in settings.quick_commands if command.favorite],
+            ["*IDN?", "SYST:ERR:ALL?"],
+        )
+        # The bundled example command file is seeded as a default quick file.
+        from ComPort_Zone.models import EXAMPLE_COMMAND_FILE
+
+        self.assertEqual([qf.label for qf in settings.quick_files], ["Example Commands"])
+        self.assertTrue(settings.quick_files[0].path.endswith(".cpz"))
+        self.assertTrue(EXAMPLE_COMMAND_FILE.exists())
         self.assertTrue(settings.check_for_updates_on_launch)
 
     def test_settings_store_round_trip(self) -> None:

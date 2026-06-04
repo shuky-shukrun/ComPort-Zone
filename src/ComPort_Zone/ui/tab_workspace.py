@@ -54,10 +54,13 @@ class TerminalTabWidget(QTabWidget):
         self.new_tab_button = QToolButton(self)
         self.new_tab_button.setObjectName("newTabButton")
         set_button_icon(self.new_tab_button, QStyle.StandardPixmap.SP_FileDialogNewFolder, 17)
-        self.new_tab_button.setToolTip("New tab")
+        self.new_tab_button.setToolTip("New Terminal")
         self.new_tab_button.setAutoRaise(True)
         self.new_tab_button.setFixedSize(32, 28)
-        self.new_tab_button.clicked.connect(self.newTabRequested.emit)
+        # Clicking + opens the new-tab menu (New Terminal / New Command File) rather
+        # than creating a terminal outright, so the user picks the tab type.
+        self.new_tab_button.setToolTip("New tab (choose type)")
+        self.new_tab_button.clicked.connect(self._open_new_tab_menu)
         self.new_tab_button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.new_tab_button.customContextMenuRequested.connect(
             lambda position: self.newTabMenuRequested.emit(self.new_tab_button.mapToGlobal(position))
@@ -85,6 +88,10 @@ class TerminalTabWidget(QTabWidget):
     def setTabIcon(self, index: int, icon) -> None:
         super().setTabIcon(index, icon)
         self._schedule_new_tab_button_position()
+
+    def _open_new_tab_menu(self) -> None:
+        button = self.new_tab_button
+        self.newTabMenuRequested.emit(button.mapToGlobal(button.rect().bottomLeft()))
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.tabBar() and event.type() in {

@@ -115,11 +115,16 @@ class TabWorkspaceControllerTests(unittest.TestCase):
 
     def test_terminal_tab_widget_owns_new_tab_button(self) -> None:
         tabs = TerminalTabWidget()
-        emitted: list[str] = []
-        tabs.newTabRequested.connect(lambda: emitted.append("new"))
+        tabs.resize(400, 240)
+        tabs.show()
+        self.qt.processEvents()
+        menu_points: list[QPoint] = []
+        new_tabs: list[str] = []
+        tabs.newTabMenuRequested.connect(menu_points.append)
+        tabs.newTabRequested.connect(lambda: new_tabs.append("new"))
 
         self.assertEqual(tabs.new_tab_button.objectName(), "newTabButton")
-        self.assertEqual(tabs.new_tab_button.toolTip(), "New tab")
+        self.assertEqual(tabs.new_tab_button.toolTip(), "New tab (choose type)")
         self.assertIs(tabs.new_tab_button.parent(), tabs)
         self.assertEqual(
             tabs.new_tab_button.contextMenuPolicy(),
@@ -128,7 +133,10 @@ class TabWorkspaceControllerTests(unittest.TestCase):
 
         tabs.new_tab_button.click()
 
-        self.assertEqual(emitted, ["new"])
+        # Clicking + opens the new-tab menu (the user picks the tab type) rather than
+        # creating a terminal directly.
+        self.assertEqual(len(menu_points), 1)
+        self.assertEqual(new_tabs, [])
         tabs.deleteLater()
 
     def test_terminal_tab_widget_forwards_new_tab_button_context_menu(self) -> None:

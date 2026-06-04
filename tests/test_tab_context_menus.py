@@ -98,7 +98,7 @@ class TabContextMenuBuilderTests(unittest.TestCase):
             self.assertEqual(
                 action_titles(menu),
                 [
-                    "New Tab",
+                    "New Terminal",
                     "Duplicate Tab",
                     "Rename Tab",
                     "Connection Settings",
@@ -157,7 +157,7 @@ class TabContextMenuBuilderTests(unittest.TestCase):
         try:
             menu = TabContextMenuBuilder(host).build(-1)
 
-            self.assertEqual(action_titles(menu), ["New Tab", "New Command File"])
+            self.assertEqual(action_titles(menu), ["New Terminal", "New Command File"])
         finally:
             host.deleteLater()
 

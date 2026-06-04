@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .command_file_service import COMMAND_FILE_FILTER, CommandFileService
+from .command_file_service import COMMAND_FILE_FILTER, COMMAND_FILE_SAVE_FILTER, CommandFileService
 from .command_editor_core import (
     COMMENT_SNIPPETS,
     COMPLETION_TOKEN_CHARS,
@@ -1547,7 +1547,7 @@ class CommandFileEditorDialog(QDialog):
             self,
             "Save Command File",
             start,
-            COMMAND_FILE_FILTER,
+            COMMAND_FILE_SAVE_FILTER,
         )
         if not path:
             return False

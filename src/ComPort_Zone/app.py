@@ -152,7 +152,7 @@ def create_startup_splash(message: str) -> QSplashScreen:
     return splash
 
 
-def run() -> int:
+def run(initial_file: str | None = None) -> int:
     set_windows_app_user_model_id()
     if QApplication.instance() is None:
         # Keep fractional display scales (125%/150%) intact so device-pixel icon
@@ -183,4 +183,6 @@ def run() -> int:
     window.show()
     splash.finish(window)
     window.run_startup_actions()
+    if initial_file:
+        window.open_command_file_editor(initial_file)
     return app.exec()

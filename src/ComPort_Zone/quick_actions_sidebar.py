@@ -46,6 +46,7 @@ class QuickActionsSidebarActions:
     history_favorite: Callable[[str], None] | None = None         # add history text to favorites
     history_save: Callable[[str], None] | None = None             # add history text to saved
     history_remove: Callable[[str], None] | None = None           # remove history text
+    run_file: Callable[[], None] | None = None                    # run an ad-hoc file (not saved)
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -207,6 +208,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
             header_buttons=(
                 self._header_button("+", "Add file", actions.add_file, parent),
                 self._overflow_button(parent, [
+                    ("Run file…", actions.run_file),
+                    None,
                     ("Edit", actions.edit_file),
                     ("Delete", actions.delete_file),
                     None,
@@ -347,6 +350,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
                 menu.addSeparator()
                 continue
             label, callback = entry
+            if callback is None:  # optional action not wired on this drawer
+                continue
             action = QAction(label, menu)
             action.triggered.connect(lambda _checked=False, cb=callback: cb())
             menu.addAction(action)

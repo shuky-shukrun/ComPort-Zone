@@ -30,4 +30,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-ComPort_Zone = ["VERSION", "assets/*.png"]
+ComPort_Zone = ["VERSION", "assets/*.png", "assets/*.cpz"]

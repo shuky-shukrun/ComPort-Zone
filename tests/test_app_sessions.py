@@ -736,7 +736,6 @@ class AppSessionTests(unittest.TestCase):
             session.serial_client._serial = FakePort()
             session._update_connection_ui(True)
 
-            self.assertTrue(session.script_run_button.isEnabled())
             self.assertTrue(session.script_pause_button.isHidden())
             self.assertTrue(session.script_resume_button.isHidden())
             self.assertTrue(session.script_stop_button.isHidden())
@@ -751,7 +750,6 @@ class AppSessionTests(unittest.TestCase):
 
             session.controller.script_snapshot = lambda: BatchRunSnapshot(is_running=True)  # type: ignore[method-assign]
             session._refresh_script_controls()
-            self.assertFalse(session.script_run_button.isEnabled())
             self.assertFalse(session.script_pause_button.isHidden())
             self.assertTrue(session.script_pause_button.isEnabled())
             self.assertTrue(session.script_resume_button.isHidden())
@@ -954,7 +952,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(calls, [window.tabs.new_tab_button.mapToGlobal(position)])
             menu = window.build_tab_context_menu(-1)
             titles = [action.text() for action in menu.actions() if not action.isSeparator()]
-            self.assertEqual(titles, ["New Tab", "New Command File"])
+            self.assertEqual(titles, ["New Terminal", "New Command File"])
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1003,6 +1001,51 @@ class AppSessionTests(unittest.TestCase):
                 window.deleteLater()
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
+
+    def test_quick_file_play_runs_and_double_click_opens_editor(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_file_actions.json")
+        script_path = Path(__file__).with_name("_tmp_actions_script.cmd")
+        settings_path.unlink(missing_ok=True)
+        script_path.write_text("*IDN?\n", encoding="utf-8")
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.delete_all_quick_files(confirm=False)  # drop the seeded example file
+            window.add_quick_file(QuickFile(label="Script", path=str(script_path)))
+            drawer = window.shared_drawer
+            runs: list[str] = []
+            for active_session in window.iter_sessions():
+                active_session.run_script_path = lambda p, _runs=runs: _runs.append(str(p))
+
+            editors_before = len(list(window.iter_command_file_editors()))
+            # Double-clicking a quick file opens it in an editor (new tab when none active).
+            drawer.quick_file_list.setCurrentRow(0)
+            window._shared_open_file()
+            self.assertEqual(len(list(window.iter_command_file_editors())), editors_before + 1)
+            self.assertIsNotNone(window.current_command_file_editor())
+            self.assertEqual(runs, [])
+
+            # The play affordance runs the file in a terminal, even with the editor active.
+            drawer.quick_file_list.setCurrentRow(0)
+            window._shared_run_file()
+            self.assertEqual(runs, [str(script_path)])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            script_path.unlink(missing_ok=True)
 
     def test_favorites_are_a_starred_subset_of_saved_commands(self) -> None:
         from ComPort_Zone.models import QuickCommand
@@ -2413,6 +2456,7 @@ class AppSessionTests(unittest.TestCase):
             script_path.write_text("SEND status\n", encoding="utf-8")
             window = app_module.MainWindow()
             session = window.current_session()
+            window.delete_all_quick_files(confirm=False)  # drop the seeded example file
             session.batch_runner.start = lambda steps: started_steps.append(steps)
 
             self.assertEqual(session.drawer_pages.count(), 4)

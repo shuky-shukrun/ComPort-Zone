@@ -274,11 +274,6 @@ class TerminalSessionWidget(QWidget):
         self.connection_button.setObjectName("terminalConnectionActionButton")
         self.connection_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.connection_button.clicked.connect(self.toggle_connection)
-        self.script_run_button = QPushButton("Run", self.command_bar)
-        self.script_run_button.setObjectName("commandFileRunButton")
-        self.script_run_button.setToolTip("Run a command file in this terminal.")
-        set_button_icon(self.script_run_button, QStyle.StandardPixmap.SP_MediaPlay, 15)
-        self.script_run_button.clicked.connect(self.run_script)
         self.script_pause_button = QPushButton("Pause", self.command_bar)
         self.script_pause_button.setObjectName("commandFilePauseButton")
         self.script_pause_button.setToolTip("Pause the running command file.")
@@ -350,7 +345,6 @@ class TerminalSessionWidget(QWidget):
         ]
         command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.connection_button)
-        command_layout.addWidget(self.script_run_button)
         command_layout.addWidget(self.script_pause_button)
         command_layout.addWidget(self.script_resume_button)
         command_layout.addWidget(self.script_stop_button)
@@ -393,7 +387,6 @@ class TerminalSessionWidget(QWidget):
         essentials = [
             self.status_label,
             self.connection_button,
-            self.script_run_button,
             self.script_status_label,
             self.timestamp_toggle,
             self.hex_toggle,
@@ -1270,7 +1263,7 @@ class TerminalSessionWidget(QWidget):
 
     def run_script(self) -> None:
         start_dir = self.host.settings.last_script_path or str(Path.cwd())
-        path, _ = QFileDialog.getOpenFileName(self, "Run Command File", start_dir, "Text Files (*.txt *.cmd *.scr);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Run Command File", start_dir, "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)")
         if not path:
             return
         self.run_script_path(Path(path))
@@ -1337,14 +1330,13 @@ class TerminalSessionWidget(QWidget):
         self.pause_script()
 
     def _refresh_script_controls(self) -> None:
-        if not hasattr(self, "script_run_button"):
+        if not hasattr(self, "script_status_label"):
             return
         snapshot = self.controller.script_snapshot()
         connected = self.transport.is_connected
         active = snapshot.is_running or snapshot.is_stopping
         paused = snapshot.is_paused
         stopping = snapshot.is_stopping
-        self.script_run_button.setEnabled(connected and not active)
         self.script_pause_button.setVisible(active and not paused)
         self.script_pause_button.setEnabled(active and not stopping)
         self.script_resume_button.setVisible(active and paused)
@@ -1370,11 +1362,6 @@ class TerminalSessionWidget(QWidget):
             tooltip = "No command file is running."
         self.script_status_label.setText(text)
         self.script_status_label.setToolTip(tooltip)
-        self.script_run_button.setToolTip(
-            "Run a command file in this terminal."
-            if connected
-            else "Connect before running a command file."
-        )
 
     def toggle_logging(self) -> None:
         if self.logger.enabled:

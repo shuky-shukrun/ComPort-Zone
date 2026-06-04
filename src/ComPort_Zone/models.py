@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -25,6 +26,8 @@ RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
+# Example command file shipped alongside the package (installation folder).
+EXAMPLE_COMMAND_FILE = Path(__file__).resolve().parent / "assets" / "example-commands.cpz"
 SETTINGS_SCHEMA_VERSION = 4
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 
@@ -404,6 +407,34 @@ class WorkspaceLayoutState:
         )
 
 
+def default_quick_commands() -> list[QuickCommand]:
+    """Saved commands seeded on first run — two are favourited by default."""
+    return [
+        QuickCommand(
+            label="*IDN?",
+            command="*IDN?",
+            description="Identify the instrument (vendor, model, serial, firmware)",
+            favorite=True,
+        ),
+        QuickCommand(
+            label="SYST:ERR:ALL?",
+            command="SYST:ERR:ALL?",
+            description="Read and clear all queued errors",
+            favorite=True,
+        ),
+        QuickCommand(
+            label="SYST:FIRM?",
+            command="SYST:FIRM?",
+            description="Query the firmware version",
+        ),
+    ]
+
+
+def default_quick_files() -> list[QuickFile]:
+    """Quick files seeded on first run — the bundled example command file."""
+    return [QuickFile(label="Example Commands", path=str(EXAMPLE_COMMAND_FILE))]
+
+
 @dataclass(slots=True)
 class AppSettings:
     transport_kind: str = "serial"
@@ -411,10 +442,8 @@ class AppSettings:
     serial: SerialProfile = field(default_factory=SerialProfile)
     lan: LanProfile = field(default_factory=LanProfile)
     command_history: list[str] = field(default_factory=list)
-    quick_commands: list[QuickCommand] = field(
-        default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
-    )
-    quick_files: list[QuickFile] = field(default_factory=list)
+    quick_commands: list[QuickCommand] = field(default_factory=default_quick_commands)
+    quick_files: list[QuickFile] = field(default_factory=default_quick_files)
     quick_command_sort_mode: str = "Custom"
     quick_command_hidden_groups: list[str] = field(default_factory=list)
     quick_file_sort_mode: str = "Custom"
@@ -536,15 +565,20 @@ class AppSettings:
         quick_commands_data = (
             _list_value(libraries.get("quick_commands"))
             if quick_commands_present
-            else [QuickCommand(label=item, command=item).to_dict() for item in DEFAULT_SNIPPETS]
+            else [command.to_dict() for command in default_quick_commands()]
         )
         quick_commands = []
         for item in quick_commands_data:
             quick_command = QuickCommand.from_dict(item)
             if quick_command.command:
                 quick_commands.append(quick_command)
+        quick_files_data = (
+            _list_value(libraries.get("quick_files"))
+            if "quick_files" in libraries
+            else [quick_file.to_dict() for quick_file in default_quick_files()]
+        )
         quick_files = []
-        for item in _list_value(libraries.get("quick_files")):
+        for item in quick_files_data:
             quick_file = QuickFile.from_dict(item)
             if quick_file.path:
                 quick_files.append(quick_file)
