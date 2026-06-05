@@ -783,9 +783,11 @@ class QuickActionsDrawer(QFrame):
         content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(12)
+        # Each visible section takes an equal share of the dock height so its list
+        # fills the full side-bar length (and scrolls internally) — no trailing
+        # stretch, which would otherwise steal the space and half-fill the list.
         for section in self.sections.values():
-            content_layout.addWidget(section)
-        content_layout.addStretch(0)
+            content_layout.addWidget(section, 1)
 
         scroll = QScrollArea(self.panel)
         scroll.setObjectName("drawerScroll")

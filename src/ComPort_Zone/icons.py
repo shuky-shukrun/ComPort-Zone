@@ -4,8 +4,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, QSize, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QByteArray, QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QAbstractButton, QApplication, QMenu, QStyle
 
@@ -215,6 +215,47 @@ def checked_checkbox_image_path(
     pixmap.save(str(path), "PNG")
     result = str(path).replace("\\", "/")
     _CHECKBOX_CACHE[key] = result
+    return result
+
+
+_ARROW_CACHE: dict[tuple, str] = {}
+
+
+def scrollbar_arrow_image_path(direction: str, color: str, size: int = 9) -> str:
+    """Render a small filled scrollbar arrow (up/down/left/right) to a cached PNG
+    and return a forward-slashed path for QSS ``image: url(...)``.
+
+    QSS-styled ``QScrollBar`` sub-controls drop the native arrows, so the two
+    arrow buttons need explicit images to show their glyphs."""
+    key = (direction, color, size)
+    cached = _ARROW_CACHE.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    m = size * 0.26  # inset from the edges so the triangle isn't clipped
+    far = size - m
+    mid = size / 2
+    if direction == "up":
+        points = [(mid, m), (far, far), (m, far)]
+    elif direction == "down":
+        points = [(m, m), (far, m), (mid, far)]
+    elif direction == "left":
+        points = [(m, mid), (far, m), (far, far)]
+    else:  # right
+        points = [(m, m), (far, mid), (m, far)]
+    painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in points]))
+    painter.end()
+    cache_dir = Path(tempfile.gettempdir()) / "comport-zone-ui"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"scroll-{direction}-{color.lstrip('#')}-{size}.png"
+    pixmap.save(str(path), "PNG")
+    result = str(path).replace("\\", "/")
+    _ARROW_CACHE[key] = result
     return result
 
 

@@ -18,7 +18,7 @@ TX=green / RX=blue semantics) maps directly onto the same tokens the prototype u
 
 from __future__ import annotations
 
-from ..icons import checked_checkbox_image_path
+from ..icons import checked_checkbox_image_path, scrollbar_arrow_image_path
 from ..themes import ThemePalette, mix_hex, rgba
 from .tokens import (
     CONTROL_H,
@@ -92,6 +92,21 @@ def build_stylesheet(theme: ThemePalette) -> str:
     err_bg = rgba(red, 0.12)
     danger_bd = mix_hex(red, bd, 0.45)
     sel_text = tx
+    # Scrollbar handle: a muted grey that reads clearly against the panel (the old
+    # elevated tone was nearly invisible), a touch brighter on hover.
+    scroll_handle = mix_hex(tx2, panel, 0.42)
+    scroll_handle_hover = mix_hex(tx2, panel, 0.15)
+    # Themed arrow glyphs for the two scrollbar buttons (no native arrows once the
+    # bar is QSS-styled). A clearly-readable grey, brightening to full ink on hover.
+    arrow_ink = mix_hex(tx2, tx, 0.45)
+    arrow_up = scrollbar_arrow_image_path("up", arrow_ink)
+    arrow_down = scrollbar_arrow_image_path("down", arrow_ink)
+    arrow_left = scrollbar_arrow_image_path("left", arrow_ink)
+    arrow_right = scrollbar_arrow_image_path("right", arrow_ink)
+    arrow_up_h = scrollbar_arrow_image_path("up", tx)
+    arrow_down_h = scrollbar_arrow_image_path("down", tx)
+    arrow_left_h = scrollbar_arrow_image_path("left", tx)
+    arrow_right_h = scrollbar_arrow_image_path("right", tx)
 
     parts: list[str] = []
 
@@ -528,13 +543,28 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QSplitter::handle {{ background: {bd_soft}; }}
     QSplitter::handle:hover {{ background: {accent}; }}
 
-    QScrollBar:vertical {{ background: transparent; width: 11px; margin: 2px 2px 2px 0; border: none; }}
-    QScrollBar::handle:vertical {{ background: {elevated}; border-radius: 4px; min-height: 28px; }}
-    QScrollBar::handle:vertical:hover {{ background: {bd_strong}; }}
-    QScrollBar:horizontal {{ background: transparent; height: 11px; margin: 0 2px 2px 2px; border: none; }}
-    QScrollBar::handle:horizontal {{ background: {elevated}; border-radius: 4px; min-width: 28px; }}
-    QScrollBar::handle:horizontal:hover {{ background: {bd_strong}; }}
-    QScrollBar::add-line, QScrollBar::sub-line {{ background: none; border: none; width: 0; height: 0; }}
+    /* Scrollbars: transparent track, rounded handle, two arrow buttons (no bg).
+       The top/bottom (or left/right) margin reserves the space the arrow buttons
+       sit in (subcontrol-origin: margin) — without it they collapse to nothing. */
+    QScrollBar:vertical {{ background: transparent; width: 14px; margin: 14px 0 14px 0; border: none; }}
+    QScrollBar::handle:vertical {{ background: {scroll_handle}; border-radius: 4px; min-height: 28px; margin: 0 3px; }}
+    QScrollBar::handle:vertical:hover {{ background: {scroll_handle_hover}; }}
+    QScrollBar::sub-line:vertical {{ background: transparent; border: none; height: 14px; subcontrol-position: top; subcontrol-origin: margin; }}
+    QScrollBar::add-line:vertical {{ background: transparent; border: none; height: 14px; subcontrol-position: bottom; subcontrol-origin: margin; }}
+    QScrollBar::up-arrow:vertical {{ image: url({arrow_up}); width: 9px; height: 9px; }}
+    QScrollBar::down-arrow:vertical {{ image: url({arrow_down}); width: 9px; height: 9px; }}
+    QScrollBar::up-arrow:vertical:hover {{ image: url({arrow_up_h}); }}
+    QScrollBar::down-arrow:vertical:hover {{ image: url({arrow_down_h}); }}
+
+    QScrollBar:horizontal {{ background: transparent; height: 14px; margin: 0 14px 0 14px; border: none; }}
+    QScrollBar::handle:horizontal {{ background: {scroll_handle}; border-radius: 4px; min-width: 28px; margin: 3px 0; }}
+    QScrollBar::handle:horizontal:hover {{ background: {scroll_handle_hover}; }}
+    QScrollBar::sub-line:horizontal {{ background: transparent; border: none; width: 14px; subcontrol-position: left; subcontrol-origin: margin; }}
+    QScrollBar::add-line:horizontal {{ background: transparent; border: none; width: 14px; subcontrol-position: right; subcontrol-origin: margin; }}
+    QScrollBar::left-arrow:horizontal {{ image: url({arrow_left}); width: 9px; height: 9px; }}
+    QScrollBar::right-arrow:horizontal {{ image: url({arrow_right}); width: 9px; height: 9px; }}
+    QScrollBar::left-arrow:horizontal:hover {{ image: url({arrow_left_h}); }}
+    QScrollBar::right-arrow:horizontal:hover {{ image: url({arrow_right_h}); }}
     QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
     QLabel#dialogTitle {{ font-size: 15px; font-weight: 700; color: {tx}; }}
