@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -13,7 +13,16 @@ from PySide6.QtGui import (
     QTextCharFormat,
     QTextCursor,
 )
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QPushButton, QTextEdit, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QLineEdit,
+    QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QTextEdit,
+    QWidget,
+)
 
 from .themes import VS_CODE_DARK
 
@@ -72,6 +81,103 @@ class HistoryLineEdit(QLineEdit):
         super().keyPressEvent(event)
 
 
+class CompletionPopupDelegate(QStyledItemDelegate):
+    """Renders autocomplete rows as ``command   description`` — the command in the
+    terminal ink, the (optional) description muted gray — mirroring the side-panel
+    rows. It paints with the popup's font, which tracks the terminal font size."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._descriptions: dict[str, str] = {}
+        self._text_color = VS_CODE_DARK.text
+        self._description_color = "#6b7689"
+        self._selection_color = "#264f78"
+        self._hover_color = "#2a2d2e"
+
+    def set_descriptions(self, mapping) -> None:
+        self._descriptions = {str(k): str(v) for k, v in dict(mapping or {}).items()}
+
+    def set_colors(self, *, text: str, description: str, selection: str, hover: str) -> None:
+        self._text_color = text
+        self._description_color = description
+        self._selection_color = selection
+        self._hover_color = hover
+
+    def _command(self, index) -> str:
+        return str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+    def _description(self, index) -> str:
+        return self._descriptions.get(self._command(index), "")
+
+    def sizeHint(self, option, index) -> QSize:
+        fm = QFontMetrics(option.font)
+        # Tight: left margin + right margin (no description) / + gap + right (with).
+        width = fm.horizontalAdvance(self._command(index)) + 18
+        description = self._description(index)
+        if description:
+            width += fm.horizontalAdvance(description) + 16
+        return QSize(min(width, 560), max(20, fm.height() + 4))
+
+    def paint(self, painter, option, index) -> None:
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = option.rect
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if selected or hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(self._selection_color if selected else self._hover_color))
+            painter.drawRoundedRect(rect.adjusted(3, 1, -3, -1), 5, 5)
+
+        font = option.font
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        left = rect.left() + 10
+        right = rect.right() - 8
+        avail = max(10, right - left)
+        command = self._command(index)
+        shown = fm.elidedText(command, Qt.TextElideMode.ElideRight, avail)
+        painter.setPen(QColor(self._text_color))
+        painter.drawText(
+            QRect(left, rect.top(), avail, rect.height()),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            shown,
+        )
+        description = self._description(index)
+        # Only show the description when the command itself wasn't elided away.
+        if description and fm.horizontalAdvance(shown) >= fm.horizontalAdvance(command):
+            dx = left + fm.horizontalAdvance(command) + 12
+            if dx < right - 16:
+                shown_desc = fm.elidedText(description, Qt.TextElideMode.ElideRight, right - dx)
+                painter.setPen(QColor(self._description_color))
+                painter.drawText(
+                    QRect(dx, rect.top(), right - dx, rect.height()),
+                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                    shown_desc,
+                )
+        painter.restore()
+
+
+def style_completion_popup(popup, *, background: str, border: str, radius: int = 8) -> None:
+    """Style an autocomplete popup's frame to match the project's panels (the
+    rows themselves are painted by :class:`CompletionPopupDelegate`). Applied
+    directly to the popup because the window-level stylesheet doesn't cascade to
+    the completer's top-level popup."""
+    popup.setObjectName("completionPopup")
+    # No QSS padding: QCompleter sizes the popup from the delegate's row hints and
+    # doesn't account for frame padding, so any padding overflows the viewport and
+    # forces a scrollbar (which then clips the description column). The rows carry
+    # their own inset via the delegate instead.
+    popup.setStyleSheet(
+        f"QListView#completionPopup {{ background: {background};"
+        f" border: 1px solid {border}; border-radius: {radius}px; padding: 0px; outline: none; }}"
+        "QListView#completionPopup::item { border: none; padding: 0px; }"
+        "QListView#completionPopup QScrollBar:vertical { width: 9px; background: transparent; margin: 2px; }"
+        f"QListView#completionPopup QScrollBar::handle:vertical {{ background: {border}; border-radius: 4px; min-height: 20px; }}"
+        "QListView#completionPopup QScrollBar::add-line, QListView#completionPopup QScrollBar::sub-line { height: 0; }"
+    )
+
+
 class IntegratedTerminalEdit(QTextEdit):
     returnPressed = Signal()
     historyRequested = Signal(int)
@@ -96,6 +202,11 @@ class IntegratedTerminalEdit(QTextEdit):
         # Muted ink for the placeholder hint + the inline completion ghost.
         self._hint_color = "#6b7689"
         self._ghost_color = "#6b7689"
+        # Autocomplete popup: a delegate that paints command + grey description,
+        # plus the command->description map / colours it draws with.
+        self._completion_delegate: CompletionPopupDelegate | None = None
+        self._completion_descriptions: dict[str, str] = {}
+        self._completion_palette: dict[str, str] | None = None
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.setAcceptRichText(False)
         self.setUndoRedoEnabled(False)
@@ -133,8 +244,60 @@ class IntegratedTerminalEdit(QTextEdit):
     def setCompleter(self, completer) -> None:
         self._completer = completer
         completer.setWidget(self)
-        completer.popup().installEventFilter(self)
+        popup = completer.popup()
+        self._completion_delegate = CompletionPopupDelegate(popup)
+        self._completion_delegate.set_descriptions(self._completion_descriptions)
+        if self._completion_palette is not None:
+            self._completion_delegate.set_colors(**self._completion_palette)
+        popup.setItemDelegate(self._completion_delegate)
+        popup.setFont(self.font())
+        popup.setObjectName("completionPopup")
+        self._apply_completion_popup_style()
+        popup.installEventFilter(self)
         completer.highlighted.connect(self._refresh_inline_overlay)
+
+    def set_completion_descriptions(self, mapping) -> None:
+        """Map command text -> description for the popup's grey secondary column."""
+        self._completion_descriptions = {str(k): str(v) for k, v in dict(mapping or {}).items()}
+        if self._completion_delegate is not None:
+            self._completion_delegate.set_descriptions(self._completion_descriptions)
+            if self._completer is not None:
+                self._completer.popup().viewport().update()
+
+    def set_completion_colors(
+        self,
+        *,
+        text: str,
+        description: str,
+        selection: str,
+        hover: str,
+        background: str,
+        border: str,
+    ) -> None:
+        """Theme the popup: row ink (delegate) + the popup frame (direct QSS)."""
+        self._completion_palette = {
+            "text": text,
+            "description": description,
+            "selection": selection,
+            "hover": hover,
+            "background": background,
+            "border": border,
+        }
+        if self._completion_delegate is not None:
+            self._completion_delegate.set_colors(
+                text=text, description=description, selection=selection, hover=hover
+            )
+        self._apply_completion_popup_style()
+
+    def _apply_completion_popup_style(self) -> None:
+        if self._completer is None or self._completion_palette is None:
+            return
+        palette = self._completion_palette
+        style_completion_popup(
+            self._completer.popup(),
+            background=palette["background"],
+            border=palette["border"],
+        )
 
     def set_font_zoom_callback(self, callback: Callable[[int], None]) -> None:
         self.font_zoom_callback = callback
@@ -311,13 +474,20 @@ class IntegratedTerminalEdit(QTextEdit):
             self._completer.popup().hide()
             return
         popup = self._completer.popup()
+        # Match the popup (and its delegate) to the terminal's current font size.
+        popup.setFont(self.font())
         first_index = self._completer.completionModel().index(0, 0)
         if first_index.isValid():
             self._completer.setCurrentRow(0)
             popup.setCurrentIndex(first_index)
         rect = self.cursorRect()
-        width = popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width()
-        rect.setWidth(max(width, self.fontMetrics().horizontalAdvance(token) + 96))
+        # Widest row + the 1px frame border; reserve scrollbar width only if scrolling.
+        width = popup.sizeHintForColumn(0) + 6
+        if self._completer.completionModel().rowCount() > self._completer.maxVisibleItems():
+            width += popup.verticalScrollBar().sizeHint().width()
+        width = max(width, self.fontMetrics().horizontalAdvance(token) + 60)
+        rect.setWidth(min(width, 560))
+        rect.setHeight(rect.height() + 8)  # nudge the popup a little below the input line
         self._completer.complete(rect)
         self._refresh_inline_overlay()
 

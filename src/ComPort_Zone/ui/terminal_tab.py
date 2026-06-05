@@ -563,6 +563,7 @@ class TerminalSessionWidget(QWidget):
                 hint=self._terminal_colors()["timestamp"],
             )
         self._sync_prompt_context()
+        self._sync_completion_colors()
         receive_mode = (
             self.host.settings.receive_display_mode
             if self.host.settings.receive_display_mode in RECEIVE_DISPLAY_MODES
@@ -584,9 +585,26 @@ class TerminalSessionWidget(QWidget):
                 hint=self._terminal_colors()["timestamp"],
             )
         self._sync_prompt_context()
+        self._sync_completion_colors()
         if hasattr(self, "drawer") and hasattr(self.drawer, "apply_theme_palette"):
             self.drawer.apply_theme_palette(self.host.theme)
         self._sync_status_toggles()
+
+    def _sync_completion_colors(self) -> None:
+        """Theme the autocomplete popup to match the side panels (dark frame,
+        ink command, grey description)."""
+        set_colors = getattr(self.command_input, "set_completion_colors", None)
+        if not callable(set_colors):
+            return
+        theme = self.host.theme
+        set_colors(
+            text=theme.text,
+            description=theme.muted,
+            selection=theme.search_highlight,
+            hover=theme.hover or theme.surface_alt,
+            background=theme.window_alt,
+            border=theme.border,
+        )
 
     def _sync_prompt_context(self) -> None:
         """Mirror the tab name + timestamp state onto the input prompt:
@@ -1651,6 +1669,17 @@ class TerminalSessionWidget(QWidget):
             if command.command not in suggestions and text.casefold() in command.command.casefold()
         )
         self.completion_model.setStringList(suggestions[:30])
+        # Feed the popup the saved-command descriptions so each suggestion can show
+        # its description grayed out next to it.
+        set_descriptions = getattr(self.command_input, "set_completion_descriptions", None)
+        if callable(set_descriptions):
+            set_descriptions(
+                {
+                    command.command: command.description.strip()
+                    for command in self.host.quick_actions.quick_commands
+                    if command.description.strip()
+                }
+            )
 
     def _show_completion_popup(self) -> None:
         token_under_cursor = getattr(self.command_input, "token_under_cursor", None)

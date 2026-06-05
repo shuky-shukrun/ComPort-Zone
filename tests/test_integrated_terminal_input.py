@@ -6,7 +6,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QCompleter
 
 from ComPort_Zone.terminal_view import prompt_leader_text
-from ComPort_Zone.widgets import IntegratedTerminalEdit
+from ComPort_Zone.widgets import CompletionPopupDelegate, IntegratedTerminalEdit
 
 
 class IntegratedTerminalEditTests(unittest.TestCase):
@@ -249,6 +249,59 @@ class IntegratedTerminalEditTests(unittest.TestCase):
             # extension of "DC", so no ghost is drawn.
             self.assertTrue(completer.popup().isVisible())
             self.assertEqual(terminal._ghost_suffix(), "")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_completion_delegate_widens_for_and_carries_descriptions(self) -> None:
+        from PySide6.QtGui import QFont
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        model = QStringListModel(["*IDN?", "PLAIN"])
+        delegate = CompletionPopupDelegate()
+        delegate.set_descriptions({"*IDN?": "identify the instrument"})
+        option = QStyleOptionViewItem()
+        option.font = QFont("Consolas", 11)
+
+        with_description = delegate.sizeHint(option, model.index(0, 0))
+        without_description = delegate.sizeHint(option, model.index(1, 0))
+        # The row carrying a description reserves more width for the grey column.
+        self.assertGreater(with_description.width(), without_description.width())
+
+    def test_completion_popup_matches_terminal_font_and_design(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        model = QStringListModel(["*IDN?", "SYST:ERR?"], terminal)
+        completer = QCompleter(model, terminal)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        terminal.setCompleter(completer)
+        terminal.set_completion_descriptions({"*IDN?": "identify"})
+        terminal.set_completion_colors(
+            text="#ffffff",
+            description="#8a93a6",
+            selection="#264f78",
+            hover="#222631",
+            background="#141821",
+            border="#2a2f3a",
+        )
+        try:
+            terminal.show()
+            terminal.setFocus()
+            font = terminal.font()
+            font.setPointSize(18)
+            terminal.setFont(font)
+            terminal.setText("IDN")
+            terminal.show_completions(forced=True)
+            self.qt.processEvents()
+
+            popup = completer.popup()
+            self.assertTrue(popup.isVisible())
+            self.assertIsInstance(popup.itemDelegate(), CompletionPopupDelegate)
+            # Popup font tracks the terminal font size setting.
+            self.assertEqual(popup.font().pointSize(), 18)
+            # Themed frame: object name + the panel background colour are applied.
+            self.assertEqual(popup.objectName(), "completionPopup")
+            self.assertIn("#141821", popup.styleSheet())
         finally:
             terminal.deleteLater()
             self.qt.processEvents()

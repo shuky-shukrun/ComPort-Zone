@@ -66,7 +66,7 @@ from .quick_actions_panel import (
 from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from .themes import VS_CODE_DARK, ThemePalette
 from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
-from .widgets import ChevronComboBox
+from .widgets import ChevronComboBox, CompletionPopupDelegate, style_completion_popup
 
 COMPLETION_NAVIGATION_KEYS = {
     Qt.Key.Key_Down,
@@ -135,6 +135,9 @@ class CommandPlainTextEdit(QPlainTextEdit):
         super().__init__(parent)
         self.line_number_area = LineNumberArea(self)
         self.completer: QCompleter | None = None
+        self._completion_delegate: CompletionPopupDelegate | None = None
+        self._completion_descriptions: dict[str, str] = {}
+        self._completion_palette: dict[str, str] | None = None
         self.completion_refresh_callback: Callable[[str], None] | None = None
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.save_callback: Callable[[], None] | None = None
@@ -163,6 +166,14 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.search_match_background = QColor(theme.search_highlight)
         self.search_current_background = QColor(theme.accent_soft)
         self.search_match_foreground = QColor(theme.text)
+        self.set_completion_colors(
+            text=theme.text,
+            description=theme.muted,
+            selection=theme.search_highlight,
+            hover=theme.hover or theme.surface_alt,
+            background=theme.window_alt,
+            border=theme.border,
+        )
         self.line_number_area.update()
         self._apply_extra_selections()
 
@@ -172,8 +183,57 @@ class CommandPlainTextEdit(QPlainTextEdit):
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        completer.popup().installEventFilter(self)
+        popup = completer.popup()
+        self._completion_delegate = CompletionPopupDelegate(popup)
+        self._completion_delegate.set_descriptions(self._completion_descriptions)
+        if self._completion_palette is not None:
+            self._completion_delegate.set_colors(**self._completion_palette)
+        popup.setItemDelegate(self._completion_delegate)
+        popup.setFont(self.font())
+        popup.setObjectName("completionPopup")
+        self._apply_completion_popup_style()
+        popup.installEventFilter(self)
         completer.activated.connect(self.insert_completion)
+
+    def set_completion_descriptions(self, mapping) -> None:
+        self._completion_descriptions = {str(k): str(v) for k, v in dict(mapping or {}).items()}
+        if self._completion_delegate is not None:
+            self._completion_delegate.set_descriptions(self._completion_descriptions)
+            if self.completer is not None:
+                self.completer.popup().viewport().update()
+
+    def set_completion_colors(
+        self,
+        *,
+        text: str,
+        description: str,
+        selection: str,
+        hover: str,
+        background: str,
+        border: str,
+    ) -> None:
+        self._completion_palette = {
+            "text": text,
+            "description": description,
+            "selection": selection,
+            "hover": hover,
+            "background": background,
+            "border": border,
+        }
+        if self._completion_delegate is not None:
+            self._completion_delegate.set_colors(
+                text=text, description=description, selection=selection, hover=hover
+            )
+        self._apply_completion_popup_style()
+
+    def _apply_completion_popup_style(self) -> None:
+        if self.completer is None or self._completion_palette is None:
+            return
+        style_completion_popup(
+            self.completer.popup(),
+            background=self._completion_palette["background"],
+            border=self._completion_palette["border"],
+        )
 
     def set_completion_refresh_callback(self, callback: Callable[[str], None]) -> None:
         self.completion_refresh_callback = callback
@@ -343,13 +403,18 @@ class CommandPlainTextEdit(QPlainTextEdit):
             self.completer.popup().hide()
             return
         popup = self.completer.popup()
+        popup.setFont(self.font())
         first_index = self.completer.completionModel().index(0, 0)
         if first_index.isValid():
             self.completer.setCurrentRow(0)
             popup.setCurrentIndex(first_index)
         rect = self.cursorRect()
-        width = popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width()
-        rect.setWidth(max(width, self.fontMetrics().horizontalAdvance(token) + 96))
+        width = popup.sizeHintForColumn(0) + 6
+        if self.completer.completionModel().rowCount() > self.completer.maxVisibleItems():
+            width += popup.verticalScrollBar().sizeHint().width()
+        width = max(width, self.fontMetrics().horizontalAdvance(token) + 60)
+        rect.setWidth(min(width, 560))
+        rect.setHeight(rect.height() + 8)  # nudge the popup a little below the input line
         self.completer.complete(rect)
 
     def eventFilter(self, watched, event) -> bool:
@@ -1199,6 +1264,15 @@ class CommandFileEditorDialog(QDialog):
 
     def _refresh_completion_model(self, prefix: str = "") -> None:
         self.completion_model.setStringList(self.sources.suggestions(self.text(), prefix=prefix, exclude=prefix))
+        set_descriptions = getattr(self.editor, "set_completion_descriptions", None)
+        if callable(set_descriptions):
+            set_descriptions(
+                {
+                    command.command: command.description.strip()
+                    for command in self.sources.quick_commands
+                    if command.description.strip()
+                }
+            )
 
     def refresh_workspace_side_panel(self) -> None:
         if not hasattr(self, "quick_command_list"):
