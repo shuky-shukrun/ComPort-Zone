@@ -322,6 +322,23 @@ class MainWindow(QMainWindow):
         # Applied on show (the native window is guaranteed to exist by now) and
         # re-applied on every show so it survives a platform-window recreation.
         apply_rounded_corners(self)
+        # Restore the favourites splitter sizes once the drawer has a real height
+        # (pixel-based sizes can't be applied during construction).
+        if not getattr(self, "_favorites_sizes_restored", False):
+            self._favorites_sizes_restored = True
+            QTimer.singleShot(0, self._apply_favorites_splitter_sizes)
+
+    def _apply_favorites_splitter_sizes(self) -> None:
+        drawer = getattr(self, "shared_drawer", None)
+        if drawer is None or drawer.favorites_splitter is None:
+            return
+        # Splitter sizes only matter when both panels are expanded.
+        if drawer.favorites_panel.is_collapsed() or drawer.favorite_files_panel.is_collapsed():
+            return
+        splitter = drawer.favorites_splitter
+        sizes = [int(size) for size in self.settings.favorites_splitter_sizes]
+        if len(sizes) == splitter.count() and sum(sizes) > 0:
+            splitter.setSizes(sizes)
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
@@ -402,10 +419,68 @@ class MainWindow(QMainWindow):
             group_menu = QMenu(group_button)
             group_menu.aboutToShow.connect(lambda m=group_menu: self._populate_group_menu(m))
             group_button.setMenu(group_menu)
+        # Favorites page layout: collapse toggles + resize splitter, persisted.
+        drawer.favorites_panel.collapseToggled.connect(self._persist_favorites_layout)
+        drawer.favorite_files_panel.collapseToggled.connect(self._persist_favorites_layout)
+        if drawer.favorites_splitter is not None:
+            drawer.favorites_splitter.splitterMoved.connect(
+                lambda *_: QTimer.singleShot(0, self._persist_favorites_layout)
+            )
+        self._apply_favorites_layout(drawer)
         self.drawer_rail = drawer.rail
         self.drawer_panel = drawer.panel
         self.drawer_pages = drawer.pages
         return drawer
+
+    def _apply_favorites_layout(self, drawer=None) -> None:
+        """Restore the saved collapse state onto the Favorites page (splitter sizes
+        are applied later, once the drawer has a real height — see showEvent)."""
+        drawer = drawer or getattr(self, "shared_drawer", None)
+        if drawer is None:
+            return
+        drawer.favorites_panel.set_collapsed(self.settings.favorite_command_collapsed)
+        drawer.favorite_files_panel.set_collapsed(self.settings.favorite_file_collapsed)
+        self._update_favorites_fill_cap(drawer)
+
+    def _update_favorites_fill_cap(self, drawer) -> None:
+        """When both favourites panels are collapsed, cap the splitter to its two
+        headers so the wrapper's top spacer pushes them to the bottom of the dock;
+        otherwise let the splitter fill."""
+        splitter = drawer.favorites_splitter
+        if splitter is None:
+            return
+        both_collapsed = (
+            drawer.favorites_panel.is_collapsed() and drawer.favorite_files_panel.is_collapsed()
+        )
+        if both_collapsed:
+            cap = (
+                drawer.favorites_panel.maximumHeight()
+                + drawer.favorite_files_panel.maximumHeight()
+                + splitter.handleWidth()
+                + 4
+            )
+            splitter.setMaximumHeight(cap)
+        else:
+            splitter.setMaximumHeight(16_777_215)
+
+    def _persist_favorites_layout(self, *_args) -> None:
+        drawer = getattr(self, "shared_drawer", None)
+        if drawer is None:
+            return
+        self.settings.favorite_command_collapsed = drawer.favorites_panel.is_collapsed()
+        self.settings.favorite_file_collapsed = drawer.favorite_files_panel.is_collapsed()
+        self._update_favorites_fill_cap(drawer)
+        splitter = drawer.favorites_splitter
+        both_expanded = (
+            not drawer.favorites_panel.is_collapsed()
+            and not drawer.favorite_files_panel.is_collapsed()
+        )
+        # Only a both-expanded layout is a real resize worth persisting.
+        if splitter is not None and splitter.isVisible() and both_expanded:
+            sizes = [int(size) for size in splitter.sizes()]
+            if len(sizes) == splitter.count() and all(size > 0 for size in sizes):
+                self.settings.favorites_splitter_sizes = sizes
+        self.save_settings()
 
     def _shared_command_id(self) -> str:
         return selected_item_id(self.shared_drawer.quick_command_list)

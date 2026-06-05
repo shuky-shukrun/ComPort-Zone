@@ -467,6 +467,10 @@ class AppSettings:
     favorite_file_order: list[str] = field(default_factory=list)
     favorite_command_sort_mode: str = "Custom"
     favorite_file_sort_mode: str = "Custom"
+    # Favorites page layout: per-panel collapse + the resize splitter sizes.
+    favorite_command_collapsed: bool = False
+    favorite_file_collapsed: bool = False
+    favorites_splitter_sizes: list[int] = field(default_factory=list)
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
@@ -526,6 +530,11 @@ class AppSettings:
                     "width": self.drawer_width,
                     "page_index": self.drawer_page_index,
                 },
+                "favorites_layout": {
+                    "command_collapsed": self.favorite_command_collapsed,
+                    "file_collapsed": self.favorite_file_collapsed,
+                    "splitter_sizes": list(self.favorites_splitter_sizes),
+                },
                 "updates": {
                     "check_on_launch": self.check_for_updates_on_launch,
                 },
@@ -579,6 +588,7 @@ class AppSettings:
         app = _dict_value(data.get("app"))
         terminal_font = _dict_value(app.get("terminal_font"))
         drawer = _dict_value(app.get("drawer"))
+        favorites_layout = _dict_value(app.get("favorites_layout"))
         updates = _dict_value(app.get("updates"))
         paths = _dict_value(app.get("paths"))
         window = _dict_value(app.get("window"))
@@ -651,6 +661,13 @@ class AppSettings:
             ],
             favorite_command_sort_mode=favorite_command_sort_mode,
             favorite_file_sort_mode=favorite_file_sort_mode,
+            favorite_command_collapsed=bool(favorites_layout.get("command_collapsed", False)),
+            favorite_file_collapsed=bool(favorites_layout.get("file_collapsed", False)),
+            favorites_splitter_sizes=[
+                int(size)
+                for size in _list_value(favorites_layout.get("splitter_sizes"))
+                if str(size).strip().lstrip("-").isdigit()
+            ],
             restored_tabs=[
                 TerminalSessionState.from_dict(item)
                 for item in _list_value(workspace.get("terminal_tabs"))

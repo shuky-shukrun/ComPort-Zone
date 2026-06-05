@@ -362,6 +362,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QToolButton#quickPanelHeaderButton:hover {{ background: {hover}; color: {tx}; }}
     QToolButton#quickPanelHeaderButton::menu-indicator {{ image: none; width: 0; }}
+    QToolButton#quickPanelCollapse {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px;
+        padding: 0; min-width: 18px; max-width: 18px; min-height: 22px;
+    }}
+    QToolButton#quickPanelCollapse:hover {{ background: {hover}; }}
     QListWidget#quickHistoryList {{
         background: transparent; padding: 4px;
         qproperty-placeholderColor: {tx_faint};
@@ -542,6 +547,13 @@ def build_stylesheet(theme: ThemePalette) -> str:
     parts.append(f"""
     QSplitter::handle {{ background: {bd_soft}; }}
     QSplitter::handle:hover {{ background: {accent}; }}
+    /* Favorites resize divider: a thin line that brightens on hover/drag. */
+    QSplitter#favoritesSplitter {{ background: transparent; }}
+    QSplitter#favoritesSplitter::handle:vertical {{
+        background: transparent; height: 11px; margin: 0 2px;
+        border-top: 1px solid {bd_soft};
+    }}
+    QSplitter#favoritesSplitter::handle:vertical:hover {{ border-top: 1px solid {accent}; }}
 
     /* Scrollbars: transparent track, rounded handle, two arrow buttons (no bg).
        The top/bottom (or left/right) margin reserves the space the arrow buttons

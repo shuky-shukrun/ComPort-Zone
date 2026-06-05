@@ -56,6 +56,17 @@ class ModelsAndStorageTests(unittest.TestCase):
         bad["libraries"]["favorite_command_sort_mode"] = "Nonsense"
         self.assertEqual(AppSettings.from_dict(bad).favorite_command_sort_mode, "Custom")
 
+    def test_favorites_layout_round_trips(self) -> None:
+        settings = AppSettings(
+            favorite_command_collapsed=True,
+            favorite_file_collapsed=False,
+            favorites_splitter_sizes=[300, 120],
+        )
+        restored = AppSettings.from_dict(settings.to_dict())
+        self.assertTrue(restored.favorite_command_collapsed)
+        self.assertFalse(restored.favorite_file_collapsed)
+        self.assertEqual(restored.favorites_splitter_sizes, [300, 120])
+
     def test_default_quick_commands_are_scpi_general_commands(self) -> None:
         settings = AppSettings()
 

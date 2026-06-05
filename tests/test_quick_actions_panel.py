@@ -69,6 +69,39 @@ class QuickActionsPanelTests(unittest.TestCase):
             panel.deleteLater()
             parent.deleteLater()
 
+    def test_collapsible_panel_hides_list_clamps_height_and_emits(self) -> None:
+        parent = QWidget()
+        try:
+            quick_list = create_quick_command_list(parent, tooltip="")
+            panel = QuickActionsPanel(
+                title="Favorite Commands",
+                quick_list=quick_list,
+                header_icon="star",
+                collapsible=True,
+                parent=parent,
+            )
+            states: list[bool] = []
+            panel.collapseToggled.connect(states.append)
+
+            self.assertFalse(panel.is_collapsed())
+            self.assertTrue(panel._list_holder.isVisibleTo(panel))
+            self.assertGreater(panel.maximumHeight(), 100000)
+
+            panel.set_collapsed(True, emit=True)
+            self.assertTrue(panel.is_collapsed())
+            self.assertFalse(panel._list_holder.isVisibleTo(panel))
+            # Collapsed clamps to roughly the header height so a splitter reclaims space.
+            self.assertLess(panel.maximumHeight(), 100)
+            self.assertEqual(states, [True])
+
+            panel.set_collapsed(False, emit=True)
+            self.assertFalse(panel.is_collapsed())
+            self.assertTrue(panel._list_holder.isVisibleTo(panel))
+            self.assertGreater(panel.maximumHeight(), 100000)
+            self.assertEqual(states, [True, False])
+        finally:
+            parent.deleteLater()
+
     def test_file_rows_expose_star_then_play_and_carry_favorite_state(self) -> None:
         # Files are favouritable now: a star (toggle) sits left of the play glyph.
         self.assertEqual(row_action_keys("file"), ["star", "play"])

@@ -191,6 +191,28 @@ class QuickActionsSidebarTests(unittest.TestCase):
             sidebar.deleteLater()
             parent.deleteLater()
 
+    def test_favorites_panels_are_collapsible_and_share_a_splitter(self) -> None:
+        parent = QWidget()
+        sidebar = QuickActionsSidebar(
+            actions=make_actions([]),
+            command_primary_label="Send",
+            file_primary_label="Run",
+            parent=parent,
+        )
+        try:
+            # The two favourites panels live in one vertical splitter (resizable).
+            self.assertIsNotNone(sidebar.favorites_splitter)
+            self.assertEqual(sidebar.favorites_splitter.count(), 2)
+            # Both favourites panels are collapsible (carry a header chevron).
+            self.assertIsNotNone(sidebar.favorites_panel._collapse_button)
+            self.assertIsNotNone(sidebar.favorite_files_panel._collapse_button)
+            self.assertFalse(sidebar.favorites_panel.is_collapsed())
+            sidebar.favorites_panel.set_collapsed(True)
+            self.assertTrue(sidebar.favorites_panel.is_collapsed())
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
     def test_history_page_is_added_and_resends(self) -> None:
         parent = QWidget()
         calls: list[str] = []

@@ -44,6 +44,7 @@ MOCKUP_ICONS = {
     "x":           (12, 1.3, '<path d="M3 3l6 6M9 3l-6 6" />', False),
     "chevron-down": (12, 1.3, '<path d="M3 4.5L6 7.5 9 4.5" />', False),
     "chevron-up":  (12, 1.3, '<path d="M3 7.5L6 4.5 9 7.5" />', False),
+    "chevron-right": (12, 1.3, '<path d="M4.5 3L7.5 6 4.5 9" />', False),
     "plug":        (16, 1.3, '<path d="M5 2v3M11 2v3M3.5 5h9v3a4.5 4.5 0 0 1 -9 0V5zM8 12.5V15" />', False),
     "send":        (16, 1.4, '<path d="M2.5 8h9M8 4l4 4-4 4" />', False),
     "arrow-right": (16, 1.4, '<path d="M2.5 8h9M8 4l4 4-4 4" />', False),

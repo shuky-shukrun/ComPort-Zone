@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QStyle,
     QStyledItemDelegate,
@@ -65,6 +66,8 @@ def action_zones(rect: QRect, count: int) -> list[QRect]:
     ]
 
 QUICK_ACTION_ITEM_HEIGHT = 32
+# Qt's QWIDGETSIZE_MAX — restores an unbounded max height when a panel expands.
+_PANEL_MAX_HEIGHT = 16_777_215
 FAVORITES_EMPTY_HINT = "No favorites yet — click the star icon next to saved commands or history items to add them."
 QUICK_FILE_EMPTY_HINT = "No quick files yet — click “Add File” to add one."
 
@@ -556,6 +559,10 @@ class _ElidedLabel(QLabel):
 
 
 class QuickActionsPanel(QFrame):
+    # Emitted (with the new collapsed state) when the user toggles the header
+    # chevron — the host persists it to settings.
+    collapseToggled = Signal(bool)
+
     def __init__(
         self,
         *,
@@ -565,6 +572,7 @@ class QuickActionsPanel(QFrame):
         header_buttons: tuple[QWidget, ...] = (),
         collapsible_buttons: tuple[QWidget, ...] = (),
         controls: QWidget | None = None,
+        collapsible: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -576,6 +584,9 @@ class QuickActionsPanel(QFrame):
         self.quick_list = quick_list
         # Buttons that fold into the ⋯ overflow when the header runs out of room.
         self._collapsible_buttons = tuple(collapsible_buttons)
+        self._collapsed = False
+        self._collapse_button: QToolButton | None = None
+        self._controls_holder: QWidget | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -585,9 +596,19 @@ class QuickActionsPanel(QFrame):
         header.setObjectName("quickPanelHeader")
         self._header = header
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(10, 0, 5, 0)
+        header_layout.setContentsMargins(10 if not collapsible else 4, 0, 5, 0)
         header_layout.setSpacing(4)
         self._header_pinned: list[QWidget] = []
+        if collapsible:
+            self._collapse_button = QToolButton(header)
+            self._collapse_button.setObjectName("quickPanelCollapse")
+            self._collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._collapse_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self._collapse_button.setToolTip("Collapse / expand this section")
+            set_button_icon(self._collapse_button, "chevron-down", 12)
+            self._collapse_button.clicked.connect(lambda: self.set_collapsed(not self._collapsed, emit=True))
+            header_layout.addWidget(self._collapse_button)
+            self._header_pinned.append(self._collapse_button)
         if header_icon is not None:
             icon_label = QLabel(header)
             icon_label.setObjectName("quickPanelIcon")
@@ -617,6 +638,7 @@ class QuickActionsPanel(QFrame):
             controls_layout.setSpacing(6)
             controls_layout.addWidget(controls)
             layout.addWidget(controls_holder)
+            self._controls_holder = controls_holder
 
         list_holder = QWidget(self)
         list_holder.setObjectName("drawerContent")
@@ -625,12 +647,37 @@ class QuickActionsPanel(QFrame):
         list_layout.setSpacing(0)
         list_layout.addWidget(self.quick_list)
         layout.addWidget(list_holder, 1)
+        self._list_holder = list_holder
 
         model = quick_list.model()
         model.rowsInserted.connect(self._update_count)
         model.rowsRemoved.connect(self._update_count)
         model.modelReset.connect(self._update_count)
         self._update_count()
+
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
+    def set_collapsed(self, collapsed: bool, *, emit: bool = False) -> None:
+        collapsed = bool(collapsed)
+        changed = collapsed != self._collapsed
+        self._collapsed = collapsed
+        self._list_holder.setVisible(not collapsed)
+        if self._controls_holder is not None:
+            self._controls_holder.setVisible(not collapsed)
+        if collapsed:
+            # Clamp to the header so a splitter reclaims the freed space.
+            self.setMaximumHeight(self._header.sizeHint().height())
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        else:
+            self.setMaximumHeight(_PANEL_MAX_HEIGHT)
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        if self._collapse_button is not None:
+            set_button_icon(
+                self._collapse_button, "chevron-right" if collapsed else "chevron-down", 12
+            )
+        if emit and changed:
+            self.collapseToggled.emit(collapsed)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -725,6 +772,7 @@ class QuickActionsDrawer(QFrame):
         rail_modes: Iterable[QuickActionsRailMode],
         on_page_requested: Callable[[int], None] | None = None,
         settings_callback: Callable[[], None] | None = None,
+        splitter_groups: Iterable[tuple[str, ...]] = (),
         rail_width: int = 48,
         parent: QWidget | None = None,
     ) -> None:
@@ -735,6 +783,10 @@ class QuickActionsDrawer(QFrame):
         self.sections = dict(sections)
         self.rail_modes = list(rail_modes)
         self.current_mode_index = 0
+        # Groups of section keys whose panels share a draggable QSplitter (so the
+        # Favorites page can reallocate space between commands + files).
+        self._splitter_groups = [tuple(group) for group in splitter_groups]
+        self.section_splitters: list[QSplitter] = []
 
         drawer_layout = QHBoxLayout(self)
         drawer_layout.setContentsMargins(0, 0, 0, 0)
@@ -786,8 +838,43 @@ class QuickActionsDrawer(QFrame):
         # Each visible section takes an equal share of the dock height so its list
         # fills the full side-bar length (and scrolls internally) — no trailing
         # stretch, which would otherwise steal the space and half-fill the list.
-        for section in self.sections.values():
-            content_layout.addWidget(section, 1)
+        # Sections in a splitter-group share a draggable QSplitter instead.
+        group_for_key: dict[str, tuple[str, ...]] = {}
+        self._group_wrappers: list[QWidget] = []
+        for group in self._splitter_groups:
+            splitter = QSplitter(Qt.Orientation.Vertical)
+            splitter.setObjectName("favoritesSplitter")
+            splitter.setChildrenCollapsible(False)
+            splitter.setHandleWidth(10)
+            for key in group:
+                section = self.sections.get(key)
+                if section is not None:
+                    splitter.addWidget(section)
+                    group_for_key[key] = group
+            # A top spacer above the splitter: when every panel in the group is
+            # collapsed (the host caps the splitter to its headers) the spacer
+            # takes the slack, so the collapsed headers sink to the bottom.
+            wrapper = QWidget(self.content)
+            wrapper.setObjectName("drawerContent")
+            wrapper_layout = QVBoxLayout(wrapper)
+            wrapper_layout.setContentsMargins(0, 0, 0, 0)
+            wrapper_layout.setSpacing(0)
+            wrapper_layout.addStretch(0)
+            wrapper_layout.addWidget(splitter, 1)
+            self.section_splitters.append(splitter)
+            self._group_wrappers.append(wrapper)
+        emitted_groups: set[int] = set()
+        for key, section in self.sections.items():
+            group = group_for_key.get(key)
+            if group is not None:
+                group_index = self._splitter_groups.index(group)
+                if group_index not in emitted_groups:
+                    content_layout.addWidget(self._group_wrappers[group_index], 1)
+                    emitted_groups.add(group_index)
+            else:
+                content_layout.addWidget(section, 1)
+        # Map each group wrapper to its section keys for per-mode visibility.
+        self._wrapper_keys = list(zip(self._group_wrappers, self._splitter_groups))
 
         scroll = QScrollArea(self.panel)
         scroll.setObjectName("drawerScroll")
@@ -821,6 +908,10 @@ class QuickActionsDrawer(QFrame):
         visible = set(self.rail_modes[clamped].sections)
         for key, section in self.sections.items():
             section.setVisible(key in visible)
+        # A group wrapper is shown only when one of its sections is on this page;
+        # otherwise it must be hidden so it doesn't steal layout space.
+        for wrapper, keys in self._wrapper_keys:
+            wrapper.setVisible(any(key in visible for key in keys))
         self._set_active_rail_button(clamped)
 
     def _set_active_rail_button(self, index: int) -> None:

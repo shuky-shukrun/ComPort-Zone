@@ -258,20 +258,25 @@ class QuickActionsSidebar(QuickActionsDrawer):
         )
 
         # Favorites rail surfaces two curated panels: favourite commands + files.
-        favorites_page = QuickActionsPanel(
+        # They are collapsible and share a draggable splitter (see splitter_groups).
+        self.favorites_panel = QuickActionsPanel(
             title="Favorite Commands",
             quick_list=self.favorite_command_list,
             header_icon="star",
             collapsible_buttons=(self.favorite_sort_button, self.favorite_group_button),
+            collapsible=True,
             parent=parent,
         )
-        favorite_files_page = QuickActionsPanel(
+        self.favorite_files_panel = QuickActionsPanel(
             title="Favorite Files",
             quick_list=self.favorite_file_list,
             header_icon="star",
             collapsible_buttons=(self.favorite_file_sort_button,),
+            collapsible=True,
             parent=parent,
         )
+        favorites_page = self.favorites_panel
+        favorite_files_page = self.favorite_files_panel
         history_page = QuickActionsPanel(
             title="History",
             quick_list=self.quick_history_list,
@@ -311,9 +316,15 @@ class QuickActionsSidebar(QuickActionsDrawer):
             rail_modes=rail_modes,
             on_page_requested=on_page_requested,
             settings_callback=settings_callback,
+            splitter_groups=[("favorites", "favorite_file")],
             rail_width=rail_width,
             parent=parent,
         )
+
+    @property
+    def favorites_splitter(self):
+        """The QSplitter wrapping the two favourites panels (None if absent)."""
+        return self.section_splitters[0] if self.section_splitters else None
 
     def apply_theme_palette(self, palette) -> None:
         for quick_list in (
