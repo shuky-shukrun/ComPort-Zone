@@ -40,6 +40,15 @@ from PySide6.QtWidgets import (
 )
 
 from .batch import strip_c_style_comment
+from .command_completion import (
+    ACCEPT,
+    CANCEL,
+    DISMISS,
+    NAVIGATE,
+    classify_completion_key,
+    move_completion_selection,
+    resolve_completion_text,
+)
 from .command_file_service import COMMAND_FILE_FILTER, COMMAND_FILE_SAVE_FILTER, CommandFileService
 from .command_editor_core import (
     COMMENT_SNIPPETS,
@@ -71,15 +80,6 @@ from .themes import VS_CODE_DARK, ThemePalette
 from .ui.search_overlay import SearchOverlay
 from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
 from .widgets import ChevronComboBox, CompletionPopupDelegate, set_button_role, style_completion_popup
-
-COMPLETION_NAVIGATION_KEYS = {
-    Qt.Key.Key_Down,
-    Qt.Key.Key_Up,
-    Qt.Key.Key_PageDown,
-    Qt.Key.Key_PageUp,
-    Qt.Key.Key_Home,
-    Qt.Key.Key_End,
-}
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -420,44 +420,13 @@ class CommandPlainTextEdit(QPlainTextEdit):
     def accept_current_completion(self) -> None:
         if not self.completer:
             return
-        popup_index = self.completer.popup().currentIndex()
-        completion = str(popup_index.data() or "") if popup_index.isValid() else ""
-        if not completion:
-            completion = self.completer.currentCompletion()
-        if not completion:
-            index = self.completer.completionModel().index(0, 0)
-            completion = str(index.data() or "") if index.isValid() else ""
+        completion = resolve_completion_text(self.completer)
         if completion:
             self.insert_completion(completion)
         self.completer.popup().hide()
 
     def navigate_completion(self, key: Qt.Key) -> None:
-        if not self.completer:
-            return
-        model = self.completer.completionModel()
-        row_count = model.rowCount()
-        if row_count <= 0:
-            return
-        popup = self.completer.popup()
-        current_row = popup.currentIndex().row()
-        if current_row < 0:
-            current_row = max(self.completer.currentRow(), 0)
-        if key == Qt.Key.Key_Down:
-            target_row = min(current_row + 1, row_count - 1)
-        elif key == Qt.Key.Key_Up:
-            target_row = max(current_row - 1, 0)
-        elif key == Qt.Key.Key_PageDown:
-            target_row = min(current_row + 8, row_count - 1)
-        elif key == Qt.Key.Key_PageUp:
-            target_row = max(current_row - 8, 0)
-        elif key == Qt.Key.Key_End:
-            target_row = row_count - 1
-        else:
-            target_row = 0
-        self.completer.setCurrentRow(target_row)
-        index = model.index(target_row, 0)
-        if index.isValid():
-            popup.setCurrentIndex(index)
+        move_completion_selection(self.completer, key)
 
     def show_completions(self, *, forced: bool = False) -> None:
         if not self.completer:
@@ -498,13 +467,20 @@ class CommandPlainTextEdit(QPlainTextEdit):
             and event.type() == QEvent.Type.KeyPress
             and popup.isVisible()
         ):
-            if event.key() in COMPLETION_NAVIGATION_KEYS:
+            action = classify_completion_key(event.key())
+            if action == NAVIGATE:
                 self.navigate_completion(event.key())
                 return True
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if action == ACCEPT:
                 self.accept_current_completion()
                 return True
-            if event.key() == Qt.Key.Key_Escape:
+            if action == DISMISS:
+                # Enter closes the popup without accepting, then inserts a newline —
+                # only Tab accepts, matching the terminal.
+                popup.hide()
+                self.insertPlainText("\n")
+                return True
+            if action == CANCEL:
                 popup.hide()
                 return True
         return super().eventFilter(watched, event)
@@ -549,18 +525,23 @@ class CommandPlainTextEdit(QPlainTextEdit):
                 event.accept()
                 return
         if self.completer and self.completer.popup().isVisible():
-            if event.key() in COMPLETION_NAVIGATION_KEYS:
+            action = classify_completion_key(event.key())
+            if action == NAVIGATE:
                 self.navigate_completion(event.key())
                 event.accept()
                 return
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if action == ACCEPT:
                 self.accept_current_completion()
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_Escape:
+            if action == CANCEL:
                 self.completer.popup().hide()
                 event.accept()
                 return
+            if action == DISMISS:
+                # Enter closes the popup without accepting, then falls through so the
+                # base class inserts a newline — only Tab accepts, like the terminal.
+                self.completer.popup().hide()
         is_completion_shortcut = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() == Qt.Key.Key_Space
         if not is_completion_shortcut:
             super().keyPressEvent(event)

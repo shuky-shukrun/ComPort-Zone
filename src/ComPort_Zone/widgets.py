@@ -24,18 +24,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .command_completion import (
+    ACCEPT,
+    CANCEL,
+    DISMISS,
+    NAVIGATE,
+    classify_completion_key,
+    move_completion_selection,
+    resolve_completion_text,
+)
 from .themes import VS_CODE_DARK
 
 
 TERMINAL_COMPLETION_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:*?.-")
-TERMINAL_COMPLETION_NAVIGATION_KEYS = {
-    Qt.Key.Key_Down,
-    Qt.Key.Key_Up,
-    Qt.Key.Key_PageDown,
-    Qt.Key.Key_PageUp,
-    Qt.Key.Key_Home,
-    Qt.Key.Key_End,
-}
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -414,13 +415,7 @@ class IntegratedTerminalEdit(QTextEdit):
     def accept_current_completion(self) -> None:
         if not self._completer:
             return
-        popup_index = self._completer.popup().currentIndex()
-        completion = str(popup_index.data() or "") if popup_index.isValid() else ""
-        if not completion:
-            completion = self._completer.currentCompletion()
-        if not completion:
-            index = self._completer.completionModel().index(0, 0)
-            completion = str(index.data() or "") if index.isValid() else ""
+        completion = resolve_completion_text(self._completer)
         if completion:
             self.insert_completion(completion)
         self._completer.popup().hide()
@@ -434,32 +429,7 @@ class IntegratedTerminalEdit(QTextEdit):
         self.returnPressed.emit()
 
     def navigate_completion(self, key: Qt.Key) -> None:
-        if not self._completer:
-            return
-        model = self._completer.completionModel()
-        row_count = model.rowCount()
-        if row_count <= 0:
-            return
-        popup = self._completer.popup()
-        current_row = popup.currentIndex().row()
-        if current_row < 0:
-            current_row = max(self._completer.currentRow(), 0)
-        if key == Qt.Key.Key_Down:
-            target_row = min(current_row + 1, row_count - 1)
-        elif key == Qt.Key.Key_Up:
-            target_row = max(current_row - 1, 0)
-        elif key == Qt.Key.Key_PageDown:
-            target_row = min(current_row + 8, row_count - 1)
-        elif key == Qt.Key.Key_PageUp:
-            target_row = max(current_row - 8, 0)
-        elif key == Qt.Key.Key_End:
-            target_row = row_count - 1
-        else:
-            target_row = 0
-        self._completer.setCurrentRow(target_row)
-        index = model.index(target_row, 0)
-        if index.isValid():
-            popup.setCurrentIndex(index)
+        move_completion_selection(self._completer, key)
         self._refresh_inline_overlay()
 
     def show_completions(self, *, forced: bool = False) -> None:
@@ -565,16 +535,18 @@ class IntegratedTerminalEdit(QTextEdit):
             and event.type() == QEvent.Type.KeyPress
             and popup.isVisible()
         ):
-            if event.key() in TERMINAL_COMPLETION_NAVIGATION_KEYS:
+            action = classify_completion_key(event.key())
+            if action == NAVIGATE:
                 self.navigate_completion(event.key())
                 return True
-            if event.key() in {Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if action == ACCEPT:
                 self.accept_current_completion()
                 return True
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return}:
+            if action == DISMISS:
+                # Enter submits the draft; it never accepts the highlighted suggestion.
                 self._handle_return_key(event.modifiers())
                 return True
-            if event.key() == Qt.Key.Key_Escape:
+            if action == CANCEL:
                 popup.hide()
                 return True
         return super().eventFilter(watched, event)
@@ -591,19 +563,21 @@ class IntegratedTerminalEdit(QTextEdit):
         popup = self._completer.popup() if self._completer else None
         popup_visible = bool(popup and popup.isVisible())
         if popup_visible:
-            if event.key() in TERMINAL_COMPLETION_NAVIGATION_KEYS:
+            action = classify_completion_key(event.key())
+            if action == NAVIGATE:
                 self.navigate_completion(event.key())
                 event.accept()
                 return
-            if event.key() in {Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if action == ACCEPT:
                 self.accept_current_completion()
                 event.accept()
                 return
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return}:
+            if action == DISMISS:
+                # Enter submits the draft; it never accepts the highlighted suggestion.
                 self._handle_return_key(event.modifiers())
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_Escape:
+            if action == CANCEL:
                 popup.hide()
                 event.accept()
                 return

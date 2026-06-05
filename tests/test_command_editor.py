@@ -92,10 +92,51 @@ class CommandEditorTests(unittest.TestCase):
             self.qt.processEvents()
             self.assertEqual(dialog.completer.popup().currentIndex().data(), "SINK:CURR?")
 
-            QTest.keyClick(dialog.completer.popup(), Qt.Key.Key_Return)
+            QTest.keyClick(dialog.completer.popup(), Qt.Key.Key_Tab)
             self.qt.processEvents()
             self.assertEqual(dialog.text(), "SINK:CURR?")
         finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_enter_dismisses_completion_and_inserts_newline(self) -> None:
+        # Matches the terminal: only Tab accepts; Enter closes the popup and adds a
+        # newline (keyPressEvent path, key delivered to the editor).
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.editor.show()
+            dialog.editor.setFocus()
+            QTest.keyClicks(dialog.editor, "SIN")
+            self.qt.processEvents()
+            self.assertTrue(dialog.completer.popup().isVisible())
+
+            QTest.keyClick(dialog.editor, Qt.Key.Key_Return)
+            self.qt.processEvents()
+
+            self.assertFalse(dialog.completer.popup().isVisible())
+            self.assertEqual(dialog.text(), "SIN\n")
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_enter_on_popup_dismisses_completion_and_inserts_newline(self) -> None:
+        # Same policy via the popup's event filter (key delivered to the popup).
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.editor.show()
+            dialog.editor.setFocus()
+            QTest.keyClicks(dialog.editor, "SIN")
+            self.qt.processEvents()
+            self.assertTrue(dialog.completer.popup().isVisible())
+
+            QTest.keyClick(dialog.completer.popup(), Qt.Key.Key_Return)
+            self.qt.processEvents()
+
+            self.assertFalse(dialog.completer.popup().isVisible())
+            self.assertEqual(dialog.text(), "SIN\n")
+        finally:
+            dialog._dirty = False
             dialog.close()
             dialog.deleteLater()
 
