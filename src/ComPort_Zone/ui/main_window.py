@@ -963,6 +963,15 @@ class MainWindow(QMainWindow):
             if session:
                 self._open_prompted_session_settings(session)
         self._schedule_launch_update_check()
+        # Land the caret in the active tab's terminal/editor so the app is ready to
+        # type the moment it opens — after any first-run settings dialog has closed.
+        self.focus_active_tab_input()
+
+    def focus_active_tab_input(self) -> None:
+        """Give keyboard focus to the active tab's terminal/editor, caret at the end."""
+        focus_input = getattr(self.tabs.currentWidget(), "focus_input", None)
+        if callable(focus_input):
+            focus_input()
 
     def _schedule_launch_update_check(self) -> None:
         if self.settings.check_for_updates_on_launch:

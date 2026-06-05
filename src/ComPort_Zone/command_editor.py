@@ -1350,6 +1350,14 @@ class CommandFileEditorDialog(QDialog):
         self.editor.setTextCursor(cursor)
         self.editor.setFocus()
 
+    def focus_input(self) -> None:
+        """Focus the editor with the caret at the end of the document, so it is ready
+        to type into (used on launch and tab activation)."""
+        cursor = self.editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
+
     def open_selected_quick_file(self) -> None:
         quick_file = self.selected_quick_file()
         if not quick_file:

@@ -129,6 +129,99 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_launch_focuses_terminal_command_line_at_draft_end(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_focus_terminal.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(
+                        check_for_updates_on_launch=False,
+                        restored_tabs=[
+                            TerminalSessionState(
+                                title="DUT",
+                                serial=SerialProfile(port="COM77", baudrate=57600, line_ending="LF"),
+                                connected_on_launch=False,
+                                command_draft="status",
+                            )
+                        ],
+                    )
+                )
+            )
+            old_config_path = app_module.default_config_path
+            app_module.default_config_path = lambda: settings_path
+            window = None
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                self.qt.processEvents()
+                session = window.current_session()
+
+                # Park the caret elsewhere; focusing the active tab must land it after
+                # the restored draft ("status") so the user can type immediately.
+                session.command_input.setCursorPosition(0)
+                self.assertEqual(session.command_input.cursorPosition(), 0)
+
+                window.focus_active_tab_input()
+                self.assertEqual(session.command_input.cursorPosition(), len("status"))
+
+                # The deferred launch sequence drives the same focus (no prompt fires
+                # because a tab was restored).
+                session.command_input.setCursorPosition(0)
+                window.run_startup_actions()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+                self.assertEqual(session.command_input.cursorPosition(), len("status"))
+            finally:
+                app_module.default_config_path = old_config_path
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_launch_focus_targets_command_file_editor_caret_end(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_focus_editor.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            app_module.default_config_path = lambda: settings_path
+            window = None
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                self.qt.processEvents()
+                editor = window.add_command_file_tab()
+                editor.restore_text("LINE one\nLINE two", dirty=False)
+                window.tabs.setCurrentWidget(editor)
+                self.qt.processEvents()
+
+                cursor = editor.editor.textCursor()
+                cursor.setPosition(0)
+                editor.editor.setTextCursor(cursor)
+                self.assertEqual(editor.editor.textCursor().position(), 0)
+
+                window.focus_active_tab_input()
+                self.assertEqual(
+                    editor.editor.textCursor().position(),
+                    len("LINE one\nLINE two"),
+                )
+            finally:
+                app_module.default_config_path = old_config_path
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_restored_connected_missing_port_skips_auto_connect(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_restore_missing_port.json")
         settings_path.unlink(missing_ok=True)

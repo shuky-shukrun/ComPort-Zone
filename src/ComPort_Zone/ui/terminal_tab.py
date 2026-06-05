@@ -1439,6 +1439,12 @@ class TerminalSessionWidget(QWidget):
         seed = self.terminal.textCursor().selectedText().replace(" ", "\n")
         self.search_overlay.open_for(seed)
 
+    def focus_input(self) -> None:
+        """Focus the terminal's command line with the caret after the draft, so the
+        terminal is ready to type into (used on launch and tab activation)."""
+        self.command_input.setFocus()
+        self.command_input.setCursorPosition(len(self.command_input.text()))
+
     def hide_search(self) -> None:
         self.search_input.clear()
         self.search_overlay.hide()
