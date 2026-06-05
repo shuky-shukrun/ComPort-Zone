@@ -218,10 +218,10 @@ class CommandEditorTests(unittest.TestCase):
 
             QTest.keyClick(dialog.editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
             self.qt.processEvents()
-            self.assertTrue(dialog.find_replace_bar.isVisible())
+            self.assertTrue(dialog.search_overlay.isVisible())
             self.assertFalse(dialog.replace_input.isVisible())
-            self.assertFalse(dialog.replace_button.isVisible())
-            self.assertFalse(dialog.replace_all_button.isVisible())
+            self.assertFalse(dialog.search_overlay.replace_one_button.isVisible())
+            self.assertFalse(dialog.search_overlay.replace_all_button.isVisible())
 
             dialog.search_input.setText("volt")
             self.qt.processEvents()
@@ -246,12 +246,12 @@ class CommandEditorTests(unittest.TestCase):
             dialog.setPlainText("SEND VOLT?\nSEND CURR?\nSEND VOLT?\n")
             dialog.show_find_bar()
             self.qt.processEvents()
-            self.assertFalse(dialog.replace_button.isVisible())
+            self.assertFalse(dialog.search_overlay.replace_one_button.isVisible())
             dialog.show_replace_bar()
             self.qt.processEvents()
             self.assertTrue(dialog.replace_input.isVisible())
-            self.assertTrue(dialog.replace_button.isVisible())
-            self.assertTrue(dialog.replace_all_button.isVisible())
+            self.assertTrue(dialog.search_overlay.replace_one_button.isVisible())
+            self.assertTrue(dialog.search_overlay.replace_all_button.isVisible())
             dialog.search_input.setText("SEND")
             dialog.replace_input.setText("EXPECT")
             self.qt.processEvents()
@@ -282,43 +282,31 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
-    def test_editor_font_controls_are_visible_and_described(self) -> None:
-        changes: list[int] = []
+    def test_editor_command_bar_has_green_run_wrap_and_send_to(self) -> None:
         dialog = CommandFileEditorDialog(
             sources=CommandEditorSources(),
-            font_change_callback=changes.append,
             run_target_service=CommandRunTargetService(
-                targets_supplier=lambda: [CommandRunTarget(42, "Connected | COM42 | 115200 8N1")],
+                targets_supplier=lambda: [CommandRunTarget(42, "COM42 · Serial")],
                 run_callback=lambda request, target_id: True,
             ),
         )
         try:
-            run_bar = dialog.send_to_target_button.parentWidget()
-            labels = run_bar.findChildren(QLabel, "editorFontControlsLabel")
-            buttons = run_bar.findChildren(QPushButton, "editorFontSizeButton")
-            run_bar_widgets = [
-                run_bar.layout().itemAt(index).widget()
-                for index in range(run_bar.layout().count())
-                if run_bar.layout().itemAt(index).widget() is not None
-            ]
-            send_index = run_bar_widgets.index(dialog.send_to_target_button)
-
-            self.assertEqual([label.text() for label in labels], ["Font"])
-            self.assertEqual([button.text() for button in buttons], ["-", "+"])
-            self.assertEqual(run_bar_widgets[send_index + 1], labels[0])
-            self.assertEqual(run_bar_widgets[send_index + 2], buttons[0])
-            self.assertEqual(run_bar_widgets[send_index + 3], buttons[1])
-            self.assertTrue(all(button.width() >= 38 for button in buttons))
-            self.assertEqual(buttons[0].toolTip(), "Decrease editor font size")
-            self.assertEqual(buttons[1].toolTip(), "Increase editor font size")
-            self.assertEqual(buttons[0].accessibleName(), "Decrease editor font size")
-            self.assertEqual(buttons[1].accessibleName(), "Increase editor font size")
-
-            buttons[0].click()
-            buttons[1].click()
-
-            self.assertEqual(changes, [-1, 1])
+            dialog.show()
+            self.qt.processEvents()
+            # The Run button is the green-themed action, kept in the bottom bar.
+            self.assertEqual(dialog.run_button.text(), "Run")
+            self.assertEqual(dialog.run_button.objectName(), "editorRunButton")
+            # Line-wrap toggle + send-to combo share the bottom command bar.
+            command_bar = dialog.run_button.parentWidget()
+            self.assertIs(dialog.wrap_toggle.parentWidget(), command_bar)
+            self.assertIs(dialog.run_target_combo.parentWidget(), command_bar)
+            self.assertTrue(dialog.wrap_toggle.isChecked())  # wraps by default
+            # The shrunk send-to label flows straight through from the target.
+            self.assertEqual(dialog.run_target_combo.itemText(0), "COM42 · Serial")
+            # Font +/- buttons are gone from the editor chrome (Ctrl+wheel zoom).
+            self.assertEqual(dialog.findChildren(QPushButton, "editorFontSizeButton"), [])
         finally:
+            dialog._dirty = False
             dialog.close()
             dialog.deleteLater()
 

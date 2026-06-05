@@ -59,6 +59,7 @@ from ..transports import SerialTransportAdapter
 from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
+from .search_overlay import SearchOverlay
 from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
 
 DRAWER_COLLAPSED_WIDTH = 48
@@ -220,41 +221,21 @@ class TerminalSessionWidget(QWidget):
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.setSpacing(0)
 
-        self.search_bar = QFrame(self.terminal_column)
-        self.search_bar.setObjectName("searchBar")
-        search_layout = QHBoxLayout(self.search_bar)
-        search_layout.setContentsMargins(8, 6, 8, 6)
-        search_layout.setSpacing(6)
-        self.search_input = QLineEdit(self.search_bar)
-        self.search_input.setPlaceholderText("Search")
-        self.search_input.textChanged.connect(self._refresh_search_highlights)
-        self.search_input.returnPressed.connect(self.find_next)
-        prev_button = QPushButton("Prev", self.search_bar)
-        set_button_icon(prev_button, QStyle.StandardPixmap.SP_ArrowBack)
-        prev_button.setToolTip("Previous match")
-        prev_button.clicked.connect(self.find_previous)
-        next_button = QPushButton("Next", self.search_bar)
-        set_button_icon(next_button, QStyle.StandardPixmap.SP_ArrowForward)
-        next_button.setToolTip("Next match (Enter)")
-        next_button.clicked.connect(self.find_next)
-        close_search = QPushButton("", self.search_bar)
-        set_button_icon(close_search, QStyle.StandardPixmap.SP_DialogCloseButton)
-        close_search.setToolTip("Close search (Esc)")
-        close_search.setAccessibleName("Close search")
-        close_search.clicked.connect(self.hide_search)
-        self.search_count = QLabel("0", self.search_bar)
-        search_layout.addWidget(self.search_input, 1)
-        search_layout.addWidget(prev_button)
-        search_layout.addWidget(next_button)
-        search_layout.addWidget(self.search_count)
-        search_layout.addWidget(close_search)
-        self.search_bar.hide()
-
         self.terminal = IntegratedTerminalEdit(self.terminal_column)
         self.terminal.setObjectName("terminal")
         self.terminal.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.terminal.customContextMenuRequested.connect(self.show_terminal_context_menu)
+        # Floating find overlay over the transcript (Ctrl+F) — replaces the docked
+        # search bar; it owns the search field + the live match count.
+        self.search_overlay = SearchOverlay(self.terminal, with_replace=False, parent=self.terminal_column)
+        self.search_input = self.search_overlay.search_field
+        self.search_count = self.search_overlay.count_label
+        self.search_input.setPlaceholderText("Search transcript")
+        self.search_input.textChanged.connect(self._refresh_search_highlights)
+        self.search_overlay.findNext.connect(self.find_next)
+        self.search_overlay.findPrevious.connect(self.find_previous)
+        self.search_overlay.closeRequested.connect(self.hide_search)
         self.terminal_view = TerminalView(self.terminal, self.search_count)
         self.command_input = self.terminal
         self.terminal.set_font_zoom_callback(lambda delta: self.host.change_font_size(delta))
@@ -367,7 +348,6 @@ class TerminalSessionWidget(QWidget):
         self.command_bar.installEventFilter(self)
         self._sync_status_toggles()
 
-        terminal_layout.addWidget(self.search_bar)
         terminal_layout.addWidget(self.terminal, 1)
         terminal_layout.addWidget(self.command_bar)
 
@@ -1456,13 +1436,13 @@ class TerminalSessionWidget(QWidget):
         self._refresh_search_highlights(self.search_input.text())
 
     def show_search(self) -> None:
-        self.search_bar.show()
-        self.search_input.setFocus()
-        self.search_input.selectAll()
+        seed = self.terminal.textCursor().selectedText().replace(" ", "\n")
+        self.search_overlay.open_for(seed)
 
     def hide_search(self) -> None:
         self.search_input.clear()
-        self.search_bar.hide()
+        self.search_overlay.hide()
+        self.terminal_view.refresh_search_highlights("", self.host.theme.search_highlight)
         self.command_input.setFocus()
 
     def find_next(self) -> None:
@@ -1602,7 +1582,7 @@ class TerminalSessionWidget(QWidget):
     def replace_terminal_selection(self, replacement: str) -> None:
         replace_from_menu = getattr(self.terminal, "replace_selection_from_menu", None)
         if callable(replace_from_menu):
-            if replace_from_menu(replacement) and self.search_bar.isVisible():
+            if replace_from_menu(replacement) and self.search_overlay.isVisible():
                 self._refresh_search_highlights(self.search_input.text())
             return
         cursor = self.terminal.textCursor()
@@ -1613,7 +1593,7 @@ class TerminalSessionWidget(QWidget):
         cursor.insertText(replacement)
         self.terminal.setReadOnly(was_read_only)
         self.terminal.setTextCursor(cursor)
-        if self.search_bar.isVisible():
+        if self.search_overlay.isVisible():
             self._refresh_search_highlights(self.search_input.text())
 
     def show_converted_selection(self, title: str, content: str) -> None:
@@ -1734,7 +1714,7 @@ class TerminalSessionWidget(QWidget):
             plan,
             colors=self._terminal_colors(),
             timestamps_enabled=self.host.settings.timestamps_enabled,
-            search_visible=self.search_bar.isVisible(),
+            search_visible=self.search_overlay.isVisible(),
             search_text=self.search_input.text(),
             search_highlight=self.host.theme.search_highlight,
         )
@@ -1896,6 +1876,11 @@ class TerminalSessionWidget(QWidget):
         if isinstance(self.profile, LanProfile):
             return self.profile.endpoint()
         return self.profile.port
+
+    def run_target_label(self) -> str:
+        """Compact label for the editor's send-to list: "<tab name> · <type>"."""
+        kind = "TCP" if self.transport_kind == "lan" else "Serial"
+        return f"{self.tab_title} · {kind}"
 
     def _profile_port_missing(self) -> bool:
         if self.transport_kind != "serial" or not isinstance(self.profile, SerialProfile):

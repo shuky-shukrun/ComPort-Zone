@@ -1675,14 +1675,14 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             editor = window.add_command_file_tab()
             editor.setPlainText("SEND *IDN?\n")
-            editor.find_replace_bar.hide()
+            editor.search_overlay.hide()
             editor.editor.setFocus()
             self.qt.processEvents()
 
             QTest.keyClick(editor.editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
             self.qt.processEvents()
 
-            self.assertTrue(editor.find_replace_bar.isVisible())
+            self.assertTrue(editor.search_overlay.isVisible())
             self.assertFalse(editor.replace_input.isVisible())
         finally:
             app_module.default_config_path = old_config_path
@@ -1711,14 +1711,14 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             editor = window.add_command_file_tab()
             editor.setPlainText("SEND *IDN?\n")
-            editor.find_replace_bar.hide()
+            editor.search_overlay.hide()
             editor.editor.setFocus()
             self.qt.processEvents()
 
             QTest.keyClick(editor.editor, Qt.Key.Key_H, Qt.KeyboardModifier.ControlModifier)
             self.qt.processEvents()
 
-            self.assertTrue(editor.find_replace_bar.isVisible())
+            self.assertTrue(editor.search_overlay.isVisible())
             self.assertTrue(editor.replace_input.isVisible())
         finally:
             app_module.default_config_path = old_config_path

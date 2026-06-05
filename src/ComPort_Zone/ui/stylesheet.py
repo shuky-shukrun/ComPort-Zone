@@ -96,6 +96,10 @@ def build_stylesheet(theme: ThemePalette) -> str:
     # elevated tone was nearly invisible), a touch brighter on hover.
     scroll_handle = mix_hex(tx2, panel, 0.42)
     scroll_handle_hover = mix_hex(tx2, panel, 0.15)
+    # Editor "Run" button — vivid brand green, lighter on hover / darker on press.
+    run_btn = green
+    run_btn_hover = mix_hex(green, "#ffffff", 0.16)
+    run_btn_press = mix_hex(green, bg, 0.20)
     # Themed arrow glyphs for the two scrollbar buttons (no native arrows once the
     # bar is QSS-styled). A clearly-readable grey, brightening to full ink on hover.
     arrow_ink = mix_hex(tx2, tx, 0.45)
@@ -438,6 +442,42 @@ def build_stylesheet(theme: ThemePalette) -> str:
         border-top: 1px solid {bd_soft};
     }}
     QFrame#searchBar {{ border-bottom: 1px solid {bd_soft}; border-top: none; }}
+
+    /* Floating find / find+replace overlay (terminal + editor). */
+    QFrame#searchOverlay {{
+        background: {elevated}; border: 1px solid {bd_strong}; border-radius: {RADIUS_MD}px;
+    }}
+    QLineEdit#searchOverlayField {{
+        background: {field}; border: 1px solid {bd}; border-radius: {RADIUS_SM}px;
+        padding: 3px 7px; color: {tx}; min-width: 150px; min-height: 22px;
+    }}
+    QLineEdit#searchOverlayField:focus {{ border: 1px solid {accent}; }}
+    QToolButton#searchOverlayButton {{
+        background: transparent; border: 1px solid transparent; border-radius: {RADIUS_SM}px;
+        color: {tx2}; font-size: 12px; font-weight: 600; padding: 0 6px; min-width: 24px; min-height: 22px;
+    }}
+    QToolButton#searchOverlayButton:hover {{ background: {hover}; color: {tx}; }}
+    QToolButton#searchOverlayButton:checked {{ background: {ghost_on_bg}; color: {accent}; border: 1px solid {accent}; }}
+    QToolButton#searchOverlayIcon {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px; min-width: 22px; min-height: 22px;
+    }}
+    QToolButton#searchOverlayIcon:hover {{ background: {hover}; }}
+    QLabel#searchOverlayCount {{ color: {tx3}; font-family: {MONO}; font-size: 11px; }}
+
+    /* Command-file editor chrome: icon toolbar + green Run button. */
+    QToolButton#editorToolButton {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px;
+        padding: 2px; min-width: 26px; min-height: 24px;
+    }}
+    QToolButton#editorToolButton:hover {{ background: {hover}; }}
+    QFrame#editorToolbarRule {{ background: {bd_soft}; border: none; max-height: 1px; min-height: 1px; }}
+    QLabel#editorSendLabel {{ color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px; }}
+    QPushButton#editorRunButton {{
+        background: {run_btn}; color: {on_accent}; border: none; border-radius: {RADIUS_SM}px;
+        padding: 4px 14px; font-weight: 700; min-height: 24px;
+    }}
+    QPushButton#editorRunButton:hover {{ background: {run_btn_hover}; }}
+    QPushButton#editorRunButton:pressed {{ background: {run_btn_press}; }}
 
     QLabel#commandFileStatusLabel, QLabel#editorStatusLabel, QLabel#editorPathLabel {{
         color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px;

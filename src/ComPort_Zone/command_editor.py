@@ -54,7 +54,7 @@ from .command_run_targets import (
     CommandRunTargetService,
 )
 from .command_search import CommandSearchState, find_search_matches, replace_all_matches
-from .icons import build_icon
+from .icons import build_icon, set_button_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES, QuickCommand, QuickFile
 from .quick_actions import quick_file_display_text, quick_group_name
 from .quick_actions_panel import (
@@ -65,8 +65,9 @@ from .quick_actions_panel import (
 )
 from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from .themes import VS_CODE_DARK, ThemePalette
+from .ui.search_overlay import SearchOverlay
 from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
-from .widgets import ChevronComboBox, CompletionPopupDelegate, style_completion_popup
+from .widgets import ChevronComboBox, CompletionPopupDelegate, set_button_role, style_completion_popup
 
 COMPLETION_NAVIGATION_KEYS = {
     Qt.Key.Key_Down,
@@ -566,10 +567,9 @@ class CommandFileEditorDialog(QDialog):
         self.shortcut_save.activated.connect(self.save)
         self.shortcut_save_as = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
         self.shortcut_save_as.activated.connect(self.save_as)
-        self.shortcut_find = QShortcut(QKeySequence("Ctrl+F"), self)
-        self.shortcut_find.activated.connect(self.show_find_bar)
-        self.shortcut_replace = QShortcut(QKeySequence("Ctrl+H"), self)
-        self.shortcut_replace.activated.connect(self.show_replace_bar)
+        # Find/Replace are driven by the global edit.find / edit.replace commands
+        # (Ctrl+F / Ctrl+H) which route to the active tab — a duplicate local
+        # QShortcut here made Ctrl+F ambiguous app-wide and broke terminal search.
 
         self.warn_unknown = QCheckBox("Warn unknown commands", self)
         self.warn_unknown.setChecked(True)
@@ -591,52 +591,48 @@ class CommandFileEditorDialog(QDialog):
             self.apply_theme_palette(theme_palette)
         self.editor.textChanged.connect(self._text_changed)
 
+        # Top toolbar: path on the left, file/search icon actions on the right.
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        for label, callback in (
-            ("New", self.new_file),
-            ("Open", self.open_file),
-            ("Save", self.save),
-            ("Save As", self.save_as),
-            ("Find", self.show_find_bar),
-            ("Replace", self.show_replace_bar),
-        ):
-            button = QPushButton(label, self)
-            button.clicked.connect(callback)
+        toolbar.setContentsMargins(8, 4, 6, 4)
+        toolbar.setSpacing(3)
+        toolbar.addWidget(self.path_label, 1)
+        self.open_button = self._toolbar_icon("folder", "Open command file…", self.open_file)
+        self.save_button = self._toolbar_icon("save", "Save (Ctrl+S)", self.save)
+        self.save_as_button = self._toolbar_icon("save-as", "Save As… (Ctrl+Shift+S)", self.save_as)
+        self.find_button = self._toolbar_icon("search", "Find (Ctrl+F)", self.show_find_bar)
+        for button in (self.open_button, self.save_button, self.save_as_button, self.find_button):
             toolbar.addWidget(button)
-        if show_run_button:
-            button = QPushButton("Run Buffer", self)
-            button.clicked.connect(self.run_buffer)
-            toolbar.addWidget(button)
-        toolbar.addStretch(1)
-        toolbar.addWidget(self.warn_unknown)
-        if self.font_change_callback and not self._show_run_bar and not self.embedded:
-            self._add_font_controls(toolbar, self)
-
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.addWidget(self.path_label, 1)
         if not self.embedded:
-            close_button = QToolButton(self)
-            close_button.setText("Close")
-            close_button.clicked.connect(self.reject)
-            header.addWidget(close_button)
+            close_button = self._toolbar_icon("x", "Close", self.reject)
+            toolbar.addWidget(close_button)
 
         line = QFrame(self)
+        line.setObjectName("editorToolbarRule")
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
 
         self.editor_column = QWidget(self)
         editor_layout = QVBoxLayout(self.editor_column)
         editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.addLayout(header)
+        editor_layout.setSpacing(0)
         editor_layout.addLayout(toolbar)
-        editor_layout.addWidget(self._build_find_replace_bar())
         editor_layout.addWidget(line)
         editor_layout.addWidget(self.editor, 1)
-        editor_layout.addWidget(self.status_label)
-        if self._show_run_bar:
-            editor_layout.addWidget(self._build_run_bar())
+        editor_layout.addWidget(self._build_command_bar())
+
+        # Floating find+replace overlay over the editor (Ctrl+F / Ctrl+H). Its
+        # widgets are aliased onto the names the existing search logic expects.
+        self.search_overlay = SearchOverlay(self.editor, with_replace=True, parent=self.editor_column)
+        self.search_input = self.search_overlay.search_field
+        self.replace_input = self.search_overlay.replace_field
+        self.case_sensitive_check = self.search_overlay.case_button
+        self.search_count_label = self.search_overlay.count_label
+        self.search_input.textChanged.connect(lambda _: self.refresh_search_matches(reset=True))
+        self.case_sensitive_check.toggled.connect(lambda _: self.refresh_search_matches(reset=True))
+        self.search_overlay.findNext.connect(self.find_next)
+        self.search_overlay.findPrevious.connect(self.find_previous)
+        self.search_overlay.replaceOne.connect(self.replace_current)
+        self.search_overlay.replaceAll.connect(self.replace_all)
+        self.search_overlay.closeRequested.connect(self.hide_find_replace_bar)
 
         if self.show_workspace_side_panel:
             root_layout = QHBoxLayout(self)
@@ -1114,27 +1110,66 @@ class CommandFileEditorDialog(QDialog):
         self.quick_actions_panel = drawer
         return drawer
 
-    def _build_run_bar(self) -> QWidget:
+    def _build_command_bar(self) -> QWidget:
+        """Bottom status/command bar: validation status + line-wrap toggle +
+        the (shrunk) send-to target + a green Run button."""
         bar = QFrame(self)
         bar.setObjectName("commandBar")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(6)
-
-        label = QLabel("Send file to", bar)
-        self.run_target_combo = ChevronComboBox(bar)
-        self.run_target_combo.setMinimumWidth(120)
-        self.run_target_combo.setMaximumWidth(260)
-        self.run_target_combo.setToolTip("Connected terminal target")
-        self.send_to_target_button = QPushButton("Send", bar)
-        self.send_to_target_button.clicked.connect(self.send_to_selected_target)
-        layout.addStretch(1)
-        layout.addWidget(label)
-        layout.addWidget(self.run_target_combo)
-        layout.addWidget(self.send_to_target_button)
-        if self.font_change_callback and not self.embedded:
+        self.status_label.setParent(bar)
+        layout.addWidget(self.status_label, 1)
+        layout.addWidget(self.warn_unknown)
+        self.wrap_toggle = self._status_toggle("wrap", "Wrap long lines", self._toggle_wrap)
+        self.wrap_toggle.setChecked(True)  # QPlainTextEdit wraps by default
+        layout.addWidget(self.wrap_toggle)
+        if self._show_run_bar:
+            send_label = QLabel("Send to", bar)
+            send_label.setObjectName("editorSendLabel")
+            self.run_target_combo = ChevronComboBox(bar)
+            self.run_target_combo.setMinimumWidth(110)
+            self.run_target_combo.setMaximumWidth(210)
+            self.run_target_combo.setToolTip("Run target terminal")
+            self.run_button = QPushButton("Run", bar)
+            self.run_button.setObjectName("editorRunButton")
+            self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            set_button_icon(self.run_button, "play", 12, "#ffffff")
+            self.run_button.clicked.connect(self.send_to_selected_target)
+            self.send_to_target_button = self.run_button  # back-compat alias
+            layout.addWidget(send_label)
+            layout.addWidget(self.run_target_combo)
+            layout.addWidget(self.run_button)
+        elif self.font_change_callback and not self.embedded:
             self._add_font_controls(layout, bar)
         return bar
+
+    def _toolbar_icon(self, icon: str, tip: str, callback) -> QToolButton:
+        button = QToolButton(self)
+        button.setObjectName("editorToolButton")
+        button.setToolTip(tip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_button_icon(button, icon, 15)
+        button.clicked.connect(callback)
+        return button
+
+    def _status_toggle(self, icon: str, tip: str, slot) -> QToolButton:
+        button = QToolButton(self)
+        button.setObjectName("statusToggleButton")
+        button.setCheckable(True)
+        button.setToolTip(tip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setProperty("iconName", icon)
+        set_button_icon(button, icon, 14)
+        button.toggled.connect(slot)
+        return button
+
+    def _toggle_wrap(self, checked: bool) -> None:
+        self.editor.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth if checked else QPlainTextEdit.LineWrapMode.NoWrap
+        )
 
     def _add_font_controls(self, layout: QHBoxLayout, parent: QWidget) -> None:
         font_label = QLabel("Font", parent)
@@ -1155,47 +1190,6 @@ class CommandFileEditorDialog(QDialog):
         layout.addWidget(font_label)
         layout.addWidget(font_down)
         layout.addWidget(font_up)
-
-    def _build_find_replace_bar(self) -> QWidget:
-        self.find_replace_bar = QFrame(self)
-        self.find_replace_bar.setObjectName("searchBar")
-        layout = QHBoxLayout(self.find_replace_bar)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
-
-        self.search_input = QLineEdit(self.find_replace_bar)
-        self.search_input.setPlaceholderText("Find")
-        self.search_input.textChanged.connect(lambda _: self.refresh_search_matches(reset=True))
-        self.search_input.returnPressed.connect(self.find_next)
-        self.replace_input = QLineEdit(self.find_replace_bar)
-        self.replace_input.setPlaceholderText("Replace")
-        self.case_sensitive_check = QCheckBox("Aa", self.find_replace_bar)
-        self.case_sensitive_check.setToolTip("Case sensitive search")
-        self.case_sensitive_check.toggled.connect(lambda _: self.refresh_search_matches(reset=True))
-        previous_button = QPushButton("Prev", self.find_replace_bar)
-        previous_button.clicked.connect(self.find_previous)
-        next_button = QPushButton("Next", self.find_replace_bar)
-        next_button.clicked.connect(self.find_next)
-        self.replace_button = QPushButton("Replace", self.find_replace_bar)
-        self.replace_button.clicked.connect(self.replace_current)
-        self.replace_all_button = QPushButton("Replace All", self.find_replace_bar)
-        self.replace_all_button.clicked.connect(self.replace_all)
-        close_button = QToolButton(self.find_replace_bar)
-        close_button.setText("X")
-        close_button.clicked.connect(self.hide_find_replace_bar)
-        self.search_count_label = QLabel("0/0", self.find_replace_bar)
-
-        layout.addWidget(self.search_input, 2)
-        layout.addWidget(self.replace_input, 2)
-        layout.addWidget(self.case_sensitive_check)
-        layout.addWidget(previous_button)
-        layout.addWidget(next_button)
-        layout.addWidget(self.replace_button)
-        layout.addWidget(self.replace_all_button)
-        layout.addWidget(self.search_count_label)
-        layout.addWidget(close_button)
-        self.find_replace_bar.hide()
-        return self.find_replace_bar
 
     def setPlainText(self, text: str) -> None:
         self.editor.setPlainText(text)
@@ -1411,25 +1405,19 @@ class CommandFileEditorDialog(QDialog):
             QApplication.beep()
 
     def show_find_bar(self) -> None:
-        self._show_find_replace_bar(show_replace=False)
+        self._open_search(show_replace=False)
 
     def show_replace_bar(self) -> None:
-        self._show_find_replace_bar(show_replace=True)
+        self._open_search(show_replace=True)
 
-    def _show_find_replace_bar(self, *, show_replace: bool) -> None:
-        selection = self.editor.textCursor().selectedText().replace("\u2029", "\n")
-        if selection:
-            self.search_input.setText(selection)
-        self.replace_input.setVisible(show_replace)
-        self.replace_button.setVisible(show_replace)
-        self.replace_all_button.setVisible(show_replace)
-        self.find_replace_bar.show()
+    def _open_search(self, *, show_replace: bool) -> None:
+        selection = self.editor.textCursor().selectedText()
+        seed = selection if "\u2029" not in selection else ""
+        self.search_overlay.open_for(seed, replace=show_replace)
         self.refresh_search_matches(reset=True)
-        self.search_input.setFocus()
-        self.search_input.selectAll()
 
     def hide_find_replace_bar(self) -> None:
-        self.find_replace_bar.hide()
+        self.search_overlay.hide()
         self.search_state.clear()
         self.editor.set_search_highlights([])
         self.editor.setFocus()
