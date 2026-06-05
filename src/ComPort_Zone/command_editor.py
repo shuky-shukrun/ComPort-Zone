@@ -9,6 +9,7 @@ from PySide6.QtGui import (
     QAction,
     QColor,
     QFont,
+    QFontMetrics,
     QKeySequence,
     QPainter,
     QShortcut,
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .batch import strip_c_style_comment
 from .command_file_service import COMMAND_FILE_FILTER, COMMAND_FILE_SAVE_FILTER, CommandFileService
 from .command_editor_core import (
     COMMENT_SNIPPETS,
@@ -45,6 +47,7 @@ from .command_editor_core import (
     DEFAULT_KNOWN_COMMANDS,
     CommandEditorSources,
     CommandValidationIssue,
+    command_text_from_line,
     command_token,
 )
 from .command_editor_highlighting import CommandFileHighlighter
@@ -138,6 +141,8 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.completer: QCompleter | None = None
         self._completion_delegate: CompletionPopupDelegate | None = None
         self._completion_descriptions: dict[str, str] = {}
+        # case-folded command -> description, for the inline current-line hint
+        self._description_by_command: dict[str, str] = {}
         self._completion_palette: dict[str, str] | None = None
         self.completion_refresh_callback: Callable[[str], None] | None = None
         self.font_zoom_callback: Callable[[int], None] | None = None
@@ -150,6 +155,9 @@ class CommandPlainTextEdit(QPlainTextEdit):
         # pre-theme first frame is on-theme; apply_theme_palette overrides on load.
         self.line_number_background = QColor(VS_CODE_DARK.surface_alt)
         self.line_number_foreground = QColor(VS_CODE_DARK.muted)
+        # Muted ink for the inline current-line command-description hint (matches the
+        # grey description column in the completion popup).
+        self.description_hint_color = QColor(VS_CODE_DARK.muted)
         self.current_line_background = QColor(VS_CODE_DARK.chip)
         self.search_match_background = QColor(VS_CODE_DARK.search_highlight)
         self.search_current_background = QColor(VS_CODE_DARK.accent_soft)
@@ -163,6 +171,7 @@ class CommandPlainTextEdit(QPlainTextEdit):
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.line_number_background = QColor(theme.surface_alt)
         self.line_number_foreground = QColor(theme.muted)
+        self.description_hint_color = QColor(theme.muted)
         self.current_line_background = QColor(theme.chip)
         self.search_match_background = QColor(theme.search_highlight)
         self.search_current_background = QColor(theme.accent_soft)
@@ -198,10 +207,17 @@ class CommandPlainTextEdit(QPlainTextEdit):
 
     def set_completion_descriptions(self, mapping) -> None:
         self._completion_descriptions = {str(k): str(v) for k, v in dict(mapping or {}).items()}
+        self._description_by_command = {
+            command.casefold(): description
+            for command, description in self._completion_descriptions.items()
+            if description.strip()
+        }
         if self._completion_delegate is not None:
             self._completion_delegate.set_descriptions(self._completion_descriptions)
             if self.completer is not None:
                 self.completer.popup().viewport().update()
+        # Re-render so the current line's inline description hint reflects the new map.
+        self.viewport().update()
 
     def set_completion_colors(
         self,
@@ -327,6 +343,59 @@ class CommandPlainTextEdit(QPlainTextEdit):
             selections.append(selection)
         self.search_extra_selections = selections
         self._apply_extra_selections()
+
+    def _current_line_description(self) -> str:
+        """Description of the saved command on the caret's line, or '' if none.
+
+        Reuses the command-file line parser so ``SEND *IDN?`` and a bare ``*IDN?``
+        both resolve, while directives (WAIT/EXPECT) and comments resolve to nothing.
+        Matching is case-insensitive to mirror SCPI's case-insensitive commands.
+        """
+        if not self._description_by_command:
+            return ""
+        stripped = strip_c_style_comment(self.textCursor().block().text())
+        if not stripped or stripped.startswith("#"):
+            return ""
+        command_text = command_text_from_line(stripped)
+        if not command_text:
+            return ""
+        return self._description_by_command.get(command_text.casefold(), "")
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        description = self._current_line_description()
+        if description:
+            self._paint_line_description(description)
+
+    def _paint_line_description(self, description: str) -> None:
+        block = self.textCursor().block()
+        if not block.isValid() or not block.isVisible():
+            return
+        # EndOfBlock (not EndOfLine) so the hint sits past the full command even when
+        # the line word-wraps — the editor wraps by default.
+        end_of_line = QTextCursor(block)
+        end_of_line.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        rect = self.cursorRect(end_of_line)
+        font = QFont(self.font())
+        font.setItalic(True)
+        metrics = QFontMetrics(font)
+        gap = metrics.horizontalAdvance("  ")
+        x = rect.left() + gap
+        available = self.viewport().width() - x - 6
+        if available < 24:  # not enough room past the line to be legible
+            return
+        text = metrics.elidedText(description, Qt.TextElideMode.ElideRight, available)
+        painter = QPainter(self.viewport())
+        try:
+            painter.setFont(font)
+            painter.setPen(self.description_hint_color)
+            painter.drawText(
+                QRect(x, rect.top(), available, rect.height()),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                text,
+            )
+        finally:
+            painter.end()
 
     def token_under_cursor(self) -> str:
         cursor = self.textCursor()

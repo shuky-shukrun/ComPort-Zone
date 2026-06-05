@@ -188,6 +188,52 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def _description_on_line(self, dialog, line_index: int) -> str:
+        editor = dialog.editor
+        block = editor.document().findBlockByNumber(line_index)
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfLine)
+        editor.setTextCursor(cursor)
+        return editor._current_line_description()
+
+    def test_inline_description_hint_resolves_saved_command_on_current_line(self) -> None:
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(
+                quick_commands=[
+                    QuickCommand(label="Identity", command="*IDN?", description="Identify the instrument"),
+                    QuickCommand(label="DC volts", command="MEAS:VOLT:DC?", description="Measure DC voltage"),
+                    QuickCommand(label="No note", command="OUTP 1", description=""),
+                ]
+            ),
+        )
+        try:
+            dialog.setPlainText("// header\n*IDN?\nSEND MEAS:VOLT:DC?\nWAIT 100\nOUTP 1\nUNKNOWN?\n")
+
+            self.assertEqual(self._description_on_line(dialog, 1), "Identify the instrument")  # bare command
+            self.assertEqual(self._description_on_line(dialog, 2), "Measure DC voltage")       # SEND <command>
+            self.assertEqual(self._description_on_line(dialog, 0), "")  # comment line
+            self.assertEqual(self._description_on_line(dialog, 3), "")  # WAIT directive
+            self.assertEqual(self._description_on_line(dialog, 4), "")  # saved but no description
+            self.assertEqual(self._description_on_line(dialog, 5), "")  # unknown command
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_inline_description_hint_matches_command_case_insensitively(self) -> None:
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(
+                quick_commands=[QuickCommand(label="Identity", command="*IDN?", description="Identify")],
+            ),
+        )
+        try:
+            dialog.setPlainText("*idn?\n")
+            self.assertEqual(self._description_on_line(dialog, 0), "Identify")
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
     def test_editor_ctrl_s_saves_current_file(self) -> None:
         script_path = Path(__file__).with_name("_tmp_editor_save_shortcut.txt")
         script_path.write_text("SEND old\n", encoding="utf-8")
