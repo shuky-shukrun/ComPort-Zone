@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
-from PySide6.QtWidgets import QStyle, QTabBar, QTabWidget, QToolButton, QWidget
+from PySide6.QtWidgets import QMenu, QStyle, QTabBar, QTabWidget, QToolButton, QWidget
 
 from ..icons import set_button_icon
 from ..models import LanProfile, SerialProfile, TerminalSessionState
@@ -47,9 +47,16 @@ class TerminalTabWidget(QTabWidget):
     newTabMenuRequested = Signal(QPoint)
     _NEW_TAB_BUTTON_GAP = 8
     _NEW_TAB_BUTTON_SIDE_MARGIN = 4
+    _OVERFLOW_BUTTON_GAP = 4
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        # Named so the QSS can hide the native scroll arrows (QTabBar::scroller) for
+        # just this tab strip — overflow is surfaced through the ⋯ menu instead.
+        self.setObjectName("sessionTabs")
+        # Scroll buttons keep the tab bar's minimum width tiny (≈ one tab) regardless
+        # of tab count, so a crowded strip never forces the window wider. The native
+        # arrows themselves are hidden in QSS; the ⋯ overflow menu replaces them.
         self.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
         self.new_tab_button = QToolButton(self)
         self.new_tab_button.setObjectName("newTabButton")
@@ -65,29 +72,44 @@ class TerminalTabWidget(QTabWidget):
         self.new_tab_button.customContextMenuRequested.connect(
             lambda position: self.newTabMenuRequested.emit(self.new_tab_button.mapToGlobal(position))
         )
+        # ⋯ overflow: appears only when the tabs don't all fit. Its menu lists every
+        # tab (icon + title, current one checked) so any tab — including ones scrolled
+        # out of view — is one click away. Selecting one scrolls it back into view.
+        self.overflow_button = QToolButton(self)
+        self.overflow_button.setObjectName("tabOverflowButton")
+        self.overflow_button.setText("⋯")  # ⋯ horizontal ellipsis
+        self.overflow_button.setToolTip("Show all tabs")
+        self.overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.overflow_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.overflow_button.setFixedSize(30, 28)
+        self.overflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._overflow_menu = QMenu(self.overflow_button)
+        self._overflow_menu.aboutToShow.connect(self._build_overflow_menu)
+        self.overflow_button.setMenu(self._overflow_menu)
+        self.overflow_button.hide()
         self.tabBar().installEventFilter(self)
-        self.currentChanged.connect(lambda _: self._schedule_new_tab_button_position())
+        self.currentChanged.connect(lambda _: self._schedule_tab_button_layout())
 
     def tabInserted(self, index: int) -> None:
         super().tabInserted(index)
-        self._schedule_new_tab_button_position()
+        self._schedule_tab_button_layout()
 
     def tabRemoved(self, index: int) -> None:
         super().tabRemoved(index)
-        self._schedule_new_tab_button_position()
+        self._schedule_tab_button_layout()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_tab_bar_width_limit()
-        self._schedule_new_tab_button_position()
+        self._schedule_tab_button_layout()
 
     def setTabText(self, index: int, text: str) -> None:
         super().setTabText(index, text)
-        self._schedule_new_tab_button_position()
+        self._schedule_tab_button_layout()
 
     def setTabIcon(self, index: int, icon) -> None:
         super().setTabIcon(index, icon)
-        self._schedule_new_tab_button_position()
+        self._schedule_tab_button_layout()
 
     def _open_new_tab_menu(self) -> None:
         button = self.new_tab_button
@@ -100,24 +122,71 @@ class TerminalTabWidget(QTabWidget):
             QEvent.Type.Show,
             QEvent.Type.Move,
         }:
-            self._schedule_new_tab_button_position()
+            self._schedule_tab_button_layout()
         return super().eventFilter(watched, event)
 
-    def _schedule_new_tab_button_position(self) -> None:
-        QTimer.singleShot(0, self._position_new_tab_button)
+    def _schedule_tab_button_layout(self) -> None:
+        QTimer.singleShot(0, self._position_tab_buttons)
 
-    def _sync_tab_bar_width_limit(self) -> None:
-        reserved_width = (
+    def _tabs_overflowing(self) -> bool:
+        """True when the tabs' natural width exceeds the room left after the + button.
+
+        Uses the tab bar's (unconstrained) size hint, so it stays correct even though
+        ``_sync_tab_bar_width_limit`` caps the bar's actual width. Reserving the extra
+        ⋯ width only once overflow is already true gives a little hysteresis that stops
+        the button flickering on/off right at the threshold.
+        """
+        if self.count() == 0:
+            return False
+        base_reserved = (
             self.new_tab_button.width()
             + self._NEW_TAB_BUTTON_GAP
             + self._NEW_TAB_BUTTON_SIDE_MARGIN
         )
-        self.tabBar().setMaximumWidth(max(1, self.width() - reserved_width))
+        return self.tabBar().sizeHint().width() > self.width() - base_reserved
 
-    def _position_new_tab_button(self) -> None:
+    def _sync_tab_bar_width_limit(self) -> bool:
+        """Cap the tab bar so the +/⋯ buttons always have room; return overflow state."""
+        overflowing = self._tabs_overflowing()
+        reserved = (
+            self.new_tab_button.width()
+            + self._NEW_TAB_BUTTON_GAP
+            + self._NEW_TAB_BUTTON_SIDE_MARGIN
+        )
+        if overflowing:
+            reserved += self.overflow_button.width() + self._OVERFLOW_BUTTON_GAP
+        self.tabBar().setMaximumWidth(max(1, self.width() - reserved))
+        return overflowing
+
+    def _position_tab_buttons(self) -> None:
         bar = self.tabBar()
-        self._sync_tab_bar_width_limit()
+        overflowing = self._sync_tab_bar_width_limit()
         bar_origin = bar.mapTo(self, QPoint(0, 0))
+
+        def centered_y(widget: QToolButton) -> int:
+            return bar_origin.y() + max(2, int((bar.height() - widget.height()) / 2))
+
+        if overflowing:
+            # Crowded strip: pin + to the far right and tuck ⋯ just left of it; the
+            # capped tab bar ends one gap before the ⋯ button.
+            new_tab_x = max(
+                self._NEW_TAB_BUTTON_SIDE_MARGIN,
+                self.width() - self.new_tab_button.width() - self._NEW_TAB_BUTTON_SIDE_MARGIN,
+            )
+            overflow_x = max(
+                self._NEW_TAB_BUTTON_SIDE_MARGIN,
+                new_tab_x - self._OVERFLOW_BUTTON_GAP - self.overflow_button.width(),
+            )
+            self.overflow_button.move(overflow_x, centered_y(self.overflow_button))
+            self.overflow_button.show()
+            self.overflow_button.raise_()
+            self.new_tab_button.move(new_tab_x, centered_y(self.new_tab_button))
+            self.new_tab_button.raise_()
+            return
+
+        # Everything fits: hide ⋯ and let + trail the last tab (or sit at the start
+        # of an empty strip).
+        self.overflow_button.hide()
         if self.count() == 0:
             desired_x = bar_origin.x() + 6
         else:
@@ -128,9 +197,34 @@ class TerminalTabWidget(QTabWidget):
             self.width() - self.new_tab_button.width() - self._NEW_TAB_BUTTON_SIDE_MARGIN,
         )
         x = max(self._NEW_TAB_BUTTON_SIDE_MARGIN, min(desired_x, max_x))
-        y = bar_origin.y() + max(2, int((bar.height() - self.new_tab_button.height()) / 2))
-        self.new_tab_button.move(x, y)
+        self.new_tab_button.move(x, centered_y(self.new_tab_button))
         self.new_tab_button.raise_()
+
+    def _build_overflow_menu(self) -> None:
+        menu = self._overflow_menu
+        menu.clear()
+        current = self.currentIndex()
+        for index in range(self.count()):
+            title = self.tabText(index).strip() or f"Tab {index + 1}"
+            action = menu.addAction(self.tabIcon(index), title)
+            action.setCheckable(True)
+            action.setChecked(index == current)
+            tooltip = self.tabToolTip(index)
+            if tooltip:
+                action.setToolTip(tooltip)
+            widget = self.widget(index)
+            action.triggered.connect(
+                lambda _checked=False, target=widget: self._activate_overflow_tab(target)
+            )
+
+    def _activate_overflow_tab(self, widget: QWidget | None) -> None:
+        if widget is None:
+            return
+        index = self.indexOf(widget)
+        if index >= 0:
+            # Drives QTabBar.setCurrentIndex -> makeVisible, scrolling the picked tab
+            # back on-screen even when the native scroll arrows are hidden.
+            self.setCurrentIndex(index)
 
 
 class TabWorkspaceController:

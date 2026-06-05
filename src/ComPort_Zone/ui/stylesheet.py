@@ -303,6 +303,16 @@ def build_stylesheet(theme: ThemePalette) -> str:
         border: none; border-radius: 3px; padding: 0; margin-right: 2px;
     }}
     QToolButton#tabCloseButton:hover {{ background: {hover}; color: {tx}; }}
+    /* Hide the native left/right scroll arrows on the session tab strip — overflow
+       is surfaced through the ⋯ menu (QToolButton#tabOverflowButton) instead, while
+       scroll mode is kept on so the tab bar's minimum width stays ≈ one tab. */
+    QTabWidget#sessionTabs QTabBar::scroller {{ width: 0px; height: 0px; }}
+    QToolButton#tabOverflowButton {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px;
+        color: {tx2}; font-size: 15px; font-weight: 700; padding: 0;
+    }}
+    QToolButton#tabOverflowButton:hover {{ background: {hover}; color: {tx}; }}
+    QToolButton#tabOverflowButton::menu-indicator {{ image: none; width: 0; }}
     """)
 
     # =====================================================================

@@ -190,8 +190,11 @@ class MainWindow(QMainWindow):
         # re-delegated to the OS from ui/title_bar.py.
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         # Keep the floor low so the app fits small screens and a split workspace
-        # (two panes) never forces the window past the screen edge.
-        self.setMinimumSize(680, 460)
+        # (two panes) never forces the window past the screen edge. The tab strip no
+        # longer pins a wide floor — a crowded strip collapses into the ⋯ overflow
+        # menu (ui/tab_workspace.py) and the bar's minimum stays ≈ one tab — so the
+        # window can shrink to where the command bar's controls run out of room.
+        self.setMinimumSize(460, 440)
         self.resize(self.settings.window_width, self.settings.window_height)
         self._build_ui()
         self.tab_workspace = TabWorkspaceController(

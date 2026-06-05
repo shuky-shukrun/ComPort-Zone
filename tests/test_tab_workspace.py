@@ -153,6 +153,67 @@ class TabWorkspaceControllerTests(unittest.TestCase):
         self.assertEqual(emitted, [tabs.new_tab_button.mapToGlobal(position)])
         tabs.deleteLater()
 
+    def test_overflow_button_hidden_when_tabs_fit(self) -> None:
+        tabs = TerminalTabWidget()
+        tabs.resize(600, 240)
+        for name in ("COM1", "COM2"):
+            tabs.addTab(FakeTerminalTab(name), name)
+        tabs.show()
+        self.qt.processEvents()
+        tabs._position_tab_buttons()
+
+        # A roomy strip shows no overflow; the + button trails the last tab.
+        self.assertTrue(tabs.overflow_button.isHidden())
+        self.assertEqual(tabs.overflow_button.objectName(), "tabOverflowButton")
+        self.assertFalse(tabs.new_tab_button.isHidden())
+        tabs.deleteLater()
+
+    def test_overflow_button_appears_when_tabs_crowded(self) -> None:
+        tabs = TerminalTabWidget()
+        tabs.resize(240, 240)  # deliberately too narrow for the tabs below
+        for index in range(12):
+            tabs.addTab(FakeTerminalTab(f"COM{index} Device"), f"COM{index} Device")
+        tabs.show()
+        self.qt.processEvents()
+        tabs._position_tab_buttons()
+
+        # A crowded strip reveals the ⋯ button, tucked just left of the + button,
+        # and the tab bar is capped to leave room for both.
+        self.assertFalse(tabs.overflow_button.isHidden())
+        self.assertLess(
+            tabs.overflow_button.x() + tabs.overflow_button.width(),
+            tabs.new_tab_button.x() + 1,
+        )
+        self.assertLessEqual(
+            tabs.tabBar().maximumWidth(),
+            tabs.width()
+            - tabs.new_tab_button.width()
+            - tabs.overflow_button.width()
+            - tabs._NEW_TAB_BUTTON_GAP,
+        )
+        tabs.deleteLater()
+
+    def test_overflow_menu_lists_all_tabs_and_activates_selection(self) -> None:
+        tabs = TerminalTabWidget()
+        tabs.resize(240, 240)
+        for index in range(8):
+            tabs.addTab(FakeTerminalTab(f"COM{index}"), f"COM{index}")
+        tabs.setCurrentIndex(0)
+        tabs.show()
+        self.qt.processEvents()
+
+        tabs._build_overflow_menu()
+        actions = tabs._overflow_menu.actions()
+        self.assertEqual(len(actions), tabs.count())
+        self.assertEqual([a.text() for a in actions], [f"COM{i}" for i in range(8)])
+        # Exactly the current tab is checked.
+        self.assertEqual([i for i, a in enumerate(actions) if a.isChecked()], [0])
+
+        # Triggering an entry activates that tab (which scrolls it into view).
+        actions[6].trigger()
+        self.assertEqual(tabs.currentIndex(), 6)
+        tabs.deleteLater()
+
     def test_new_tab_button_stays_clear_of_close_button_after_tab_rename(self) -> None:
         tabs = TerminalTabWidget()
         tabs.resize(600, 240)
