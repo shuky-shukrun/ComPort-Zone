@@ -154,6 +154,32 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
         second.deleteLater()
         created[0].deleteLater()
 
+    def test_tab_index_at_returns_global_index_in_second_pane(self) -> None:
+        # Regression for issue #11: a context menu opened on the right pane's tab must
+        # resolve to that tab's *global* index, not its pane-local one (which would
+        # alias the left pane's tab and rename/close/etc. the wrong tab).
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.move_tab_to_other_pane(1)  # second -> right pane (global index 1)
+        self.qt.processEvents()
+        left, right = workspace.panes()
+        self.assertIs(workspace.active_pane(), right)
+
+        position = right.tabBar().tabRect(0).center()
+        self.assertEqual(right.tabBar().tabAt(position), 0)  # pane-local
+        self.assertEqual(workspace.tab_index_at(position), 1)  # global
+        self.assertIs(workspace.widget(workspace.tab_index_at(position)), second)
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
+
     def test_join_panes_moves_tabs_back_to_primary_pane(self) -> None:
         workspace = SplitWorkspaceWidget()
         first = QWidget()

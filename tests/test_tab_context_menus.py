@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 from ComPort_Zone.command_registry import CommandRegistry
@@ -149,6 +150,39 @@ class TabContextMenuBuilderTests(unittest.TestCase):
             next(action for action in menu.actions() if action.text() == "Save").trigger()
 
             self.assertEqual(host.editor.calls, ["save"])
+        finally:
+            host.deleteLater()
+
+    def test_show_addresses_tab_by_global_index(self) -> None:
+        # Regression for issue #11: show() must build the menu for the tab's global
+        # index (via tabs.tab_index_at), not the pane-local index from tabBar().tabAt.
+        host = FakeContextMenuHost()
+
+        class FakeTabBar:
+            def tabAt(self, _position) -> int:
+                return 0  # pane-local index — would mis-target the second pane
+
+            def mapToGlobal(self, position):
+                return position
+
+        class FakeSplitTabs(FakeTabs):
+            def tabBar(self):
+                return FakeTabBar()
+
+            def tab_index_at(self, _position) -> int:
+                return 1  # global index of the right pane's tab
+
+        class FakeMenu:
+            def exec(self, _global_position) -> None:
+                return None
+
+        host.tabs = FakeSplitTabs()
+        builder = TabContextMenuBuilder(host)
+        captured: list[int] = []
+        builder.build = lambda index: captured.append(index) or FakeMenu()
+        try:
+            builder.show(QPoint(5, 5))
+            self.assertEqual(captured, [1])
         finally:
             host.deleteLater()
 

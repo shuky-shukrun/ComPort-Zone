@@ -228,6 +228,20 @@ class SplitWorkspaceWidget(QWidget):
                 return ref
         return None
 
+    def tab_index_at(self, position: QPoint) -> int:
+        """Global index of the tab under ``position`` (active pane's tab-bar coords).
+
+        A tab context menu is requested from the pane under the cursor, which is made
+        active first, so its tab bar owns ``position``. Returning the *global* index
+        keeps the menu's actions (rename/close/settings…) pointed at the right tab in
+        either pane — a pane-local index would mis-target tabs in the second pane.
+        """
+        pane = self.active_pane()
+        local_index = pane.tabBar().tabAt(position)
+        if local_index < 0:
+            return -1
+        return self._global_index(pane, local_index)
+
     def pane_index(self, pane: TerminalTabWidget) -> int:
         try:
             return self._panes.index(pane)
