@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QRect, Qt, Signal
@@ -36,6 +38,11 @@ class SplitWorkspaceWidget(QWidget):
         self.splitter.setHandleWidth(SPLITTER_HANDLE)
         self._panes: list[TerminalTabWidget] = []
         self._active_pane: TerminalTabWidget | None = None
+        # While a new-tab / tab context menu is open this pins the pane that asked
+        # for it, so addTab targets that pane even if a focus event flips the active
+        # pane while the modal menu is up (otherwise a new tab opened from the right
+        # pane's + can land in the left pane). See _tab_creation_pinned_to.
+        self._pending_tab_pane: TerminalTabWidget | None = None
         self._drag_start: dict[TerminalTabWidget, QPoint] = {}
         self.drop_preview = QLabel(self)
         self.drop_preview.setObjectName("splitDropPreview")
@@ -119,7 +126,10 @@ class SplitWorkspaceWidget(QWidget):
         return -1
 
     def addTab(self, widget: QWidget, *args) -> int:
-        pane = self.active_pane()
+        # Honor a pane pinned by an in-flight new-tab menu; fall back to the active
+        # pane for every other caller (restore, duplicate, programmatic adds).
+        pane = self._pending_tab_pane if self._pending_tab_pane in self._panes else self.active_pane()
+        self._pending_tab_pane = None
         index = pane.addTab(widget, *args)
         self._watch_tab_content(widget)
         self._set_active_pane(pane)
@@ -276,17 +286,35 @@ class SplitWorkspaceWidget(QWidget):
         self._set_active_pane(pane)
         self.currentChanged.emit(self.currentIndex())
 
+    @contextmanager
+    def _tab_creation_pinned_to(self, pane: TerminalTabWidget) -> Iterator[None]:
+        """Pin ``pane`` as the addTab target while a (modal) tab menu is open.
+
+        The menu signals below are emitted synchronously and run their menu's
+        ``exec`` inline, so any new tab the user chooses is created before the
+        context exits — restoring the previous pin even if the menu is dismissed.
+        """
+        previous = self._pending_tab_pane
+        self._pending_tab_pane = pane
+        try:
+            yield
+        finally:
+            self._pending_tab_pane = previous
+
     def _new_tab_requested(self, pane: TerminalTabWidget) -> None:
         self._set_active_pane(pane)
-        self.newTabRequested.emit()
+        with self._tab_creation_pinned_to(pane):
+            self.newTabRequested.emit()
 
     def _new_tab_menu_requested(self, pane: TerminalTabWidget, position: QPoint) -> None:
         self._set_active_pane(pane)
-        self.newTabMenuRequested.emit(position)
+        with self._tab_creation_pinned_to(pane):
+            self.newTabMenuRequested.emit(position)
 
     def _tab_context_requested(self, pane: TerminalTabWidget, position: QPoint) -> None:
         self._set_active_pane(pane)
-        self.tabContextMenuRequested.emit(position)
+        with self._tab_creation_pinned_to(pane):
+            self.tabContextMenuRequested.emit(position)
 
     def _global_index(self, pane: TerminalTabWidget, local_index: int) -> int:
         global_index = 0

@@ -1,6 +1,6 @@
 import unittest
 
-from PySide6.QtCore import QByteArray, QMimeData, QPointF, Qt
+from PySide6.QtCore import QByteArray, QMimeData, QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
@@ -115,6 +115,44 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
         workspace.deleteLater()
         first.deleteLater()
         second.deleteLater()
+
+    def test_new_tab_menu_targets_requesting_pane_despite_focus_change(self) -> None:
+        # The right pane's + opens a modal menu; while it is up a focus event flips
+        # the active pane back to the left. The new tab must still land in the pane
+        # whose + was clicked (the right one), not the focus-stolen left pane.
+        workspace = SplitWorkspaceWidget()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.move_tab_to_other_pane(1)  # second -> right pane
+        left, right = workspace.panes()
+        self.assertEqual((left.count(), right.count()), (1, 1))
+
+        created: list[QWidget] = []
+
+        def on_menu(_position):
+            # Stand in for the modal menu: focus flips to the left pane, then the
+            # chosen action creates a tab.
+            workspace._activate_pane(left)
+            self.assertIs(workspace.active_pane(), left)
+            new_tab = QWidget()
+            created.append(new_tab)
+            workspace.addTab(new_tab, "New")
+
+        workspace.newTabMenuRequested.connect(on_menu)
+        workspace._new_tab_menu_requested(right, QPoint(0, 0))
+
+        self.assertEqual(right.count(), 2)
+        self.assertEqual(left.count(), 1)
+        self.assertIs(right.widget(1), created[0])
+        # Pin is cleared once the menu closes, so later adds follow the active pane.
+        self.assertIsNone(workspace._pending_tab_pane)
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
+        created[0].deleteLater()
 
     def test_join_panes_moves_tabs_back_to_primary_pane(self) -> None:
         workspace = SplitWorkspaceWidget()
