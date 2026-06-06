@@ -609,10 +609,12 @@ class CommandFileEditorDialog(QDialog):
         if self.embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle("Command File Editor")
-        # Embedded as a workspace tab the minimum must stay small, otherwise a split
-        # (two panes side by side) forces the whole window past the screen edge.
+        # Embedded as a workspace tab the floor must stay below the pane's own minimum
+        # (ui.tokens.WORKSPACE_PANE_MIN_W) — otherwise a squeezed pane can't shrink the
+        # editor to fit and the command bar (Run button) spills past the pane's edge.
+        # The bar copes by folding its controls into the ⋯ overflow as it narrows.
         if self.embedded:
-            self.setMinimumSize(320, 220)
+            self.setMinimumSize(160, 220)
         else:
             self.setMinimumSize(620, 420)
 

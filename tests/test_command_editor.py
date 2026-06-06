@@ -369,6 +369,19 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_embedded_editor_minimum_width_fits_a_workspace_pane(self) -> None:
+        # The embedded editor must shrink at least as small as a split pane's floor,
+        # else a squeezed pane clips the command bar's Run button off the right edge.
+        from ComPort_Zone.ui.tokens import WORKSPACE_PANE_MIN_W
+
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources(), embedded=True)
+        try:
+            self.assertLessEqual(dialog.minimumWidth(), WORKSPACE_PANE_MIN_W)
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
     def test_editor_command_bar_collapses_to_run_button_when_narrow(self) -> None:
         dialog = CommandFileEditorDialog(
             sources=CommandEditorSources(),
