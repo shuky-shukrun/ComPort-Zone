@@ -9,7 +9,7 @@ from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QVBoxLayout, QWidget
 
 from .tab_workspace import TerminalTabWidget
-from .tokens import SPLITTER_HANDLE
+from .tokens import SPLITTER_HANDLE, WORKSPACE_PANE_MIN_W
 
 
 TAB_MIME_TYPE = "application/x-comport-zone-tab"
@@ -259,6 +259,9 @@ class SplitWorkspaceWidget(QWidget):
         pane.setMovable(True)
         pane.setTabsClosable(False)
         pane.setUsesScrollButtons(True)
+        # Keep the pane's hard floor small so the divider between two panes always has
+        # slack to move; the content's larger size hint would otherwise pin it.
+        pane.setMinimumWidth(WORKSPACE_PANE_MIN_W)
         pane.newTabRequested.connect(lambda source=pane: self._new_tab_requested(source))
         pane.newTabMenuRequested.connect(
             lambda position, source=pane: self._new_tab_menu_requested(source, position)

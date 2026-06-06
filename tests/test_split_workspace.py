@@ -5,6 +5,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from ComPort_Zone.ui.split_workspace import TAB_MIME_TYPE, SplitWorkspaceWidget
+from ComPort_Zone.ui.tokens import WORKSPACE_PANE_MIN_W
 
 
 class FakeDragEvent:
@@ -153,6 +154,33 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
         first.deleteLater()
         second.deleteLater()
         created[0].deleteLater()
+
+    def test_panes_have_small_minimum_width_so_divider_stays_movable(self) -> None:
+        # Each pane keeps a small hard floor; without it the terminal/editor content
+        # size hints pin the divider and it looks frozen at common window sizes.
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.move_tab_to_other_pane(1)  # two panes
+        self.qt.processEvents()
+        self.assertEqual(workspace.pane_count(), 2)
+        for pane in workspace.panes():
+            self.assertEqual(pane.minimumWidth(), WORKSPACE_PANE_MIN_W)
+
+        # The splitter honors the small floor: a pane can shrink near it instead of
+        # being clamped to its (larger) content size hint.
+        workspace.splitter.setSizes([WORKSPACE_PANE_MIN_W, 900 - WORKSPACE_PANE_MIN_W])
+        self.qt.processEvents()
+        self.assertLessEqual(workspace.panes()[0].width(), WORKSPACE_PANE_MIN_W + 40)
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
 
     def test_tab_index_at_returns_global_index_in_second_pane(self) -> None:
         # Regression for issue #11: a context menu opened on the right pane's tab must

@@ -42,6 +42,12 @@ FONT_BTN_H = 30
 # --- Layout -----------------------------------------------------------------
 SPLITTER_HANDLE = 6
 TAB_MIN_W = 120
+# Floor for a single split-workspace pane. Kept well below any pane's content size
+# hint so the splitter between two panes always has room to move in both directions —
+# without it the terminal/editor command bars' (large) minimum widths consume all the
+# slack and the divider looks frozen. The content copes with the squeeze: the command
+# bars collapse into their ⋯ overflow as a pane narrows.
+WORKSPACE_PANE_MIN_W = 200
 # Open-drawer floor: wide enough that a row's send/play affordance and the panel
 # header's +/⋯ buttons stay visible (title elides). Dragging below this collapses
 # the drawer to the rail (see TerminalSessionWidget._drawer_resized).
