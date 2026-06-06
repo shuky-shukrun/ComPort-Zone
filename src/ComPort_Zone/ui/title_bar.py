@@ -1,8 +1,8 @@
 """Frameless window chrome: a custom title bar + native edge-resize grips.
 
-The design replaces the native OS title bar with a 38px bar carrying the app icon,
-``ComPort Zone — <subtitle>``, a live-connection dot, and Minimize/Maximize/Close
-buttons (styles/app.css ``.cpz-title``).
+The design replaces the native OS title bar with a single VS Code-style row that
+carries the app logo, the application menu bar (File/Edit/…), a centred command
+palette box, and the Minimize/Maximize/Close buttons. The separate menu row is gone.
 
 Window *management* is delegated to the OS through Qt 6's
 ``QWindow.startSystemMove`` / ``startSystemResize`` so native Aero-snap, maximize
@@ -16,11 +16,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QFont, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenuBar, QToolButton, QWidget
 
-from .tokens import APP_ICON, LIVE_DOT, TITLE_BAR_H, WINDOW_BTN_W
+from ..icons import set_button_icon
+from .tokens import APP_ICON, TITLE_BAR_H, WINDOW_BTN_W
 
 # Segoe Fluent Icons (Windows 11) window-control glyphs, with a Windows-10 fallback.
 _GLYPH_MIN = ""
@@ -67,18 +68,23 @@ def apply_rounded_corners(widget: QWidget, *, small: bool = True) -> None:
 
 
 class TitleBar(QWidget):
-    """The custom 38px window title bar."""
+    """The single VS Code-style window chrome row."""
+
+    commandPaletteRequested = Signal()
 
     def __init__(self, window: QWidget, icon_path: Path) -> None:
         super().__init__(window)
         self._window = window
         self._press_pos = None
+        self._live = False
+        self._menu_bar: QMenuBar | None = None
         self.setObjectName("titleBar")
         self.setFixedHeight(TITLE_BAR_H)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(11, 0, 0, 0)
-        layout.setSpacing(8)
+        self._layout = layout
+        layout.setContentsMargins(8, 0, 0, 0)
+        layout.setSpacing(6)
 
         self.icon_label = QLabel(self)
         pixmap = QPixmap(str(icon_path))
@@ -92,21 +98,22 @@ class TitleBar(QWidget):
                 )
             )
         layout.addWidget(self.icon_label)
+        # The application menu bar is inserted at index 1 by attach_menu_bar().
 
-        self.title_label = QLabel("ComPort Zone", self)
-        self.title_label.setObjectName("titleText")
-        self.title_label.setProperty("strong", True)
-        layout.addWidget(self.title_label)
+        layout.addStretch(1)
 
-        self.subtitle_label = QLabel("", self)
-        self.subtitle_label.setObjectName("titleText")
-        layout.addWidget(self.subtitle_label)
-
-        self.live_dot = QLabel(self)
-        self.live_dot.setObjectName("titleLiveDot")
-        self.live_dot.setFixedSize(LIVE_DOT - 1, LIVE_DOT - 1)
-        self.live_dot.setVisible(False)
-        layout.addWidget(self.live_dot)
+        # Centred command palette box (VS Code's "command center"). Clicking it opens
+        # the command palette; it hides on a narrow window (see _relayout_chrome).
+        self.command_center = QToolButton(self)
+        self.command_center.setObjectName("commandCenter")
+        self.command_center.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        set_button_icon(self.command_center, "search", 13)
+        self.command_center.setText("Search commands…")
+        self.command_center.setToolTip("Open the command palette")
+        self.command_center.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_center.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.command_center.clicked.connect(self.commandPaletteRequested)
+        layout.addWidget(self.command_center)
 
         layout.addStretch(1)
 
@@ -131,12 +138,37 @@ class TitleBar(QWidget):
         button.setCursor(Qt.CursorShape.ArrowCursor)
         return button
 
+    def attach_menu_bar(self, menu_bar: QMenuBar) -> None:
+        """Place the application menu bar just right of the logo, in this single row."""
+        self._menu_bar = menu_bar
+        menu_bar.setParent(self)
+        self._layout.insertWidget(1, menu_bar)
+        self._relayout_chrome()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._relayout_chrome()
+
+    def _relayout_chrome(self) -> None:
+        """Hide the command box when the bar can't fit it beside the full menu bar;
+        the menus then have room (and overflow into their own dots when narrower)."""
+        if self._menu_bar is None:
+            return
+        margins = self._layout.contentsMargins()
+        fixed = margins.left() + margins.right() + self.icon_label.sizeHint().width()
+        fixed += sum(button.width() for button in (self.btn_min, self.btn_max, self.btn_close))
+        fixed += self._menu_bar.sizeHint().width()
+        fixed += self._layout.spacing() * 6
+        self.command_center.setVisible(self.width() >= fixed + self.command_center.sizeHint().width())
+
     # ---- live state -----------------------------------------------------
     def set_subtitle(self, text: str) -> None:
-        self.subtitle_label.setText(f"— {text}" if text else "")
+        # The connection context now lives in the status bar / command bar; mirror it
+        # into the window title so the taskbar and screen readers still see it.
+        self._window.setWindowTitle(f"ComPort Zone - {text}" if text else "ComPort Zone")
 
     def set_live(self, live: bool) -> None:
-        self.live_dot.setVisible(bool(live))
+        self._live = bool(live)
 
     def refresh_maximize_glyph(self) -> None:
         self.btn_max.setText(_GLYPH_RESTORE if self._window.isMaximized() else _GLYPH_MAX)

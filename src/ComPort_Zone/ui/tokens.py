@@ -58,8 +58,10 @@ DRAWER_COLLAPSE_AT = 188
 FONT_UI_PT = 10
 
 # --- Modern-IDE window shell (from styles/app.css) --------------------------
-TITLE_BAR_H = 38          # .cpz-title
-MENU_BAR_H = 26           # .cpz-menu (compact; tighter than the 28px mock)
+# Single VS Code-style chrome row: logo + menu bar + command palette + window
+# buttons all share this height (the old separate menu row is gone).
+TITLE_BAR_H = 32          # .cpz-title
+MENU_BAR_H = 26           # legacy; menu items now sit inside the title row
 TOOLBAR_H = 44            # .app-toolbar  (ctrl-h + 16)
 STATUS_BAR_H = 30         # .cpz-status (24 in design; +6 to seat font controls)
 RAIL_W = 46               # .app-rail

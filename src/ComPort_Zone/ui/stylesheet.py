@@ -156,13 +156,6 @@ def build_stylesheet(theme: ThemePalette) -> str:
         background: {panel};
         border-bottom: 1px solid {bd_soft};
     }}
-    QLabel#titleText {{ color: {tx2}; font-size: {UI_FS}px; }}
-    QLabel#titleText[strong="true"] {{ color: {tx}; font-weight: 600; }}
-    QLabel#titleLiveDot {{
-        background: {green};
-        border-radius: 3px;
-        min-width: 6px; max-width: 6px; min-height: 6px; max-height: 6px;
-    }}
     QToolButton#windowButton {{
         background: transparent;
         border: none;
@@ -172,16 +165,30 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QToolButton#windowButton:hover {{ background: {hover}; color: {tx}; }}
     QToolButton#windowButtonClose:hover {{ background: #e23a4e; color: #ffffff; }}
 
+    /* Command palette box ("command center"), centred in the title row. */
+    QToolButton#commandCenter {{
+        background: {field};
+        color: {tx2};
+        border: 1px solid {bd_soft};
+        border-radius: {RADIUS_SM}px;
+        padding: 3px 12px;
+        font-size: {UI_FS}px;
+        min-width: 240px; max-width: 440px;
+    }}
+    QToolButton#commandCenter:hover {{ background: {hover}; border-color: {bd_strong}; color: {tx}; }}
+
+    /* The application menu bar now lives inside the title row — transparent so the
+       bar's panel colour shows through, with items vertically centred in the row. */
     QMenuBar {{
-        background: {panel};
+        background: transparent;
         color: {tx2};
         border: none;
-        padding: 0px 5px;
+        padding: 0;
         font-size: {UI_FS}px;
     }}
     QMenuBar::item {{
         background: transparent;
-        padding: 2px 9px;
+        padding: 4px 9px;
         border-radius: {RADIUS_SM}px;
         color: {tx2};
     }}

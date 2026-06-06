@@ -84,7 +84,6 @@ from .tokens import (
     DRAWER_MIN_W,
     FONT_BTN_H,
     FONT_BTN_W,
-    MENU_BAR_H,
     SPLITTER_HANDLE,
 )
 from .tab_context_menus import TabContextMenuBuilder
@@ -233,20 +232,14 @@ class MainWindow(QMainWindow):
             self._schedule_launch_update_check()
 
     def _build_ui(self) -> None:
-        # --- frameless window chrome: custom title bar + relocated menu bar ---
+        # --- frameless window chrome: a single VS Code-style title row carrying the
+        # logo, the application menu bar, a centred command palette box, and the
+        # Minimize/Maximize/Close buttons (the separate menu row is gone). ---
         self._app_menu_bar = QMenuBar(self)
-        # Keep the relocated menu bar tight — a plain QMenuBar otherwise grows
-        # well past the design's compact row.
-        self._app_menu_bar.setFixedHeight(MENU_BAR_H)
         self.title_bar = TitleBar(self, APP_ICON_PATH)
-        chrome = QWidget(self)
-        chrome.setObjectName("windowChrome")
-        chrome_layout = QVBoxLayout(chrome)
-        chrome_layout.setContentsMargins(0, 0, 0, 0)
-        chrome_layout.setSpacing(0)
-        chrome_layout.addWidget(self.title_bar)
-        chrome_layout.addWidget(self._app_menu_bar)
-        self.setMenuWidget(chrome)
+        self.title_bar.attach_menu_bar(self._app_menu_bar)
+        self.title_bar.commandPaletteRequested.connect(self.show_command_palette)
+        self.setMenuWidget(self.title_bar)
 
         self.tabs = SplitWorkspaceWidget(self)
         self.tabs.setDocumentMode(True)
