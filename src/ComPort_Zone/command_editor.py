@@ -83,6 +83,7 @@ from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLIT
 from .widgets import (
     ChevronComboBox,
     CompletionPopupDelegate,
+    LineSpacingController,
     fit_overflow_groups,
     set_button_role,
     style_completion_popup,
@@ -172,8 +173,13 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
+        self._line_spacing = LineSpacingController(self)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
+
+    def set_line_spacing(self, percent: int) -> None:
+        """Set the line spacing as a percentage of the font's natural line height."""
+        self._line_spacing.set_percent(percent)
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.line_number_background = QColor(theme.surface_alt)
@@ -1363,9 +1369,10 @@ class CommandFileEditorDialog(QDialog):
             if issue.severity == "error"
         ]
 
-    def apply_editor_font(self, font: QFont) -> None:
+    def apply_editor_font(self, font: QFont, line_spacing: int = 100) -> None:
         self.editor.setFont(font)
         self.editor.document().setDefaultFont(font)
+        self.editor.set_line_spacing(line_spacing)
         self.editor.update_line_number_area_width(0)
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:

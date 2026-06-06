@@ -478,10 +478,11 @@ class AppSettings:
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
     terminal_font_family: str = ""
+    terminal_line_spacing: int = 115
     line_wrap_enabled: bool = True
     scrollback_size: int = 10000
     receive_display_mode: str = "Text"
-    drawer_collapsed: bool = True
+    drawer_collapsed: bool = False
     drawer_width: int = 260
     drawer_page_index: int = 0
     check_for_updates_on_launch: bool = True
@@ -521,6 +522,7 @@ class AppSettings:
                 "terminal_font": {
                     "family": self.terminal_font_family,
                     "size": self.terminal_font_size,
+                    "line_spacing": self.terminal_line_spacing,
                 },
                 "line_wrap_enabled": self.line_wrap_enabled,
                 "scrollback_size": self.scrollback_size,
@@ -681,6 +683,7 @@ class AppSettings:
             timestamps_enabled=bool(app.get("timestamps_enabled", True)),
             terminal_font_size=int(terminal_font.get("size", 10)),
             terminal_font_family=str(terminal_font.get("family", "")),
+            terminal_line_spacing=int(terminal_font.get("line_spacing", 115)),
             line_wrap_enabled=bool(app.get("line_wrap_enabled", False)),
             scrollback_size=int(app.get("scrollback_size", 10000)),
             receive_display_mode=receive_display_mode,

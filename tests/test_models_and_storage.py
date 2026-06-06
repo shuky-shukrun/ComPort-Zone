@@ -174,6 +174,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             timestamps_enabled=False,
             terminal_font_size=13,
             terminal_font_family="Cascadia Mono",
+            terminal_line_spacing=140,
             line_wrap_enabled=True,
             scrollback_size=20000,
             receive_display_mode="Text + Hex",
@@ -202,6 +203,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertNotIn("serial", saved_payload)
         self.assertEqual(saved_payload["transport"]["profile"]["port"], "COM7")
         self.assertEqual(saved_payload["app"]["terminal_font"]["size"], 13)
+        self.assertEqual(saved_payload["app"]["terminal_font"]["line_spacing"], 140)
         self.assertEqual(saved_payload["app"]["drawer"]["width"], 340)
         self.assertEqual(saved_payload["app"]["drawer"]["page_index"], 1)
         self.assertTrue(saved_payload["app"]["updates"]["check_on_launch"])
@@ -242,6 +244,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertFalse(loaded.timestamps_enabled)
         self.assertEqual(loaded.terminal_font_size, 13)
         self.assertEqual(loaded.terminal_font_family, "Cascadia Mono")
+        self.assertEqual(loaded.terminal_line_spacing, 140)
         self.assertTrue(loaded.line_wrap_enabled)
         self.assertEqual(loaded.scrollback_size, 20000)
         self.assertEqual(loaded.receive_display_mode, "Text + Hex")

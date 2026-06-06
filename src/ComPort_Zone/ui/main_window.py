@@ -834,7 +834,7 @@ class MainWindow(QMainWindow):
             self.settings.drawer_width,
             self.settings.drawer_page_index,
         )
-        editor.apply_editor_font(self.editor_font())
+        editor.apply_editor_font(self.editor_font(), self.settings.terminal_line_spacing)
         if state is not None:
             if state.text or state.dirty or not state.path:
                 editor.restore_text(state.text, dirty=state.dirty)
@@ -1348,12 +1348,14 @@ class MainWindow(QMainWindow):
         dialog = TerminalFontSettingsDialog(
             self.settings.terminal_font_family,
             self.settings.terminal_font_size,
+            self.settings.terminal_line_spacing,
             self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.settings.terminal_font_family = dialog.selected_family()
         self.settings.terminal_font_size = dialog.selected_size()
+        self.settings.terminal_line_spacing = dialog.selected_line_spacing()
         self.apply_terminal_font_settings()
         self.save_settings()
 
@@ -1361,7 +1363,7 @@ class MainWindow(QMainWindow):
         for session in self.iter_sessions():
             session.apply_settings()
         for editor in self.iter_command_file_editors():
-            editor.apply_editor_font(self.editor_font())
+            editor.apply_editor_font(self.editor_font(), self.settings.terminal_line_spacing)
 
     def toggle_timestamps(self) -> None:
         self.set_timestamps_enabled(self.timestamps_action.isChecked())
@@ -1449,7 +1451,7 @@ class MainWindow(QMainWindow):
             session.refresh_quick_commands()
             session.refresh_quick_files()
         for editor in self.iter_command_file_editors():
-            editor.apply_editor_font(self.editor_font())
+            editor.apply_editor_font(self.editor_font(), self.settings.terminal_line_spacing)
             editor.apply_drawer_state(
                 self.settings.drawer_collapsed,
                 self.settings.drawer_width,

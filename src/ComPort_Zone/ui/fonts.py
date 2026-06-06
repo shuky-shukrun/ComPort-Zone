@@ -6,6 +6,12 @@ from PySide6.QtWidgets import QApplication
 TERMINAL_FONT_MIN = 8
 TERMINAL_FONT_MAX = 24
 
+# Line spacing as a percentage of the font's natural line height (100 = the font's
+# default leading). The default is a touch above 100 because mono fonts read tight.
+TERMINAL_LINE_SPACING_MIN = 100
+TERMINAL_LINE_SPACING_MAX = 200
+TERMINAL_LINE_SPACING_DEFAULT = 115
+
 
 def pick_ui_font() -> QFont:
     families = {family.casefold(): family for family in QFontDatabase.families()}

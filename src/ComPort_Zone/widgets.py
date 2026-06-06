@@ -97,6 +97,58 @@ def fit_overflow_groups(bar, fixed, groups, overflow_button, *, reserve: int = 1
     return groups[:collapsed]
 
 
+def _line_height_format(percent: int) -> QTextBlockFormat:
+    fmt = QTextBlockFormat()
+    fmt.setLineHeight(float(percent), QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+    return fmt
+
+
+def apply_line_spacing(text_edit, percent: int) -> None:
+    """Set a proportional line height (100 = the font's own leading) on the whole doc."""
+    cursor = QTextCursor(text_edit.document())
+    cursor.select(QTextCursor.SelectionType.Document)
+    cursor.mergeBlockFormat(_line_height_format(max(100, int(percent))))
+
+
+class LineSpacingController:
+    """Holds a QTextEdit/QPlainTextEdit at a chosen proportional line height, applying
+    it to blocks that appear later — the terminal streams new lines, the editor gains
+    them as the user types — via the document's contentsChange signal."""
+
+    def __init__(self, text_edit) -> None:
+        self._edit = text_edit
+        self._percent = 100
+        self._applying = False
+        text_edit.document().contentsChange.connect(self._on_contents_change)
+
+    def set_percent(self, percent: int) -> None:
+        self._percent = max(100, int(percent))
+        self._guarded(lambda: apply_line_spacing(self._edit, self._percent))
+
+    def _on_contents_change(self, position: int, _removed: int, added: int) -> None:
+        if self._applying or self._percent <= 100:
+            return
+
+        def run() -> None:
+            document = self._edit.document()
+            last = max(0, document.characterCount() - 1)
+            cursor = QTextCursor(document)
+            cursor.setPosition(min(position, last))
+            cursor.setPosition(min(position + max(added, 0), last), QTextCursor.MoveMode.KeepAnchor)
+            cursor.mergeBlockFormat(_line_height_format(self._percent))
+
+        self._guarded(run)
+
+    def _guarded(self, work) -> None:
+        if self._applying:
+            return
+        self._applying = True
+        try:
+            work()
+        finally:
+            self._applying = False
+
+
 class HistoryLineEdit(QLineEdit):
     historyRequested = Signal(int)
     autocompleteRequested = Signal()
@@ -256,7 +308,12 @@ class IntegratedTerminalEdit(QTextEdit):
         self.setAcceptRichText(False)
         self.setUndoRedoEnabled(False)
         self.setAcceptDrops(False)
+        self._line_spacing = LineSpacingController(self)
         self._replace_document("", "", 0)
+
+    def set_line_spacing(self, percent: int) -> None:
+        """Set the line spacing as a percentage of the font's natural line height."""
+        self._line_spacing.set_percent(percent)
 
     def set_terminal_colors(self, *, prompt: str, draft: str, hint: str | None = None) -> None:
         self._prompt_color = prompt

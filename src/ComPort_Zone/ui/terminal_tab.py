@@ -550,6 +550,7 @@ class TerminalSessionWidget(QWidget):
         )
         self.terminal.setFont(terminal_font)
         self.terminal.document().setDefaultFont(terminal_font)
+        self.terminal.set_line_spacing(self.host.settings.terminal_line_spacing)
         if hasattr(self.terminal, "set_terminal_colors"):
             self.terminal.set_terminal_colors(
                 prompt=self.host.theme.tx,
