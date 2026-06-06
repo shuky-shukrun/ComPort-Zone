@@ -519,7 +519,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#editorRunButton:hover {{ background: {run_btn_hover}; }}
     QPushButton#editorRunButton:pressed {{ background: {run_btn_press}; }}
 
-    QLabel#commandFileStatusLabel, QLabel#editorStatusLabel, QLabel#editorPathLabel {{
+    QLabel#editorStatusLabel, QLabel#editorPathLabel {{
         color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px;
     }}
     QToolButton#commandBarOverflow {{

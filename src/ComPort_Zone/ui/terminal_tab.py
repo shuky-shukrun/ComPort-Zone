@@ -278,8 +278,6 @@ class TerminalSessionWidget(QWidget):
         self.script_stop_button.setToolTip("Stop the running command file.")
         set_button_icon(self.script_stop_button, QStyle.StandardPixmap.SP_MediaStop, 15)
         self.script_stop_button.clicked.connect(self.stop_script)
-        self.script_status_label = QLabel("File idle", self.command_bar)
-        self.script_status_label.setObjectName("commandFileStatusLabel")
         self.mode_combo = ChevronComboBox(self.command_bar)
         self.mode_combo.addItems(SEND_MODES)
         self.mode_combo.setFixedWidth(118)
@@ -338,7 +336,6 @@ class TerminalSessionWidget(QWidget):
         command_layout.addWidget(self.script_pause_button)
         command_layout.addWidget(self.script_resume_button)
         command_layout.addWidget(self.script_stop_button)
-        command_layout.addWidget(self.script_status_label)
         command_layout.addStretch(1)
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.rx_display_combo)
@@ -371,8 +368,8 @@ class TerminalSessionWidget(QWidget):
         """Fold controls into the ⋯ menu as the bar narrows, down to just Connect.
 
         Collapse order (least to most important): the send/receive/line-ending combos,
-        then the view toggles, then the status text, then the file-run status. The
-        connection button — and any live script buttons — always stay put.
+        then the view toggles, then the connection status text. The connection button —
+        and any live script buttons — always stay put.
         """
         if not hasattr(self, "command_overflow_button"):
             return
@@ -382,7 +379,7 @@ class TerminalSessionWidget(QWidget):
                 fixed.append(button)
         groups = [
             [self.mode_combo, self.rx_display_combo, self.line_ending_label],
-            [self.status_label, self.script_status_label],
+            [self.status_label],
             [self.timestamp_toggle, self.wrap_toggle, self.hex_toggle, self.log_toggle],
         ]
         collapsed = fit_overflow_groups(self.command_bar, fixed, groups, self.command_overflow_button)
@@ -1382,10 +1379,9 @@ class TerminalSessionWidget(QWidget):
         self.pause_script()
 
     def _refresh_script_controls(self) -> None:
-        if not hasattr(self, "script_status_label"):
+        if not hasattr(self, "script_pause_button"):
             return
         snapshot = self.controller.script_snapshot()
-        connected = self.transport.is_connected
         active = snapshot.is_running or snapshot.is_stopping
         paused = snapshot.is_paused
         stopping = snapshot.is_stopping
@@ -1395,25 +1391,16 @@ class TerminalSessionWidget(QWidget):
         self.script_resume_button.setEnabled(snapshot.can_resume)
         self.script_stop_button.setVisible(active)
         self.script_stop_button.setEnabled(active and not stopping)
-        if stopping:
-            text = "File stopping"
-            tooltip = "Command file is stopping."
-        elif paused:
-            text = "File paused"
-            if snapshot.pause_reason == "connection":
-                tooltip = "Command file is paused after disconnect. Reconnect, then click Resume."
-            elif snapshot.pause_reason == "user+connection":
-                tooltip = "Command file is paused and the connection is closed. Reconnect, then click Resume."
-            else:
-                tooltip = "Command file is paused. Click Resume to continue."
-        elif active:
-            text = "File running"
-            tooltip = "Command file is running."
+        # Running / paused / resumed / stopped / finished are narrated in the terminal
+        # as SYS messages, so the command bar no longer carries a status label. The one
+        # control-actionable hint — why Resume is disabled after a disconnect — rides
+        # on the Resume button's tooltip so it is not lost.
+        if paused and snapshot.pause_reason in ("connection", "user+connection"):
+            self.script_resume_button.setToolTip(
+                "Paused after disconnect — reconnect, then click Resume."
+            )
         else:
-            text = "File idle"
-            tooltip = "No command file is running."
-        self.script_status_label.setText(text)
-        self.script_status_label.setToolTip(tooltip)
+            self.script_resume_button.setToolTip("Resume the paused command file.")
 
     def toggle_logging(self) -> None:
         if self.logger.enabled:

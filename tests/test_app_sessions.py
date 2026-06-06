@@ -900,7 +900,9 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(session.script_pause_button.isHidden())
             self.assertTrue(session.script_resume_button.isHidden())
             self.assertTrue(session.script_stop_button.isHidden())
-            self.assertEqual(session.script_status_label.text(), "File idle")
+            # The "File idle/running/paused" status label is gone — run state is
+            # narrated in the terminal as SYS messages instead.
+            self.assertFalse(hasattr(session, "script_status_label"))
 
             session.toggle_pause()
             self.assertEqual(session.pause_label.text(), "RX paused")
@@ -915,7 +917,6 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(session.script_pause_button.isEnabled())
             self.assertTrue(session.script_resume_button.isHidden())
             self.assertFalse(session.script_stop_button.isHidden())
-            self.assertEqual(session.script_status_label.text(), "File running")
 
             session.controller.script_snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
                 is_running=True,
@@ -927,7 +928,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(session.script_pause_button.isHidden())
             self.assertFalse(session.script_resume_button.isHidden())
             self.assertFalse(session.script_resume_button.isEnabled())
-            self.assertIn("Reconnect", session.script_status_label.toolTip())
+            # The reconnect hint moved from the removed status label to the Resume button.
+            self.assertIn("reconnect", session.script_resume_button.toolTip().lower())
 
             session.controller.script_snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
                 is_running=True,
@@ -937,6 +939,74 @@ class AppSessionTests(unittest.TestCase):
             )
             session._refresh_script_controls()
             self.assertTrue(session.script_resume_button.isEnabled())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_first_launch_opens_side_bar_on_favorites(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_first_launch.json")
+        settings_path.unlink(missing_ok=True)
+        settings_path.with_name(settings_path.name + ".bak").unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            # No settings file yet → genuine first launch: the side bar greets the
+            # user open on the Favorites rail (page 0) rather than collapsed.
+            window = app_module.MainWindow()
+            window.resize(1180, 720)
+            window.show()
+            self.qt.processEvents()
+            self.assertFalse(window.settings.drawer_collapsed)
+            self.assertEqual(window.settings.drawer_page_index, 0)
+            self.assertFalse(window.shared_drawer.panel.isHidden())
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 0)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_returning_launch_keeps_saved_collapsed_side_bar(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_returning_drawer.json")
+        settings_path.unlink(missing_ok=True)
+        self.assertTrue(
+            SettingsService(SettingsStore(settings_path)).save(
+                AppSettings(check_for_updates_on_launch=False, drawer_collapsed=True)
+            )
+        )
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            # A settings file already exists → not a first launch, so the saved
+            # collapsed state is honored (the first-run open does not fire).
+            window = app_module.MainWindow()
+            window.resize(1180, 720)
+            window.show()
+            self.qt.processEvents()
+            self.assertTrue(window.settings.drawer_collapsed)
+            self.assertTrue(window.shared_drawer.panel.isHidden())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
