@@ -53,6 +53,50 @@ def set_widget_state(widget: QWidget, state: str) -> None:
     widget.update()
 
 
+def fit_overflow_groups(bar, fixed, groups, overflow_button, *, reserve: int = 16) -> list:
+    """Hide trailing groups so a command bar's optional widgets fit its width.
+
+    Shared by the terminal and editor command bars so both collapse the same way.
+
+    - ``fixed``: widgets that always stay visible (e.g. Connect / Run).
+    - ``groups``: lists of widgets ordered from FIRST-to-collapse to LAST. As the bar
+      narrows, whole groups move into ``overflow_button``'s menu, highest priority
+      (last group) kept visible longest.
+    - ``overflow_button`` is shown whenever anything is collapsed.
+
+    Widths come from each widget's ``sizeHint`` (valid even while hidden), so the bar
+    expands again — un-hiding groups — as it widens. Returns the collapsed groups so
+    the caller can populate the overflow menu accordingly.
+    """
+    layout = bar.layout()
+    spacing = layout.spacing()
+    margins = layout.contentsMargins()
+
+    def width_of(widget) -> int:
+        return widget.sizeHint().width() + spacing
+
+    base = margins.left() + margins.right() + reserve + sum(width_of(w) for w in fixed)
+    overflow_width = width_of(overflow_button)
+    available = bar.width()
+
+    collapsed = 0
+    while collapsed < len(groups):
+        remaining = [w for group in groups[collapsed:] for w in group]
+        needed = base + sum(width_of(w) for w in remaining)
+        if collapsed:
+            needed += overflow_width
+        if needed <= available:
+            break
+        collapsed += 1
+
+    hidden = {w for group in groups[:collapsed] for w in group}
+    for group in groups:
+        for widget in group:
+            widget.setVisible(widget not in hidden)
+    overflow_button.setVisible(collapsed > 0)
+    return groups[:collapsed]
+
+
 class HistoryLineEdit(QLineEdit):
     historyRequested = Signal(int)
     autocompleteRequested = Signal()

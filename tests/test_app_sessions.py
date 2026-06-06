@@ -182,6 +182,59 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_terminal_command_bar_collapses_to_connect_when_narrow(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_term_collapse.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            app_module.default_config_path = lambda: settings_path
+            window = None
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                window.setMinimumSize(260, 400)
+                window.resize(1100, 700)
+                window.show()
+                self.qt.processEvents()
+                window.set_drawer_collapsed(True)
+                if window.workspace_tab_count() == 0:
+                    window.add_session(prompt_settings=False)
+                self.qt.processEvents()
+                session = window.current_session()
+
+                window.resize(1100, 700)
+                for _ in range(4):
+                    self.qt.processEvents()
+                self.assertFalse(session.command_overflow_button.isVisible())
+                self.assertTrue(session.wrap_toggle.isVisible())
+
+                window.resize(300, 700)
+                for _ in range(6):
+                    self.qt.processEvents()
+                # Only the connection button (plus ⋯) survives.
+                self.assertTrue(session.connection_button.isVisible())
+                self.assertTrue(session.command_overflow_button.isVisible())
+                self.assertFalse(session.mode_combo.isVisible())
+                self.assertFalse(session.wrap_toggle.isVisible())
+                self.assertFalse(session.status_label.isVisible())
+
+                session._build_command_overflow_menu()
+                labels = [action.text() for action in session._command_overflow_menu.actions()]
+                self.assertIn("Timestamps", labels)
+            finally:
+                app_module.default_config_path = old_config_path
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_launch_focus_targets_command_file_editor_caret_end(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_focus_editor.json")
         settings_path.unlink(missing_ok=True)
@@ -687,11 +740,19 @@ class AppSessionTests(unittest.TestCase):
                 )
             )
             window = app_module.MainWindow()
-            window.resize(1000, 700)
+            # Wide enough that neither split pane's command bar collapses its status
+            # into the ⋯ overflow (that progressive collapse is covered elsewhere).
+            window.resize(1500, 700)
             window.show()
             self.qt.processEvents()
             sessions = window.iter_sessions()
             window.set_drawer_collapsed(False)
+
+            # Single pane: the gradient active-split-side edge stays hidden — with one
+            # pane there is nothing to disambiguate.
+            self.assertEqual(window.tabs.pane_count(), 1)
+            self.assertFalse(sessions[0].property("activeWorkspaceTab"))
+            self.assertFalse(sessions[1].property("activeWorkspaceTab"))
 
             window.split_tab_right(window.tabs.indexOf(sessions[1]))
             self.qt.processEvents()
@@ -744,6 +805,13 @@ class AppSessionTests(unittest.TestCase):
                 window.connection_status_label.text(),
                 sessions[0].connection_status_text(),
             )
+
+            # Re-joining back to one pane hides the edge again on both tabs.
+            window.join_workspace_panes()
+            self.qt.processEvents()
+            self.assertEqual(window.tabs.pane_count(), 1)
+            self.assertFalse(sessions[0].property("activeWorkspaceTab"))
+            self.assertFalse(sessions[1].property("activeWorkspaceTab"))
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

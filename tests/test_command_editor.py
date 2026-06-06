@@ -369,6 +369,47 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_editor_command_bar_collapses_to_run_button_when_narrow(self) -> None:
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(),
+            run_target_service=CommandRunTargetService(
+                targets_supplier=lambda: [CommandRunTarget(7, "COM7 · Serial")],
+                run_callback=lambda request, target_id: True,
+            ),
+        )
+        try:
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+            dialog.setMinimumSize(150, 150)  # simulate being squeezed inside a narrow pane
+            dialog.show()
+            dialog.refresh_run_targets()
+            self.qt.processEvents()
+
+            dialog.resize(900, 480)
+            self.qt.processEvents()
+            self.assertFalse(dialog.command_overflow_button.isVisible())
+            self.assertTrue(dialog.warn_unknown.isVisible())
+            self.assertTrue(dialog.run_target_combo.isVisible())
+
+            dialog.resize(300, 480)
+            for _ in range(4):
+                self.qt.processEvents()
+            # Only the Run button (plus ⋯) survives; everything else folds away.
+            self.assertTrue(dialog.run_button.isVisible())
+            self.assertTrue(dialog.command_overflow_button.isVisible())
+            self.assertFalse(dialog.warn_unknown.isVisible())
+            self.assertFalse(dialog.wrap_toggle.isVisible())
+            self.assertFalse(dialog.run_target_combo.isVisible())
+
+            dialog._build_command_overflow_menu()
+            labels = [action.text() for action in dialog._command_overflow_menu.actions()]
+            self.assertIn("Warn unknown commands", labels)
+            self.assertIn("Wrap long lines", labels)
+            self.assertIn("Run on", labels)
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
     def test_editor_command_bar_has_green_run_wrap_and_send_to(self) -> None:
         dialog = CommandFileEditorDialog(
             sources=CommandEditorSources(),

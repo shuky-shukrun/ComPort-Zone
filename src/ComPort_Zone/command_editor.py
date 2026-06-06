@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStyle,
     QTextEdit,
@@ -79,7 +80,13 @@ from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActio
 from .themes import VS_CODE_DARK, ThemePalette
 from .ui.search_overlay import SearchOverlay
 from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
-from .widgets import ChevronComboBox, CompletionPopupDelegate, set_button_role, style_completion_popup
+from .widgets import (
+    ChevronComboBox,
+    CompletionPopupDelegate,
+    fit_overflow_groups,
+    set_button_role,
+    style_completion_popup,
+)
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -1165,18 +1172,36 @@ class CommandFileEditorDialog(QDialog):
         the (shrunk) send-to target + a green Run button."""
         bar = QFrame(self)
         bar.setObjectName("commandBar")
+        self._command_bar = bar
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(6)
         self.status_label.setParent(bar)
+        # Let the status text yield its space as the bar narrows (it's mirrored in the
+        # window footer), so the controls have room before they fold into ⋯.
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.status_label, 1)
         layout.addWidget(self.warn_unknown)
         self.wrap_toggle = self._status_toggle("wrap", "Wrap long lines", self._toggle_wrap)
         self.wrap_toggle.setChecked(True)  # QPlainTextEdit wraps by default
         layout.addWidget(self.wrap_toggle)
+        # ⋯ overflow: as the bar narrows these secondary controls fold into its menu,
+        # keeping only the Run button (mirrors the terminal's command bar).
+        self.command_overflow_button = QToolButton(bar)
+        self.command_overflow_button.setObjectName("commandBarOverflow")
+        self.command_overflow_button.setText("⋯")
+        self.command_overflow_button.setToolTip("More controls")
+        self.command_overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_overflow_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.command_overflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._command_overflow_menu = QMenu(self.command_overflow_button)
+        self._command_overflow_menu.aboutToShow.connect(self._build_command_overflow_menu)
+        self.command_overflow_button.setMenu(self._command_overflow_menu)
+        self.command_overflow_button.hide()
+        self._overflow_collapsed: set = set()
         if self._show_run_bar:
-            send_label = QLabel("Send to", bar)
-            send_label.setObjectName("editorSendLabel")
+            self._send_label = QLabel("Send to", bar)
+            self._send_label.setObjectName("editorSendLabel")
             self.run_target_combo = ChevronComboBox(bar)
             self.run_target_combo.setMinimumWidth(110)
             self.run_target_combo.setMaximumWidth(210)
@@ -1187,12 +1212,68 @@ class CommandFileEditorDialog(QDialog):
             set_button_icon(self.run_button, "play", 12, "#ffffff")
             self.run_button.clicked.connect(self.send_to_selected_target)
             self.send_to_target_button = self.run_button  # back-compat alias
-            layout.addWidget(send_label)
+            layout.addWidget(self._send_label)
             layout.addWidget(self.run_target_combo)
+            layout.addWidget(self.command_overflow_button)
             layout.addWidget(self.run_button)
         elif self.font_change_callback and not self.embedded:
+            layout.addWidget(self.command_overflow_button)
             self._add_font_controls(layout, bar)
+        else:
+            layout.addWidget(self.command_overflow_button)
+        bar.installEventFilter(self)
         return bar
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is getattr(self, "_command_bar", None) and event.type() == QEvent.Type.Resize:
+            self._relayout_command_bar()
+        return super().eventFilter(watched, event)
+
+    def _relayout_command_bar(self) -> None:
+        """Fold the secondary controls into the ⋯ menu as the bar narrows, keeping
+        only the Run button (Warn toggle first, then Wrap, then the send-to target)."""
+        if not hasattr(self, "command_overflow_button"):
+            return
+        if self._show_run_bar:
+            fixed = [self.run_button]
+            groups = [
+                [self.warn_unknown],
+                [self.wrap_toggle],
+                [self._send_label, self.run_target_combo],
+            ]
+        else:
+            fixed = []
+            groups = [[self.warn_unknown], [self.wrap_toggle]]
+        collapsed = fit_overflow_groups(self._command_bar, fixed, groups, self.command_overflow_button)
+        self._overflow_collapsed = {widget for group in collapsed for widget in group}
+
+    def _build_command_overflow_menu(self) -> None:
+        menu = self._command_overflow_menu
+        menu.clear()
+        collapsed = self._overflow_collapsed
+        if self.warn_unknown in collapsed:
+            action = menu.addAction("Warn unknown commands")
+            action.setCheckable(True)
+            action.setChecked(self.warn_unknown.isChecked())
+            action.triggered.connect(lambda checked: self.warn_unknown.setChecked(checked))
+        if self.wrap_toggle in collapsed:
+            action = menu.addAction("Wrap long lines")
+            action.setCheckable(True)
+            action.setChecked(self.wrap_toggle.isChecked())
+            action.triggered.connect(lambda _checked=False: self.wrap_toggle.click())
+        if self._show_run_bar and self.run_target_combo in collapsed:
+            if not menu.isEmpty():
+                menu.addSeparator()
+            target_menu = menu.addMenu("Run on")
+            for index in range(self.run_target_combo.count()):
+                action = target_menu.addAction(self.run_target_combo.itemText(index))
+                action.setCheckable(True)
+                action.setChecked(index == self.run_target_combo.currentIndex())
+                action.triggered.connect(
+                    lambda _checked=False, idx=index: self.run_target_combo.setCurrentIndex(idx)
+                )
+        if menu.isEmpty():
+            menu.addAction("No hidden controls").setEnabled(False)
 
     def _toolbar_icon(self, icon: str, tip: str, callback) -> QToolButton:
         button = QToolButton(self)

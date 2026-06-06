@@ -56,7 +56,13 @@ from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan,
 from ..terminal_view import TerminalView, prompt_leader_text
 from ..themes import mix_hex
 from ..transports import SerialTransportAdapter
-from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
+from ..widgets import (
+    ChevronComboBox,
+    IntegratedTerminalEdit,
+    fit_overflow_groups,
+    set_button_role,
+    set_widget_state,
+)
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
 from .search_overlay import SearchOverlay
@@ -316,7 +322,7 @@ class TerminalSessionWidget(QWidget):
         self.command_overflow_button = QToolButton(self.command_bar)
         self.command_overflow_button.setObjectName("commandBarOverflow")
         self.command_overflow_button.setText("⋯")
-        self.command_overflow_button.setToolTip("Send mode, receive display, line ending")
+        self.command_overflow_button.setToolTip("More controls")
         self.command_overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.command_overflow_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.command_overflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -324,11 +330,9 @@ class TerminalSessionWidget(QWidget):
         self._command_overflow_menu.aboutToShow.connect(self._build_command_overflow_menu)
         self.command_overflow_button.setMenu(self._command_overflow_menu)
         self.command_overflow_button.hide()
-        self._command_secondary = [
-            self.mode_combo,
-            self.rx_display_combo,
-            self.line_ending_label,
-        ]
+        # Widgets currently folded into the ⋯ menu (set by _relayout_command_bar);
+        # _build_command_overflow_menu reads it to show only what's collapsed.
+        self._overflow_collapsed: set = set()
         command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.connection_button)
         command_layout.addWidget(self.script_pause_button)
@@ -364,51 +368,61 @@ class TerminalSessionWidget(QWidget):
         return super().eventFilter(obj, event)
 
     def _relayout_command_bar(self) -> None:
-        """Collapse the IO controls into the overflow menu when the bar is narrow."""
+        """Fold controls into the ⋯ menu as the bar narrows, down to just Connect.
+
+        Collapse order (least to most important): the send/receive/line-ending combos,
+        then the view toggles, then the status text, then the file-run status. The
+        connection button — and any live script buttons — always stay put.
+        """
         if not hasattr(self, "command_overflow_button"):
             return
-        layout = self.command_bar.layout()
-        spacing = layout.spacing()
-        margins = layout.contentsMargins()
-        essentials = [
-            self.status_label,
-            self.connection_button,
-            self.script_status_label,
-            self.timestamp_toggle,
-            self.wrap_toggle,
-            self.hex_toggle,
-            self.log_toggle,
-        ]
+        fixed = [self.connection_button]
         for button in (self.script_pause_button, self.script_resume_button, self.script_stop_button):
-            if button.isVisible():
-                essentials.append(button)
-        needed = margins.left() + margins.right() + 16
-        for widget in essentials + self._command_secondary:
-            needed += widget.sizeHint().width() + spacing
-        collapse = self.command_bar.width() < needed
-        for widget in self._command_secondary:
-            widget.setVisible(not collapse)
-        self.command_overflow_button.setVisible(collapse)
+            if not button.isHidden():
+                fixed.append(button)
+        groups = [
+            [self.mode_combo, self.rx_display_combo, self.line_ending_label],
+            [self.status_label, self.script_status_label],
+            [self.timestamp_toggle, self.wrap_toggle, self.hex_toggle, self.log_toggle],
+        ]
+        collapsed = fit_overflow_groups(self.command_bar, fixed, groups, self.command_overflow_button)
+        self._overflow_collapsed = {widget for group in collapsed for widget in group}
 
     def _build_command_overflow_menu(self) -> None:
         menu = self._command_overflow_menu
         menu.clear()
-        send_menu = menu.addMenu("Send mode")
-        for index in range(self.mode_combo.count()):
-            action = send_menu.addAction(self.mode_combo.itemText(index))
-            action.setCheckable(True)
-            action.setChecked(index == self.mode_combo.currentIndex())
-            action.triggered.connect(lambda _checked=False, idx=index: self.mode_combo.setCurrentIndex(idx))
-        receive_menu = menu.addMenu("Receive display")
-        for index in range(self.rx_display_combo.count()):
-            action = receive_menu.addAction(self.rx_display_combo.itemText(index))
-            action.setCheckable(True)
-            action.setChecked(index == self.rx_display_combo.currentIndex())
-            action.triggered.connect(lambda _checked=False, idx=index: self.rx_display_combo.setCurrentIndex(idx))
-        menu.addSeparator()
-        line_ending = self.line_ending_label.text().strip()
-        if line_ending:
-            menu.addAction(line_ending).setEnabled(False)
+        collapsed = self._overflow_collapsed
+        if self.mode_combo in collapsed:
+            send_menu = menu.addMenu("Send mode")
+            for index in range(self.mode_combo.count()):
+                action = send_menu.addAction(self.mode_combo.itemText(index))
+                action.setCheckable(True)
+                action.setChecked(index == self.mode_combo.currentIndex())
+                action.triggered.connect(lambda _checked=False, idx=index: self.mode_combo.setCurrentIndex(idx))
+            receive_menu = menu.addMenu("Receive display")
+            for index in range(self.rx_display_combo.count()):
+                action = receive_menu.addAction(self.rx_display_combo.itemText(index))
+                action.setCheckable(True)
+                action.setChecked(index == self.rx_display_combo.currentIndex())
+                action.triggered.connect(lambda _checked=False, idx=index: self.rx_display_combo.setCurrentIndex(idx))
+            line_ending = self.line_ending_label.text().strip()
+            if line_ending:
+                menu.addAction(f"Line ending: {line_ending}").setEnabled(False)
+        if self.timestamp_toggle in collapsed:
+            if not menu.isEmpty():
+                menu.addSeparator()
+            for toggle, label in (
+                (self.timestamp_toggle, "Timestamps"),
+                (self.wrap_toggle, "Wrap lines"),
+                (self.hex_toggle, "Hex view"),
+                (self.log_toggle, "Log to file"),
+            ):
+                action = menu.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(toggle.isChecked())
+                action.triggered.connect(lambda _checked=False, button=toggle: button.click())
+        if menu.isEmpty():
+            menu.addAction("No hidden controls").setEnabled(False)
 
     def _make_status_toggle(self, icon_name: str, tooltip: str, slot) -> QToolButton:
         """A compact checkable icon button for the command bar's status toggles."""
