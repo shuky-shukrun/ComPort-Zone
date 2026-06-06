@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QPolygonF
+from PySide6.QtGui import QAction, QColor, QIcon, QLinearGradient, QPainter, QPixmap, QPolygonF
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QAbstractButton, QApplication, QMenu, QStyle
 
@@ -259,6 +259,48 @@ def scrollbar_arrow_image_path(direction: str, color: str, size: int = 9) -> str
     pixmap.save(str(path), "PNG")
     result = str(path).replace("\\", "/")
     _ARROW_CACHE[key] = result
+    return result
+
+
+_GRADIENT_LINE_CACHE: dict[tuple, str] = {}
+
+
+def gradient_line_image_path(
+    colors: tuple[str, ...], *, width: int = 256, thickness: int = 2
+) -> str:
+    """Render a horizontal multi-stop gradient strip to a cached PNG and return a
+    forward-slashed path for QSS ``border-image: url(...)``.
+
+    QSS ``border`` / ``border-top`` / ``border-bottom`` accept only a solid color, so
+    a gradient accent line (the active tab underline, the active split-pane edge)
+    needs an image. The strip is exactly ``thickness`` px tall so a single-edge
+    ``border-image`` slice (e.g. ``0 0 2 0``) leaves a zero-height center region and
+    no gradient fill bleeds over the widget body."""
+    stops = tuple(colors) or ("#000000",)
+    key = (stops, width, thickness)
+    cached = _GRADIENT_LINE_CACHE.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+    pixmap = QPixmap(width, thickness)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    gradient = QLinearGradient(0.0, 0.0, float(width), 0.0)
+    if len(stops) == 1:
+        gradient.setColorAt(0.0, QColor(stops[0]))
+        gradient.setColorAt(1.0, QColor(stops[0]))
+    else:
+        last = len(stops) - 1
+        for index, color in enumerate(stops):
+            gradient.setColorAt(index / last, QColor(color))
+    painter.fillRect(0, 0, width, thickness, gradient)
+    painter.end()
+    cache_dir = Path(tempfile.gettempdir()) / "comport-zone-ui"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tag = "-".join(color.lstrip("#") for color in stops)
+    path = cache_dir / f"gradline-{tag}-{width}x{thickness}.png"
+    pixmap.save(str(path), "PNG")
+    result = str(path).replace("\\", "/")
+    _GRADIENT_LINE_CACHE[key] = result
     return result
 
 

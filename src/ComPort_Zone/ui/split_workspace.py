@@ -295,9 +295,14 @@ class SplitWorkspaceWidget(QWidget):
     def _refresh_active_pane_styles(self) -> None:
         for pane in self._panes:
             pane.setProperty("activePane", pane is self._active_pane)
-            pane.style().unpolish(pane)
-            pane.style().polish(pane)
-            pane.update()
+            # The selected-tab underline switches on the *pane's* activePane property
+            # (`QTabWidget[activePane="false"] QTabBar::tab:selected`). Qt does not
+            # invalidate a descendant's style cache when an ancestor property changes,
+            # so the tab bar must be re-polished explicitly or it keeps the stale rule.
+            for target in (pane, pane.tabBar()):
+                target.style().unpolish(target)
+                target.style().polish(target)
+                target.update()
 
     def _pane_current_changed(self, pane: TerminalTabWidget) -> None:
         self._set_active_pane(pane)

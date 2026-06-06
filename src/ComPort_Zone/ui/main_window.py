@@ -1224,13 +1224,17 @@ class MainWindow(QMainWindow):
 
     def update_workspace_split_chrome(self, *, drawer_source=None) -> None:
         active_widget = self.tabs.currentWidget()
+        # The full-width gradient edge above the active tab only earns its keep when
+        # the workspace is split — it marks *which* pane is active. With a single pane
+        # there is nothing to disambiguate, so it stays hidden.
+        is_split = getattr(self.tabs, "pane_count", lambda: 1)() > 1
         for ref in self.tabs.iter_tab_refs():
             widget = ref.widget
             # The side bar is a single shared drawer to the left of the tabs; the
             # per-tab drawers stay hidden so the tabs sit only over the terminal.
             if hasattr(widget, "set_workspace_drawer_visible"):
                 widget.set_workspace_drawer_visible(False)
-            self._set_workspace_tab_active_property(widget, widget is active_widget)
+            self._set_workspace_tab_active_property(widget, is_split and widget is active_widget)
         self._apply_shared_drawer_state()
         terminal_owns_status = isinstance(active_widget, TerminalSessionWidget)
         # The shared connection chip/button are terminal-specific: terminals show

@@ -18,7 +18,11 @@ TX=green / RX=blue semantics) maps directly onto the same tokens the prototype u
 
 from __future__ import annotations
 
-from ..icons import checked_checkbox_image_path, scrollbar_arrow_image_path
+from ..icons import (
+    checked_checkbox_image_path,
+    gradient_line_image_path,
+    scrollbar_arrow_image_path,
+)
 from ..themes import ThemePalette, mix_hex, rgba
 from .tokens import (
     CONTROL_H,
@@ -79,6 +83,15 @@ def build_stylesheet(theme: ThemePalette) -> str:
     red = theme.error
     on_accent = theme.on_accent
     grad = brand_gradient(theme)
+    # The brand gradient stops, also rendered to a thin PNG so it can paint the
+    # gradient accent *lines* (active tab underline + active split-pane edge) — QSS
+    # `border` only accepts a solid color, so those use `border-image` instead.
+    grad_stops = tuple(s.strip() for s in theme.brand_gradient.split(",") if s.strip()) or (accent,)
+    grad_line = gradient_line_image_path(grad_stops)
+    # A flat strip (same mechanism) for the *inactive* split pane's selected tab —
+    # `border-image: none` does not reliably reset an inherited border-image in Qt
+    # QSS, so the muted line must replace the image with another image.
+    muted_line = gradient_line_image_path((bd_strong,))
     # A real tick for checked checkboxes (QSS-styled indicators drop the native one).
     check_img = checked_checkbox_image_path(accent, "#ffffff", 16, RADIUS_SM)
 
@@ -286,8 +299,15 @@ def build_stylesheet(theme: ThemePalette) -> str:
         font-size: {UI_FS}px;
     }}
     QTabBar::tab:hover:!selected {{ color: {tx2}; }}
-    QTabBar::tab:selected {{ color: {tx}; border-bottom: 2px solid {accent}; }}
-    QTabWidget[activePane="false"] QTabBar::tab:selected {{ border-bottom: 2px solid {bd_strong}; }}
+    QTabBar::tab:selected {{
+        color: {tx};
+        border-bottom: 2px solid transparent;
+        border-image: url({grad_line}) 0 0 2 0 stretch;
+    }}
+    QTabWidget[activePane="false"] QTabBar::tab:selected {{
+        border-bottom: 2px solid transparent;
+        border-image: url({muted_line}) 0 0 2 0 stretch;
+    }}
 
     QToolButton#newTabButton {{
         background: transparent;
@@ -445,7 +465,10 @@ def build_stylesheet(theme: ThemePalette) -> str:
         selection-background-color: {sel};
         selection-color: {tx};
     }}
-    QTextEdit#terminal[activeWorkspaceTab="true"] {{ border-top: 2px solid {accent}; }}
+    QTextEdit#terminal[activeWorkspaceTab="true"] {{
+        border-top: 2px solid transparent;
+        border-image: url({grad_line}) 2 0 0 0 stretch;
+    }}
 
     QFrame#commandBar, QFrame#searchBar {{
         background: {panel};
@@ -558,7 +581,10 @@ def build_stylesheet(theme: ThemePalette) -> str:
         selection-background-color: {sel};
         selection-color: {tx};
     }}
-    QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{ border-top: 2px solid {accent}; }}
+    QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
+        border-top: 2px solid transparent;
+        border-image: url({grad_line}) 2 0 0 0 stretch;
+    }}
     QLabel#editorFontControlsLabel, QLabel#statusFontControlsLabel {{
         color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px 0 8px;
     }}
