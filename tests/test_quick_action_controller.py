@@ -129,6 +129,58 @@ class QuickActionControllerTests(unittest.TestCase):
             csv_path.unlink(missing_ok=True)
             parent.deleteLater()
 
+    def test_set_quick_file_favorite_toggles_and_tracks_favorites_order(self) -> None:
+        parent = QWidget()
+        try:
+            library = QuickActionLibrary(
+                quick_files=[
+                    QuickFile(id="alpha", label="Alpha", path="C:/alpha.cpz"),
+                    QuickFile(id="beta", label="Beta", path="C:/beta.cpz"),
+                ]
+            )
+            harness = QuickActionControllerHarness(parent, library)
+
+            harness.controller.set_quick_file_favorite("beta", True)
+            self.assertTrue(library.file_by_id("beta").favorite)
+            self.assertEqual(
+                [f.id for f in harness.controller.favorite_quick_files_snapshot()], ["beta"]
+            )
+            # The favourite-file order picked up the newly-starred file.
+            self.assertEqual(library.favorite_file_order, ["beta"])
+            self.assertEqual(harness.file_refreshes, ["beta"])
+            self.assertEqual(harness.save_count, 1)
+
+            # Un-starring prunes it from the favourites order.
+            harness.controller.set_quick_file_favorite("beta", False)
+            self.assertFalse(library.file_by_id("beta").favorite)
+            self.assertEqual(library.favorite_file_order, [])
+            self.assertEqual(harness.controller.favorite_quick_files_snapshot(), [])
+        finally:
+            parent.deleteLater()
+
+    def test_reorder_favorite_commands_keeps_saved_order_intact(self) -> None:
+        parent = QWidget()
+        try:
+            library = QuickActionLibrary(
+                quick_commands=[
+                    QuickCommand(id="a", label="A", command="a", favorite=True),
+                    QuickCommand(id="b", label="B", command="b", favorite=False),
+                    QuickCommand(id="c", label="C", command="c", favorite=True),
+                ]
+            )
+            harness = QuickActionControllerHarness(parent, library)
+
+            harness.controller.reorder_favorite_commands(["c", "a"], selected_id="c")
+
+            self.assertEqual(library.favorite_command_order, ["c", "a"])
+            self.assertEqual(library.favorite_command_sort_mode, "Custom")
+            # Saved Commands order is unaffected (independent favourites order).
+            self.assertEqual([c.id for c in library.quick_commands], ["a", "b", "c"])
+            self.assertEqual(harness.command_refreshes, ["c"])
+            self.assertEqual(harness.save_count, 1)
+        finally:
+            parent.deleteLater()
+
     def test_move_quick_file_persists_new_order(self) -> None:
         parent = QWidget()
         try:

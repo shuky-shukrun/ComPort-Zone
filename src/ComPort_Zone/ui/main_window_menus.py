@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu, QStyle
 
 from ..command_registry import CommandRegistry
-from ..icons import standard_icon
+from ..icons import build_icon, set_action_icon
 from ..models import THEME_OPTIONS
 
 
@@ -80,11 +80,11 @@ class MainWindowMenuBuilder:
         tools_menu.addSeparator()
 
         command_files_menu = tools_menu.addMenu("Command Files")
-        command_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_MediaPlay))
+        set_action_icon(command_files_menu, QStyle.StandardPixmap.SP_MediaPlay)
         self.add_registered_action(command_files_menu, "command_file.new")
         self.add_registered_action(command_files_menu, "command_file.open_editor")
         run_editor_menu = command_files_menu.addMenu("Run in Terminal")
-        run_editor_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ArrowForward))
+        set_action_icon(run_editor_menu, QStyle.StandardPixmap.SP_ArrowForward)
         run_editor_menu.aboutToShow.connect(lambda menu=run_editor_menu: self.host.populate_run_editor_menu(menu))
         command_files_menu.addSeparator()
         self.add_registered_action(command_files_menu, "command_file.run")
@@ -92,11 +92,11 @@ class MainWindowMenuBuilder:
         self.add_registered_action(command_files_menu, "command_file.stop")
 
         quick_commands_menu = tools_menu.addMenu("Quick Commands")
-        quick_commands_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_CommandLink))
+        set_action_icon(quick_commands_menu, QStyle.StandardPixmap.SP_CommandLink)
         self.add_registered_menu_section(quick_commands_menu, "quick_commands")
 
         quick_files_menu = tools_menu.addMenu("Quick Files")
-        quick_files_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        set_action_icon(quick_files_menu, QStyle.StandardPixmap.SP_DirOpenIcon)
         self.add_registered_menu_section(quick_files_menu, "quick_files")
 
         help_menu = menu_bar.addMenu("Help")
@@ -158,7 +158,7 @@ class MainWindowMenuBuilder:
     ) -> QAction:
         action = QAction(text, self.host)
         if icon is not None:
-            action.setIcon(standard_icon(icon))
+            set_action_icon(action, icon)
         if shortcut:
             action.setShortcut(shortcut)
         action.setCheckable(checkable)
@@ -177,7 +177,7 @@ class MainWindowMenuBuilder:
     ) -> QAction:
         action = QAction(text, self.host)
         if icon is not None:
-            action.setIcon(standard_icon(icon))
+            action.setIcon(build_icon(icon))
         action.setEnabled(enabled)
         action.triggered.connect(lambda _checked=False: callback())
         menu.addAction(action)

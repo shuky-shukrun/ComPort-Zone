@@ -219,6 +219,10 @@ class QuickActionLibrary:
         command_sort_mode: str = "Custom",
         command_hidden_groups: list[str] | None = None,
         file_sort_mode: str = "Custom",
+        favorite_command_order: list[str] | None = None,
+        favorite_file_order: list[str] | None = None,
+        favorite_command_sort_mode: str = "Custom",
+        favorite_file_sort_mode: str = "Custom",
     ) -> None:
         self.quick_commands = list(quick_commands or [])
         self.quick_files = list(quick_files or [])
@@ -229,6 +233,18 @@ class QuickActionLibrary:
         )
         self.command_hidden_groups = list(command_hidden_groups or [])
         self.file_sort_mode = file_sort_mode if file_sort_mode in QUICK_FILE_SORT_MODES else "Custom"
+        # Favourites keep their own curated order + sort mode (the "independent
+        # order" the user picked) — separate from the full Saved lists above.
+        self.favorite_command_order = list(favorite_command_order or [])
+        self.favorite_file_order = list(favorite_file_order or [])
+        self.favorite_command_sort_mode = (
+            favorite_command_sort_mode
+            if favorite_command_sort_mode in QUICK_COMMAND_SORT_MODES
+            else "Custom"
+        )
+        self.favorite_file_sort_mode = (
+            favorite_file_sort_mode if favorite_file_sort_mode in QUICK_FILE_SORT_MODES else "Custom"
+        )
 
     def command_by_id(self, command_id: str) -> QuickCommand | None:
         return next((command for command in self.quick_commands if command.id == command_id), None)
@@ -247,52 +263,152 @@ class QuickActionLibrary:
                 seen.add(key)
         return sorted(groups, key=str.casefold)
 
+    @staticmethod
+    def _sort_commands_with(commands: list[QuickCommand], mode: str) -> list[QuickCommand]:
+        if mode == "Title":
+            return sorted(
+                commands,
+                key=lambda command: (
+                    command.display_label().casefold(),
+                    quick_group_name(command.group).casefold(),
+                    command.command.casefold(),
+                ),
+            )
+        if mode == "Group":
+            return sorted(
+                commands,
+                key=lambda command: (
+                    quick_group_name(command.group).casefold(),
+                    command.display_label().casefold(),
+                    command.command.casefold(),
+                ),
+            )
+        return list(commands)
+
+    def _sort_commands(self, commands: list[QuickCommand]) -> list[QuickCommand]:
+        return self._sort_commands_with(commands, self.command_sort_mode)
+
+    @staticmethod
+    def _apply_custom_order(items: list, order: list[str]) -> list:
+        """Arrange ``items`` by the id sequence in ``order``; any ids not present
+        keep their original relative order, appended at the end."""
+        by_id = {item.id: item for item in items}
+        seen: set[str] = set()
+        result = []
+        for item_id in order:
+            item = by_id.get(item_id)
+            if item is not None and item_id not in seen:
+                result.append(item)
+                seen.add(item_id)
+        result.extend(item for item in items if item.id not in seen)
+        return result
+
+    @staticmethod
+    def _synced_order(order_seed: list[str], member_ids: list[str]) -> list[str]:
+        """An id order limited to current members: honour ``order_seed`` first,
+        then append any members it is missing (in their natural order)."""
+        members = set(member_ids)
+        result = [item_id for item_id in order_seed if item_id in members]
+        seen = set(result)
+        result.extend(item_id for item_id in member_ids if item_id not in seen)
+        return result
+
     def visible_commands(self) -> list[QuickCommand]:
         hidden = {group.casefold() for group in self.command_hidden_groups}
-        commands = [
+        return self._sort_commands(
+            [
+                command
+                for command in self.quick_commands
+                if quick_group_name(command.group).casefold() not in hidden
+            ]
+        )
+
+    def favorite_commands(self) -> list[QuickCommand]:
+        """Favourited saved commands (subset), in the favourites' own order/sort.
+
+        Hidden groups apply here too, so the Favorites group control can fold a
+        group away just like Saved Commands."""
+        hidden = {group.casefold() for group in self.command_hidden_groups}
+        favorites = [
             command
             for command in self.quick_commands
-            if quick_group_name(command.group).casefold() not in hidden
+            if command.favorite and quick_group_name(command.group).casefold() not in hidden
         ]
-        if self.command_sort_mode == "Title":
+        if self.favorite_command_sort_mode == "Custom":
+            return self._apply_custom_order(favorites, self.favorite_command_order)
+        return self._sort_commands_with(favorites, self.favorite_command_sort_mode)
+
+    def sync_favorite_command_order(self) -> None:
+        self.favorite_command_order = self._synced_order(
+            self.favorite_command_order,
+            [command.id for command in self.quick_commands if command.favorite],
+        )
+
+    def reorder_favorite_commands(self, command_ids: list[str]) -> bool:
+        member_ids = [command.id for command in self.quick_commands if command.favorite]
+        new_order = self._synced_order(command_ids, member_ids)
+        changed = new_order != self.favorite_command_order or self.favorite_command_sort_mode != "Custom"
+        self.favorite_command_order = new_order
+        self.favorite_command_sort_mode = "Custom"
+        return changed
+
+    def set_favorite_command_sort_mode(self, mode: str) -> None:
+        self.favorite_command_sort_mode = mode if mode in QUICK_COMMAND_SORT_MODES else "Custom"
+
+    def set_favorite_file_sort_mode(self, mode: str) -> None:
+        self.favorite_file_sort_mode = mode if mode in QUICK_FILE_SORT_MODES else "Custom"
+
+    def command_by_text(self, text: str) -> QuickCommand | None:
+        """First saved command whose command text matches (used to de-duplicate
+        when saving/favouriting from history)."""
+        text = text.strip()
+        if not text:
+            return None
+        return next((command for command in self.quick_commands if command.command.strip() == text), None)
+
+    @staticmethod
+    def _sort_files_with(quick_files: list[QuickFile], mode: str) -> list[QuickFile]:
+        if mode == "Title":
             return sorted(
-                commands,
-                key=lambda command: (
-                    command.display_label().casefold(),
-                    quick_group_name(command.group).casefold(),
-                    command.command.casefold(),
+                quick_files,
+                key=lambda quick_file: (
+                    quick_file_display_text(quick_file).casefold(),
+                    quick_file.path.casefold(),
                 ),
             )
-        if self.command_sort_mode == "Group":
+        if mode == "Path":
             return sorted(
-                commands,
-                key=lambda command: (
-                    quick_group_name(command.group).casefold(),
-                    command.display_label().casefold(),
-                    command.command.casefold(),
+                quick_files,
+                key=lambda quick_file: (
+                    quick_file.path.casefold(),
+                    quick_file_display_text(quick_file).casefold(),
                 ),
             )
-        return commands
+        return list(quick_files)
 
     def visible_files(self) -> list[QuickFile]:
-        quick_files = list(self.quick_files)
-        if self.file_sort_mode == "Title":
-            return sorted(
-                quick_files,
-                key=lambda quick_file: (
-                    quick_file_display_text(quick_file).casefold(),
-                    quick_file.path.casefold(),
-                ),
-            )
-        if self.file_sort_mode == "Path":
-            return sorted(
-                quick_files,
-                key=lambda quick_file: (
-                    quick_file.path.casefold(),
-                    quick_file_display_text(quick_file).casefold(),
-                ),
-            )
-        return quick_files
+        return self._sort_files_with(list(self.quick_files), self.file_sort_mode)
+
+    def favorite_files(self) -> list[QuickFile]:
+        """Favourited quick files (subset), in the favourites' own order/sort."""
+        favorites = [quick_file for quick_file in self.quick_files if quick_file.favorite]
+        if self.favorite_file_sort_mode == "Custom":
+            return self._apply_custom_order(favorites, self.favorite_file_order)
+        return self._sort_files_with(favorites, self.favorite_file_sort_mode)
+
+    def sync_favorite_file_order(self) -> None:
+        self.favorite_file_order = self._synced_order(
+            self.favorite_file_order,
+            [quick_file.id for quick_file in self.quick_files if quick_file.favorite],
+        )
+
+    def reorder_favorite_files(self, quick_file_ids: list[str]) -> bool:
+        member_ids = [quick_file.id for quick_file in self.quick_files if quick_file.favorite]
+        new_order = self._synced_order(quick_file_ids, member_ids)
+        changed = new_order != self.favorite_file_order or self.favorite_file_sort_mode != "Custom"
+        self.favorite_file_order = new_order
+        self.favorite_file_sort_mode = "Custom"
+        return changed
 
     def can_manually_reorder_commands(self) -> bool:
         groups = {group.casefold() for group in self.command_group_names()}

@@ -29,6 +29,9 @@ class FakeSession:
     def connection_status_text(self) -> str:
         return f"Connected | COM{self.session_id}"
 
+    def run_target_label(self) -> str:
+        return f"{self.tab_title} · Serial"
+
     def run_script_text(
         self,
         text: str,
@@ -97,7 +100,7 @@ class CommandFileRunCoordinatorTests(unittest.TestCase):
             statuses=statuses,
         )
 
-        self.assertEqual(coordinator.run_targets(), [CommandRunTarget(1, "Connected | COM1")])
+        self.assertEqual(coordinator.run_targets(), [CommandRunTarget(1, "COM1 · Serial")])
 
     def test_populate_run_menu_runs_editor_in_target(self) -> None:
         session = FakeSession(88)

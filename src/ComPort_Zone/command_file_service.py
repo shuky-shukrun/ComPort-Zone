@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-COMMAND_FILE_FILTER = "Text Files (*.txt *.cmd *.scr);;All Files (*)"
-DEFAULT_COMMAND_FILE_NAME = "command-file.txt"
+# ``.cpz`` is the native ComPort Zone command file; ``.txt``/``.cmd``/``.scr`` stay
+# supported for opening/adding. Open shows every command file by default; Save As
+# defaults to ``.cpz`` (the first filter) while still allowing other extensions.
+COMMAND_FILE_FILTER = "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)"
+COMMAND_FILE_SAVE_FILTER = "ComPort Zone Files (*.cpz);;Command Files (*.txt *.cmd *.scr);;All Files (*)"
+DEFAULT_COMMAND_FILE_NAME = "command-file.cpz"
 
 
 class CommandFileService:

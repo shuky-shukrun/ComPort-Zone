@@ -1,10 +1,11 @@
 import unittest
 
-from PySide6.QtCore import QByteArray, QMimeData, QPointF, Qt
+from PySide6.QtCore import QByteArray, QMimeData, QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from ComPort_Zone.ui.split_workspace import TAB_MIME_TYPE, SplitWorkspaceWidget
+from ComPort_Zone.ui.tokens import WORKSPACE_PANE_MIN_W
 
 
 class FakeDragEvent:
@@ -111,6 +112,97 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
 
         self.assertIs(workspace.currentWidget(), first)
         self.assertIs(workspace.active_pane(), workspace.panes()[0])
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
+
+    def test_new_tab_menu_targets_requesting_pane_despite_focus_change(self) -> None:
+        # The right pane's + opens a modal menu; while it is up a focus event flips
+        # the active pane back to the left. The new tab must still land in the pane
+        # whose + was clicked (the right one), not the focus-stolen left pane.
+        workspace = SplitWorkspaceWidget()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.move_tab_to_other_pane(1)  # second -> right pane
+        left, right = workspace.panes()
+        self.assertEqual((left.count(), right.count()), (1, 1))
+
+        created: list[QWidget] = []
+
+        def on_menu(_position):
+            # Stand in for the modal menu: focus flips to the left pane, then the
+            # chosen action creates a tab.
+            workspace._activate_pane(left)
+            self.assertIs(workspace.active_pane(), left)
+            new_tab = QWidget()
+            created.append(new_tab)
+            workspace.addTab(new_tab, "New")
+
+        workspace.newTabMenuRequested.connect(on_menu)
+        workspace._new_tab_menu_requested(right, QPoint(0, 0))
+
+        self.assertEqual(right.count(), 2)
+        self.assertEqual(left.count(), 1)
+        self.assertIs(right.widget(1), created[0])
+        # Pin is cleared once the menu closes, so later adds follow the active pane.
+        self.assertIsNone(workspace._pending_tab_pane)
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
+        created[0].deleteLater()
+
+    def test_panes_have_small_minimum_width_so_divider_stays_movable(self) -> None:
+        # Each pane keeps a small hard floor; without it the terminal/editor content
+        # size hints pin the divider and it looks frozen at common window sizes.
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.move_tab_to_other_pane(1)  # two panes
+        self.qt.processEvents()
+        self.assertEqual(workspace.pane_count(), 2)
+        for pane in workspace.panes():
+            self.assertEqual(pane.minimumWidth(), WORKSPACE_PANE_MIN_W)
+
+        # The splitter honors the small floor: a pane can shrink near it instead of
+        # being clamped to its (larger) content size hint.
+        workspace.splitter.setSizes([WORKSPACE_PANE_MIN_W, 900 - WORKSPACE_PANE_MIN_W])
+        self.qt.processEvents()
+        self.assertLessEqual(workspace.panes()[0].width(), WORKSPACE_PANE_MIN_W + 40)
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
+
+    def test_tab_index_at_returns_global_index_in_second_pane(self) -> None:
+        # Regression for issue #11: a context menu opened on the right pane's tab must
+        # resolve to that tab's *global* index, not its pane-local one (which would
+        # alias the left pane's tab and rename/close/etc. the wrong tab).
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.move_tab_to_other_pane(1)  # second -> right pane (global index 1)
+        self.qt.processEvents()
+        left, right = workspace.panes()
+        self.assertIs(workspace.active_pane(), right)
+
+        position = right.tabBar().tabRect(0).center()
+        self.assertEqual(right.tabBar().tabAt(position), 0)  # pane-local
+        self.assertEqual(workspace.tab_index_at(position), 1)  # global
+        self.assertIs(workspace.widget(workspace.tab_index_at(position)), second)
 
         workspace.deleteLater()
         first.deleteLater()

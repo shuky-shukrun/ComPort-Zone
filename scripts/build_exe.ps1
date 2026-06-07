@@ -372,6 +372,7 @@ UninstallDisplayIcon={app}\app\{#MyAppExeName}
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "associatecpz"; Description: "Open .cpz command files with {#MyAppName}"; GroupDescription: "File associations:"
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\app"
@@ -384,6 +385,14 @@ Source: "{#MySourceDir}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignore
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\app\{#MyAppExeName}"
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\app\{#MyAppExeName}"; Tasks: desktopicon
+
+[Registry]
+; Associate .cpz command files with ComPort Zone so double-clicking opens them in
+; the editor. Per-user (HKCU\Software\Classes) since the installer runs unprivileged.
+Root: HKCU; Subkey: "Software\Classes\.cpz"; ValueType: string; ValueName: ""; ValueData: "ComPortZone.CommandFile"; Flags: uninsdeletevalue; Tasks: associatecpz
+Root: HKCU; Subkey: "Software\Classes\ComPortZone.CommandFile"; ValueType: string; ValueName: ""; ValueData: "ComPort Zone Command File"; Flags: uninsdeletekey; Tasks: associatecpz
+Root: HKCU; Subkey: "Software\Classes\ComPortZone.CommandFile\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\app\{#MyAppExeName},0"; Tasks: associatecpz
+Root: HKCU; Subkey: "Software\Classes\ComPortZone.CommandFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\app\{#MyAppExeName}"" ""%1"""; Tasks: associatecpz
 
 [Run]
 Filename: "{app}\app\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

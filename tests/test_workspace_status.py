@@ -104,9 +104,8 @@ class WorkspaceStatusPresenterTests(unittest.TestCase):
         tabs.setCurrentWidget(editor)
         presenter.sync_from_current(theme)
 
-        self.assertEqual(status_label.text(), "Command file | Untitled | Dirty")
-        self.assertEqual(action_button.text(), "Terminal only")
-        self.assertFalse(action_button.isEnabled())
+        # Editors are connectionless: the presenter routes their status to the footer
+        # and leaves the (main-window-hidden) connection chip/button alone.
         self.assertEqual(footer.text(), "Command file | Untitled | Dirty")
 
     def test_connection_state_color_maps_states_to_theme(self) -> None:

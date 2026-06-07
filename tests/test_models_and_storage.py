@@ -33,6 +33,40 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(apply_line_ending("ping", "CRLF"), b"ping\r\n")
         self.assertEqual(apply_line_ending("ping", "None"), b"ping")
 
+    def test_quick_file_favorite_round_trips(self) -> None:
+        quick_file = QuickFile(label="Self-Test", path="C:/self-test.cpz", favorite=True)
+        restored = QuickFile.from_dict(quick_file.to_dict())
+        self.assertTrue(restored.favorite)
+        self.assertFalse(QuickFile.from_dict({"path": "C:/x.cpz"}).favorite)
+
+    def test_favorites_order_and_sort_modes_round_trip(self) -> None:
+        settings = AppSettings(
+            favorite_command_order=["c2", "c1"],
+            favorite_file_order=["f2", "f1"],
+            favorite_command_sort_mode="Title",
+            favorite_file_sort_mode="Path",
+        )
+        restored = AppSettings.from_dict(settings.to_dict())
+        self.assertEqual(restored.favorite_command_order, ["c2", "c1"])
+        self.assertEqual(restored.favorite_file_order, ["f2", "f1"])
+        self.assertEqual(restored.favorite_command_sort_mode, "Title")
+        self.assertEqual(restored.favorite_file_sort_mode, "Path")
+        # An unknown sort mode falls back to Custom.
+        bad = settings.to_dict()
+        bad["libraries"]["favorite_command_sort_mode"] = "Nonsense"
+        self.assertEqual(AppSettings.from_dict(bad).favorite_command_sort_mode, "Custom")
+
+    def test_favorites_layout_round_trips(self) -> None:
+        settings = AppSettings(
+            favorite_command_collapsed=True,
+            favorite_file_collapsed=False,
+            favorites_splitter_sizes=[300, 120],
+        )
+        restored = AppSettings.from_dict(settings.to_dict())
+        self.assertTrue(restored.favorite_command_collapsed)
+        self.assertFalse(restored.favorite_file_collapsed)
+        self.assertEqual(restored.favorites_splitter_sizes, [300, 120])
+
     def test_default_quick_commands_are_scpi_general_commands(self) -> None:
         settings = AppSettings()
 
@@ -45,6 +79,32 @@ class ModelsAndStorageTests(unittest.TestCase):
             ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"],
         )
         self.assertEqual([command.group for command in settings.quick_commands], ["General"] * 3)
+        # Every default command has a description; *IDN? and SYST:ERR:ALL? ship favourited.
+        self.assertTrue(all(command.description for command in settings.quick_commands))
+        self.assertEqual(
+            [command.command for command in settings.quick_commands if command.favorite],
+            ["*IDN?", "SYST:ERR:ALL?"],
+        )
+        # The bundled example command files are seeded as default quick files —
+        # only the basic one is favourited by default.
+        from ComPort_Zone.models import (
+            EXAMPLE_COMMAND_FILE,
+            EXAMPLE_MEASUREMENT_FILE,
+            EXAMPLE_SELF_TEST_FILE,
+        )
+
+        self.assertEqual(
+            [qf.label for qf in settings.quick_files],
+            ["Example Commands", "Self-Test (EXPECT)", "Measurement (parameters)"],
+        )
+        self.assertEqual(
+            [qf.label for qf in settings.quick_files if qf.favorite],
+            ["Example Commands"],
+        )
+        self.assertTrue(settings.quick_files[0].path.endswith(".cpz"))
+        self.assertTrue(EXAMPLE_COMMAND_FILE.exists())
+        self.assertTrue(EXAMPLE_SELF_TEST_FILE.exists())
+        self.assertTrue(EXAMPLE_MEASUREMENT_FILE.exists())
         self.assertTrue(settings.check_for_updates_on_launch)
 
     def test_settings_store_round_trip(self) -> None:
@@ -114,6 +174,7 @@ class ModelsAndStorageTests(unittest.TestCase):
             timestamps_enabled=False,
             terminal_font_size=13,
             terminal_font_family="Cascadia Mono",
+            terminal_line_spacing=140,
             line_wrap_enabled=True,
             scrollback_size=20000,
             receive_display_mode="Text + Hex",
@@ -142,6 +203,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertNotIn("serial", saved_payload)
         self.assertEqual(saved_payload["transport"]["profile"]["port"], "COM7")
         self.assertEqual(saved_payload["app"]["terminal_font"]["size"], 13)
+        self.assertEqual(saved_payload["app"]["terminal_font"]["line_spacing"], 140)
         self.assertEqual(saved_payload["app"]["drawer"]["width"], 340)
         self.assertEqual(saved_payload["app"]["drawer"]["page_index"], 1)
         self.assertTrue(saved_payload["app"]["updates"]["check_on_launch"])
@@ -182,6 +244,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertFalse(loaded.timestamps_enabled)
         self.assertEqual(loaded.terminal_font_size, 13)
         self.assertEqual(loaded.terminal_font_family, "Cascadia Mono")
+        self.assertEqual(loaded.terminal_line_spacing, 140)
         self.assertTrue(loaded.line_wrap_enabled)
         self.assertEqual(loaded.scrollback_size, 20000)
         self.assertEqual(loaded.receive_display_mode, "Text + Hex")

@@ -53,6 +53,7 @@ class TerminalRenderPlan:
     stream_text: bool = False
     ensure_line_break: bool = False
     stream_separator: str = ""
+    direction: str = ""  # mockup column label: TX / RX / SYS / ERR
 
 
 class TerminalSessionController:
@@ -140,6 +141,13 @@ class TerminalSessionController:
                 "status": "SYS ",
                 "error": "ERR ",
                 "progress": "SYS ",
+            }.get(event.kind, ""),
+            direction={
+                "rx": "RX",
+                "tx": "TX",
+                "status": "SYS",
+                "error": "ERR",
+                "progress": "SYS",
             }.get(event.kind, ""),
             color_role=color_role,
             stream_text=stream_text,

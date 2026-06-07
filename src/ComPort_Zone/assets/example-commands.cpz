@@ -1,0 +1,8 @@
+# Example command file shipped with ComPort Zone.
+# Lines run top to bottom; "WAIT <ms>" pauses between commands.
+# Open it in the editor (double-click in Quick Files) or run it (play icon).
+
+*IDN?
+SYST:ERR?
+WAIT 1000
+SYST:FIRM?

@@ -29,7 +29,12 @@ from ComPort_Zone.ui.dialogs import (
     VersionUpdateDialog,
     summarize_parameter_occurrences,
 )
-from ComPort_Zone.ui.fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN
+from ComPort_Zone.ui.fonts import (
+    TERMINAL_FONT_MAX,
+    TERMINAL_FONT_MIN,
+    TERMINAL_LINE_SPACING_DEFAULT,
+    TERMINAL_LINE_SPACING_MAX,
+)
 
 
 class DialogExtractionTests(unittest.TestCase):
@@ -55,19 +60,22 @@ class DialogExtractionTests(unittest.TestCase):
             dialog.deleteLater()
 
     def test_terminal_font_dialog_clamps_size_and_resets_to_default(self) -> None:
-        dialog = TerminalFontSettingsDialog("Definitely Missing Mono", TERMINAL_FONT_MAX + 99)
+        dialog = TerminalFontSettingsDialog("Definitely Missing Mono", TERMINAL_FONT_MAX + 99, 999)
         try:
             spin = dialog.findChild(QSpinBox)
 
             self.assertIsNotNone(spin)
             self.assertEqual(dialog.selected_size(), TERMINAL_FONT_MAX)
             self.assertEqual(dialog.selected_family(), "Definitely Missing Mono")
+            # Out-of-range line spacing is clamped to the max.
+            self.assertEqual(dialog.selected_line_spacing(), TERMINAL_LINE_SPACING_MAX)
 
             dialog.reset_defaults()
 
             self.assertEqual(dialog.selected_family(), "")
             self.assertEqual(dialog.selected_size(), 10)
             self.assertGreaterEqual(dialog.selected_size(), TERMINAL_FONT_MIN)
+            self.assertEqual(dialog.selected_line_spacing(), TERMINAL_LINE_SPACING_DEFAULT)
         finally:
             dialog.deleteLater()
 

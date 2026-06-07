@@ -9,6 +9,7 @@ from PySide6.QtGui import (
     QAction,
     QColor,
     QFont,
+    QFontMetrics,
     QKeySequence,
     QPainter,
     QShortcut,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStyle,
     QTextEdit,
@@ -38,13 +40,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .command_file_service import COMMAND_FILE_FILTER, CommandFileService
+from .batch import strip_c_style_comment
+from .command_completion import (
+    ACCEPT,
+    CANCEL,
+    DISMISS,
+    NAVIGATE,
+    classify_completion_key,
+    move_completion_selection,
+    resolve_completion_text,
+)
+from .command_file_service import COMMAND_FILE_FILTER, COMMAND_FILE_SAVE_FILTER, CommandFileService
 from .command_editor_core import (
     COMMENT_SNIPPETS,
     COMPLETION_TOKEN_CHARS,
     DEFAULT_KNOWN_COMMANDS,
     CommandEditorSources,
     CommandValidationIssue,
+    command_text_from_line,
     command_token,
 )
 from .command_editor_highlighting import CommandFileHighlighter
@@ -54,7 +67,7 @@ from .command_run_targets import (
     CommandRunTargetService,
 )
 from .command_search import CommandSearchState, find_search_matches, replace_all_matches
-from .icons import standard_icon
+from .icons import build_icon, set_button_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES, QuickCommand, QuickFile
 from .quick_actions import quick_file_display_text, quick_group_name
 from .quick_actions_panel import (
@@ -64,17 +77,17 @@ from .quick_actions_panel import (
     selected_item_id,
 )
 from .quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
-from .themes import ThemePalette
-from .widgets import ChevronComboBox
-
-COMPLETION_NAVIGATION_KEYS = {
-    Qt.Key.Key_Down,
-    Qt.Key.Key_Up,
-    Qt.Key.Key_PageDown,
-    Qt.Key.Key_PageUp,
-    Qt.Key.Key_Home,
-    Qt.Key.Key_End,
-}
+from .themes import VS_CODE_DARK, ThemePalette
+from .ui.search_overlay import SearchOverlay
+from .ui.tokens import DRAWER_MAX_W, DRAWER_MIN_W, FONT_BTN_H, FONT_BTN_W, SPLITTER_HANDLE
+from .widgets import (
+    ChevronComboBox,
+    CompletionPopupDelegate,
+    LineSpacingController,
+    fit_overflow_groups,
+    set_button_role,
+    style_completion_popup,
+)
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -134,6 +147,11 @@ class CommandPlainTextEdit(QPlainTextEdit):
         super().__init__(parent)
         self.line_number_area = LineNumberArea(self)
         self.completer: QCompleter | None = None
+        self._completion_delegate: CompletionPopupDelegate | None = None
+        self._completion_descriptions: dict[str, str] = {}
+        # case-folded command -> description, for the inline current-line hint
+        self._description_by_command: dict[str, str] = {}
+        self._completion_palette: dict[str, str] | None = None
         self.completion_refresh_callback: Callable[[str], None] | None = None
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.save_callback: Callable[[], None] | None = None
@@ -141,25 +159,44 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.find_callback: Callable[[], None] | None = None
         self.replace_callback: Callable[[], None] | None = None
         self.search_extra_selections: list[QTextEdit.ExtraSelection] = []
-        self.line_number_background = QColor("#181818")
-        self.line_number_foreground = QColor("#858585")
-        self.current_line_background = QColor("#202020")
-        self.search_match_background = QColor("#264F78")
-        self.search_current_background = QColor("#515C6A")
-        self.search_match_foreground = QColor("#FFFFFF")
+        # Seed the gutter/search colors from the default palette so even the
+        # pre-theme first frame is on-theme; apply_theme_palette overrides on load.
+        self.line_number_background = QColor(VS_CODE_DARK.surface_alt)
+        self.line_number_foreground = QColor(VS_CODE_DARK.muted)
+        # Muted ink for the inline current-line command-description hint (matches the
+        # grey description column in the completion popup).
+        self.description_hint_color = QColor(VS_CODE_DARK.muted)
+        self.current_line_background = QColor(VS_CODE_DARK.chip)
+        self.search_match_background = QColor(VS_CODE_DARK.search_highlight)
+        self.search_current_background = QColor(VS_CODE_DARK.accent_soft)
+        self.search_match_foreground = QColor(VS_CODE_DARK.text)
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
+        self._line_spacing = LineSpacingController(self)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
+
+    def set_line_spacing(self, percent: int) -> None:
+        """Set the line spacing as a percentage of the font's natural line height."""
+        self._line_spacing.set_percent(percent)
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.line_number_background = QColor(theme.surface_alt)
         self.line_number_foreground = QColor(theme.muted)
+        self.description_hint_color = QColor(theme.muted)
         self.current_line_background = QColor(theme.chip)
         self.search_match_background = QColor(theme.search_highlight)
         self.search_current_background = QColor(theme.accent_soft)
         self.search_match_foreground = QColor(theme.text)
+        self.set_completion_colors(
+            text=theme.text,
+            description=theme.muted,
+            selection=theme.search_highlight,
+            hover=theme.hover or theme.surface_alt,
+            background=theme.window_alt,
+            border=theme.border,
+        )
         self.line_number_area.update()
         self._apply_extra_selections()
 
@@ -169,8 +206,64 @@ class CommandPlainTextEdit(QPlainTextEdit):
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        completer.popup().installEventFilter(self)
+        popup = completer.popup()
+        self._completion_delegate = CompletionPopupDelegate(popup)
+        self._completion_delegate.set_descriptions(self._completion_descriptions)
+        if self._completion_palette is not None:
+            self._completion_delegate.set_colors(**self._completion_palette)
+        popup.setItemDelegate(self._completion_delegate)
+        popup.setFont(self.font())
+        popup.setObjectName("completionPopup")
+        self._apply_completion_popup_style()
+        popup.installEventFilter(self)
         completer.activated.connect(self.insert_completion)
+
+    def set_completion_descriptions(self, mapping) -> None:
+        self._completion_descriptions = {str(k): str(v) for k, v in dict(mapping or {}).items()}
+        self._description_by_command = {
+            command.casefold(): description
+            for command, description in self._completion_descriptions.items()
+            if description.strip()
+        }
+        if self._completion_delegate is not None:
+            self._completion_delegate.set_descriptions(self._completion_descriptions)
+            if self.completer is not None:
+                self.completer.popup().viewport().update()
+        # Re-render so the current line's inline description hint reflects the new map.
+        self.viewport().update()
+
+    def set_completion_colors(
+        self,
+        *,
+        text: str,
+        description: str,
+        selection: str,
+        hover: str,
+        background: str,
+        border: str,
+    ) -> None:
+        self._completion_palette = {
+            "text": text,
+            "description": description,
+            "selection": selection,
+            "hover": hover,
+            "background": background,
+            "border": border,
+        }
+        if self._completion_delegate is not None:
+            self._completion_delegate.set_colors(
+                text=text, description=description, selection=selection, hover=hover
+            )
+        self._apply_completion_popup_style()
+
+    def _apply_completion_popup_style(self) -> None:
+        if self.completer is None or self._completion_palette is None:
+            return
+        style_completion_popup(
+            self.completer.popup(),
+            background=self._completion_palette["background"],
+            border=self._completion_palette["border"],
+        )
 
     def set_completion_refresh_callback(self, callback: Callable[[str], None]) -> None:
         self.completion_refresh_callback = callback
@@ -264,6 +357,59 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.search_extra_selections = selections
         self._apply_extra_selections()
 
+    def _current_line_description(self) -> str:
+        """Description of the saved command on the caret's line, or '' if none.
+
+        Reuses the command-file line parser so ``SEND *IDN?`` and a bare ``*IDN?``
+        both resolve, while directives (WAIT/EXPECT) and comments resolve to nothing.
+        Matching is case-insensitive to mirror SCPI's case-insensitive commands.
+        """
+        if not self._description_by_command:
+            return ""
+        stripped = strip_c_style_comment(self.textCursor().block().text())
+        if not stripped or stripped.startswith("#"):
+            return ""
+        command_text = command_text_from_line(stripped)
+        if not command_text:
+            return ""
+        return self._description_by_command.get(command_text.casefold(), "")
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        description = self._current_line_description()
+        if description:
+            self._paint_line_description(description)
+
+    def _paint_line_description(self, description: str) -> None:
+        block = self.textCursor().block()
+        if not block.isValid() or not block.isVisible():
+            return
+        # EndOfBlock (not EndOfLine) so the hint sits past the full command even when
+        # the line word-wraps — the editor wraps by default.
+        end_of_line = QTextCursor(block)
+        end_of_line.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        rect = self.cursorRect(end_of_line)
+        font = QFont(self.font())
+        font.setItalic(True)
+        metrics = QFontMetrics(font)
+        gap = metrics.horizontalAdvance("  ")
+        x = rect.left() + gap
+        available = self.viewport().width() - x - 6
+        if available < 24:  # not enough room past the line to be legible
+            return
+        text = metrics.elidedText(description, Qt.TextElideMode.ElideRight, available)
+        painter = QPainter(self.viewport())
+        try:
+            painter.setFont(font)
+            painter.setPen(self.description_hint_color)
+            painter.drawText(
+                QRect(x, rect.top(), available, rect.height()),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                text,
+            )
+        finally:
+            painter.end()
+
     def token_under_cursor(self) -> str:
         cursor = self.textCursor()
         position = cursor.positionInBlock()
@@ -287,44 +433,13 @@ class CommandPlainTextEdit(QPlainTextEdit):
     def accept_current_completion(self) -> None:
         if not self.completer:
             return
-        popup_index = self.completer.popup().currentIndex()
-        completion = str(popup_index.data() or "") if popup_index.isValid() else ""
-        if not completion:
-            completion = self.completer.currentCompletion()
-        if not completion:
-            index = self.completer.completionModel().index(0, 0)
-            completion = str(index.data() or "") if index.isValid() else ""
+        completion = resolve_completion_text(self.completer)
         if completion:
             self.insert_completion(completion)
         self.completer.popup().hide()
 
     def navigate_completion(self, key: Qt.Key) -> None:
-        if not self.completer:
-            return
-        model = self.completer.completionModel()
-        row_count = model.rowCount()
-        if row_count <= 0:
-            return
-        popup = self.completer.popup()
-        current_row = popup.currentIndex().row()
-        if current_row < 0:
-            current_row = max(self.completer.currentRow(), 0)
-        if key == Qt.Key.Key_Down:
-            target_row = min(current_row + 1, row_count - 1)
-        elif key == Qt.Key.Key_Up:
-            target_row = max(current_row - 1, 0)
-        elif key == Qt.Key.Key_PageDown:
-            target_row = min(current_row + 8, row_count - 1)
-        elif key == Qt.Key.Key_PageUp:
-            target_row = max(current_row - 8, 0)
-        elif key == Qt.Key.Key_End:
-            target_row = row_count - 1
-        else:
-            target_row = 0
-        self.completer.setCurrentRow(target_row)
-        index = model.index(target_row, 0)
-        if index.isValid():
-            popup.setCurrentIndex(index)
+        move_completion_selection(self.completer, key)
 
     def show_completions(self, *, forced: bool = False) -> None:
         if not self.completer:
@@ -340,13 +455,18 @@ class CommandPlainTextEdit(QPlainTextEdit):
             self.completer.popup().hide()
             return
         popup = self.completer.popup()
+        popup.setFont(self.font())
         first_index = self.completer.completionModel().index(0, 0)
         if first_index.isValid():
             self.completer.setCurrentRow(0)
             popup.setCurrentIndex(first_index)
         rect = self.cursorRect()
-        width = popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width()
-        rect.setWidth(max(width, self.fontMetrics().horizontalAdvance(token) + 96))
+        width = popup.sizeHintForColumn(0) + 6
+        if self.completer.completionModel().rowCount() > self.completer.maxVisibleItems():
+            width += popup.verticalScrollBar().sizeHint().width()
+        width = max(width, self.fontMetrics().horizontalAdvance(token) + 60)
+        rect.setWidth(min(width, 560))
+        rect.setHeight(rect.height() + 8)  # nudge the popup a little below the input line
         self.completer.complete(rect)
 
     def eventFilter(self, watched, event) -> bool:
@@ -360,13 +480,20 @@ class CommandPlainTextEdit(QPlainTextEdit):
             and event.type() == QEvent.Type.KeyPress
             and popup.isVisible()
         ):
-            if event.key() in COMPLETION_NAVIGATION_KEYS:
+            action = classify_completion_key(event.key())
+            if action == NAVIGATE:
                 self.navigate_completion(event.key())
                 return True
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if action == ACCEPT:
                 self.accept_current_completion()
                 return True
-            if event.key() == Qt.Key.Key_Escape:
+            if action == DISMISS:
+                # Enter closes the popup without accepting, then inserts a newline —
+                # only Tab accepts, matching the terminal.
+                popup.hide()
+                self.insertPlainText("\n")
+                return True
+            if action == CANCEL:
                 popup.hide()
                 return True
         return super().eventFilter(watched, event)
@@ -411,18 +538,23 @@ class CommandPlainTextEdit(QPlainTextEdit):
                 event.accept()
                 return
         if self.completer and self.completer.popup().isVisible():
-            if event.key() in COMPLETION_NAVIGATION_KEYS:
+            action = classify_completion_key(event.key())
+            if action == NAVIGATE:
                 self.navigate_completion(event.key())
                 event.accept()
                 return
-            if event.key() in {Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if action == ACCEPT:
                 self.accept_current_completion()
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_Escape:
+            if action == CANCEL:
                 self.completer.popup().hide()
                 event.accept()
                 return
+            if action == DISMISS:
+                # Enter closes the popup without accepting, then falls through so the
+                # base class inserts a newline — only Tab accepts, like the terminal.
+                self.completer.popup().hide()
         is_completion_shortcut = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() == Qt.Key.Key_Space
         if not is_completion_shortcut:
             super().keyPressEvent(event)
@@ -452,6 +584,7 @@ class CommandFileEditorDialog(QDialog):
         theme_palette: ThemePalette | None = None,
         workspace_drawer_page_callback: Callable[[int], None] | None = None,
         workspace_drawer_width_callback: Callable[[int, object], None] | None = None,
+        command_palette_callback: Callable[[], None] | None = None,
         embedded: bool = False,
         show_run_button: bool = True,
         show_workspace_side_panel: bool = False,
@@ -468,6 +601,7 @@ class CommandFileEditorDialog(QDialog):
         self.run_target_service = run_target_service
         self.workspace_drawer_page_callback = workspace_drawer_page_callback
         self.workspace_drawer_width_callback = workspace_drawer_width_callback
+        self.command_palette_callback = command_palette_callback
         self._show_run_bar = self.run_target_service is not None and self.run_target_service.is_configured()
         self.embedded = embedded
         self.show_workspace_side_panel = show_workspace_side_panel
@@ -481,7 +615,14 @@ class CommandFileEditorDialog(QDialog):
         if self.embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle("Command File Editor")
-        self.setMinimumSize(860, 640)
+        # Embedded as a workspace tab the floor must stay below the pane's own minimum
+        # (ui.tokens.WORKSPACE_PANE_MIN_W) — otherwise a squeezed pane can't shrink the
+        # editor to fit and the command bar (Run button) spills past the pane's edge.
+        # The bar copes by folding its controls into the ⋯ overflow as it narrows.
+        if self.embedded:
+            self.setMinimumSize(160, 220)
+        else:
+            self.setMinimumSize(620, 420)
 
         self.path_label = QLabel(self)
         self.path_label.setObjectName("editorPathLabel")
@@ -491,10 +632,9 @@ class CommandFileEditorDialog(QDialog):
         self.shortcut_save.activated.connect(self.save)
         self.shortcut_save_as = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
         self.shortcut_save_as.activated.connect(self.save_as)
-        self.shortcut_find = QShortcut(QKeySequence("Ctrl+F"), self)
-        self.shortcut_find.activated.connect(self.show_find_bar)
-        self.shortcut_replace = QShortcut(QKeySequence("Ctrl+H"), self)
-        self.shortcut_replace.activated.connect(self.show_replace_bar)
+        # Find/Replace are driven by the global edit.find / edit.replace commands
+        # (Ctrl+F / Ctrl+H) which route to the active tab — a duplicate local
+        # QShortcut here made Ctrl+F ambiguous app-wide and broke terminal search.
 
         self.warn_unknown = QCheckBox("Warn unknown commands", self)
         self.warn_unknown.setChecked(True)
@@ -516,52 +656,48 @@ class CommandFileEditorDialog(QDialog):
             self.apply_theme_palette(theme_palette)
         self.editor.textChanged.connect(self._text_changed)
 
+        # Top toolbar: path on the left, file/search icon actions on the right.
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        for label, callback in (
-            ("New", self.new_file),
-            ("Open", self.open_file),
-            ("Save", self.save),
-            ("Save As", self.save_as),
-            ("Find", self.show_find_bar),
-            ("Replace", self.show_replace_bar),
-        ):
-            button = QPushButton(label, self)
-            button.clicked.connect(callback)
+        toolbar.setContentsMargins(8, 4, 6, 4)
+        toolbar.setSpacing(3)
+        toolbar.addWidget(self.path_label, 1)
+        self.open_button = self._toolbar_icon("folder", "Open command file…", self.open_file)
+        self.save_button = self._toolbar_icon("save", "Save (Ctrl+S)", self.save)
+        self.save_as_button = self._toolbar_icon("save-as", "Save As… (Ctrl+Shift+S)", self.save_as)
+        self.find_button = self._toolbar_icon("search", "Find (Ctrl+F)", self.show_find_bar)
+        for button in (self.open_button, self.save_button, self.save_as_button, self.find_button):
             toolbar.addWidget(button)
-        if show_run_button:
-            button = QPushButton("Run Buffer", self)
-            button.clicked.connect(self.run_buffer)
-            toolbar.addWidget(button)
-        toolbar.addStretch(1)
-        toolbar.addWidget(self.warn_unknown)
-        if self.font_change_callback and not self._show_run_bar and not self.embedded:
-            self._add_font_controls(toolbar, self)
-
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.addWidget(self.path_label, 1)
         if not self.embedded:
-            close_button = QToolButton(self)
-            close_button.setText("Close")
-            close_button.clicked.connect(self.reject)
-            header.addWidget(close_button)
+            close_button = self._toolbar_icon("x", "Close", self.reject)
+            toolbar.addWidget(close_button)
 
         line = QFrame(self)
+        line.setObjectName("editorToolbarRule")
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
 
         self.editor_column = QWidget(self)
         editor_layout = QVBoxLayout(self.editor_column)
         editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.addLayout(header)
+        editor_layout.setSpacing(0)
         editor_layout.addLayout(toolbar)
-        editor_layout.addWidget(self._build_find_replace_bar())
         editor_layout.addWidget(line)
         editor_layout.addWidget(self.editor, 1)
-        editor_layout.addWidget(self.status_label)
-        if self._show_run_bar:
-            editor_layout.addWidget(self._build_run_bar())
+        editor_layout.addWidget(self._build_command_bar())
+
+        # Floating find+replace overlay over the editor (Ctrl+F / Ctrl+H). Its
+        # widgets are aliased onto the names the existing search logic expects.
+        self.search_overlay = SearchOverlay(self.editor, with_replace=True, parent=self.editor_column)
+        self.search_input = self.search_overlay.search_field
+        self.replace_input = self.search_overlay.replace_field
+        self.case_sensitive_check = self.search_overlay.case_button
+        self.search_count_label = self.search_overlay.count_label
+        self.search_input.textChanged.connect(lambda _: self.refresh_search_matches(reset=True))
+        self.case_sensitive_check.toggled.connect(lambda _: self.refresh_search_matches(reset=True))
+        self.search_overlay.findNext.connect(self.find_next)
+        self.search_overlay.findPrevious.connect(self.find_previous)
+        self.search_overlay.replaceOne.connect(self.replace_current)
+        self.search_overlay.replaceAll.connect(self.replace_all)
+        self.search_overlay.closeRequested.connect(self.hide_find_replace_bar)
 
         if self.show_workspace_side_panel:
             root_layout = QHBoxLayout(self)
@@ -569,7 +705,7 @@ class CommandFileEditorDialog(QDialog):
             root_layout.setSpacing(0)
             self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal, self)
             self.workspace_splitter.setChildrenCollapsible(False)
-            self.workspace_splitter.setHandleWidth(3)
+            self.workspace_splitter.setHandleWidth(SPLITTER_HANDLE)
             self.workspace_splitter.splitterMoved.connect(self._workspace_drawer_resized)
             self.workspace_splitter.addWidget(self._build_workspace_side_panel())
             self.workspace_splitter.addWidget(self.editor_column)
@@ -615,8 +751,8 @@ class CommandFileEditorDialog(QDialog):
                     self.workspace_splitter.setSizes([rail_width, max(700, self.width() - rail_width)])
                 return
             drawer_width = max(220, min(width, 520))
-            self.workspace_drawer.setMinimumWidth(220)
-            self.workspace_drawer.setMaximumWidth(520)
+            self.workspace_drawer.setMinimumWidth(DRAWER_MIN_W)
+            self.workspace_drawer.setMaximumWidth(DRAWER_MAX_W)
             if hasattr(self, "workspace_splitter"):
                 self.workspace_splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
         finally:
@@ -798,7 +934,7 @@ class CommandFileEditorDialog(QDialog):
     ) -> QAction:
         action = QAction(text, menu)
         if icon is not None:
-            action.setIcon(standard_icon(icon))
+            action.setIcon(build_icon(icon))
         action.setEnabled(enabled)
         action.triggered.connect(lambda _checked=False, callback=callback: callback())
         menu.addAction(action)
@@ -1008,6 +1144,7 @@ class CommandFileEditorDialog(QDialog):
             file_order_changed=self._persist_quick_file_order,
             command_selection_changed=self._refresh_quick_action_buttons,
             file_selection_changed=self._refresh_quick_action_buttons,
+            settings_callback=self.command_palette_callback,
             on_page_requested=self._select_workspace_drawer_page,
             parent=self,
         )
@@ -1038,26 +1175,140 @@ class CommandFileEditorDialog(QDialog):
         self.quick_actions_panel = drawer
         return drawer
 
-    def _build_run_bar(self) -> QWidget:
+    def _build_command_bar(self) -> QWidget:
+        """Bottom status/command bar: validation status + line-wrap toggle +
+        the (shrunk) send-to target + a green Run button."""
         bar = QFrame(self)
         bar.setObjectName("commandBar")
+        self._command_bar = bar
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(6)
-
-        label = QLabel("Send file to", bar)
-        self.run_target_combo = ChevronComboBox(bar)
-        self.run_target_combo.setMinimumWidth(220)
-        self.run_target_combo.setToolTip("Connected terminal target")
-        self.send_to_target_button = QPushButton("Send", bar)
-        self.send_to_target_button.clicked.connect(self.send_to_selected_target)
-        layout.addStretch(1)
-        layout.addWidget(label)
-        layout.addWidget(self.run_target_combo)
-        layout.addWidget(self.send_to_target_button)
-        if self.font_change_callback and not self.embedded:
+        self.status_label.setParent(bar)
+        # Let the status text yield its space as the bar narrows (it's mirrored in the
+        # window footer), so the controls have room before they fold into ⋯.
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        layout.addWidget(self.status_label, 1)
+        layout.addWidget(self.warn_unknown)
+        self.wrap_toggle = self._status_toggle("wrap", "Wrap long lines", self._toggle_wrap)
+        self.wrap_toggle.setChecked(True)  # QPlainTextEdit wraps by default
+        layout.addWidget(self.wrap_toggle)
+        # ⋯ overflow: as the bar narrows these secondary controls fold into its menu,
+        # keeping only the Run button (mirrors the terminal's command bar).
+        self.command_overflow_button = QToolButton(bar)
+        self.command_overflow_button.setObjectName("commandBarOverflow")
+        self.command_overflow_button.setText("⋯")
+        self.command_overflow_button.setToolTip("More controls")
+        self.command_overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_overflow_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.command_overflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._command_overflow_menu = QMenu(self.command_overflow_button)
+        self._command_overflow_menu.aboutToShow.connect(self._build_command_overflow_menu)
+        self.command_overflow_button.setMenu(self._command_overflow_menu)
+        self.command_overflow_button.hide()
+        self._overflow_collapsed: set = set()
+        if self._show_run_bar:
+            self._send_label = QLabel("Send to", bar)
+            self._send_label.setObjectName("editorSendLabel")
+            self.run_target_combo = ChevronComboBox(bar)
+            self.run_target_combo.setMinimumWidth(110)
+            self.run_target_combo.setMaximumWidth(210)
+            self.run_target_combo.setToolTip("Run target terminal")
+            self.run_button = QPushButton("Run", bar)
+            self.run_button.setObjectName("editorRunButton")
+            self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            set_button_icon(self.run_button, "play", 12, "#ffffff")
+            self.run_button.clicked.connect(self.send_to_selected_target)
+            self.send_to_target_button = self.run_button  # back-compat alias
+            layout.addWidget(self._send_label)
+            layout.addWidget(self.run_target_combo)
+            layout.addWidget(self.command_overflow_button)
+            layout.addWidget(self.run_button)
+        elif self.font_change_callback and not self.embedded:
+            layout.addWidget(self.command_overflow_button)
             self._add_font_controls(layout, bar)
+        else:
+            layout.addWidget(self.command_overflow_button)
+        bar.installEventFilter(self)
         return bar
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is getattr(self, "_command_bar", None) and event.type() == QEvent.Type.Resize:
+            self._relayout_command_bar()
+        return super().eventFilter(watched, event)
+
+    def _relayout_command_bar(self) -> None:
+        """Fold the secondary controls into the ⋯ menu as the bar narrows, keeping
+        only the Run button (Warn toggle first, then Wrap, then the send-to target)."""
+        if not hasattr(self, "command_overflow_button"):
+            return
+        if self._show_run_bar:
+            fixed = [self.run_button]
+            groups = [
+                [self.warn_unknown],
+                [self.wrap_toggle],
+                [self._send_label, self.run_target_combo],
+            ]
+        else:
+            fixed = []
+            groups = [[self.warn_unknown], [self.wrap_toggle]]
+        collapsed = fit_overflow_groups(self._command_bar, fixed, groups, self.command_overflow_button)
+        self._overflow_collapsed = {widget for group in collapsed for widget in group}
+
+    def _build_command_overflow_menu(self) -> None:
+        menu = self._command_overflow_menu
+        menu.clear()
+        collapsed = self._overflow_collapsed
+        if self.warn_unknown in collapsed:
+            action = menu.addAction("Warn unknown commands")
+            action.setCheckable(True)
+            action.setChecked(self.warn_unknown.isChecked())
+            action.triggered.connect(lambda checked: self.warn_unknown.setChecked(checked))
+        if self.wrap_toggle in collapsed:
+            action = menu.addAction("Wrap long lines")
+            action.setCheckable(True)
+            action.setChecked(self.wrap_toggle.isChecked())
+            action.triggered.connect(lambda _checked=False: self.wrap_toggle.click())
+        if self._show_run_bar and self.run_target_combo in collapsed:
+            if not menu.isEmpty():
+                menu.addSeparator()
+            target_menu = menu.addMenu("Run on")
+            for index in range(self.run_target_combo.count()):
+                action = target_menu.addAction(self.run_target_combo.itemText(index))
+                action.setCheckable(True)
+                action.setChecked(index == self.run_target_combo.currentIndex())
+                action.triggered.connect(
+                    lambda _checked=False, idx=index: self.run_target_combo.setCurrentIndex(idx)
+                )
+        if menu.isEmpty():
+            menu.addAction("No hidden controls").setEnabled(False)
+
+    def _toolbar_icon(self, icon: str, tip: str, callback) -> QToolButton:
+        button = QToolButton(self)
+        button.setObjectName("editorToolButton")
+        button.setToolTip(tip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_button_icon(button, icon, 15)
+        button.clicked.connect(callback)
+        return button
+
+    def _status_toggle(self, icon: str, tip: str, slot) -> QToolButton:
+        button = QToolButton(self)
+        button.setObjectName("statusToggleButton")
+        button.setCheckable(True)
+        button.setToolTip(tip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setProperty("iconName", icon)
+        set_button_icon(button, icon, 14)
+        button.toggled.connect(slot)
+        return button
+
+    def _toggle_wrap(self, checked: bool) -> None:
+        self.editor.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth if checked else QPlainTextEdit.LineWrapMode.NoWrap
+        )
 
     def _add_font_controls(self, layout: QHBoxLayout, parent: QWidget) -> None:
         font_label = QLabel("Font", parent)
@@ -1065,60 +1316,19 @@ class CommandFileEditorDialog(QDialog):
         font_label.setToolTip("Editor font size")
         font_down = QPushButton("-", parent)
         font_down.setObjectName("editorFontSizeButton")
-        font_down.setFixedSize(QSize(38, 34))
+        font_down.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         font_down.setAccessibleName("Decrease editor font size")
         font_down.setToolTip("Decrease editor font size")
         font_down.clicked.connect(lambda: self.font_change_callback(-1) if self.font_change_callback else None)
         font_up = QPushButton("+", parent)
         font_up.setObjectName("editorFontSizeButton")
-        font_up.setFixedSize(QSize(38, 34))
+        font_up.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         font_up.setAccessibleName("Increase editor font size")
         font_up.setToolTip("Increase editor font size")
         font_up.clicked.connect(lambda: self.font_change_callback(1) if self.font_change_callback else None)
         layout.addWidget(font_label)
         layout.addWidget(font_down)
         layout.addWidget(font_up)
-
-    def _build_find_replace_bar(self) -> QWidget:
-        self.find_replace_bar = QFrame(self)
-        self.find_replace_bar.setObjectName("searchBar")
-        layout = QHBoxLayout(self.find_replace_bar)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
-
-        self.search_input = QLineEdit(self.find_replace_bar)
-        self.search_input.setPlaceholderText("Find")
-        self.search_input.textChanged.connect(lambda _: self.refresh_search_matches(reset=True))
-        self.search_input.returnPressed.connect(self.find_next)
-        self.replace_input = QLineEdit(self.find_replace_bar)
-        self.replace_input.setPlaceholderText("Replace")
-        self.case_sensitive_check = QCheckBox("Aa", self.find_replace_bar)
-        self.case_sensitive_check.setToolTip("Case sensitive search")
-        self.case_sensitive_check.toggled.connect(lambda _: self.refresh_search_matches(reset=True))
-        previous_button = QPushButton("Prev", self.find_replace_bar)
-        previous_button.clicked.connect(self.find_previous)
-        next_button = QPushButton("Next", self.find_replace_bar)
-        next_button.clicked.connect(self.find_next)
-        self.replace_button = QPushButton("Replace", self.find_replace_bar)
-        self.replace_button.clicked.connect(self.replace_current)
-        self.replace_all_button = QPushButton("Replace All", self.find_replace_bar)
-        self.replace_all_button.clicked.connect(self.replace_all)
-        close_button = QToolButton(self.find_replace_bar)
-        close_button.setText("X")
-        close_button.clicked.connect(self.hide_find_replace_bar)
-        self.search_count_label = QLabel("0/0", self.find_replace_bar)
-
-        layout.addWidget(self.search_input, 2)
-        layout.addWidget(self.replace_input, 2)
-        layout.addWidget(self.case_sensitive_check)
-        layout.addWidget(previous_button)
-        layout.addWidget(next_button)
-        layout.addWidget(self.replace_button)
-        layout.addWidget(self.replace_all_button)
-        layout.addWidget(self.search_count_label)
-        layout.addWidget(close_button)
-        self.find_replace_bar.hide()
-        return self.find_replace_bar
 
     def setPlainText(self, text: str) -> None:
         self.editor.setPlainText(text)
@@ -1159,13 +1369,15 @@ class CommandFileEditorDialog(QDialog):
             if issue.severity == "error"
         ]
 
-    def apply_editor_font(self, font: QFont) -> None:
+    def apply_editor_font(self, font: QFont, line_spacing: int = 100) -> None:
         self.editor.setFont(font)
         self.editor.document().setDefaultFont(font)
+        self.editor.set_line_spacing(line_spacing)
         self.editor.update_line_number_area_width(0)
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.editor.apply_theme_palette(theme)
+        self.highlighter.apply_theme(theme)
 
     def restore_text(self, text: str, *, dirty: bool) -> None:
         self.editor.setPlainText(text)
@@ -1186,6 +1398,15 @@ class CommandFileEditorDialog(QDialog):
 
     def _refresh_completion_model(self, prefix: str = "") -> None:
         self.completion_model.setStringList(self.sources.suggestions(self.text(), prefix=prefix, exclude=prefix))
+        set_descriptions = getattr(self.editor, "set_completion_descriptions", None)
+        if callable(set_descriptions):
+            set_descriptions(
+                {
+                    command.command: command.description.strip()
+                    for command in self.sources.quick_commands
+                    if command.description.strip()
+                }
+            )
 
     def refresh_workspace_side_panel(self) -> None:
         if not hasattr(self, "quick_command_list"):
@@ -1269,6 +1490,14 @@ class CommandFileEditorDialog(QDialog):
         self.editor.setTextCursor(cursor)
         self.editor.setFocus()
 
+    def focus_input(self) -> None:
+        """Focus the editor with the caret at the end of the document, so it is ready
+        to type into (used on launch and tab activation)."""
+        cursor = self.editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
+
     def open_selected_quick_file(self) -> None:
         quick_file = self.selected_quick_file()
         if not quick_file:
@@ -1324,25 +1553,19 @@ class CommandFileEditorDialog(QDialog):
             QApplication.beep()
 
     def show_find_bar(self) -> None:
-        self._show_find_replace_bar(show_replace=False)
+        self._open_search(show_replace=False)
 
     def show_replace_bar(self) -> None:
-        self._show_find_replace_bar(show_replace=True)
+        self._open_search(show_replace=True)
 
-    def _show_find_replace_bar(self, *, show_replace: bool) -> None:
-        selection = self.editor.textCursor().selectedText().replace("\u2029", "\n")
-        if selection:
-            self.search_input.setText(selection)
-        self.replace_input.setVisible(show_replace)
-        self.replace_button.setVisible(show_replace)
-        self.replace_all_button.setVisible(show_replace)
-        self.find_replace_bar.show()
+    def _open_search(self, *, show_replace: bool) -> None:
+        selection = self.editor.textCursor().selectedText()
+        seed = selection if "\u2029" not in selection else ""
+        self.search_overlay.open_for(seed, replace=show_replace)
         self.refresh_search_matches(reset=True)
-        self.search_input.setFocus()
-        self.search_input.selectAll()
 
     def hide_find_replace_bar(self) -> None:
-        self.find_replace_bar.hide()
+        self.search_overlay.hide()
         self.search_state.clear()
         self.editor.set_search_highlights([])
         self.editor.setFocus()
@@ -1534,7 +1757,7 @@ class CommandFileEditorDialog(QDialog):
             self,
             "Save Command File",
             start,
-            COMMAND_FILE_FILTER,
+            COMMAND_FILE_SAVE_FILTER,
         )
         if not path:
             return False

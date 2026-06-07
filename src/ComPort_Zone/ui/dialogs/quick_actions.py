@@ -117,7 +117,7 @@ class QuickFileDialog(QDialog):
             self,
             "Choose Command File",
             start_dir,
-            "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+            "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)",
         )
         if path:
             self.path_input.setText(path)

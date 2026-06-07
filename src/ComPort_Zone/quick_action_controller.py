@@ -78,6 +78,14 @@ class QuickActionController:
         self._refresh_from_settings()
         return self.library.file_sort_mode
 
+    def favorite_command_sort_mode_snapshot(self) -> str:
+        self._refresh_from_settings()
+        return self.library.favorite_command_sort_mode
+
+    def favorite_file_sort_mode_snapshot(self) -> str:
+        self._refresh_from_settings()
+        return self.library.favorite_file_sort_mode
+
     def quick_command_by_id(self, command_id: str) -> QuickCommand | None:
         self._refresh_from_settings()
         return self.library.command_by_id(command_id)
@@ -106,6 +114,24 @@ class QuickActionController:
         if self.library.file_sort_mode == mode:
             return
         self.library.set_file_sort_mode(mode)
+        self._commit_files()
+
+    def set_favorite_command_sort_mode(self, mode: str) -> None:
+        self._refresh_from_settings()
+        if mode not in QUICK_COMMAND_SORT_MODES:
+            mode = "Custom"
+        if self.library.favorite_command_sort_mode == mode:
+            return
+        self.library.set_favorite_command_sort_mode(mode)
+        self._commit_commands()
+
+    def set_favorite_file_sort_mode(self, mode: str) -> None:
+        self._refresh_from_settings()
+        if mode not in QUICK_FILE_SORT_MODES:
+            mode = "Custom"
+        if self.library.favorite_file_sort_mode == mode:
+            return
+        self.library.set_favorite_file_sort_mode(mode)
         self._commit_files()
 
     def set_quick_command_group_visible(self, group: str, visible: bool) -> None:
@@ -145,6 +171,56 @@ class QuickActionController:
             return
         self.library.quick_commands.append(command)
         self._commit_commands()
+
+    def favorite_quick_commands_snapshot(self) -> list[QuickCommand]:
+        self._refresh_from_settings()
+        return self.library.favorite_commands()
+
+    def favorite_quick_files_snapshot(self) -> list[QuickFile]:
+        self._refresh_from_settings()
+        return self.library.favorite_files()
+
+    def set_quick_command_favorite(self, command_id: str, favorite: bool) -> None:
+        self._refresh_from_settings()
+        command = self.library.command_by_id(command_id)
+        if command is None or command.favorite == bool(favorite):
+            return
+        command.favorite = bool(favorite)
+        command.updated_at = utc_now_iso()
+        self._commit_commands(command_id)
+
+    def set_quick_file_favorite(self, quick_file_id: str, favorite: bool) -> None:
+        self._refresh_from_settings()
+        quick_file = self.library.file_by_id(quick_file_id)
+        if quick_file is None or quick_file.favorite == bool(favorite):
+            return
+        quick_file.favorite = bool(favorite)
+        quick_file.updated_at = utc_now_iso()
+        self._commit_files(quick_file_id)
+
+    def add_command_from_text(self, text: str, *, favorite: bool = False) -> QuickCommand | None:
+        """Save a raw command (from history). De-duplicates by command text: an
+        existing match is reused (only flipped to favourite when needed)."""
+        self._refresh_from_settings()
+        text = text.strip()
+        if not text:
+            return None
+        existing = self.library.command_by_text(text)
+        if existing is not None:
+            if favorite and not existing.favorite:
+                existing.favorite = True
+                existing.updated_at = utc_now_iso()
+                self._commit_commands(existing.id)
+            else:
+                self._set_status(f"Already in saved commands: {_short_label(existing.display_label(), 32)}")
+            return existing
+        command = QuickCommand(label=text, command=text, favorite=favorite)
+        self.library.quick_commands.append(command)
+        self._commit_commands(command.id)
+        self._set_status(
+            f"{'Favourited' if favorite else 'Saved'} command: {_short_label(text, 32)}"
+        )
+        return command
 
     def edit_quick_command(self, command_id: str) -> None:
         command = self.quick_command_by_id(command_id)
@@ -406,6 +482,18 @@ class QuickActionController:
             return
         self._commit_files(selected_id)
 
+    def reorder_favorite_commands(self, command_ids: list[str], *, selected_id: str = "") -> None:
+        self._refresh_from_settings()
+        if not self.library.reorder_favorite_commands(command_ids):
+            return
+        self._commit_commands(selected_id)
+
+    def reorder_favorite_files(self, quick_file_ids: list[str], *, selected_id: str = "") -> None:
+        self._refresh_from_settings()
+        if not self.library.reorder_favorite_files(quick_file_ids):
+            return
+        self._commit_files(selected_id)
+
     def delete_all_quick_commands(self, *, confirm: bool = True) -> bool:
         self._refresh_from_settings()
         count = len(self.library.quick_commands)
@@ -445,11 +533,15 @@ class QuickActionController:
         return True
 
     def _commit_commands(self, selected_id: str | None = None) -> None:
+        # Keep the favourites order in step with the live favourite set (prunes
+        # un-favourited / deleted ids, appends newly-favourited ones).
+        self.library.sync_favorite_command_order()
         self._sync_to_settings()
         self._refresh_commands(selected_id)
         self._save_settings()
 
     def _commit_files(self, selected_id: str | None = None) -> None:
+        self.library.sync_favorite_file_order()
         self._sync_to_settings()
         self._refresh_files(selected_id)
         self._save_settings()

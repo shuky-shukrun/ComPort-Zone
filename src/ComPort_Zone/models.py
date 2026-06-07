@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -13,11 +14,24 @@ LINE_ENDINGS = {
 }
 
 FLOW_CONTROL_OPTIONS = ("None", "RTS/CTS", "XON/XOFF", "DSR/DTR")
-THEME_OPTIONS = ("VS Code Dark", "Windows Terminal", "Bench Light", "Scope Amber")
+THEME_OPTIONS = (
+    "ComPort Zone Dark",
+    "ComPort Zone Light",
+    "VS Code Dark",
+    "Windows Terminal",
+    "Bench Light",
+    "Scope Amber",
+)
 RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
+# Example command files shipped alongside the package (installation folder).
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
+# Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
+EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
+EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
 SETTINGS_SCHEMA_VERSION = 4
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 
@@ -141,6 +155,7 @@ class QuickCommand:
     send_mode: str = "Text"
     group: str = "General"
     line_ending_override: str = ""
+    favorite: bool = False
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -156,6 +171,7 @@ class QuickCommand:
             "send_mode": self.send_mode,
             "group": self.group,
             "line_ending_override": self.line_ending_override,
+            "favorite": self.favorite,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -175,6 +191,7 @@ class QuickCommand:
             send_mode=str(data.get("send_mode", "Text")),
             group=str(data.get("group", "General")) or "General",
             line_ending_override=str(data.get("line_ending_override", "")),
+            favorite=bool(data.get("favorite", False)),
             created_at=str(data.get("created_at", utc_now_iso())),
             updated_at=str(data.get("updated_at", utc_now_iso())),
         )
@@ -185,6 +202,7 @@ class QuickFile:
     id: str = field(default_factory=lambda: uuid4().hex)
     label: str = ""
     path: str = ""
+    favorite: bool = False
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -196,6 +214,7 @@ class QuickFile:
             "id": self.id,
             "label": self.label,
             "path": self.path,
+            "favorite": self.favorite,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -211,6 +230,7 @@ class QuickFile:
             id=str(data.get("id", uuid4().hex)),
             label=label,
             path=path,
+            favorite=bool(data.get("favorite", False)),
             created_at=str(data.get("created_at", utc_now_iso())),
             updated_at=str(data.get("updated_at", utc_now_iso())),
         )
@@ -394,6 +414,41 @@ class WorkspaceLayoutState:
         )
 
 
+def default_quick_commands() -> list[QuickCommand]:
+    """Saved commands seeded on first run — two are favourited by default."""
+    return [
+        QuickCommand(
+            label="*IDN?",
+            command="*IDN?",
+            description="Identify the instrument (vendor, model, serial, firmware)",
+            favorite=True,
+        ),
+        QuickCommand(
+            label="SYST:ERR:ALL?",
+            command="SYST:ERR:ALL?",
+            description="Read and clear all queued errors",
+            favorite=True,
+        ),
+        QuickCommand(
+            label="SYST:FIRM?",
+            command="SYST:FIRM?",
+            description="Query the firmware version",
+        ),
+    ]
+
+
+def default_quick_files() -> list[QuickFile]:
+    """Quick files seeded on first run — the bundled example command files.
+
+    Only the basic example is favourited by default; the richer EXPECT /
+    parameter samples are saved but left for the user to star."""
+    return [
+        QuickFile(label="Example Commands", path=str(EXAMPLE_COMMAND_FILE), favorite=True),
+        QuickFile(label="Self-Test (EXPECT)", path=str(EXAMPLE_SELF_TEST_FILE)),
+        QuickFile(label="Measurement (parameters)", path=str(EXAMPLE_MEASUREMENT_FILE)),
+    ]
+
+
 @dataclass(slots=True)
 class AppSettings:
     transport_kind: str = "serial"
@@ -401,24 +456,33 @@ class AppSettings:
     serial: SerialProfile = field(default_factory=SerialProfile)
     lan: LanProfile = field(default_factory=LanProfile)
     command_history: list[str] = field(default_factory=list)
-    quick_commands: list[QuickCommand] = field(
-        default_factory=lambda: [QuickCommand(label=item, command=item) for item in DEFAULT_SNIPPETS]
-    )
-    quick_files: list[QuickFile] = field(default_factory=list)
+    quick_commands: list[QuickCommand] = field(default_factory=default_quick_commands)
+    quick_files: list[QuickFile] = field(default_factory=default_quick_files)
     quick_command_sort_mode: str = "Custom"
     quick_command_hidden_groups: list[str] = field(default_factory=list)
     quick_file_sort_mode: str = "Custom"
+    # Favourites keep an independent order + sort mode, separate from the full
+    # Saved Commands / Files lists (a curated arrangement the user controls).
+    favorite_command_order: list[str] = field(default_factory=list)
+    favorite_file_order: list[str] = field(default_factory=list)
+    favorite_command_sort_mode: str = "Custom"
+    favorite_file_sort_mode: str = "Custom"
+    # Favorites page layout: per-panel collapse + the resize splitter sizes.
+    favorite_command_collapsed: bool = False
+    favorite_file_collapsed: bool = False
+    favorites_splitter_sizes: list[int] = field(default_factory=list)
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
-    theme: str = "VS Code Dark"
+    theme: str = "ComPort Zone Dark"
     timestamps_enabled: bool = True
     terminal_font_size: int = 10
     terminal_font_family: str = ""
-    line_wrap_enabled: bool = False
+    terminal_line_spacing: int = 115
+    line_wrap_enabled: bool = True
     scrollback_size: int = 10000
     receive_display_mode: str = "Text"
-    drawer_collapsed: bool = True
+    drawer_collapsed: bool = False
     drawer_width: int = 260
     drawer_page_index: int = 0
     check_for_updates_on_launch: bool = True
@@ -458,6 +522,7 @@ class AppSettings:
                 "terminal_font": {
                     "family": self.terminal_font_family,
                     "size": self.terminal_font_size,
+                    "line_spacing": self.terminal_line_spacing,
                 },
                 "line_wrap_enabled": self.line_wrap_enabled,
                 "scrollback_size": self.scrollback_size,
@@ -466,6 +531,11 @@ class AppSettings:
                     "collapsed": self.drawer_collapsed,
                     "width": self.drawer_width,
                     "page_index": self.drawer_page_index,
+                },
+                "favorites_layout": {
+                    "command_collapsed": self.favorite_command_collapsed,
+                    "file_collapsed": self.favorite_file_collapsed,
+                    "splitter_sizes": list(self.favorites_splitter_sizes),
                 },
                 "updates": {
                     "check_on_launch": self.check_for_updates_on_launch,
@@ -488,6 +558,10 @@ class AppSettings:
                 "quick_command_sort_mode": self.quick_command_sort_mode,
                 "quick_command_hidden_groups": list(self.quick_command_hidden_groups),
                 "quick_file_sort_mode": self.quick_file_sort_mode,
+                "favorite_command_order": list(self.favorite_command_order),
+                "favorite_file_order": list(self.favorite_file_order),
+                "favorite_command_sort_mode": self.favorite_command_sort_mode,
+                "favorite_file_sort_mode": self.favorite_file_sort_mode,
             },
             "workspace": {
                 "terminal_tabs": [session.to_dict() for session in self.restored_tabs],
@@ -516,6 +590,7 @@ class AppSettings:
         app = _dict_value(data.get("app"))
         terminal_font = _dict_value(app.get("terminal_font"))
         drawer = _dict_value(app.get("drawer"))
+        favorites_layout = _dict_value(app.get("favorites_layout"))
         updates = _dict_value(app.get("updates"))
         paths = _dict_value(app.get("paths"))
         window = _dict_value(app.get("window"))
@@ -526,15 +601,20 @@ class AppSettings:
         quick_commands_data = (
             _list_value(libraries.get("quick_commands"))
             if quick_commands_present
-            else [QuickCommand(label=item, command=item).to_dict() for item in DEFAULT_SNIPPETS]
+            else [command.to_dict() for command in default_quick_commands()]
         )
         quick_commands = []
         for item in quick_commands_data:
             quick_command = QuickCommand.from_dict(item)
             if quick_command.command:
                 quick_commands.append(quick_command)
+        quick_files_data = (
+            _list_value(libraries.get("quick_files"))
+            if "quick_files" in libraries
+            else [quick_file.to_dict() for quick_file in default_quick_files()]
+        )
         quick_files = []
-        for item in _list_value(libraries.get("quick_files")):
+        for item in quick_files_data:
             quick_file = QuickFile.from_dict(item)
             if quick_file.path:
                 quick_files.append(quick_file)
@@ -547,6 +627,12 @@ class AppSettings:
         quick_file_sort_mode = str(libraries.get("quick_file_sort_mode", "Custom"))
         if quick_file_sort_mode not in QUICK_FILE_SORT_MODES:
             quick_file_sort_mode = "Custom"
+        favorite_command_sort_mode = str(libraries.get("favorite_command_sort_mode", "Custom"))
+        if favorite_command_sort_mode not in QUICK_COMMAND_SORT_MODES:
+            favorite_command_sort_mode = "Custom"
+        favorite_file_sort_mode = str(libraries.get("favorite_file_sort_mode", "Custom"))
+        if favorite_file_sort_mode not in QUICK_FILE_SORT_MODES:
+            favorite_file_sort_mode = "Custom"
         settings = cls(
             transport_kind=transport_kind,
             transport_profile=dict(
@@ -565,6 +651,25 @@ class AppSettings:
                 if str(group).strip()
             ],
             quick_file_sort_mode=quick_file_sort_mode,
+            favorite_command_order=[
+                str(item).strip()
+                for item in _list_value(libraries.get("favorite_command_order"))
+                if str(item).strip()
+            ],
+            favorite_file_order=[
+                str(item).strip()
+                for item in _list_value(libraries.get("favorite_file_order"))
+                if str(item).strip()
+            ],
+            favorite_command_sort_mode=favorite_command_sort_mode,
+            favorite_file_sort_mode=favorite_file_sort_mode,
+            favorite_command_collapsed=bool(favorites_layout.get("command_collapsed", False)),
+            favorite_file_collapsed=bool(favorites_layout.get("file_collapsed", False)),
+            favorites_splitter_sizes=[
+                int(size)
+                for size in _list_value(favorites_layout.get("splitter_sizes"))
+                if str(size).strip().lstrip("-").isdigit()
+            ],
             restored_tabs=[
                 TerminalSessionState.from_dict(item)
                 for item in _list_value(workspace.get("terminal_tabs"))
@@ -574,10 +679,11 @@ class AppSettings:
                 for item in _list_value(workspace.get("command_file_tabs"))
             ],
             workspace_layout=WorkspaceLayoutState.from_dict(_dict_value(workspace.get("layout"))),
-            theme=str(app.get("theme", "VS Code Dark")),
+            theme=str(app.get("theme", "ComPort Zone Dark")),
             timestamps_enabled=bool(app.get("timestamps_enabled", True)),
             terminal_font_size=int(terminal_font.get("size", 10)),
             terminal_font_family=str(terminal_font.get("family", "")),
+            terminal_line_spacing=int(terminal_font.get("line_spacing", 115)),
             line_wrap_enabled=bool(app.get("line_wrap_enabled", False)),
             scrollback_size=int(app.get("scrollback_size", 10000)),
             receive_display_mode=receive_display_mode,

@@ -6,7 +6,7 @@ from html import escape
 from pathlib import Path
 from typing import ClassVar, cast
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -14,11 +14,14 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QInputDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -26,12 +29,20 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from .. import quick_actions as _quick_actions
+from ..quick_actions_panel import (
+    item_ids_in_order,
+    populate_quick_command_list,
+    populate_quick_file_list,
+    populate_quick_history_list,
+    selected_item_id,
+)
+from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..app_settings_controller import AppSettingsController
 from ..command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from ..command_registry import CommandPaletteEntry, CommandRegistry
 from ..command_run_targets import CommandRunRequest, CommandRunTarget
 from ..history import HistoryStore
-from ..icons import standard_icon
+from ..icons import retint_icons, set_icon_color, standard_icon
 from ..models import (
     AppSettings,
     CommandFileTabState,
@@ -64,9 +75,19 @@ from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog, VersionUp
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
 from .split_workspace import SplitWorkspaceWidget
+from .stylesheet import build_stylesheet
 from .tab_workspace import TabWorkspaceController
+from .title_bar import TitleBar, WindowResizeGrips, apply_rounded_corners
+from .tokens import (
+    DRAWER_COLLAPSE_AT,
+    DRAWER_MAX_W,
+    DRAWER_MIN_W,
+    FONT_BTN_H,
+    FONT_BTN_W,
+    SPLITTER_HANDLE,
+)
 from .tab_context_menus import TabContextMenuBuilder
-from .terminal_tab import TerminalSessionWidget
+from .terminal_tab import DRAWER_COLLAPSED_WIDTH, TerminalSessionWidget
 from .workspace_status import WorkspaceStatusPresenter, connection_state_color
 
 APP_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "comport-zone-icon.png"
@@ -150,7 +171,7 @@ class MainWindow(QMainWindow):
             confirm_bulk_delete=lambda title, message: self._confirm_bulk_delete(title, message),
         )
         self.history_catalog = HistoryStore(self.settings.command_history)
-        self.theme = THEMES.get(self.settings.theme, THEMES["VS Code Dark"])
+        self.theme = THEMES.get(self.settings.theme, THEMES["ComPort Zone Dark"])
         self._session_counter = 0
         self._loading = True
         self._deferred_startup_actions_pending = defer_startup_actions
@@ -164,6 +185,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ComPort Zone")
         self.setWindowIcon(app_icon())
         self.setFont(pick_ui_font())
+        # Frameless: the design ships a bespoke title bar; native drag/resize/snap is
+        # re-delegated to the OS from ui/title_bar.py.
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        # Keep the floor low so the app fits small screens and a split workspace
+        # (two panes) never forces the window past the screen edge. The tab strip no
+        # longer pins a wide floor — a crowded strip collapses into the ⋯ overflow
+        # menu (ui/tab_workspace.py) and the bar's minimum stays ≈ one tab — so the
+        # window can shrink to where the command bar's controls run out of room.
+        self.setMinimumSize(460, 440)
         self.resize(self.settings.window_width, self.settings.window_height)
         self._build_ui()
         self.tab_workspace = TabWorkspaceController(
@@ -194,12 +224,23 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self.apply_theme(self.theme.name)
         self.restore_sessions(prompt_first_settings=not defer_startup_actions)
+        self.refresh_shared_drawer()
+        self._apply_shared_drawer_state()
         self._loading = False
         self.set_status("Ready")
         if not defer_startup_actions:
             self._schedule_launch_update_check()
 
     def _build_ui(self) -> None:
+        # --- frameless window chrome: a single VS Code-style title row carrying the
+        # logo, the application menu bar, a centred command palette box, and the
+        # Minimize/Maximize/Close buttons (the separate menu row is gone). ---
+        self._app_menu_bar = QMenuBar(self)
+        self.title_bar = TitleBar(self, APP_ICON_PATH)
+        self.title_bar.attach_menu_bar(self._app_menu_bar)
+        self.title_bar.commandPaletteRequested.connect(self.show_command_palette)
+        self.setMenuWidget(self.title_bar)
+
         self.tabs = SplitWorkspaceWidget(self)
         self.tabs.setDocumentMode(True)
         self.tabs.setMovable(True)
@@ -210,7 +251,20 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
         self.tabs.tabContextMenuRequested.connect(self.show_tab_context_menu)
         self.tabs.tabMovedBetweenPanes.connect(self._tab_moved_between_panes)
-        self.setCentralWidget(self.tabs)
+        # The drawer is one shared full-height side bar to the left of the tabs
+        # (the mockup's app-body: rail | side panel | main column). Its actions
+        # dispatch to the active tab; per-tab drawers are hidden.
+        self.shared_drawer = self._build_shared_drawer()
+        self.central_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.central_splitter.setObjectName("centralSplitter")
+        self.central_splitter.setChildrenCollapsible(False)
+        self.central_splitter.setHandleWidth(SPLITTER_HANDLE)
+        self.central_splitter.addWidget(self.shared_drawer)
+        self.central_splitter.addWidget(self.tabs)
+        self.central_splitter.setStretchFactor(0, 0)
+        self.central_splitter.setStretchFactor(1, 1)
+        self.central_splitter.splitterMoved.connect(self._shared_drawer_resized)
+        self.setCentralWidget(self.central_splitter)
 
         self.footer = QLabel("Ready", self)
         self.footer.setObjectName("footer")
@@ -228,13 +282,13 @@ class MainWindow(QMainWindow):
         self.font_status_label.setToolTip("Terminal and editor font size")
         self.font_decrease_button = QPushButton("-", self)
         self.font_decrease_button.setObjectName("statusFontSizeButton")
-        self.font_decrease_button.setFixedSize(QSize(34, 28))
+        self.font_decrease_button.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         self.font_decrease_button.setToolTip("Decrease terminal and editor font size")
         self.font_decrease_button.setAccessibleName("Decrease terminal and editor font size")
         self.font_decrease_button.clicked.connect(lambda: self.change_font_size(-1))
         self.font_increase_button = QPushButton("+", self)
         self.font_increase_button.setObjectName("statusFontSizeButton")
-        self.font_increase_button.setFixedSize(QSize(34, 28))
+        self.font_increase_button.setFixedSize(QSize(FONT_BTN_W, FONT_BTN_H))
         self.font_increase_button.setToolTip("Increase terminal and editor font size")
         self.font_increase_button.setAccessibleName("Increase terminal and editor font size")
         self.font_increase_button.clicked.connect(lambda: self.change_font_size(1))
@@ -248,6 +302,331 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.font_decrease_button)
         self.statusBar().addPermanentWidget(self.font_increase_button)
         self.statusBar().addPermanentWidget(self.version_label)
+
+        # Native edge/corner resize for the frameless window.
+        self._resize_grips = WindowResizeGrips(self)
+
+    def menuBar(self) -> QMenuBar:
+        # The menu bar lives inside the custom title-bar chrome (see _build_ui), so
+        # both the menu builder and the test-suite read it through this override.
+        bar = getattr(self, "_app_menu_bar", None)
+        return bar if bar is not None else super().menuBar()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Round the frameless shell's outer corners to the subtle Win11 radius.
+        # Applied on show (the native window is guaranteed to exist by now) and
+        # re-applied on every show so it survives a platform-window recreation.
+        apply_rounded_corners(self)
+        # Restore the favourites splitter sizes once the drawer has a real height
+        # (pixel-based sizes can't be applied during construction).
+        if not getattr(self, "_favorites_sizes_restored", False):
+            self._favorites_sizes_restored = True
+            QTimer.singleShot(0, self._apply_favorites_splitter_sizes)
+
+    def _apply_favorites_splitter_sizes(self) -> None:
+        drawer = getattr(self, "shared_drawer", None)
+        if drawer is None or drawer.favorites_splitter is None:
+            return
+        # Splitter sizes only matter when both panels are expanded.
+        if drawer.favorites_panel.is_collapsed() or drawer.favorite_files_panel.is_collapsed():
+            return
+        splitter = drawer.favorites_splitter
+        sizes = [int(size) for size in self.settings.favorites_splitter_sizes]
+        if len(sizes) == splitter.count() and sum(sizes) > 0:
+            splitter.setSizes(sizes)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "title_bar"):
+            self.title_bar.refresh_maximize_glyph()
+
+    def _refresh_title_subtitle(self) -> None:
+        if not hasattr(self, "title_bar"):
+            return
+        session = self.current_session()
+        if session is None:
+            self.title_bar.set_subtitle("")
+            self.title_bar.set_live(False)
+            return
+        state = session.connection_state()
+        segments = [part.strip() for part in session.connection_status_text().split("|") if part.strip()]
+        if state == "connected":
+            self.title_bar.set_subtitle(" · ".join(segments[:3]))
+            self.title_bar.set_live(True)
+        else:
+            self.title_bar.set_subtitle(segments[0] if segments else "Disconnected")
+            self.title_bar.set_live(False)
+
+    # ------------------------------------------------------------------ #
+    # Shared full-height side bar (one drawer for the whole window; its    #
+    # actions dispatch to the active tab via use_quick_command_id, etc.).  #
+    # ------------------------------------------------------------------ #
+    def _build_shared_drawer(self) -> QuickActionsSidebar:
+        drawer = QuickActionsSidebar(
+            actions=QuickActionsSidebarActions(
+                command_primary=self._shared_use_command,
+                file_primary=self._shared_run_file,
+                add_command=self.add_quick_command,
+                edit_command=lambda: self.edit_quick_command(self._shared_command_id()),
+                delete_command=lambda: self.delete_quick_command(self._shared_command_id()),
+                move_command_up=lambda: self.move_quick_command(self._shared_command_id(), -1),
+                move_command_down=lambda: self.move_quick_command(self._shared_command_id(), 1),
+                import_commands=self.import_quick_commands_csv,
+                export_commands=self.export_quick_commands_csv,
+                add_file=self.add_quick_file,
+                edit_file=lambda: self.edit_quick_file(self._shared_file_id()),
+                delete_file=lambda: self.delete_quick_file(self._shared_file_id()),
+                move_file_up=lambda: self.move_quick_file(self._shared_file_id(), -1),
+                move_file_down=lambda: self.move_quick_file(self._shared_file_id(), 1),
+                import_files=self.import_quick_files_csv,
+                export_files=self.export_quick_files_csv,
+                command_use_by_id=self.use_quick_command_id,
+                command_favorite_toggle=self.set_quick_command_favorite,
+                file_use_by_id=self.run_quick_file_id,
+                file_open_by_id=self.open_quick_file_in_editor_id,
+                file_favorite_toggle=self.set_quick_file_favorite,
+                history_favorite=lambda text: self.add_saved_command_from_text(text, favorite=True),
+                history_save=lambda text: self.add_saved_command_from_text(text, favorite=False),
+                history_remove=self.remove_command_from_history,
+                run_file=self.run_command_file_dialog,
+            ),
+            command_primary_label="Send",
+            file_primary_label="Run",
+            command_double_clicked=self._shared_use_command,
+            file_double_clicked=self._shared_open_file,
+            command_sort_changed=self._shared_command_sort_changed,
+            file_sort_changed=self._shared_file_sort_changed,
+            command_order_changed=self._shared_persist_command_order,
+            file_order_changed=self._shared_persist_file_order,
+            favorite_command_sort_changed=self._shared_favorite_command_sort_changed,
+            favorite_file_sort_changed=self._shared_favorite_file_sort_changed,
+            favorite_command_order_changed=self._shared_persist_favorite_command_order,
+            favorite_file_order_changed=self._shared_persist_favorite_file_order,
+            include_history=True,
+            history_primary=self._shared_resend_history,
+            settings_callback=self.show_command_palette,
+            group_menu_provider=self._populate_group_menu,
+            on_page_requested=self.request_drawer_page,
+            rail_width=DRAWER_COLLAPSED_WIDTH,
+            parent=self,
+        )
+        for group_button in (drawer.quick_group_button, drawer.favorite_group_button):
+            group_menu = QMenu(group_button)
+            group_menu.aboutToShow.connect(lambda m=group_menu: self._populate_group_menu(m))
+            group_button.setMenu(group_menu)
+        # Favorites page layout: collapse toggles + resize splitter, persisted.
+        drawer.favorites_panel.collapseToggled.connect(self._persist_favorites_layout)
+        drawer.favorite_files_panel.collapseToggled.connect(self._persist_favorites_layout)
+        if drawer.favorites_splitter is not None:
+            drawer.favorites_splitter.splitterMoved.connect(
+                lambda *_: QTimer.singleShot(0, self._persist_favorites_layout)
+            )
+        self._apply_favorites_layout(drawer)
+        self.drawer_rail = drawer.rail
+        self.drawer_panel = drawer.panel
+        self.drawer_pages = drawer.pages
+        return drawer
+
+    def _apply_favorites_layout(self, drawer=None) -> None:
+        """Restore the saved collapse state onto the Favorites page (splitter sizes
+        are applied later, once the drawer has a real height — see showEvent)."""
+        drawer = drawer or getattr(self, "shared_drawer", None)
+        if drawer is None:
+            return
+        drawer.favorites_panel.set_collapsed(self.settings.favorite_command_collapsed)
+        drawer.favorite_files_panel.set_collapsed(self.settings.favorite_file_collapsed)
+        self._update_favorites_fill_cap(drawer)
+
+    def _update_favorites_fill_cap(self, drawer) -> None:
+        """When both favourites panels are collapsed, cap the splitter to its two
+        headers so the wrapper's top spacer pushes them to the bottom of the dock;
+        otherwise let the splitter fill."""
+        splitter = drawer.favorites_splitter
+        if splitter is None:
+            return
+        both_collapsed = (
+            drawer.favorites_panel.is_collapsed() and drawer.favorite_files_panel.is_collapsed()
+        )
+        if both_collapsed:
+            cap = (
+                drawer.favorites_panel.maximumHeight()
+                + drawer.favorite_files_panel.maximumHeight()
+                + splitter.handleWidth()
+                + 4
+            )
+            splitter.setMaximumHeight(cap)
+        else:
+            splitter.setMaximumHeight(16_777_215)
+
+    def _persist_favorites_layout(self, *_args) -> None:
+        drawer = getattr(self, "shared_drawer", None)
+        if drawer is None:
+            return
+        self.settings.favorite_command_collapsed = drawer.favorites_panel.is_collapsed()
+        self.settings.favorite_file_collapsed = drawer.favorite_files_panel.is_collapsed()
+        self._update_favorites_fill_cap(drawer)
+        splitter = drawer.favorites_splitter
+        both_expanded = (
+            not drawer.favorites_panel.is_collapsed()
+            and not drawer.favorite_files_panel.is_collapsed()
+        )
+        # Only a both-expanded layout is a real resize worth persisting.
+        if splitter is not None and splitter.isVisible() and both_expanded:
+            sizes = [int(size) for size in splitter.sizes()]
+            if len(sizes) == splitter.count() and all(size > 0 for size in sizes):
+                self.settings.favorites_splitter_sizes = sizes
+        self.save_settings()
+
+    def _shared_command_id(self) -> str:
+        return selected_item_id(self.shared_drawer.quick_command_list)
+
+    def _shared_file_id(self) -> str:
+        return selected_item_id(self.shared_drawer.quick_file_list)
+
+    def _shared_use_command(self) -> None:
+        self.use_quick_command_id(self._shared_command_id())
+
+    def _shared_run_file(self) -> None:
+        self.run_quick_file_id(self._shared_file_id())
+
+    def _shared_open_file(self) -> None:
+        self.open_quick_file_in_editor_id(self._shared_file_id())
+
+    def _shared_resend_history(self, command: str) -> None:
+        session = self.current_session()
+        if session is not None:
+            session.resend_command(command)
+
+    def _shared_command_sort_changed(self) -> None:
+        mode = self.shared_drawer.quick_sort_combo.currentData()
+        if mode:
+            self.set_quick_command_sort_mode(str(mode))
+
+    def _shared_file_sort_changed(self) -> None:
+        mode = self.shared_drawer.quick_file_sort_combo.currentData()
+        if mode:
+            self.set_quick_file_sort_mode(str(mode))
+
+    def _shared_persist_command_order(self) -> None:
+        self.reorder_quick_commands(
+            item_ids_in_order(self.shared_drawer.quick_command_list),
+            selected_id=self._shared_command_id(),
+        )
+
+    def _shared_persist_file_order(self) -> None:
+        self.reorder_quick_files(
+            item_ids_in_order(self.shared_drawer.quick_file_list),
+            selected_id=self._shared_file_id(),
+            force_custom=True,
+        )
+
+    def _shared_favorite_command_id(self) -> str:
+        return selected_item_id(self.shared_drawer.favorite_command_list)
+
+    def _shared_favorite_file_id(self) -> str:
+        return selected_item_id(self.shared_drawer.favorite_file_list)
+
+    def _shared_favorite_command_sort_changed(self) -> None:
+        mode = self.shared_drawer.favorite_sort_combo.currentData()
+        if mode:
+            self.set_favorite_command_sort_mode(str(mode))
+
+    def _shared_favorite_file_sort_changed(self) -> None:
+        mode = self.shared_drawer.favorite_file_sort_combo.currentData()
+        if mode:
+            self.set_favorite_file_sort_mode(str(mode))
+
+    def _shared_persist_favorite_command_order(self) -> None:
+        self.reorder_favorite_commands(
+            item_ids_in_order(self.shared_drawer.favorite_command_list),
+            selected_id=self._shared_favorite_command_id(),
+        )
+
+    def _shared_persist_favorite_file_order(self) -> None:
+        self.reorder_favorite_files(
+            item_ids_in_order(self.shared_drawer.favorite_file_list),
+            selected_id=self._shared_favorite_file_id(),
+        )
+
+    def _populate_group_menu(self, menu) -> None:
+        menu.clear()
+        hidden = set(self.quick_command_hidden_groups_snapshot())
+        for group in self.quick_command_group_names():
+            action = menu.addAction(group)
+            action.setCheckable(True)
+            action.setChecked(group not in hidden)
+            action.toggled.connect(
+                lambda checked, g=group: (
+                    self.set_quick_command_group_visible(g, checked),
+                    self.refresh_quick_commands_everywhere(),
+                )
+            )
+        menu.addSeparator()
+        menu.addAction("Show all", lambda: (self.show_all_quick_command_groups(), self.refresh_quick_commands_everywhere()))
+        menu.addAction("Hide all", lambda: (self.hide_all_quick_command_groups(), self.refresh_quick_commands_everywhere()))
+
+    def refresh_shared_drawer(self) -> None:
+        if not hasattr(self, "shared_drawer"):
+            return
+        populate_quick_command_list(
+            self.shared_drawer.quick_command_list,
+            self.visible_quick_commands_snapshot(),
+            selected_id=self._shared_command_id(),
+            label_limit=30,
+            group_limit=10,
+            draggable=True,
+        )
+        populate_quick_command_list(
+            self.shared_drawer.favorite_command_list,
+            self.favorite_quick_commands_snapshot(),
+            selected_id=self._shared_favorite_command_id(),
+            label_limit=30,
+            group_limit=10,
+            draggable=True,
+        )
+        populate_quick_file_list(
+            self.shared_drawer.quick_file_list,
+            self.visible_quick_files_snapshot(),
+            selected_id=self._shared_file_id(),
+            label_limit=30,
+            draggable=True,
+        )
+        populate_quick_file_list(
+            self.shared_drawer.favorite_file_list,
+            self.favorite_quick_files_snapshot(),
+            selected_id=self._shared_favorite_file_id(),
+            label_limit=30,
+            draggable=True,
+        )
+        populate_quick_history_list(
+            self.shared_drawer.quick_history_list,
+            list(reversed(self.history_catalog.all_commands()))[:80],
+            favorite_commands={command.command.strip() for command in self.favorite_quick_commands_snapshot()},
+        )
+        self._sync_shared_sort_combos()
+
+    def _sync_shared_sort_combos(self) -> None:
+        for combo, mode in (
+            (self.shared_drawer.quick_sort_combo, self.quick_command_sort_mode_snapshot()),
+            (self.shared_drawer.quick_file_sort_combo, self.quick_file_sort_mode_snapshot()),
+            (self.shared_drawer.favorite_sort_combo, self.favorite_command_sort_mode_snapshot()),
+            (self.shared_drawer.favorite_file_sort_combo, self.favorite_file_sort_mode_snapshot()),
+        ):
+            combo.blockSignals(True)
+            index = combo.findData(mode)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+        groups = self.quick_command_group_names()
+        hidden = set(self.quick_command_hidden_groups_snapshot())
+        visible = [g for g in groups if g not in hidden]
+        label = "All" if len(visible) == len(groups) else f"{len(visible)}/{len(groups)}"
+        for group_button in (
+            self.shared_drawer.quick_group_button,
+            self.shared_drawer.favorite_group_button,
+        ):
+            group_button.setToolTip(f"Quick command groups — showing {label}")
 
     def _build_menus(self) -> None:
         self.menu_builder.build().install_on(self)
@@ -318,6 +697,10 @@ class MainWindow(QMainWindow):
             command_sort_mode=self.settings.quick_command_sort_mode,
             command_hidden_groups=self.settings.quick_command_hidden_groups,
             file_sort_mode=self.settings.quick_file_sort_mode,
+            favorite_command_order=self.settings.favorite_command_order,
+            favorite_file_order=self.settings.favorite_file_order,
+            favorite_command_sort_mode=self.settings.favorite_command_sort_mode,
+            favorite_file_sort_mode=self.settings.favorite_file_sort_mode,
         )
 
     def _sync_quick_actions_to_settings(self) -> None:
@@ -326,6 +709,10 @@ class MainWindow(QMainWindow):
         self.settings.quick_command_sort_mode = self.quick_actions.command_sort_mode
         self.settings.quick_command_hidden_groups = list(self.quick_actions.command_hidden_groups)
         self.settings.quick_file_sort_mode = self.quick_actions.file_sort_mode
+        self.settings.favorite_command_order = list(self.quick_actions.favorite_command_order)
+        self.settings.favorite_file_order = list(self.quick_actions.favorite_file_order)
+        self.settings.favorite_command_sort_mode = self.quick_actions.favorite_command_sort_mode
+        self.settings.favorite_file_sort_mode = self.quick_actions.favorite_file_sort_mode
 
     def _refresh_quick_actions_from_settings(self) -> None:
         self.quick_actions = self._quick_action_library_from_settings()
@@ -378,7 +765,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Open Command File Editor",
                 start_dir,
-                "Text Files (*.txt *.cmd *.scr);;All Files (*)",
+                "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)",
             )
             if not selected:
                 return
@@ -436,6 +823,7 @@ class MainWindow(QMainWindow):
             theme_palette=self.theme,
             workspace_drawer_page_callback=self.request_drawer_page,
             workspace_drawer_width_callback=lambda width, source: self.set_drawer_width(width, source=source),
+            command_palette_callback=self.show_command_palette,
             embedded=True,
             show_run_button=False,
             show_workspace_side_panel=True,
@@ -446,7 +834,7 @@ class MainWindow(QMainWindow):
             self.settings.drawer_width,
             self.settings.drawer_page_index,
         )
-        editor.apply_editor_font(self.editor_font())
+        editor.apply_editor_font(self.editor_font(), self.settings.terminal_line_spacing)
         if state is not None:
             if state.text or state.dirty or not state.path:
                 editor.restore_text(state.text, dirty=state.dirty)
@@ -568,6 +956,15 @@ class MainWindow(QMainWindow):
             if session:
                 self._open_prompted_session_settings(session)
         self._schedule_launch_update_check()
+        # Land the caret in the active tab's terminal/editor so the app is ready to
+        # type the moment it opens — after any first-run settings dialog has closed.
+        self.focus_active_tab_input()
+
+    def focus_active_tab_input(self) -> None:
+        """Give keyboard focus to the active tab's terminal/editor, caret at the end."""
+        focus_input = getattr(self.tabs.currentWidget(), "focus_input", None)
+        if callable(focus_input):
+            focus_input()
 
     def _schedule_launch_update_check(self) -> None:
         if self.settings.check_for_updates_on_launch:
@@ -801,13 +1198,12 @@ class MainWindow(QMainWindow):
 
     def update_tab_titles(self) -> None:
         self.workspace_status.update_tab_titles(self.theme)
-
-    def _shared_drawer_pane(self):
-        panes = self.tabs.panes()
-        for pane in panes:
-            if pane.count() > 0:
-                return pane
-        return panes[0] if panes else None
+        # The input prompt echoes the tab name, so refresh it whenever a title
+        # changes (endpoint connects, rename, …).
+        for session in self.iter_sessions():
+            sync = getattr(session, "_sync_prompt_context", None)
+            if callable(sync):
+                sync()
 
     def _set_workspace_tab_active_property(self, widget: QWidget, active: bool) -> None:
         targets = [widget]
@@ -820,27 +1216,33 @@ class MainWindow(QMainWindow):
             target.update()
 
     def update_workspace_split_chrome(self, *, drawer_source=None) -> None:
-        shared_drawer_pane = self._shared_drawer_pane()
         active_widget = self.tabs.currentWidget()
+        # The full-width gradient edge above the active tab only earns its keep when
+        # the workspace is split — it marks *which* pane is active. With a single pane
+        # there is nothing to disambiguate, so it stays hidden.
+        is_split = getattr(self.tabs, "pane_count", lambda: 1)() > 1
         for ref in self.tabs.iter_tab_refs():
             widget = ref.widget
-            drawer_visible = shared_drawer_pane is None or ref.pane is shared_drawer_pane
+            # The side bar is a single shared drawer to the left of the tabs; the
+            # per-tab drawers stay hidden so the tabs sit only over the terminal.
             if hasattr(widget, "set_workspace_drawer_visible"):
-                widget.set_workspace_drawer_visible(drawer_visible)
-            if drawer_visible and widget is not drawer_source and hasattr(widget, "apply_drawer_state"):
-                widget.apply_drawer_state(
-                    self.settings.drawer_collapsed,
-                    self.settings.drawer_width,
-                    self.normalized_drawer_page_index(),
-                )
-            self._set_workspace_tab_active_property(widget, widget is active_widget)
+                widget.set_workspace_drawer_visible(False)
+            self._set_workspace_tab_active_property(widget, is_split and widget is active_widget)
+        self._apply_shared_drawer_state()
         terminal_owns_status = isinstance(active_widget, TerminalSessionWidget)
-        self.connection_status_label.setVisible(not terminal_owns_status)
-        self.connection_action_button.setVisible(not terminal_owns_status)
+        # The shared connection chip/button are terminal-specific: terminals show
+        # their own in the command bar, and editors are connectionless (their status
+        # lives in the footer). Hide the shared widgets for both so the status line
+        # is not duplicated or cut off while an editor tab is active.
+        is_editor = isinstance(active_widget, CommandFileEditorDialog)
+        show_shared_connection = not terminal_owns_status and not is_editor
+        self.connection_status_label.setVisible(show_shared_connection)
+        self.connection_action_button.setVisible(show_shared_connection)
 
     def sync_status_from_current_session(self) -> None:
         self.workspace_status.sync_from_current(self.theme)
         self.update_workspace_split_chrome()
+        self._refresh_title_subtitle()
 
     def connection_state_color(self, state: str) -> str:
         return connection_state_color(state, self.theme)
@@ -861,6 +1263,7 @@ class MainWindow(QMainWindow):
         # updates should refresh shared targets without replacing it.
         self.workspace_status.sync_from_current(self.theme)
         self.update_workspace_split_chrome()
+        self._refresh_title_subtitle()
 
     def set_status(self, text: str) -> None:
         self.workspace_status.set_status(text)
@@ -869,8 +1272,9 @@ class MainWindow(QMainWindow):
         self.set_drawer_collapsed(not self.settings.drawer_collapsed)
 
     def normalized_drawer_page_index(self, index: int | None = None) -> int:
+        # Rail modes: All (0), Quick Send (1), Command Files (2), History (3).
         page_index = self.settings.drawer_page_index if index is None else index
-        return max(0, min(int(page_index), 1))
+        return max(0, min(int(page_index), 3))
 
     def apply_drawer_state_to_current_tab(self) -> None:
         self.update_workspace_split_chrome()
@@ -898,10 +1302,39 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def set_drawer_width(self, width: int, *, source=None) -> None:
-        self.settings.drawer_width = max(220, min(width, 520))
+        self.settings.drawer_width = max(DRAWER_MIN_W, min(width, DRAWER_MAX_W))
         self.apply_drawer_state_to_tabs(source=source)
         if not self._loading:
             self.save_settings()
+
+    def _apply_shared_drawer_state(self) -> None:
+        if not hasattr(self, "shared_drawer"):
+            return
+        collapsed = self.settings.drawer_collapsed
+        self.shared_drawer.select_page(self.normalized_drawer_page_index())
+        self.shared_drawer.panel.setVisible(not collapsed)
+        if collapsed:
+            self.shared_drawer.setMinimumWidth(DRAWER_COLLAPSED_WIDTH)
+            self.shared_drawer.setMaximumWidth(DRAWER_COLLAPSED_WIDTH)
+            self.central_splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(200, self.width() - DRAWER_COLLAPSED_WIDTH)])
+        else:
+            width = max(DRAWER_MIN_W, min(self.settings.drawer_width, DRAWER_MAX_W))
+            self.shared_drawer.setMinimumWidth(DRAWER_MIN_W)
+            self.shared_drawer.setMaximumWidth(DRAWER_MAX_W)
+            self.central_splitter.setSizes([width, max(200, self.width() - width)])
+
+    def _shared_drawer_resized(self, pos: int, index: int) -> None:
+        # Persist a manual drag of the side bar; auto-collapse below the floor.
+        if self.settings.drawer_collapsed or self._loading:
+            return
+        sizes = self.central_splitter.sizes()
+        if not sizes:
+            return
+        if sizes[0] < DRAWER_COLLAPSE_AT:
+            self.set_drawer_collapsed(True)
+            return
+        self.settings.drawer_width = max(DRAWER_MIN_W, min(sizes[0], DRAWER_MAX_W))
+        self.save_settings()
 
     def change_font_size(self, delta: int) -> None:
         self.settings.terminal_font_size = max(
@@ -915,12 +1348,14 @@ class MainWindow(QMainWindow):
         dialog = TerminalFontSettingsDialog(
             self.settings.terminal_font_family,
             self.settings.terminal_font_size,
+            self.settings.terminal_line_spacing,
             self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.settings.terminal_font_family = dialog.selected_family()
         self.settings.terminal_font_size = dialog.selected_size()
+        self.settings.terminal_line_spacing = dialog.selected_line_spacing()
         self.apply_terminal_font_settings()
         self.save_settings()
 
@@ -928,14 +1363,35 @@ class MainWindow(QMainWindow):
         for session in self.iter_sessions():
             session.apply_settings()
         for editor in self.iter_command_file_editors():
-            editor.apply_editor_font(self.editor_font())
+            editor.apply_editor_font(self.editor_font(), self.settings.terminal_line_spacing)
 
     def toggle_timestamps(self) -> None:
-        self.settings.timestamps_enabled = self.timestamps_action.isChecked()
+        self.set_timestamps_enabled(self.timestamps_action.isChecked())
+
+    def set_timestamps_enabled(self, enabled: bool) -> None:
+        self.settings.timestamps_enabled = bool(enabled)
+        if hasattr(self, "timestamps_action"):
+            self.timestamps_action.blockSignals(True)
+            self.timestamps_action.setChecked(self.settings.timestamps_enabled)
+            self.timestamps_action.blockSignals(False)
+        # Re-sync each tab so the command-bar timestamp toggles track the setting,
+        # then re-render history so the detached timestamp column toggles for all.
+        for session in self.iter_sessions():
+            session.apply_settings()
+            if hasattr(session, "rerender_transcript"):
+                session.rerender_transcript()
         self.save_settings()
 
     def toggle_line_wrap(self) -> None:
-        self.settings.line_wrap_enabled = self.wrap_action.isChecked()
+        self.set_line_wrap_enabled(self.wrap_action.isChecked())
+
+    def set_line_wrap_enabled(self, enabled: bool) -> None:
+        self.settings.line_wrap_enabled = bool(enabled)
+        if hasattr(self, "wrap_action"):
+            self.wrap_action.blockSignals(True)
+            self.wrap_action.setChecked(self.settings.line_wrap_enabled)
+            self.wrap_action.blockSignals(False)
+        # Re-apply so terminals re-wrap and every command-bar wrap toggle tracks it.
         for session in self.iter_sessions():
             session.apply_settings()
         self.save_settings()
@@ -963,6 +1419,8 @@ class MainWindow(QMainWindow):
         self.settings.receive_display_mode = mode
         for session in self.iter_sessions():
             session.apply_settings()
+            if hasattr(session, "rerender_transcript"):
+                session.rerender_transcript()
         self.save_settings()
 
     def default_serial_profile(self) -> SerialProfile:
@@ -993,12 +1451,14 @@ class MainWindow(QMainWindow):
             session.refresh_quick_commands()
             session.refresh_quick_files()
         for editor in self.iter_command_file_editors():
-            editor.apply_editor_font(self.editor_font())
+            editor.apply_editor_font(self.editor_font(), self.settings.terminal_line_spacing)
             editor.apply_drawer_state(
                 self.settings.drawer_collapsed,
                 self.settings.drawer_width,
                 self.settings.drawer_page_index,
             )
+        self.refresh_shared_drawer()
+        self._apply_shared_drawer_state()
         self.update_tab_titles()
         self.sync_status_from_current_session()
 
@@ -1043,6 +1503,37 @@ class MainWindow(QMainWindow):
         if session is not None:
             session.run_script_path(path)
 
+    def run_quick_file_id(self, quick_file_id: str) -> None:
+        """Run a quick file in a terminal (the row's play affordance). Falls back to
+        the first terminal when the active tab is an editor."""
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        session = self.current_session() or next(iter(self.iter_sessions()), None)
+        if session is not None:
+            session.run_script_path(Path(quick_file.path))
+
+    def open_quick_file_in_editor_id(self, quick_file_id: str) -> None:
+        """Open a quick file in the active editor, or a new one when none is active
+        (the row's double-click)."""
+        quick_file = self.quick_file_by_id(quick_file_id)
+        if not quick_file:
+            return
+        path = Path(quick_file.path)
+        editor = self.current_command_file_editor()
+        if editor is not None:
+            if editor.confirm_save_or_discard_if_dirty():
+                editor.load_path(path)
+            return
+        self.add_command_file_tab(path=path)
+
+    def run_command_file_dialog(self) -> None:
+        """Pick and run a command file in the active terminal without saving it as a
+        quick file (the Quick Files ⋯ "Run file…" action)."""
+        session = self.current_session() or next(iter(self.iter_sessions()), None)
+        if session is not None:
+            session.run_script()
+
     def quick_command_group_names(self) -> list[str]:
         return self.quick_action_controller.quick_command_group_names()
 
@@ -1075,6 +1566,41 @@ class MainWindow(QMainWindow):
 
     def copy_quick_command_text(self, command_id: str) -> None:
         self.quick_action_controller.copy_quick_command_text(command_id)
+
+    # --- Favorites (a subset of saved commands flagged ``favorite``) ----------
+    def favorite_quick_commands_snapshot(self) -> list[QuickCommand]:
+        return self.quick_action_controller.favorite_quick_commands_snapshot()
+
+    def set_quick_command_favorite(self, command_id: str, favorite: bool) -> None:
+        self.quick_action_controller.set_quick_command_favorite(command_id, favorite)
+
+    def favorite_quick_files_snapshot(self) -> list[QuickFile]:
+        return self.quick_action_controller.favorite_quick_files_snapshot()
+
+    def set_quick_file_favorite(self, quick_file_id: str, favorite: bool) -> None:
+        self.quick_action_controller.set_quick_file_favorite(quick_file_id, favorite)
+
+    def favorite_command_sort_mode_snapshot(self) -> str:
+        return self.quick_action_controller.favorite_command_sort_mode_snapshot()
+
+    def favorite_file_sort_mode_snapshot(self) -> str:
+        return self.quick_action_controller.favorite_file_sort_mode_snapshot()
+
+    def set_favorite_command_sort_mode(self, mode: str) -> None:
+        self.quick_action_controller.set_favorite_command_sort_mode(mode)
+
+    def set_favorite_file_sort_mode(self, mode: str) -> None:
+        self.quick_action_controller.set_favorite_file_sort_mode(mode)
+
+    def reorder_favorite_commands(self, command_ids: list[str], *, selected_id: str = "") -> None:
+        self.quick_action_controller.reorder_favorite_commands(command_ids, selected_id=selected_id)
+
+    def reorder_favorite_files(self, quick_file_ids: list[str], *, selected_id: str = "") -> None:
+        self.quick_action_controller.reorder_favorite_files(quick_file_ids, selected_id=selected_id)
+
+    def add_saved_command_from_text(self, text: str, *, favorite: bool = False) -> None:
+        # Saving/favouriting from history reuses a matching saved command (no dupes).
+        self.quick_action_controller.add_command_from_text(text, favorite=favorite)
 
     def add_quick_file(self, quick_file: QuickFile | None = None) -> None:
         self.quick_action_controller.add_quick_file(quick_file)
@@ -1181,18 +1707,21 @@ class MainWindow(QMainWindow):
             editor.highlighter.rehighlight()
             editor.update_validation_status()
             editor.refresh_workspace_side_panel()
+        self.refresh_shared_drawer()
 
     def refresh_quick_files_everywhere(self, selected_id: str | None = None) -> None:
         for session in self.iter_sessions():
             session.refresh_quick_files(selected_id)
         for editor in self.iter_command_file_editors():
             editor.refresh_workspace_side_panel()
+        self.refresh_shared_drawer()
 
     def record_command(self, command: str) -> None:
         self.history_catalog.add(command)
         for session in self.iter_sessions():
             session.history_store.add(command)
             session._update_completion_model()
+        self.refresh_shared_drawer()
         self.save_settings()
 
     def remove_command_from_history(self, command: str) -> bool:
@@ -1201,6 +1730,7 @@ class MainWindow(QMainWindow):
             session.history_store.remove(command)
             session._update_completion_model()
         if removed:
+            self.refresh_shared_drawer()
             self.save_settings()
         return removed
 
@@ -1288,7 +1818,7 @@ class MainWindow(QMainWindow):
     def _rebuild_runtime_state_from_settings(self, settings: AppSettings) -> None:
         self.quick_actions = self._quick_action_library_from_settings()
         self.history_catalog = HistoryStore(settings.command_history)
-        self.theme = THEMES.get(settings.theme, THEMES["VS Code Dark"])
+        self.theme = THEMES.get(settings.theme, THEMES["ComPort Zone Dark"])
         self.resize(settings.window_width, settings.window_height)
 
     def show_about(self) -> None:
@@ -1399,13 +1929,17 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def apply_theme(self, name: str, *, save: bool = True) -> None:
-        self.theme = THEMES.get(name, THEMES["VS Code Dark"])
+        self.theme = THEMES.get(name, THEMES["ComPort Zone Dark"])
         self.settings.theme = self.theme.name
+        set_icon_color(self.theme.text)
         self.setStyleSheet(self._stylesheet(self.theme))
         for editor in self.iter_command_file_editors():
             editor.apply_theme_palette(self.theme)
         for session in self.iter_sessions():
             session.apply_theme_palette()
+        # Qt caches QIcon pixmaps, so persistent buttons and menu icons do not
+        # recolor on their own — re-tint them after the new color is in effect.
+        retint_icons(self)
         for theme_name, action in getattr(self, "theme_actions", {}).items():
             action.setChecked(theme_name == self.theme.name)
         self.update_tab_titles()
@@ -1414,436 +1948,7 @@ class MainWindow(QMainWindow):
             self.save_settings()
 
     def _stylesheet(self, theme: ThemePalette) -> str:
-        terminal_background = "#0c0c0c" if theme.name in {"VS Code Dark", "Windows Terminal"} else theme.field
-        return f"""
-        QMainWindow, QWidget {{
-            background: {theme.window};
-            color: {theme.text};
-        }}
-        QMenuBar {{
-            background: {theme.window};
-            color: {theme.text};
-            border-bottom: 1px solid {theme.border};
-            padding-left: 4px;
-        }}
-        QMenuBar::item {{
-            padding: 6px 11px;
-            border-radius: 6px;
-        }}
-        QMenuBar::item:selected, QMenu {{
-            background: {theme.surface_alt};
-        }}
-        QMenu {{
-            border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 6px;
-        }}
-        QMenu::item {{
-            padding: 7px 30px 7px 24px;
-            border-radius: 6px;
-        }}
-        QMenu::item:selected {{
-            background: {theme.accent_soft};
-        }}
-        QTabWidget::pane {{
-            border: none;
-        }}
-        QTabWidget[activePane="true"]::pane {{
-            border: 2px solid {theme.accent};
-        }}
-        QTabWidget[activePane="false"]::pane {{
-            border: 1px solid {theme.border};
-        }}
-        QTabBar::tab {{
-            background: {theme.surface_alt};
-            color: {theme.text};
-            padding: 8px 8px 8px 16px;
-            min-width: 130px;
-            border: 1px solid transparent;
-            border-top-left-radius: 9px;
-            border-top-right-radius: 9px;
-            margin: 5px 2px 0 2px;
-        }}
-        QTabBar::tab:selected {{
-            background: {theme.window};
-            border-top: 2px solid {theme.accent};
-            border-left: 1px solid {theme.border};
-            border-right: 1px solid {theme.border};
-        }}
-        QTabWidget[activePane="true"] QTabBar::tab:selected {{
-            border-top: 3px solid {theme.accent};
-        }}
-        QTabBar::tab:hover:!selected {{
-            background: {theme.surface};
-        }}
-        QToolButton#newTabButton {{
-            background: {theme.surface_alt};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 8px;
-            font-size: 13pt;
-            padding: 0;
-        }}
-        QToolButton#newTabButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.accent};
-        }}
-        QToolButton#tabCloseButton {{
-            background: transparent;
-            color: {theme.muted};
-            border: 1px solid transparent;
-            border-radius: 7px;
-            padding: 0;
-            margin-right: 2px;
-        }}
-        QToolButton#tabCloseButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.border};
-        }}
-        QToolButton#tabCloseButton:pressed {{
-            background: {theme.accent_soft};
-            border-color: {theme.accent};
-        }}
-        QFrame#drawer {{
-            background: {theme.window_alt};
-            border-right: 1px solid {theme.border};
-        }}
-        QFrame#drawerRail {{
-            background: {theme.surface_alt};
-            border-right: 1px solid {theme.border};
-        }}
-        QToolButton#railButton {{
-            background: transparent;
-            color: {theme.text};
-            border: 1px solid transparent;
-            border-radius: 10px;
-        }}
-        QToolButton#railButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.border};
-        }}
-        QToolButton#railButton:pressed {{
-            background: {theme.accent_soft};
-            border-color: {theme.accent};
-        }}
-        QFrame#drawerPanel {{
-            background: {theme.window_alt};
-        }}
-        QFrame#editorSidePanel {{
-            background: {theme.window_alt};
-            border-right: 1px solid {theme.border};
-        }}
-        QLabel#drawerTitle {{
-            font-weight: 650;
-            color: {theme.text};
-            padding: 1px 2px 4px 2px;
-        }}
-        QLabel#drawerSection {{
-            color: {theme.muted};
-            font-size: 8pt;
-            font-weight: 700;
-            padding: 9px 3px 1px 3px;
-        }}
-        QLabel#drawerHelpText {{
-            color: {theme.muted};
-            line-height: 1.3;
-            padding: 2px 3px 6px 3px;
-        }}
-        QFrame#terminalColumn, QTextEdit#terminal {{
-            background: {terminal_background};
-            color: {theme.text};
-            border: none;
-        }}
-        QTextEdit#terminal {{
-            border: 2px solid transparent;
-        }}
-        QTextEdit#terminal[activeWorkspaceTab="true"],
-        QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
-            border: 2px solid {theme.accent};
-        }}
-        QFrame#commandBar, QFrame#searchBar {{
-            background: {theme.window};
-            border-top: 1px solid {theme.border};
-        }}
-        QLabel#terminalConnectionStatus {{
-            background: {theme.chip};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 7px;
-            padding: 3px 8px;
-        }}
-        QLabel#terminalConnectionStatus[state="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QLabel#terminalConnectionStatus[state="retrying"] {{
-            color: {theme.status};
-            border-color: {theme.status};
-        }}
-        QLabel#terminalConnectionStatus[state="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QLabel#terminalConnectionStatus[state="no-port"] {{
-            color: {theme.muted};
-            border-color: {theme.border};
-        }}
-        QPushButton#terminalConnectionActionButton {{
-            min-width: 84px;
-            padding: 3px 9px;
-            border-radius: 7px;
-            background: {theme.surface_alt};
-        }}
-        QPushButton#terminalConnectionActionButton[role="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QPushButton#terminalConnectionActionButton[role="retrying"],
-        QPushButton#terminalConnectionActionButton[role="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QPushButton#terminalConnectionActionButton[role="no-port"] {{
-            color: {theme.muted};
-        }}
-        QLabel#splitDropPreview {{
-            background: {theme.accent_soft};
-            color: {theme.text};
-            border: 2px dashed {theme.accent};
-            border-radius: 8px;
-            font-weight: 700;
-            padding: 12px;
-        }}
-        QLabel#connectionStatus {{
-            background: {theme.chip};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 7px;
-            padding: 3px 9px;
-        }}
-        QLabel#connectionStatus[state="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QLabel#connectionStatus[state="retrying"] {{
-            color: {theme.status};
-            border-color: {theme.status};
-        }}
-        QLabel#connectionStatus[state="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QLabel#connectionStatus[state="no-port"] {{
-            color: {theme.muted};
-            border-color: {theme.border};
-        }}
-        QLineEdit, QComboBox, QListWidget {{
-            background: {theme.field};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 7px 9px;
-            selection-background-color: {theme.search_highlight};
-        }}
-        QPlainTextEdit#commandFileEditor {{
-            background: {terminal_background};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 0px;
-            selection-background-color: {theme.search_highlight};
-        }}
-        QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
-            border: 2px solid {theme.accent};
-        }}
-        QLabel#editorPathLabel, QLabel#editorStatusLabel {{
-            color: {theme.muted};
-            padding: 4px 2px;
-        }}
-        QLineEdit:focus, QComboBox:focus, QListWidget:focus {{
-            border-color: {theme.accent};
-        }}
-        QListWidget {{
-            outline: none;
-        }}
-        QListWidget::item {{
-            border-radius: 7px;
-            padding: 7px 8px;
-            margin: 2px;
-        }}
-        QListWidget::item:hover {{
-            background: {theme.surface};
-        }}
-        QListWidget::item:selected {{
-            background: {theme.accent_soft};
-            color: {theme.text};
-        }}
-        QListWidget#quickCommandList,
-        QListWidget#quickFileList {{
-            padding: 4px;
-        }}
-        QListWidget#quickCommandList::item,
-        QListWidget#quickFileList::item {{
-            border-radius: 5px;
-            padding: 3px 6px;
-            margin: 1px 0;
-        }}
-        QDialog {{
-            background: {theme.window};
-            color: {theme.text};
-        }}
-        QLabel#dialogTitle {{
-            font-size: 13pt;
-            font-weight: 700;
-            color: {theme.text};
-        }}
-        QLabel#dialogHint {{
-            background: {theme.surface_alt};
-            color: {theme.muted};
-            border: 1px solid {theme.border};
-            border-radius: 10px;
-            padding: 10px;
-        }}
-        QDialog#commandPalette {{
-            background: {theme.window};
-            color: {theme.text};
-        }}
-        QLineEdit#commandPaletteSearch {{
-            font-size: 11pt;
-            padding: 10px 12px;
-            border-radius: 10px;
-        }}
-        QListWidget#commandPaletteList {{
-            padding: 6px;
-            border-radius: 10px;
-        }}
-        QListWidget#commandPaletteList::item {{
-            border-radius: 8px;
-            padding: 7px 10px;
-            margin: 2px;
-        }}
-        QLabel#commandPaletteHint {{
-            color: {theme.muted};
-            padding: 0 4px;
-        }}
-        QComboBox {{
-            padding-right: 28px;
-        }}
-        QComboBox::drop-down {{
-            width: 26px;
-            border-left: 1px solid {theme.border};
-            background: {theme.surface_alt};
-            border-top-right-radius: 8px;
-            border-bottom-right-radius: 8px;
-        }}
-        QPushButton {{
-            background: {theme.surface_alt};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 7px 11px;
-        }}
-        QPushButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.accent};
-        }}
-        QPushButton:pressed {{
-            background: {theme.accent_soft};
-        }}
-        QPushButton[role="accent"] {{
-            background: {theme.accent};
-            color: #ffffff;
-            border-color: {theme.accent};
-        }}
-        QPushButton#drawerActionButton {{
-            text-align: left;
-            border-radius: 9px;
-            padding: 8px 10px;
-        }}
-        QPushButton#drawerActionButton[role="drawerPrimary"] {{
-            background: {theme.chip};
-            border-color: {theme.accent_soft};
-        }}
-        QPushButton#drawerActionButton[role="drawerPrimary"]:hover {{
-            background: {theme.accent_soft};
-            border-color: {theme.accent};
-        }}
-        QPushButton#drawerActionButton[role="drawerDanger"]:hover {{
-            background: {theme.surface};
-            border-color: {theme.error};
-        }}
-        QToolButton#drawerMenuButton {{
-            background: {theme.field};
-            color: {theme.text};
-            border: 1px solid {theme.border};
-            border-radius: 8px;
-            padding: 7px 9px;
-        }}
-        QToolButton#drawerMenuButton:hover {{
-            background: {theme.surface};
-            border-color: {theme.accent};
-        }}
-        QToolButton#drawerMenuButton::menu-indicator {{
-            image: none;
-            width: 0px;
-        }}
-        QSplitter::handle {{
-            background: {theme.border};
-        }}
-        QSplitter::handle:hover {{
-            background: {theme.accent};
-        }}
-        QSplashScreen {{
-            color: {theme.text};
-        }}
-        QStatusBar {{
-            background: {theme.window_alt};
-            color: {theme.text};
-            border-top: 1px solid {theme.border};
-        }}
-        QLabel#footer {{
-            color: {theme.muted};
-            padding-left: 4px;
-        }}
-        QLabel#statusFontControlsLabel {{
-            color: {theme.muted};
-            padding: 0 2px 0 8px;
-        }}
-        QPushButton#statusFontSizeButton {{
-            min-width: 34px;
-            max-width: 34px;
-            padding: 0;
-            border-radius: 7px;
-            background: {theme.surface_alt};
-        }}
-        QPushButton#statusActionButton {{
-            min-width: 92px;
-            padding: 3px 10px;
-            border-radius: 7px;
-            background: {theme.surface_alt};
-        }}
-        QPushButton#statusActionButton[role="connected"] {{
-            color: {theme.rx};
-            border-color: {theme.rx};
-        }}
-        QPushButton#statusActionButton[role="retrying"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QPushButton#statusActionButton[role="missing"] {{
-            color: {theme.error};
-            border-color: {theme.error};
-        }}
-        QPushButton#statusActionButton[role="no-port"] {{
-            color: {theme.muted};
-        }}
-        QPushButton#statusActionButton:hover {{
-            border-color: {theme.accent};
-        }}
-        QLabel#versionInfo {{
-            color: {theme.muted};
-            padding: 0 8px;
-        }}
-        """
+        return build_stylesheet(theme)
 
     def save_settings(self) -> None:
         self.workspace_settings_controller.save_settings()

@@ -13,8 +13,13 @@ class TabContextMenuBuilder:
         self.host = host
 
     def show(self, position) -> None:
-        tab_bar = self.host.tabs.tabBar()
-        index = tab_bar.tabAt(position)
+        tabs = self.host.tabs
+        tab_bar = tabs.tabBar()
+        # In a split workspace the menu must address the tab by its global index;
+        # tab_bar.tabAt() alone is pane-local and would target the wrong tab in the
+        # second pane (issue #11). tab_index_at maps it to the global index.
+        resolve_global = getattr(tabs, "tab_index_at", None)
+        index = resolve_global(position) if callable(resolve_global) else tab_bar.tabAt(position)
         menu = self.build(index)
         menu.exec(tab_bar.mapToGlobal(position))
 

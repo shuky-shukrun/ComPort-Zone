@@ -5,7 +5,8 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QCompleter
 
-from ComPort_Zone.widgets import IntegratedTerminalEdit
+from ComPort_Zone.terminal_view import prompt_leader_text
+from ComPort_Zone.widgets import CompletionPopupDelegate, IntegratedTerminalEdit
 
 
 class IntegratedTerminalEditTests(unittest.TestCase):
@@ -29,7 +30,7 @@ class IntegratedTerminalEditTests(unittest.TestCase):
 
             self.assertEqual(terminal.toPlainText(), "SYS Ready\n")
             self.assertEqual(terminal.text(), "statusX")
-            self.assertIn("TX> statusX", terminal.display_text())
+            self.assertIn(f"{terminal.prompt}statusX", terminal.display_text())
         finally:
             terminal.deleteLater()
             self.qt.processEvents()
@@ -52,7 +53,7 @@ class IntegratedTerminalEditTests(unittest.TestCase):
             self.assertEqual(submitted, ["status\nread"])
 
             cursor = terminal.textCursor()
-            cursor.setPosition(terminal.display_text().index("TX> "))
+            cursor.setPosition(terminal.display_text().index(terminal.prompt))
             terminal.setTextCursor(cursor)
             QTest.keyClick(terminal, Qt.Key.Key_Backspace)
             self.assertEqual(terminal.text(), "status\nread")
@@ -147,7 +148,160 @@ class IntegratedTerminalEditTests(unittest.TestCase):
 
             self.assertEqual(terminal.toPlainText(), "4F 4B\n")
             self.assertEqual(terminal.text(), "draft")
-            self.assertIn("TX> draft", terminal.display_text())
+            self.assertIn(f"{terminal.prompt}draft", terminal.display_text())
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_set_prompt_text_swaps_prompt_keeping_transcript_colors_and_draft(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.set_terminal_colors(prompt="#4fc1ff", draft="#d4d4d4")
+            terminal.append_committed_runs(
+                [
+                    ("12:00:00.000 ", "#5e6a7e"),
+                    ("TX  ", "#4fc1ff"),
+                    ("*IDN?\n", "#9cdcfe"),
+                ]
+            )
+            terminal.setText("volt 1")
+            terminal.setCursorPosition(4)
+
+            new_prompt = prompt_leader_text("COM3", timestamps_enabled=True)
+            terminal.set_prompt_text(new_prompt)
+
+            display = terminal.display_text()
+            self.assertTrue(display.startswith("12:00:00.000 TX  *IDN?\n"))
+            self.assertIn(f"{new_prompt}volt 1", display)
+            self.assertEqual(terminal.prompt, new_prompt)
+            # Draft text + caret offset survive the prompt swap.
+            self.assertEqual(terminal.text(), "volt 1")
+            self.assertEqual(terminal.cursorPosition(), 4)
+
+            # The transcript timestamp keeps its gray ink (not flattened to draft).
+            stamp_cursor = QTextCursor(terminal.document())
+            stamp_cursor.setPosition(display.index("12:00"))
+            stamp_cursor.movePosition(
+                QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1
+            )
+            self.assertEqual(
+                stamp_cursor.charFormat().foreground().color().name().lower(), "#5e6a7e"
+            )
+            # The new prompt renders in the prompt colour.
+            prompt_cursor = QTextCursor(terminal.document())
+            prompt_cursor.setPosition(display.index("COM3"))
+            prompt_cursor.movePosition(
+                QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1
+            )
+            self.assertEqual(
+                prompt_cursor.charFormat().foreground().color().name().lower(), "#4fc1ff"
+            )
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_placeholder_text_round_trips(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.setPlaceholderText("type a command — ↑ recalls history")
+            self.assertEqual(
+                terminal.placeholderText(), "type a command — ↑ recalls history"
+            )
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_ghost_suffix_previews_untyped_completion(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        model = QStringListModel(["SYST:ERR?"], terminal)
+        completer = QCompleter(model, terminal)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        terminal.setCompleter(completer)
+        try:
+            terminal.show()
+            terminal.setFocus()
+            terminal.setText("SYST")
+            terminal.show_completions(forced=True)
+            self.qt.processEvents()
+
+            self.assertTrue(completer.popup().isVisible())
+            self.assertEqual(terminal._ghost_suffix(), ":ERR?")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_ghost_suffix_hidden_when_completion_does_not_extend_token(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        model = QStringListModel(["VOLT:DC?"], terminal)
+        completer = QCompleter(model, terminal)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        terminal.setCompleter(completer)
+        try:
+            terminal.show()
+            terminal.setFocus()
+            terminal.setText("DC")
+            terminal.show_completions(forced=True)
+            self.qt.processEvents()
+
+            # A contains-match still lists the item, but it isn't a clean inline
+            # extension of "DC", so no ghost is drawn.
+            self.assertTrue(completer.popup().isVisible())
+            self.assertEqual(terminal._ghost_suffix(), "")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_completion_delegate_widens_for_and_carries_descriptions(self) -> None:
+        from PySide6.QtGui import QFont
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        model = QStringListModel(["*IDN?", "PLAIN"])
+        delegate = CompletionPopupDelegate()
+        delegate.set_descriptions({"*IDN?": "identify the instrument"})
+        option = QStyleOptionViewItem()
+        option.font = QFont("Consolas", 11)
+
+        with_description = delegate.sizeHint(option, model.index(0, 0))
+        without_description = delegate.sizeHint(option, model.index(1, 0))
+        # The row carrying a description reserves more width for the grey column.
+        self.assertGreater(with_description.width(), without_description.width())
+
+    def test_completion_popup_matches_terminal_font_and_design(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        model = QStringListModel(["*IDN?", "SYST:ERR?"], terminal)
+        completer = QCompleter(model, terminal)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        terminal.setCompleter(completer)
+        terminal.set_completion_descriptions({"*IDN?": "identify"})
+        terminal.set_completion_colors(
+            text="#ffffff",
+            description="#8a93a6",
+            selection="#264f78",
+            hover="#222631",
+            background="#141821",
+            border="#2a2f3a",
+        )
+        try:
+            terminal.show()
+            terminal.setFocus()
+            font = terminal.font()
+            font.setPointSize(18)
+            terminal.setFont(font)
+            terminal.setText("IDN")
+            terminal.show_completions(forced=True)
+            self.qt.processEvents()
+
+            popup = completer.popup()
+            self.assertTrue(popup.isVisible())
+            self.assertIsInstance(popup.itemDelegate(), CompletionPopupDelegate)
+            # Popup font tracks the terminal font size setting.
+            self.assertEqual(popup.font().pointSize(), 18)
+            # Themed frame: object name + the panel background colour are applied.
+            self.assertEqual(popup.objectName(), "completionPopup")
+            self.assertIn("#141821", popup.styleSheet())
         finally:
             terminal.deleteLater()
             self.qt.processEvents()

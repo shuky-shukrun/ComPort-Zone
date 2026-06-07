@@ -129,6 +129,152 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_launch_focuses_terminal_command_line_at_draft_end(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_focus_terminal.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(
+                        check_for_updates_on_launch=False,
+                        restored_tabs=[
+                            TerminalSessionState(
+                                title="DUT",
+                                serial=SerialProfile(port="COM77", baudrate=57600, line_ending="LF"),
+                                connected_on_launch=False,
+                                command_draft="status",
+                            )
+                        ],
+                    )
+                )
+            )
+            old_config_path = app_module.default_config_path
+            app_module.default_config_path = lambda: settings_path
+            window = None
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                self.qt.processEvents()
+                session = window.current_session()
+
+                # Park the caret elsewhere; focusing the active tab must land it after
+                # the restored draft ("status") so the user can type immediately.
+                session.command_input.setCursorPosition(0)
+                self.assertEqual(session.command_input.cursorPosition(), 0)
+
+                window.focus_active_tab_input()
+                self.assertEqual(session.command_input.cursorPosition(), len("status"))
+
+                # The deferred launch sequence drives the same focus (no prompt fires
+                # because a tab was restored).
+                session.command_input.setCursorPosition(0)
+                window.run_startup_actions()
+                self.qt.processEvents()
+                QTest.qWait(1)
+                self.qt.processEvents()
+                self.assertEqual(session.command_input.cursorPosition(), len("status"))
+            finally:
+                app_module.default_config_path = old_config_path
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_terminal_command_bar_collapses_to_connect_when_narrow(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_term_collapse.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            app_module.default_config_path = lambda: settings_path
+            window = None
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                window.setMinimumSize(260, 400)
+                window.resize(1100, 700)
+                window.show()
+                self.qt.processEvents()
+                window.set_drawer_collapsed(True)
+                if window.workspace_tab_count() == 0:
+                    window.add_session(prompt_settings=False)
+                self.qt.processEvents()
+                session = window.current_session()
+
+                window.resize(1100, 700)
+                for _ in range(4):
+                    self.qt.processEvents()
+                self.assertFalse(session.command_overflow_button.isVisible())
+                self.assertTrue(session.wrap_toggle.isVisible())
+
+                window.resize(300, 700)
+                for _ in range(6):
+                    self.qt.processEvents()
+                # Only the connection button (plus ⋯) survives.
+                self.assertTrue(session.connection_button.isVisible())
+                self.assertTrue(session.command_overflow_button.isVisible())
+                self.assertFalse(session.mode_combo.isVisible())
+                self.assertFalse(session.wrap_toggle.isVisible())
+                self.assertFalse(session.status_label.isVisible())
+
+                session._build_command_overflow_menu()
+                labels = [action.text() for action in session._command_overflow_menu.actions()]
+                self.assertIn("Timestamps", labels)
+            finally:
+                app_module.default_config_path = old_config_path
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
+    def test_launch_focus_targets_command_file_editor_caret_end(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_focus_editor.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            app_module.default_config_path = lambda: settings_path
+            window = None
+            try:
+                window = app_module.MainWindow(defer_startup_actions=True)
+                self.qt.processEvents()
+                editor = window.add_command_file_tab()
+                editor.restore_text("LINE one\nLINE two", dirty=False)
+                window.tabs.setCurrentWidget(editor)
+                self.qt.processEvents()
+
+                cursor = editor.editor.textCursor()
+                cursor.setPosition(0)
+                editor.editor.setTextCursor(cursor)
+                self.assertEqual(editor.editor.textCursor().position(), 0)
+
+                window.focus_active_tab_input()
+                self.assertEqual(
+                    editor.editor.textCursor().position(),
+                    len("LINE one\nLINE two"),
+                )
+            finally:
+                app_module.default_config_path = old_config_path
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_restored_connected_missing_port_skips_auto_connect(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_restore_missing_port.json")
         settings_path.unlink(missing_ok=True)
@@ -594,11 +740,19 @@ class AppSessionTests(unittest.TestCase):
                 )
             )
             window = app_module.MainWindow()
-            window.resize(1000, 700)
+            # Wide enough that neither split pane's command bar collapses its status
+            # into the ⋯ overflow (that progressive collapse is covered elsewhere).
+            window.resize(1500, 700)
             window.show()
             self.qt.processEvents()
             sessions = window.iter_sessions()
             window.set_drawer_collapsed(False)
+
+            # Single pane: the gradient active-split-side edge stays hidden — with one
+            # pane there is nothing to disambiguate.
+            self.assertEqual(window.tabs.pane_count(), 1)
+            self.assertFalse(sessions[0].property("activeWorkspaceTab"))
+            self.assertFalse(sessions[1].property("activeWorkspaceTab"))
 
             window.split_tab_right(window.tabs.indexOf(sessions[1]))
             self.qt.processEvents()
@@ -606,8 +760,10 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.tabs.pane_count(), 2)
             self.assertEqual([pane.count() for pane in window.tabs.panes()], [1, 1])
             self.assertIs(window.tabs.currentWidget(), sessions[1])
-            self.assertTrue(sessions[0].drawer.isVisible())
-            self.assertFalse(sessions[1].drawer.isVisible())
+            # The drawer is now one shared full-height side bar; per-tab drawers hidden.
+            self.assertTrue(window.shared_drawer.isVisible())
+            self.assertTrue(sessions[0].drawer.isHidden())
+            self.assertTrue(sessions[1].drawer.isHidden())
             self.assertTrue(sessions[1].status_label.isVisible())
             self.assertTrue(sessions[1].connection_button.isVisible())
             self.assertFalse(window.connection_status_label.isVisible())
@@ -626,12 +782,8 @@ class AppSessionTests(unittest.TestCase):
             sessions[1].controller.send_quick_command = record_send
             sessions[0].quick_list.setCurrentRow(0)
             window.tabs.setCurrentWidget(sessions[1])
-            send_button = next(
-                button
-                for button in sessions[0].drawer.findChildren(QPushButton, "drawerActionButton")
-                if button.text() == "Send"
-            )
-            QTest.mouseClick(send_button, Qt.MouseButton.LeftButton)
+            # The Send affordance is now the inline row action (clickable arrow).
+            sessions[0].quick_list.actionTriggered.emit(sessions[0].quick_list.item(0), "send")
             self.qt.processEvents()
 
             self.assertEqual(sent_commands, [sessions[0].visible_quick_commands()[0].command])
@@ -653,6 +805,13 @@ class AppSessionTests(unittest.TestCase):
                 window.connection_status_label.text(),
                 sessions[0].connection_status_text(),
             )
+
+            # Re-joining back to one pane hides the edge again on both tabs.
+            window.join_workspace_panes()
+            self.qt.processEvents()
+            self.assertEqual(window.tabs.pane_count(), 1)
+            self.assertFalse(sessions[0].property("activeWorkspaceTab"))
+            self.assertFalse(sessions[1].property("activeWorkspaceTab"))
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -691,7 +850,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(window.connection_status_label.isHidden())
             self.assertTrue(window.connection_action_button.isHidden())
             self.assertTrue(session.status_label.isVisible())
-            self.assertEqual(session.status_label.maximumWidth(), 520)
+            self.assertEqual(session.status_label.maximumWidth(), 220)
             self.assertIn("Click to open Connection Settings.", session.status_label.toolTip())
 
             QTest.mouseClick(
@@ -738,11 +897,12 @@ class AppSessionTests(unittest.TestCase):
             session.serial_client._serial = FakePort()
             session._update_connection_ui(True)
 
-            self.assertTrue(session.script_run_button.isEnabled())
             self.assertTrue(session.script_pause_button.isHidden())
             self.assertTrue(session.script_resume_button.isHidden())
             self.assertTrue(session.script_stop_button.isHidden())
-            self.assertEqual(session.script_status_label.text(), "File idle")
+            # The "File idle/running/paused" status label is gone — run state is
+            # narrated in the terminal as SYS messages instead.
+            self.assertFalse(hasattr(session, "script_status_label"))
 
             session.toggle_pause()
             self.assertEqual(session.pause_label.text(), "RX paused")
@@ -753,12 +913,10 @@ class AppSessionTests(unittest.TestCase):
 
             session.controller.script_snapshot = lambda: BatchRunSnapshot(is_running=True)  # type: ignore[method-assign]
             session._refresh_script_controls()
-            self.assertFalse(session.script_run_button.isEnabled())
             self.assertFalse(session.script_pause_button.isHidden())
             self.assertTrue(session.script_pause_button.isEnabled())
             self.assertTrue(session.script_resume_button.isHidden())
             self.assertFalse(session.script_stop_button.isHidden())
-            self.assertEqual(session.script_status_label.text(), "File running")
 
             session.controller.script_snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
                 is_running=True,
@@ -770,7 +928,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertTrue(session.script_pause_button.isHidden())
             self.assertFalse(session.script_resume_button.isHidden())
             self.assertFalse(session.script_resume_button.isEnabled())
-            self.assertIn("Reconnect", session.script_status_label.toolTip())
+            # The reconnect hint moved from the removed status label to the Resume button.
+            self.assertIn("reconnect", session.script_resume_button.toolTip().lower())
 
             session.controller.script_snapshot = lambda: BatchRunSnapshot(  # type: ignore[method-assign]
                 is_running=True,
@@ -780,6 +939,74 @@ class AppSessionTests(unittest.TestCase):
             )
             session._refresh_script_controls()
             self.assertTrue(session.script_resume_button.isEnabled())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_first_launch_opens_side_bar_on_favorites(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_first_launch.json")
+        settings_path.unlink(missing_ok=True)
+        settings_path.with_name(settings_path.name + ".bak").unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            # No settings file yet → genuine first launch: the side bar greets the
+            # user open on the Favorites rail (page 0) rather than collapsed.
+            window = app_module.MainWindow()
+            window.resize(1180, 720)
+            window.show()
+            self.qt.processEvents()
+            self.assertFalse(window.settings.drawer_collapsed)
+            self.assertEqual(window.settings.drawer_page_index, 0)
+            self.assertFalse(window.shared_drawer.panel.isHidden())
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 0)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_returning_launch_keeps_saved_collapsed_side_bar(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_returning_drawer.json")
+        settings_path.unlink(missing_ok=True)
+        self.assertTrue(
+            SettingsService(SettingsStore(settings_path)).save(
+                AppSettings(check_for_updates_on_launch=False, drawer_collapsed=True)
+            )
+        )
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            # A settings file already exists → not a first launch, so the saved
+            # collapsed state is honored (the first-run open does not fire).
+            window = app_module.MainWindow()
+            window.resize(1180, 720)
+            window.show()
+            self.qt.processEvents()
+            self.assertTrue(window.settings.drawer_collapsed)
+            self.assertTrue(window.shared_drawer.panel.isHidden())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -816,7 +1043,7 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(sent, ["status"])
             self.assertEqual(session.command_input.text(), "")
-            self.assertEqual(session.terminal.toPlainText(), "TX> status\n")
+            self.assertEqual(session.terminal.toPlainText(), "TX  status\n")
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -859,7 +1086,7 @@ class AppSessionTests(unittest.TestCase):
 
             self.assertEqual(sent, ["ok", "bad"])
             self.assertEqual(session.command_input.text(), "")
-            self.assertEqual(session.terminal.toPlainText(), "TX> ok\nTX> bad\nTX> later\n")
+            self.assertEqual(session.terminal.toPlainText(), "TX  ok\nTX  bad\nTX  later\n")
             display_text = session.terminal.display_text()
 
             def color_for(fragment: str) -> str:
@@ -868,7 +1095,10 @@ class AppSessionTests(unittest.TestCase):
                 cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
                 return cursor.charFormat().foreground().color().name().lower()
 
-            self.assertEqual(color_for("ok"), window.theme.tx.lower())
+            from ComPort_Zone.themes import mix_hex
+
+            # TX body is softened toward the terminal ink (mockup data tone).
+            self.assertEqual(color_for("ok"), mix_hex(window.theme.tx, window.theme.text, 0.58).lower())
             self.assertEqual(color_for("bad"), window.theme.error.lower())
             self.assertEqual(color_for("later"), window.theme.error.lower())
         finally:
@@ -953,7 +1183,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(calls, [window.tabs.new_tab_button.mapToGlobal(position)])
             menu = window.build_tab_context_menu(-1)
             titles = [action.text() for action in menu.actions() if not action.isSeparator()]
-            self.assertEqual(titles, ["New Tab", "New Command File"])
+            self.assertEqual(titles, ["New Terminal", "New Command File"])
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1003,6 +1233,127 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_quick_file_play_runs_and_double_click_opens_editor(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_file_actions.json")
+        script_path = Path(__file__).with_name("_tmp_actions_script.cmd")
+        settings_path.unlink(missing_ok=True)
+        script_path.write_text("*IDN?\n", encoding="utf-8")
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.delete_all_quick_files(confirm=False)  # drop the seeded example file
+            window.add_quick_file(QuickFile(label="Script", path=str(script_path)))
+            drawer = window.shared_drawer
+            runs: list[str] = []
+            for active_session in window.iter_sessions():
+                active_session.run_script_path = lambda p, _runs=runs: _runs.append(str(p))
+
+            editors_before = len(list(window.iter_command_file_editors()))
+            # Double-clicking a quick file opens it in an editor (new tab when none active).
+            drawer.quick_file_list.setCurrentRow(0)
+            window._shared_open_file()
+            self.assertEqual(len(list(window.iter_command_file_editors())), editors_before + 1)
+            self.assertIsNotNone(window.current_command_file_editor())
+            self.assertEqual(runs, [])
+
+            # The play affordance runs the file in a terminal, even with the editor active.
+            drawer.quick_file_list.setCurrentRow(0)
+            window._shared_run_file()
+            self.assertEqual(runs, [str(script_path)])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            script_path.unlink(missing_ok=True)
+
+    def test_favorites_are_a_starred_subset_of_saved_commands(self) -> None:
+        from ComPort_Zone.models import QuickCommand
+        from ComPort_Zone.quick_actions_panel import ROLE_ID
+
+        settings_path = Path(__file__).with_name("_tmp_settings_favorites.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        def item_named(quick_list, text):
+            return next(
+                quick_list.item(i) for i in range(quick_list.count()) if quick_list.item(i).text() == text
+            )
+
+        try:
+            window = app_module.MainWindow()
+            drawer = window.shared_drawer
+            # Count deltas (the app may ship seeded sample commands).
+            saved0 = drawer.quick_command_list.count()
+            fav0 = drawer.favorite_command_list.count()
+
+            window.add_quick_command(QuickCommand(command="FAVT:A", favorite=True))
+            window.add_quick_command(QuickCommand(command="FAVT:B"))
+
+            # Favorites is the starred subset of saved commands.
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 2)
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 1)
+
+            # The star on a saved row toggles favorite membership.
+            drawer.quick_command_list.actionTriggered.emit(item_named(drawer.quick_command_list, "FAVT:B"), "star")
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 2)
+
+            # Favoriting from history adds the command to saved *and* favorites.
+            window.record_command("FAVT:C")
+            drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:C"), "favorite")
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 3)
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 3)
+            # The history row's star shows filled (favourite) right after adding it.
+            from ComPort_Zone.quick_actions_panel import ROLE_FAVORITE
+
+            self.assertTrue(bool(item_named(drawer.quick_history_list, "FAVT:C").data(ROLE_FAVORITE)))
+
+            # Saving an already-saved command from history does not duplicate it.
+            window.record_command("FAVT:B")
+            drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:B"), "save")
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 3)
+
+            # Removing a favorited command from saved also removes it from favorites.
+            window.delete_quick_command(str(item_named(drawer.quick_command_list, "FAVT:A").data(ROLE_ID)))
+            self.assertEqual(drawer.quick_command_list.count(), saved0 + 2)
+            self.assertEqual(drawer.favorite_command_list.count(), fav0 + 2)
+            self.assertNotIn(
+                "FAVT:A",
+                [drawer.favorite_command_list.item(i).text() for i in range(drawer.favorite_command_list.count())],
+            )
+
+            # Removing from history drops the row.
+            history_before = drawer.quick_history_list.count()
+            drawer.quick_history_list.actionTriggered.emit(item_named(drawer.quick_history_list, "FAVT:C"), "remove")
+            self.assertEqual(drawer.quick_history_list.count(), history_before - 1)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_quick_command_sidebar_has_csv_import_export_actions(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_command_sidebar_csv.json")
         settings_path.unlink(missing_ok=True)
@@ -1016,26 +1367,28 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             session = window.current_session()
-            quick_page = session.drawer_pages.widget(0)
-            button_texts = [button.text() for button in quick_page.findChildren(QPushButton)]
-
-            self.assertIn("Import CSV", button_texts)
-            self.assertIn("Export CSV", button_texts)
+            # Page 0 is Favorites (favourite commands + files); the Saved Commands
+            # page (with the CSV import/export overflow) is page 1.
+            quick_page = session.drawer_pages.widget(1)
+            # CSV import/export moved off the button grid into the header overflow (⋯)
+            # menu, which is now built lazily (aboutToShow) so it can fold in the
+            # sort/group controls when collapsed.
+            overflow_actions = []
+            for button in quick_page.findChildren(QToolButton, "quickPanelHeaderButton"):
+                menu = button.menu()
+                if menu is None:
+                    continue
+                menu.aboutToShow.emit()
+                overflow_actions.extend(action.text() for action in menu.actions())
+            self.assertIn("Import CSV…", overflow_actions)
+            self.assertIn("Export CSV…", overflow_actions)
+            # The legacy 8-button grid is gone; primary actions are inline now.
+            self.assertEqual(drawer_action_rows(quick_page), [])
+            self.assertEqual(session.drawer_pages.count(), 4)
             self.assertEqual(
-                drawer_action_rows(quick_page),
-                [
-                    ["Send", "Add Command"],
-                    ["Edit", "Delete"],
-                    ["Move Up", "Move Down"],
-                    ["Import CSV", "Export CSV"],
-                ],
+                [button.toolTip() for button in session.drawer.rail_buttons],
+                ["Favorites", "Saved Commands", "Files", "History"],
             )
-            self.assertEqual(session.drawer_pages.count(), 2)
-            rail_tooltips = [
-                button.toolTip()
-                for button in session.drawer_rail.findChildren(QToolButton)
-            ]
-            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files"])
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1059,64 +1412,55 @@ class AppSessionTests(unittest.TestCase):
         app_module.MainWindow.prompt_session_settings = lambda self, session: None
         try:
             window = app_module.MainWindow()
+            # Give the window real width so the shared-drawer splitter math is not
+            # squeezed below the drawer's minimum width.
+            window.resize(1180, 720)
             first_session = window.current_session()
             window.add_session(prompt_settings=False)
             second_session = window.current_session()
             editor = window.add_command_file_tab()
+            self.qt.processEvents()
 
             window.set_drawer_collapsed(False)
             first_session._select_drawer_page(1)
             self.qt.processEvents()
 
+            # A single, shared, full-height side bar serves every tab; the page
+            # selected from one tab is the page shown for all of them.
+            self.assertIs(window.central_splitter.widget(0), window.shared_drawer)
             self.assertEqual(window.settings.drawer_page_index, 1)
-            self.assertEqual(first_session.drawer_pages.currentIndex(), 1)
-            self.assertEqual(second_session.drawer_pages.currentIndex(), 1)
-            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
-            self.assertFalse(first_session.drawer_panel.isHidden())
-            self.assertFalse(second_session.drawer_panel.isHidden())
-            self.assertFalse(editor.workspace_drawer.panel.isHidden())
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 1)
+            self.assertFalse(window.shared_drawer.panel.isHidden())
 
-            second_drawer_updates: list[tuple[bool, int, int | None]] = []
-            original_second_apply_drawer_state = second_session.apply_drawer_state
-
-            def record_second_drawer_update(collapsed: bool, width: int, page_index: int | None = None) -> None:
-                second_drawer_updates.append((collapsed, width, page_index))
-                original_second_apply_drawer_state(collapsed, width, page_index)
-
-            second_session.apply_drawer_state = record_second_drawer_update
+            # Width changes from one tab persist and resize the one shared drawer.
             window.set_drawer_width(360, source=first_session)
             window.tabs.setCurrentWidget(second_session)
             self.qt.processEvents()
-
             self.assertEqual(window.settings.drawer_width, 360)
-            self.assertIn((False, 360, 1), second_drawer_updates)
+            self.assertEqual(window.shared_drawer.maximumWidth(), 520)
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 1)
+
+            # Switching to the editor keeps the same shared drawer; per-tab docks
+            # stay hidden so they never compete with it.
             window.tabs.setCurrentWidget(editor)
             self.qt.processEvents()
-            self.assertGreater(editor.workspace_splitter.sizes()[0], 48)
-            self.assertEqual(editor.workspace_drawer.maximumWidth(), 520)
+            self.assertFalse(window.shared_drawer.panel.isHidden())
+            self.assertTrue(first_session.drawer.isHidden())
+            self.assertTrue(second_session.drawer.isHidden())
+            self.assertTrue(editor.workspace_drawer.isHidden())
 
-            first_drawer_updates: list[tuple[bool, int, int | None]] = []
-            original_first_apply_drawer_state = first_session.apply_drawer_state
+            # Collapsing from any tab collapses the shared drawer everywhere.
+            window.set_drawer_collapsed(True)
+            self.qt.processEvents()
+            self.assertTrue(window.settings.drawer_collapsed)
+            self.assertTrue(window.shared_drawer.panel.isHidden())
 
-            def record_first_drawer_update(collapsed: bool, width: int, page_index: int | None = None) -> None:
-                first_drawer_updates.append((collapsed, width, page_index))
-                original_first_apply_drawer_state(collapsed, width, page_index)
-
-            first_session.apply_drawer_state = record_first_drawer_update
-            editor.workspace_splitter.setSizes([420, 900])
-            editor._workspace_drawer_resized(420, 0)
-            editor_drawer_width = editor.workspace_splitter.sizes()[0]
-
-            self.assertEqual(window.settings.drawer_width, editor_drawer_width)
-            self.assertIn((False, editor_drawer_width, 1), first_drawer_updates)
-
+            # Re-opening, then re-selecting the active page, toggles it shut again.
+            window.set_drawer_collapsed(False)
             second_session._select_drawer_page(1)
             self.qt.processEvents()
-
             self.assertTrue(window.settings.drawer_collapsed)
-            self.assertTrue(first_session.drawer_panel.isHidden())
-            self.assertTrue(second_session.drawer_panel.isHidden())
-            self.assertTrue(editor.workspace_drawer.panel.isHidden())
+            self.assertTrue(window.shared_drawer.panel.isHidden())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1425,49 +1769,33 @@ class AppSessionTests(unittest.TestCase):
             self.assertIs(window.current_command_file_editor(), editor)
             self.assertIn("Untitled", window.tabs.tabText(window.tabs.indexOf(editor)))
             self.assertIn("*", window.tabs.tabText(window.tabs.indexOf(editor)))
-            self.assertIn("Command file", window.connection_status_label.text())
-            self.assertFalse(window.connection_action_button.isEnabled())
+            # Editor tabs are connectionless: the shared connection chip/button are
+            # hidden (no duplicated/cut-off status line); the editor pane shows its
+            # own status. (Footer routing is covered by test_workspace_status.)
+            self.assertTrue(window.connection_status_label.isHidden())
+            self.assertTrue(window.connection_action_button.isHidden())
             self.assertTrue(hasattr(editor, "quick_command_list"))
             self.assertTrue(hasattr(editor, "quick_file_list"))
-            self.assertEqual(editor.workspace_drawer_pages.count(), 2)
+            self.assertEqual(editor.workspace_drawer_pages.count(), 3)
             self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 0)
             rail_tooltips = [
                 button.toolTip()
                 for button in editor.workspace_drawer_rail.findChildren(QToolButton)
             ]
-            self.assertEqual(rail_tooltips, ["Quick commands", "Quick files"])
-            command_buttons = [
-                button.text()
-                for button in editor.workspace_drawer_pages.widget(0).findChildren(QPushButton)
-            ]
-            file_buttons = [
-                button.text()
-                for button in editor.workspace_drawer_pages.widget(1).findChildren(QPushButton)
-            ]
+            # The editor rail now includes the settings/command-palette cog too.
             self.assertEqual(
-                drawer_action_rows(editor.workspace_drawer_pages.widget(0)),
-                [
-                    ["Insert", "Add Command"],
-                    ["Edit", "Delete"],
-                    ["Move Up", "Move Down"],
-                    ["Import CSV", "Export CSV"],
-                ],
+                rail_tooltips,
+                ["Favorites", "Saved Commands", "Files", "Settings & commands"],
             )
-            self.assertEqual(
-                drawer_action_rows(editor.workspace_drawer_pages.widget(1)),
-                [
-                    ["Open", "Add File"],
-                    ["Edit", "Delete"],
-                    ["Move Up", "Move Down"],
-                    ["Import CSV", "Export CSV"],
-                ],
-            )
-            self.assertIn("Insert", command_buttons)
-            self.assertIn("Open", file_buttons)
+            # Editor primaries are inline now (insert command / open file); grid removed.
+            self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(0)), [])
+            self.assertEqual(drawer_action_rows(editor.workspace_drawer_pages.widget(1)), [])
+            self.assertEqual(editor.insert_quick_command_button.text(), "Insert")
+            self.assertEqual(editor.open_quick_file_button.text(), "Open")
             self.assertNotIn("Validate", [button.text() for button in editor.findChildren(QPushButton)])
             self.assertNotIn("Quick command suggestions", [label.text() for label in editor.findChildren(QLabel)])
             editor._select_workspace_drawer_page(1)
-            self.assertEqual(editor.workspace_drawer_pages.currentIndex(), 1)
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 1)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1578,14 +1906,14 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             editor = window.add_command_file_tab()
             editor.setPlainText("SEND *IDN?\n")
-            editor.find_replace_bar.hide()
+            editor.search_overlay.hide()
             editor.editor.setFocus()
             self.qt.processEvents()
 
             QTest.keyClick(editor.editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
             self.qt.processEvents()
 
-            self.assertTrue(editor.find_replace_bar.isVisible())
+            self.assertTrue(editor.search_overlay.isVisible())
             self.assertFalse(editor.replace_input.isVisible())
         finally:
             app_module.default_config_path = old_config_path
@@ -1614,14 +1942,14 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             editor = window.add_command_file_tab()
             editor.setPlainText("SEND *IDN?\n")
-            editor.find_replace_bar.hide()
+            editor.search_overlay.hide()
             editor.editor.setFocus()
             self.qt.processEvents()
 
             QTest.keyClick(editor.editor, Qt.Key.Key_H, Qt.KeyboardModifier.ControlModifier)
             self.qt.processEvents()
 
-            self.assertTrue(editor.find_replace_bar.isVisible())
+            self.assertTrue(editor.search_overlay.isVisible())
             self.assertTrue(editor.replace_input.isVisible())
         finally:
             app_module.default_config_path = old_config_path
@@ -1704,7 +2032,7 @@ class AppSessionTests(unittest.TestCase):
             session._render_event(app_module.SerialEvent(kind="rx", message="1", raw=b"1"))
             session._render_event(app_module.SerialEvent(kind="rx", message="67.00\r\n", raw=b"67.00\r\n"))
 
-            self.assertEqual(session.terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
+            self.assertEqual(session.terminal.toPlainText(), "TX  SINK:CURR?\nRX  167.00\n")
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1889,6 +2217,83 @@ class AppSessionTests(unittest.TestCase):
                 window.deleteLater()
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
+
+    def test_connection_state_icons_map_to_themed_glyphs(self) -> None:
+        from ComPort_Zone.icons import connection_state_icon
+
+        self.assertEqual(connection_state_icon("connected"), "plug")
+        self.assertEqual(connection_state_icon("closed"), "plug")
+        self.assertEqual(connection_state_icon("retrying"), "stop")
+        self.assertEqual(connection_state_icon("missing"), "refresh")
+        self.assertEqual(connection_state_icon("no-port"), "cog")
+
+    def test_command_bar_status_toggles_drive_timestamps_hex_and_log(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_status_toggles.json")
+        log_path = settings_path.with_name("_tmp_status_toggles.log")
+        settings_path.unlink(missing_ok=True)
+        log_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.settings.timestamps_enabled = False
+            window.settings.receive_display_mode = "Text"
+            window.apply_settings_to_ui()
+            session = window.current_session()
+
+            # A fresh, text-mode session shows all three toggles off.
+            self.assertFalse(session.timestamp_toggle.isChecked())
+            self.assertFalse(session.hex_toggle.isChecked())
+            self.assertFalse(session.log_toggle.isChecked())
+
+            # The hex toggle flips the global receive-display mode and back.
+            session.hex_toggle.click()
+            self.qt.processEvents()
+            self.assertEqual(window.settings.receive_display_mode, "Hex")
+            self.assertTrue(session.hex_toggle.isChecked())
+            session.hex_toggle.click()
+            self.qt.processEvents()
+            self.assertEqual(window.settings.receive_display_mode, "Text")
+            self.assertFalse(session.hex_toggle.isChecked())
+
+            # The timestamp toggle flips the setting and the menu action with it.
+            session.timestamp_toggle.click()
+            self.qt.processEvents()
+            self.assertTrue(window.settings.timestamps_enabled)
+            self.assertTrue(window.timestamps_action.isChecked())
+
+            # A second tab mirrors the shared timestamp/hex state.
+            window.add_session(prompt_settings=False)
+            second = window.current_session()
+            self.assertTrue(second.timestamp_toggle.isChecked())
+            window.set_receive_display_mode("Hex")
+            self.qt.processEvents()
+            self.assertTrue(session.hex_toggle.isChecked())
+            self.assertTrue(second.hex_toggle.isChecked())
+
+            # The log toggle tracks the session logger (no file dialog needed).
+            session.controller.start_logging(str(log_path))
+            session._sync_status_toggles()
+            self.assertTrue(session.log_toggle.isChecked())
+            session.controller.stop_logging()
+            session._sync_status_toggles()
+            self.assertFalse(session.log_toggle.isChecked())
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+            log_path.unlink(missing_ok=True)
 
     def test_terminal_view_context_menu_includes_terminal_controls(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_terminal_context_menu.json")
@@ -2160,8 +2565,12 @@ class AppSessionTests(unittest.TestCase):
                 cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
                 return cursor.charFormat().foreground().color().name().lower()
 
-            self.assertEqual(color_for("status"), window.theme.tx.lower())
-            self.assertEqual(color_for("OK"), window.theme.rx.lower())
+            # Message bodies are softened toward the terminal ink (mockup data tone);
+            # the TX/RX/ERR direction column carries the full role colour.
+            from ComPort_Zone.themes import mix_hex
+
+            self.assertEqual(color_for("status"), mix_hex(window.theme.tx, window.theme.text, 0.58).lower())
+            self.assertEqual(color_for("OK"), mix_hex(window.theme.rx, window.theme.text, 0.5).lower())
             self.assertEqual(color_for("write failed"), window.theme.error.lower())
         finally:
             app_module.default_config_path = old_config_path
@@ -2282,11 +2691,12 @@ class AppSessionTests(unittest.TestCase):
             script_path.write_text("SEND status\n", encoding="utf-8")
             window = app_module.MainWindow()
             session = window.current_session()
+            window.delete_all_quick_files(confirm=False)  # drop the seeded example file
             session.batch_runner.start = lambda steps: started_steps.append(steps)
 
-            self.assertEqual(session.drawer_pages.count(), 2)
-            session._select_drawer_page(1)
-            self.assertEqual(session.drawer_pages.currentIndex(), 1)
+            self.assertEqual(session.drawer_pages.count(), 4)
+            session._select_drawer_page(2)  # Quick Files mode
+            self.assertEqual(window.shared_drawer.pages.currentIndex(), 2)
 
             window.add_quick_file(QuickFile(label="Bring-up", path=str(script_path)))
             self.assertEqual(session.quick_file_list.count(), 1)
@@ -2414,15 +2824,7 @@ class AppSessionTests(unittest.TestCase):
                 window.set_quick_file_sort_mode("Custom")
                 self.assertEqual(visible_ids(), ["zebra", "cable", "alpha"])
                 self.assertTrue(session.quick_file_list.dragEnabled())
-                self.assertEqual(
-                    drawer_action_rows(session.drawer_pages.widget(1)),
-                    [
-                        ["Run", "Add File"],
-                        ["Edit", "Delete"],
-                        ["Move Up", "Move Down"],
-                        ["Import CSV", "Export CSV"],
-                    ],
-                )
+                self.assertEqual(drawer_action_rows(session.drawer_pages.widget(1)), [])
 
                 window.move_quick_file("cable", -1)
                 self.assertEqual(visible_ids(), ["cable", "zebra", "alpha"])

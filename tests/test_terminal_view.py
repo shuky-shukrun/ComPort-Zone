@@ -5,7 +5,11 @@ from PySide6.QtWidgets import QApplication, QLabel, QTextEdit
 
 from ComPort_Zone.serial_core import SerialEvent
 from ComPort_Zone.terminal_session_controller import TerminalRenderPlan
-from ComPort_Zone.terminal_view import TerminalView
+from ComPort_Zone.terminal_view import (
+    TerminalView,
+    clamp_prompt_label,
+    prompt_leader_text,
+)
 
 
 COLORS = {
@@ -35,6 +39,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="tx", message="SINK:CURR?"),
                 message="SINK:CURR?",
                 prefix="TX> ",
+                direction="TX",
                 color_role="tx",
                 ensure_line_break=True,
             ),
@@ -48,6 +53,7 @@ class TerminalViewTests(unittest.TestCase):
             TerminalRenderPlan(
                 event=SerialEvent(kind="rx", message="1", raw=b"1"),
                 message="1",
+                direction="RX",
                 color_role="rx",
                 stream_text=True,
             ),
@@ -61,6 +67,7 @@ class TerminalViewTests(unittest.TestCase):
             TerminalRenderPlan(
                 event=SerialEvent(kind="rx", message="67.00\r\n", raw=b"67.00\r\n"),
                 message="67.00\r\n",
+                direction="RX",
                 color_role="rx",
                 stream_text=True,
             ),
@@ -71,7 +78,7 @@ class TerminalViewTests(unittest.TestCase):
             search_highlight="#333333",
         )
 
-        self.assertEqual(terminal.toPlainText(), "TX> SINK:CURR?\n167.00\n")
+        self.assertEqual(terminal.toPlainText(), "TX  SINK:CURR?\nRX  167.00\n")
 
     def test_render_plan_streams_rx_hex_with_spaces_between_chunks(self) -> None:
         view, terminal, _ = self.make_view()
@@ -115,6 +122,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="progress", message="Auto-reconnect armed. Retrying every 1000 ms."),
                 message="Auto-reconnect armed. Retrying every 1000 ms.",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 stream_text=True,
             ),
@@ -129,6 +137,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="progress", message="."),
                 message=".",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 stream_text=True,
             ),
@@ -143,6 +152,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="progress", message="."),
                 message=".",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 stream_text=True,
             ),
@@ -157,6 +167,7 @@ class TerminalViewTests(unittest.TestCase):
                 event=SerialEvent(kind="status", message="Auto-reconnect succeeded."),
                 message="Auto-reconnect succeeded.",
                 prefix="SYS ",
+                direction="SYS",
                 color_role="status",
                 ensure_line_break=True,
             ),
@@ -184,6 +195,34 @@ class TerminalViewTests(unittest.TestCase):
         self.assertTrue(view.find("alpha", backward=False))
         self.assertEqual(terminal.textCursor().selectedText(), "alpha")
         self.assertFalse(view.find("missing", backward=False))
+
+
+class PromptLeaderTests(unittest.TestCase):
+    def test_prompt_leader_aligns_chevron_under_direction_column(self) -> None:
+        # "<tab name> filling the 12-char timestamp column> <'>' in the dir column>"
+        leader = prompt_leader_text("COM3", timestamps_enabled=True)
+        self.assertEqual(len(leader), 17)
+        self.assertTrue(leader.startswith("COM3"))
+        # '>' sits where the TX/RX direction column begins (after the 13-char stamp).
+        self.assertEqual(leader[13], ">")
+        self.assertTrue(leader.endswith(" "))
+
+    def test_prompt_leader_drops_tab_name_when_timestamps_off(self) -> None:
+        self.assertEqual(prompt_leader_text("COM3", timestamps_enabled=False), ">  " + " ")
+        self.assertNotIn("COM3", prompt_leader_text("COM3", timestamps_enabled=False))
+
+    def test_prompt_leader_is_chevron_only_without_a_label(self) -> None:
+        self.assertEqual(prompt_leader_text("", timestamps_enabled=True), ">  " + " ")
+
+    def test_prompt_label_clamped_to_timestamp_width(self) -> None:
+        clamped = clamp_prompt_label("Oscilloscope bench #1")
+        self.assertEqual(len(clamped), 12)
+        self.assertTrue(clamped.endswith("…"))
+        # A label that already fits keeps its exact text.
+        self.assertEqual(clamp_prompt_label("COM3"), "COM3")
+        leader = prompt_leader_text("Oscilloscope bench #1", timestamps_enabled=True)
+        self.assertEqual(len(leader), 17)
+        self.assertIn("…", leader)
 
 
 if __name__ == "__main__":

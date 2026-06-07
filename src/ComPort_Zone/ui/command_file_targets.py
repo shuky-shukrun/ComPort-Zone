@@ -23,6 +23,9 @@ class TerminalSessionLike(Protocol):
     def connection_status_text(self) -> str:
         ...
 
+    def run_target_label(self) -> str:
+        ...
+
     def run_script_text(
         self,
         text: str,
@@ -84,7 +87,7 @@ class CommandFileRunCoordinator:
 
     def run_targets(self) -> list[CommandRunTarget]:
         return [
-            CommandRunTarget(session.session_id, session.connection_status_text())
+            CommandRunTarget(session.session_id, session.run_target_label())
             for session in self.connected_sessions()
         ]
 

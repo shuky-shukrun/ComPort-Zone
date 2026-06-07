@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QRect, Qt, Signal
@@ -7,6 +9,7 @@ from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QSplitter, QVBoxLayout, QWidget
 
 from .tab_workspace import TerminalTabWidget
+from .tokens import SPLITTER_HANDLE, WORKSPACE_PANE_MIN_W
 
 
 TAB_MIME_TYPE = "application/x-comport-zone-tab"
@@ -32,9 +35,14 @@ class SplitWorkspaceWidget(QWidget):
         self.setAcceptDrops(True)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setHandleWidth(4)
+        self.splitter.setHandleWidth(SPLITTER_HANDLE)
         self._panes: list[TerminalTabWidget] = []
         self._active_pane: TerminalTabWidget | None = None
+        # While a new-tab / tab context menu is open this pins the pane that asked
+        # for it, so addTab targets that pane even if a focus event flips the active
+        # pane while the modal menu is up (otherwise a new tab opened from the right
+        # pane's + can land in the left pane). See _tab_creation_pinned_to.
+        self._pending_tab_pane: TerminalTabWidget | None = None
         self._drag_start: dict[TerminalTabWidget, QPoint] = {}
         self.drop_preview = QLabel(self)
         self.drop_preview.setObjectName("splitDropPreview")
@@ -118,7 +126,10 @@ class SplitWorkspaceWidget(QWidget):
         return -1
 
     def addTab(self, widget: QWidget, *args) -> int:
-        pane = self.active_pane()
+        # Honor a pane pinned by an in-flight new-tab menu; fall back to the active
+        # pane for every other caller (restore, duplicate, programmatic adds).
+        pane = self._pending_tab_pane if self._pending_tab_pane in self._panes else self.active_pane()
+        self._pending_tab_pane = None
         index = pane.addTab(widget, *args)
         self._watch_tab_content(widget)
         self._set_active_pane(pane)
@@ -217,6 +228,20 @@ class SplitWorkspaceWidget(QWidget):
                 return ref
         return None
 
+    def tab_index_at(self, position: QPoint) -> int:
+        """Global index of the tab under ``position`` (active pane's tab-bar coords).
+
+        A tab context menu is requested from the pane under the cursor, which is made
+        active first, so its tab bar owns ``position``. Returning the *global* index
+        keeps the menu's actions (rename/close/settings…) pointed at the right tab in
+        either pane — a pane-local index would mis-target tabs in the second pane.
+        """
+        pane = self.active_pane()
+        local_index = pane.tabBar().tabAt(position)
+        if local_index < 0:
+            return -1
+        return self._global_index(pane, local_index)
+
     def pane_index(self, pane: TerminalTabWidget) -> int:
         try:
             return self._panes.index(pane)
@@ -234,6 +259,9 @@ class SplitWorkspaceWidget(QWidget):
         pane.setMovable(True)
         pane.setTabsClosable(False)
         pane.setUsesScrollButtons(True)
+        # Keep the pane's hard floor small so the divider between two panes always has
+        # slack to move; the content's larger size hint would otherwise pin it.
+        pane.setMinimumWidth(WORKSPACE_PANE_MIN_W)
         pane.newTabRequested.connect(lambda source=pane: self._new_tab_requested(source))
         pane.newTabMenuRequested.connect(
             lambda position, source=pane: self._new_tab_menu_requested(source, position)
@@ -267,25 +295,48 @@ class SplitWorkspaceWidget(QWidget):
     def _refresh_active_pane_styles(self) -> None:
         for pane in self._panes:
             pane.setProperty("activePane", pane is self._active_pane)
-            pane.style().unpolish(pane)
-            pane.style().polish(pane)
-            pane.update()
+            # The selected-tab underline switches on the *pane's* activePane property
+            # (`QTabWidget[activePane="false"] QTabBar::tab:selected`). Qt does not
+            # invalidate a descendant's style cache when an ancestor property changes,
+            # so the tab bar must be re-polished explicitly or it keeps the stale rule.
+            for target in (pane, pane.tabBar()):
+                target.style().unpolish(target)
+                target.style().polish(target)
+                target.update()
 
     def _pane_current_changed(self, pane: TerminalTabWidget) -> None:
         self._set_active_pane(pane)
         self.currentChanged.emit(self.currentIndex())
 
+    @contextmanager
+    def _tab_creation_pinned_to(self, pane: TerminalTabWidget) -> Iterator[None]:
+        """Pin ``pane`` as the addTab target while a (modal) tab menu is open.
+
+        The menu signals below are emitted synchronously and run their menu's
+        ``exec`` inline, so any new tab the user chooses is created before the
+        context exits — restoring the previous pin even if the menu is dismissed.
+        """
+        previous = self._pending_tab_pane
+        self._pending_tab_pane = pane
+        try:
+            yield
+        finally:
+            self._pending_tab_pane = previous
+
     def _new_tab_requested(self, pane: TerminalTabWidget) -> None:
         self._set_active_pane(pane)
-        self.newTabRequested.emit()
+        with self._tab_creation_pinned_to(pane):
+            self.newTabRequested.emit()
 
     def _new_tab_menu_requested(self, pane: TerminalTabWidget, position: QPoint) -> None:
         self._set_active_pane(pane)
-        self.newTabMenuRequested.emit(position)
+        with self._tab_creation_pinned_to(pane):
+            self.newTabMenuRequested.emit(position)
 
     def _tab_context_requested(self, pane: TerminalTabWidget, position: QPoint) -> None:
         self._set_active_pane(pane)
-        self.tabContextMenuRequested.emit(position)
+        with self._tab_creation_pinned_to(pane):
+            self.tabContextMenuRequested.emit(position)
 
     def _global_index(self, pane: TerminalTabWidget, local_index: int) -> int:
         global_index = 0

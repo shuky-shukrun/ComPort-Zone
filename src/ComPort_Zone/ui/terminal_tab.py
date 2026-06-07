@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from queue import Empty
 
-from PySide6.QtCore import Qt, QStringListModel, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,13 +23,14 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStyle,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
     QSizePolicy,
 )
 
 from ..batch import BatchParseError, parse_hex_payload
-from ..icons import set_button_icon
+from ..icons import connection_state_icon, set_button_icon
 from ..models import (
     LanProfile,
     QUICK_COMMAND_SORT_MODES,
@@ -45,19 +46,33 @@ from ..quick_actions_panel import (
     item_ids_in_order,
     populate_quick_command_list,
     populate_quick_file_list,
+    populate_quick_history_list,
     row_for_item_id,
     selected_item_id,
 )
 from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
 from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan, TerminalSessionController
-from ..terminal_view import TerminalView
+from ..terminal_view import TerminalView, prompt_leader_text
+from ..themes import mix_hex
 from ..transports import SerialTransportAdapter
-from ..widgets import ChevronComboBox, IntegratedTerminalEdit, set_button_role, set_widget_state
+from ..widgets import (
+    ChevronComboBox,
+    IntegratedTerminalEdit,
+    fit_overflow_groups,
+    set_button_role,
+    set_widget_state,
+)
 from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
+from .search_overlay import SearchOverlay
+from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
 
 DRAWER_COLLAPSED_WIDTH = 48
+# Scrollback cap for the stored transcript that backs timestamp/hex re-rendering.
+TRANSCRIPT_EVENT_CAP = 5000
+# Ghosted hint shown in the empty input line, mirroring the design mockup.
+TERMINAL_INPUT_PLACEHOLDER = "type a command — ↑ recalls history"
 
 
 class TerminalConnectionStatusLabel(QLabel):
@@ -113,6 +128,9 @@ class TerminalSessionWidget(QWidget):
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
         self._suppressed_tx_echoes: list[str] = []
+        # Stored transcript entries so timestamp/hex toggles re-render all history.
+        self._transcript: list[tuple] = []
+        self._replaying = False
 
         self._build_ui()
         self.refresh_ports()
@@ -195,7 +213,7 @@ class TerminalSessionWidget(QWidget):
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setHandleWidth(3)
+        self.splitter.setHandleWidth(SPLITTER_HANDLE)
         self.splitter.splitterMoved.connect(self._drawer_resized)
 
         self.drawer = self._build_quick_actions_sidebar()
@@ -209,37 +227,21 @@ class TerminalSessionWidget(QWidget):
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.setSpacing(0)
 
-        self.search_bar = QFrame(self.terminal_column)
-        self.search_bar.setObjectName("searchBar")
-        search_layout = QHBoxLayout(self.search_bar)
-        search_layout.setContentsMargins(8, 6, 8, 6)
-        search_layout.setSpacing(6)
-        self.search_input = QLineEdit(self.search_bar)
-        self.search_input.setPlaceholderText("Search")
-        self.search_input.textChanged.connect(self._refresh_search_highlights)
-        self.search_input.returnPressed.connect(self.find_next)
-        prev_button = QPushButton("Prev", self.search_bar)
-        set_button_icon(prev_button, QStyle.StandardPixmap.SP_ArrowBack)
-        prev_button.clicked.connect(self.find_previous)
-        next_button = QPushButton("Next", self.search_bar)
-        set_button_icon(next_button, QStyle.StandardPixmap.SP_ArrowForward)
-        next_button.clicked.connect(self.find_next)
-        close_search = QPushButton("", self.search_bar)
-        set_button_icon(close_search, QStyle.StandardPixmap.SP_DialogCloseButton)
-        close_search.clicked.connect(self.hide_search)
-        self.search_count = QLabel("0", self.search_bar)
-        search_layout.addWidget(self.search_input, 1)
-        search_layout.addWidget(prev_button)
-        search_layout.addWidget(next_button)
-        search_layout.addWidget(self.search_count)
-        search_layout.addWidget(close_search)
-        self.search_bar.hide()
-
         self.terminal = IntegratedTerminalEdit(self.terminal_column)
         self.terminal.setObjectName("terminal")
         self.terminal.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.terminal.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.terminal.customContextMenuRequested.connect(self.show_terminal_context_menu)
+        # Floating find overlay over the transcript (Ctrl+F) — replaces the docked
+        # search bar; it owns the search field + the live match count.
+        self.search_overlay = SearchOverlay(self.terminal, with_replace=False, parent=self.terminal_column)
+        self.search_input = self.search_overlay.search_field
+        self.search_count = self.search_overlay.count_label
+        self.search_input.setPlaceholderText("Search transcript")
+        self.search_input.textChanged.connect(self._refresh_search_highlights)
+        self.search_overlay.findNext.connect(self.find_next)
+        self.search_overlay.findPrevious.connect(self.find_previous)
+        self.search_overlay.closeRequested.connect(self.hide_search)
         self.terminal_view = TerminalView(self.terminal, self.search_count)
         self.command_input = self.terminal
         self.terminal.set_font_zoom_callback(lambda delta: self.host.change_font_size(delta))
@@ -254,18 +256,13 @@ class TerminalSessionWidget(QWidget):
         self.status_label.setObjectName("terminalConnectionStatus")
         self.status_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.status_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self.status_label.setMaximumWidth(520)
+        self.status_label.setMaximumWidth(220)
         self.status_label.setToolTip("Click to open Connection Settings.")
         self.status_label.clicked.connect(self.open_connection_settings)
         self.connection_button = QPushButton("Connect", self.command_bar)
         self.connection_button.setObjectName("terminalConnectionActionButton")
         self.connection_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.connection_button.clicked.connect(self.toggle_connection)
-        self.script_run_button = QPushButton("Run", self.command_bar)
-        self.script_run_button.setObjectName("commandFileRunButton")
-        self.script_run_button.setToolTip("Run a command file in this terminal.")
-        set_button_icon(self.script_run_button, QStyle.StandardPixmap.SP_MediaPlay, 15)
-        self.script_run_button.clicked.connect(self.run_script)
         self.script_pause_button = QPushButton("Pause", self.command_bar)
         self.script_pause_button.setObjectName("commandFilePauseButton")
         self.script_pause_button.setToolTip("Pause the running command file.")
@@ -281,8 +278,6 @@ class TerminalSessionWidget(QWidget):
         self.script_stop_button.setToolTip("Stop the running command file.")
         set_button_icon(self.script_stop_button, QStyle.StandardPixmap.SP_MediaStop, 15)
         self.script_stop_button.clicked.connect(self.stop_script)
-        self.script_status_label = QLabel("File idle", self.command_bar)
-        self.script_status_label.setObjectName("commandFileStatusLabel")
         self.mode_combo = ChevronComboBox(self.command_bar)
         self.mode_combo.addItems(SEND_MODES)
         self.mode_combo.setFixedWidth(118)
@@ -305,23 +300,55 @@ class TerminalSessionWidget(QWidget):
         completer.activated.connect(self._apply_completion)
         self.command_input.setCompleter(completer)
         self.line_ending_label = QLabel("", self.command_bar)
-        self.log_label = QLabel("Log off", self.command_bar)
+        # Compact view/IO toggles that sit in the status area: timestamps, hex view,
+        # and session logging. They stay visible even when the bar is narrow.
+        self.timestamp_toggle = self._make_status_toggle(
+            "clock", "Show timestamps on received lines", self._toggle_timestamps_clicked
+        )
+        self.wrap_toggle = self._make_status_toggle(
+            "wrap", "Wrap long lines", self._toggle_wrap_clicked
+        )
+        self.hex_toggle = self._make_status_toggle(
+            "hex", "Show received data as hex", self._toggle_hex_clicked
+        )
+        self.log_toggle = self._make_status_toggle(
+            "save", "Log this session to a file", self._toggle_log_clicked
+        )
         self.pause_label = QLabel("", self.command_bar)
+        # Overflow for the IO controls: when the command bar is too narrow they
+        # collapse into this "⋯" menu so the terminal can keep shrinking.
+        self.command_overflow_button = QToolButton(self.command_bar)
+        self.command_overflow_button.setObjectName("commandBarOverflow")
+        self.command_overflow_button.setText("⋯")
+        self.command_overflow_button.setToolTip("More controls")
+        self.command_overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_overflow_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.command_overflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._command_overflow_menu = QMenu(self.command_overflow_button)
+        self._command_overflow_menu.aboutToShow.connect(self._build_command_overflow_menu)
+        self.command_overflow_button.setMenu(self._command_overflow_menu)
+        self.command_overflow_button.hide()
+        # Widgets currently folded into the ⋯ menu (set by _relayout_command_bar);
+        # _build_command_overflow_menu reads it to show only what's collapsed.
+        self._overflow_collapsed: set = set()
         command_layout.addWidget(self.status_label)
         command_layout.addWidget(self.connection_button)
-        command_layout.addWidget(self.script_run_button)
         command_layout.addWidget(self.script_pause_button)
         command_layout.addWidget(self.script_resume_button)
         command_layout.addWidget(self.script_stop_button)
-        command_layout.addWidget(self.script_status_label)
         command_layout.addStretch(1)
         command_layout.addWidget(self.mode_combo)
         command_layout.addWidget(self.rx_display_combo)
         command_layout.addWidget(self.line_ending_label)
-        command_layout.addWidget(self.log_label)
+        command_layout.addWidget(self.command_overflow_button)
+        command_layout.addWidget(self.timestamp_toggle)
+        command_layout.addWidget(self.wrap_toggle)
+        command_layout.addWidget(self.hex_toggle)
+        command_layout.addWidget(self.log_toggle)
         command_layout.addWidget(self.pause_label)
+        self.command_bar.installEventFilter(self)
+        self._sync_status_toggles()
 
-        terminal_layout.addWidget(self.search_bar)
         terminal_layout.addWidget(self.terminal, 1)
         terminal_layout.addWidget(self.command_bar)
 
@@ -331,6 +358,112 @@ class TerminalSessionWidget(QWidget):
         self.splitter.setStretchFactor(1, 1)
         root.addWidget(self.splitter)
         self._refresh_script_controls()
+
+    def eventFilter(self, obj, event):
+        if obj is self.command_bar and event.type() == QEvent.Type.Resize:
+            self._relayout_command_bar()
+        return super().eventFilter(obj, event)
+
+    def _relayout_command_bar(self) -> None:
+        """Fold controls into the ⋯ menu as the bar narrows, down to just Connect.
+
+        Collapse order (least to most important): the send/receive/line-ending combos,
+        then the view toggles, then the connection status text. The connection button —
+        and any live script buttons — always stay put.
+        """
+        if not hasattr(self, "command_overflow_button"):
+            return
+        fixed = [self.connection_button]
+        for button in (self.script_pause_button, self.script_resume_button, self.script_stop_button):
+            if not button.isHidden():
+                fixed.append(button)
+        groups = [
+            [self.mode_combo, self.rx_display_combo, self.line_ending_label],
+            [self.status_label],
+            [self.timestamp_toggle, self.wrap_toggle, self.hex_toggle, self.log_toggle],
+        ]
+        collapsed = fit_overflow_groups(self.command_bar, fixed, groups, self.command_overflow_button)
+        self._overflow_collapsed = {widget for group in collapsed for widget in group}
+
+    def _build_command_overflow_menu(self) -> None:
+        menu = self._command_overflow_menu
+        menu.clear()
+        collapsed = self._overflow_collapsed
+        if self.mode_combo in collapsed:
+            send_menu = menu.addMenu("Send mode")
+            for index in range(self.mode_combo.count()):
+                action = send_menu.addAction(self.mode_combo.itemText(index))
+                action.setCheckable(True)
+                action.setChecked(index == self.mode_combo.currentIndex())
+                action.triggered.connect(lambda _checked=False, idx=index: self.mode_combo.setCurrentIndex(idx))
+            receive_menu = menu.addMenu("Receive display")
+            for index in range(self.rx_display_combo.count()):
+                action = receive_menu.addAction(self.rx_display_combo.itemText(index))
+                action.setCheckable(True)
+                action.setChecked(index == self.rx_display_combo.currentIndex())
+                action.triggered.connect(lambda _checked=False, idx=index: self.rx_display_combo.setCurrentIndex(idx))
+            line_ending = self.line_ending_label.text().strip()
+            if line_ending:
+                menu.addAction(f"Line ending: {line_ending}").setEnabled(False)
+        if self.timestamp_toggle in collapsed:
+            if not menu.isEmpty():
+                menu.addSeparator()
+            for toggle, label in (
+                (self.timestamp_toggle, "Timestamps"),
+                (self.wrap_toggle, "Wrap lines"),
+                (self.hex_toggle, "Hex view"),
+                (self.log_toggle, "Log to file"),
+            ):
+                action = menu.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(toggle.isChecked())
+                action.triggered.connect(lambda _checked=False, button=toggle: button.click())
+        if menu.isEmpty():
+            menu.addAction("No hidden controls").setEnabled(False)
+
+    def _make_status_toggle(self, icon_name: str, tooltip: str, slot) -> QToolButton:
+        """A compact checkable icon button for the command bar's status toggles."""
+        button = QToolButton(self.command_bar)
+        button.setObjectName("statusToggleButton")
+        button.setCheckable(True)
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setProperty("iconName", icon_name)
+        button.clicked.connect(slot)
+        return button
+
+    def _toggle_timestamps_clicked(self, checked: bool) -> None:
+        self.host.set_timestamps_enabled(checked)
+
+    def _toggle_wrap_clicked(self, checked: bool) -> None:
+        self.host.set_line_wrap_enabled(checked)
+
+    def _toggle_hex_clicked(self, checked: bool) -> None:
+        self.host.set_receive_display_mode("Hex" if checked else "Text")
+
+    def _toggle_log_clicked(self, _checked: bool = False) -> None:
+        # Logging owns its real state (file dialog / logger); re-sync from it.
+        self.toggle_logging()
+
+    def _sync_status_toggles(self) -> None:
+        """Reflect timestamp / hex / logging state on the command-bar toggles."""
+        if not hasattr(self, "log_toggle"):
+            return
+        settings = self.host.settings
+        theme = self.host.theme
+        for button, on in (
+            (self.timestamp_toggle, bool(settings.timestamps_enabled)),
+            (self.wrap_toggle, bool(settings.line_wrap_enabled)),
+            (self.hex_toggle, settings.receive_display_mode in ("Hex", "Text + Hex")),
+            (self.log_toggle, bool(self.logger.enabled)),
+        ):
+            if button.isChecked() != on:
+                button.blockSignals(True)
+                button.setChecked(on)
+                button.blockSignals(False)
+            # SVG icons are pixmaps, so tint explicitly: accent when active, else muted.
+            set_button_icon(button, str(button.property("iconName")), 15, theme.accent if on else theme.muted)
 
     def _build_quick_actions_sidebar(self) -> QuickActionsSidebar:
         sidebar = QuickActionsSidebar(
@@ -364,12 +497,16 @@ class TerminalSessionWidget(QWidget):
             file_sort_changed=self._quick_file_sort_changed,
             command_order_changed=self.persist_quick_command_order,
             file_order_changed=self.persist_quick_file_order,
+            include_history=True,
+            history_primary=self._resend_history_command,
+            settings_callback=self.host.show_command_palette,
             on_page_requested=self._select_drawer_page,
             rail_width=DRAWER_COLLAPSED_WIDTH,
             parent=self,
         )
         self.quick_list = sidebar.quick_command_list
         self.quick_file_list = sidebar.quick_file_list
+        self.quick_history_list = sidebar.quick_history_list
         self.quick_sort_combo = sidebar.quick_sort_combo
         self.quick_group_button = sidebar.quick_group_button
         self.quick_file_sort_combo = sidebar.quick_file_sort_combo
@@ -377,7 +514,22 @@ class TerminalSessionWidget(QWidget):
         self.quick_move_down_button = sidebar.quick_command_move_down_button
         self.quick_file_move_up_button = sidebar.quick_file_move_up_button
         self.quick_file_move_down_button = sidebar.quick_file_move_down_button
+        self.refresh_quick_history()
         return sidebar
+
+    def _resend_history_command(self, command: str) -> None:
+        text = command.strip()
+        if not text:
+            return
+        self._send_integrated_input(text, self.mode_combo.currentText())
+
+    def resend_command(self, command: str) -> None:
+        """Send a previous command again (used by the shared History panel)."""
+        self._resend_history_command(command)
+
+    def refresh_quick_history(self) -> None:
+        history = list(reversed(self.host.history_catalog.all_commands()))
+        populate_quick_history_list(self.quick_history_list, history[:80])
 
     def _select_drawer_page(self, index: int) -> None:
         self.host.request_drawer_page(index)
@@ -395,8 +547,15 @@ class TerminalSessionWidget(QWidget):
         )
         self.terminal.setFont(terminal_font)
         self.terminal.document().setDefaultFont(terminal_font)
+        self.terminal.set_line_spacing(self.host.settings.terminal_line_spacing)
         if hasattr(self.terminal, "set_terminal_colors"):
-            self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
+            self.terminal.set_terminal_colors(
+                prompt=self.host.theme.tx,
+                draft=self.host.theme.text,
+                hint=self._terminal_colors()["timestamp"],
+            )
+        self._sync_prompt_context()
+        self._sync_completion_colors()
         receive_mode = (
             self.host.settings.receive_display_mode
             if self.host.settings.receive_display_mode in RECEIVE_DISPLAY_MODES
@@ -408,10 +567,54 @@ class TerminalSessionWidget(QWidget):
             self.rx_display_combo.setCurrentIndex(receive_mode_index)
         self.rx_display_combo.blockSignals(False)
         self._update_line_ending_label()
+        self._sync_status_toggles()
 
     def apply_theme_palette(self) -> None:
         if hasattr(self.terminal, "set_terminal_colors"):
-            self.terminal.set_terminal_colors(prompt=self.host.theme.tx, draft=self.host.theme.text)
+            self.terminal.set_terminal_colors(
+                prompt=self.host.theme.tx,
+                draft=self.host.theme.text,
+                hint=self._terminal_colors()["timestamp"],
+            )
+        self._sync_prompt_context()
+        self._sync_completion_colors()
+        if hasattr(self, "drawer") and hasattr(self.drawer, "apply_theme_palette"):
+            self.drawer.apply_theme_palette(self.host.theme)
+        self._sync_status_toggles()
+
+    def _sync_completion_colors(self) -> None:
+        """Theme the autocomplete popup to match the side panels (dark frame,
+        ink command, grey description)."""
+        set_colors = getattr(self.command_input, "set_completion_colors", None)
+        if not callable(set_colors):
+            return
+        theme = self.host.theme
+        set_colors(
+            text=theme.text,
+            description=theme.muted,
+            selection=theme.search_highlight,
+            hover=theme.hover or theme.surface_alt,
+            background=theme.window_alt,
+            border=theme.border,
+        )
+
+    def _sync_prompt_context(self) -> None:
+        """Mirror the tab name + timestamp state onto the input prompt:
+        ``<tab name>  >`` aligned under the transcript columns (just ``>`` when
+        timestamps are off), plus the placeholder hint."""
+        if not hasattr(self, "terminal"):
+            return
+        set_prompt = getattr(self.terminal, "set_prompt_text", None)
+        if callable(set_prompt):
+            set_prompt(
+                prompt_leader_text(
+                    self.tab_title,
+                    timestamps_enabled=self.host.settings.timestamps_enabled,
+                )
+            )
+        set_placeholder = getattr(self.terminal, "setPlaceholderText", None)
+        if callable(set_placeholder):
+            set_placeholder(TERMINAL_INPUT_PLACEHOLDER)
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()
@@ -422,15 +625,17 @@ class TerminalSessionWidget(QWidget):
         if page_index is not None and self.drawer_pages.count() > 0:
             self.drawer_pages.setCurrentIndex(max(0, min(page_index, self.drawer_pages.count() - 1)))
         self.drawer_panel.setVisible(not collapsed)
+        if not collapsed and hasattr(self, "quick_history_list"):
+            self.refresh_quick_history()
         if collapsed:
             self.drawer.setMinimumWidth(DRAWER_COLLAPSED_WIDTH)
             self.drawer.setMaximumWidth(DRAWER_COLLAPSED_WIDTH)
-            self.splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(700, self.width() - DRAWER_COLLAPSED_WIDTH)])
+            self.splitter.setSizes([DRAWER_COLLAPSED_WIDTH, max(200, self.width() - DRAWER_COLLAPSED_WIDTH)])
             return
-        drawer_width = max(220, min(width, 520))
-        self.drawer.setMinimumWidth(220)
-        self.drawer.setMaximumWidth(520)
-        self.splitter.setSizes([drawer_width, max(700, self.width() - drawer_width)])
+        drawer_width = max(DRAWER_MIN_W, min(width, DRAWER_MAX_W))
+        self.drawer.setMinimumWidth(DRAWER_MIN_W)
+        self.drawer.setMaximumWidth(DRAWER_MAX_W)
+        self.splitter.setSizes([drawer_width, max(200, self.width() - drawer_width)])
 
     def set_workspace_drawer_visible(self, visible: bool) -> None:
         if visible:
@@ -450,8 +655,14 @@ class TerminalSessionWidget(QWidget):
         if self.host.settings.drawer_collapsed:
             return
         sizes = self.splitter.sizes()
-        if sizes:
-            self.host.set_drawer_width(sizes[0], source=self)
+        if not sizes:
+            return
+        # Dragging the handle below the open-drawer floor auto-collapses to the rail
+        # rather than clipping the rows' send/play affordance.
+        if sizes[0] < DRAWER_COLLAPSE_AT:
+            self.host.set_drawer_collapsed(True)
+            return
+        self.host.set_drawer_width(sizes[0], source=self)
 
     def _quick_sort_changed(self) -> None:
         mode = self.quick_sort_combo.currentData()
@@ -1043,24 +1254,16 @@ class TerminalSessionWidget(QWidget):
     def _render_user_send(self, message: str, *, color_role: str) -> None:
         if not message:
             return
-        self.terminal_view.render_plan(
-            TerminalRenderPlan(
-                event=SerialEvent(kind="tx", message=message),
-                message=message,
-                prefix="TX> ",
-                color_role=color_role,
-                ensure_line_break=True,
-            ),
-            colors={
-                "tx": self.host.theme.tx,
-                "error": self.host.theme.error,
-                "default": self.host.theme.text,
-            },
-            timestamps_enabled=self.host.settings.timestamps_enabled,
-            search_visible=self.search_bar.isVisible(),
-            search_text=self.search_input.text(),
-            search_highlight=self.host.theme.search_highlight,
+        plan = TerminalRenderPlan(
+            event=SerialEvent(kind="tx", message=message),
+            message=message,
+            prefix="TX> ",
+            direction="TX",
+            color_role=color_role,
+            ensure_line_break=True,
         )
+        self._emit_plan(plan)
+        self._store_transcript(("plan", plan))
 
     def _suppress_tx_echo(self, message: str) -> None:
         self._suppressed_tx_echoes.append(message)
@@ -1109,7 +1312,7 @@ class TerminalSessionWidget(QWidget):
 
     def run_script(self) -> None:
         start_dir = self.host.settings.last_script_path or str(Path.cwd())
-        path, _ = QFileDialog.getOpenFileName(self, "Run Command File", start_dir, "Text Files (*.txt *.cmd *.scr);;All Files (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Run Command File", start_dir, "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)")
         if not path:
             return
         self.run_script_path(Path(path))
@@ -1176,61 +1379,46 @@ class TerminalSessionWidget(QWidget):
         self.pause_script()
 
     def _refresh_script_controls(self) -> None:
-        if not hasattr(self, "script_run_button"):
+        if not hasattr(self, "script_pause_button"):
             return
         snapshot = self.controller.script_snapshot()
-        connected = self.transport.is_connected
         active = snapshot.is_running or snapshot.is_stopping
         paused = snapshot.is_paused
         stopping = snapshot.is_stopping
-        self.script_run_button.setEnabled(connected and not active)
         self.script_pause_button.setVisible(active and not paused)
         self.script_pause_button.setEnabled(active and not stopping)
         self.script_resume_button.setVisible(active and paused)
         self.script_resume_button.setEnabled(snapshot.can_resume)
         self.script_stop_button.setVisible(active)
         self.script_stop_button.setEnabled(active and not stopping)
-        if stopping:
-            text = "File stopping"
-            tooltip = "Command file is stopping."
-        elif paused:
-            text = "File paused"
-            if snapshot.pause_reason == "connection":
-                tooltip = "Command file is paused after disconnect. Reconnect, then click Resume."
-            elif snapshot.pause_reason == "user+connection":
-                tooltip = "Command file is paused and the connection is closed. Reconnect, then click Resume."
-            else:
-                tooltip = "Command file is paused. Click Resume to continue."
-        elif active:
-            text = "File running"
-            tooltip = "Command file is running."
+        # Running / paused / resumed / stopped / finished are narrated in the terminal
+        # as SYS messages, so the command bar no longer carries a status label. The one
+        # control-actionable hint — why Resume is disabled after a disconnect — rides
+        # on the Resume button's tooltip so it is not lost.
+        if paused and snapshot.pause_reason in ("connection", "user+connection"):
+            self.script_resume_button.setToolTip(
+                "Paused after disconnect — reconnect, then click Resume."
+            )
         else:
-            text = "File idle"
-            tooltip = "No command file is running."
-        self.script_status_label.setText(text)
-        self.script_status_label.setToolTip(tooltip)
-        self.script_run_button.setToolTip(
-            "Run a command file in this terminal."
-            if connected
-            else "Connect before running a command file."
-        )
+            self.script_resume_button.setToolTip("Resume the paused command file.")
 
     def toggle_logging(self) -> None:
         if self.logger.enabled:
             path = self.controller.stop_logging()
-            self.log_label.setText("Log off")
             self.host.update_connection_status(self)
+            self._sync_status_toggles()
             self._append_status(f"Logging stopped: {path}" if path else "Logging stopped.")
             return
         default_dir = Path(self.host.settings.log_path).parent if self.host.settings.log_path else Path.cwd()
         default_name = f"comport-zone-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
         path, _ = QFileDialog.getSaveFileName(self, "Choose Log File", str(default_dir / default_name), "Log Files (*.log *.txt);;All Files (*)")
         if not path:
+            self._sync_status_toggles()  # user cancelled — revert the toggled button
             return
         self.controller.start_logging(path)
         self.host.settings.log_path = path
-        self.log_label.setText("Logging")
         self.host.update_connection_status(self)
+        self._sync_status_toggles()
         self._append_status(f"Logging to {path}")
         self.host.save_settings()
 
@@ -1250,13 +1438,19 @@ class TerminalSessionWidget(QWidget):
         self._refresh_search_highlights(self.search_input.text())
 
     def show_search(self) -> None:
-        self.search_bar.show()
-        self.search_input.setFocus()
-        self.search_input.selectAll()
+        seed = self.terminal.textCursor().selectedText().replace(" ", "\n")
+        self.search_overlay.open_for(seed)
+
+    def focus_input(self) -> None:
+        """Focus the terminal's command line with the caret after the draft, so the
+        terminal is ready to type into (used on launch and tab activation)."""
+        self.command_input.setFocus()
+        self.command_input.setCursorPosition(len(self.command_input.text()))
 
     def hide_search(self) -> None:
         self.search_input.clear()
-        self.search_bar.hide()
+        self.search_overlay.hide()
+        self.terminal_view.refresh_search_highlights("", self.host.theme.search_highlight)
         self.command_input.setFocus()
 
     def find_next(self) -> None:
@@ -1396,7 +1590,7 @@ class TerminalSessionWidget(QWidget):
     def replace_terminal_selection(self, replacement: str) -> None:
         replace_from_menu = getattr(self.terminal, "replace_selection_from_menu", None)
         if callable(replace_from_menu):
-            if replace_from_menu(replacement) and self.search_bar.isVisible():
+            if replace_from_menu(replacement) and self.search_overlay.isVisible():
                 self._refresh_search_highlights(self.search_input.text())
             return
         cursor = self.terminal.textCursor()
@@ -1407,7 +1601,7 @@ class TerminalSessionWidget(QWidget):
         cursor.insertText(replacement)
         self.terminal.setReadOnly(was_read_only)
         self.terminal.setTextCursor(cursor)
-        if self.search_bar.isVisible():
+        if self.search_overlay.isVisible():
             self._refresh_search_highlights(self.search_input.text())
 
     def show_converted_selection(self, title: str, content: str) -> None:
@@ -1430,7 +1624,9 @@ class TerminalSessionWidget(QWidget):
         self.terminal_view.find(self.search_input.text(), backward=backward)
 
     def _refresh_search_highlights(self, text: str) -> None:
-        self.terminal_view.refresh_search_highlights(text, self.host.theme.search_highlight)
+        self.terminal_view.refresh_search_highlights(
+            text, self.host.theme.search_highlight, self.host.theme.text
+        )
 
     def _navigate_history(self, direction: int) -> None:
         text = self.history_store.navigate(direction, self.command_input.text())
@@ -1461,6 +1657,17 @@ class TerminalSessionWidget(QWidget):
             if command.command not in suggestions and text.casefold() in command.command.casefold()
         )
         self.completion_model.setStringList(suggestions[:30])
+        # Feed the popup the saved-command descriptions so each suggestion can show
+        # its description grayed out next to it.
+        set_descriptions = getattr(self.command_input, "set_completion_descriptions", None)
+        if callable(set_descriptions):
+            set_descriptions(
+                {
+                    command.command: command.description.strip()
+                    for command in self.host.quick_actions.quick_commands
+                    if command.description.strip()
+                }
+            )
 
     def _show_completion_popup(self) -> None:
         token_under_cursor = getattr(self.command_input, "token_under_cursor", None)
@@ -1507,21 +1714,63 @@ class TerminalSessionWidget(QWidget):
             )
 
     def _render_event(self, event: SerialEvent) -> None:
-        plan = self.controller.render_plan(event, self.host.settings.receive_display_mode)
+        self._emit_plan(self.controller.render_plan(event, self.host.settings.receive_display_mode))
+        self._store_transcript(("event", event))
+
+    def _emit_plan(self, plan: TerminalRenderPlan) -> None:
         self.terminal_view.render_plan(
             plan,
-            colors={
-                "rx": self.host.theme.rx,
-                "tx": self.host.theme.tx,
-                "status": self.host.theme.status,
-                "error": self.host.theme.error,
-                "default": self.host.theme.text,
-            },
+            colors=self._terminal_colors(),
             timestamps_enabled=self.host.settings.timestamps_enabled,
-            search_visible=self.search_bar.isVisible(),
+            search_visible=self.search_overlay.isVisible(),
             search_text=self.search_input.text(),
             search_highlight=self.host.theme.search_highlight,
         )
+
+    def _terminal_colors(self) -> dict[str, str]:
+        theme = self.host.theme
+        text = theme.text
+        faint = theme.text_faint or theme.muted
+        timestamp = mix_hex(faint, theme.terminal_bg, 0.62)
+        return {
+            # direction-column colours
+            "rx": theme.rx,
+            "tx": theme.tx,
+            "status": timestamp,  # SYS leader is faint, like the mockup
+            "error": theme.error,
+            "default": text,
+            # message-body colours, softened toward the terminal ink
+            "rx_body": mix_hex(theme.rx, text, 0.5),
+            "tx_body": mix_hex(theme.tx, text, 0.58),
+            "status_body": faint,
+            "error_body": theme.error,
+            "default_body": text,
+            # detached timestamp column
+            "timestamp": timestamp,
+        }
+
+    def _store_transcript(self, entry: tuple) -> None:
+        if self._replaying:
+            return
+        self._transcript.append(entry)
+        if len(self._transcript) > TRANSCRIPT_EVENT_CAP:
+            del self._transcript[: len(self._transcript) - TRANSCRIPT_EVENT_CAP]
+
+    def rerender_transcript(self) -> None:
+        """Rebuild the transcript with the current settings (timestamp on/off,
+        receive-display mode) so a toggle applies to all history — and restores."""
+        self.terminal.clear_transcript()
+        if not self._transcript:
+            return
+        self._replaying = True
+        try:
+            for kind, payload in self._transcript:
+                if kind == "event":
+                    self._emit_plan(self.controller.render_plan(payload, self.host.settings.receive_display_mode))
+                else:
+                    self._emit_plan(payload)
+        finally:
+            self._replaying = False
 
     def display_message_for_event(self, event: SerialEvent) -> str:
         return self.controller.display_message_for_event(event, self.host.settings.receive_display_mode)
@@ -1532,19 +1781,15 @@ class TerminalSessionWidget(QWidget):
     def _update_connection_ui(self, connected: bool, *, update_footer: bool = True) -> None:
         self._connected = connected
         self._status_text = self.connection_state_label()
-        status_text = self.connection_status_text()
         state = self.connection_state()
-        self.status_label.setText(status_text)
+        # Command-bar chip stays compact (state + endpoint) so the terminal can be
+        # narrow; the full profile lives in the shared status bar + this tooltip.
+        self.status_label.setText(self.connection_chip_text())
         self.status_label.setToolTip(f"{self.connection_tooltip()}\nClick to open Connection Settings.")
         set_widget_state(self.status_label, state)
         self.connection_button.setText(self.connection_action_text())
         self.connection_button.setToolTip(self.connection_tooltip())
-        action_icon = QStyle.StandardPixmap.SP_MediaStop if state == "retrying" else QStyle.StandardPixmap.SP_ComputerIcon
-        if state == "no-port":
-            action_icon = QStyle.StandardPixmap.SP_FileDialogDetailedView
-        if state == "connected":
-            action_icon = QStyle.StandardPixmap.SP_DialogCloseButton
-        set_button_icon(self.connection_button, action_icon, 15)
+        set_button_icon(self.connection_button, connection_state_icon(state), 15)
         set_button_role(self.connection_button, state)
         self._refresh_script_controls()
         self.host.update_tab_titles()
@@ -1621,6 +1866,11 @@ class TerminalSessionWidget(QWidget):
             ]
         )
 
+    def connection_chip_text(self) -> str:
+        endpoint = self.connection_endpoint()
+        label = self.connection_state_label()
+        return f"{label} · {endpoint}" if endpoint else label
+
     def _profile_summary(self) -> str:
         endpoint = self.connection_endpoint()
         if not endpoint:
@@ -1634,6 +1884,11 @@ class TerminalSessionWidget(QWidget):
         if isinstance(self.profile, LanProfile):
             return self.profile.endpoint()
         return self.profile.port
+
+    def run_target_label(self) -> str:
+        """Compact label for the editor's send-to list: "<tab name> · <type>"."""
+        kind = "TCP" if self.transport_kind == "lan" else "Serial"
+        return f"{self.tab_title} · {kind}"
 
     def _profile_port_missing(self) -> bool:
         if self.transport_kind != "serial" or not isinstance(self.profile, SerialProfile):
