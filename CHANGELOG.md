@@ -2,6 +2,35 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.4.0 - 2026-06-07
+
+### Added
+
+- Redesign the desktop app into a modern, VS Code-style workbench: a single unified title row (menu, command search, and window controls) on a frameless custom title bar, a design-token system, and theme-aware Tabler icons.
+- Add a Favorites model so individual Quick Commands and Quick Files can be starred, surfaced through an activity-bar drawer with four curated views: Favorites, Saved Commands (grouped, text or hex), Files, and History.
+- Add a collapsible, resizable, scrollable drawer layout, and seed default example commands and command files on first run.
+- Add a tab-name terminal prompt leader and inline autocomplete ghost text in the terminal input.
+- Add a shared find/replace overlay, a redesigned completion popup with descriptions, and an inline display of the current line's saved-command description in the command-file editor.
+- Add a terminal timestamp toggle and configurable terminal/editor line spacing.
+
+### Changed
+
+- Unify editor and terminal autocomplete so Tab accepts a completion and Enter never does.
+- Collapse a crowded tab strip into a `⋯` overflow menu, and collapse command bars to a single primary button when the window is very narrow.
+- Focus the active tab's terminal or editor on launch with the caret at the end, and improve line wrapping.
+- Rewrite the README around user-facing features, with new screenshots and GIFs captured from the redesigned UI.
+
+### Fixed
+
+- Fix new tabs landing in the wrong pane and the tab context menu targeting the wrong tab when the workspace is split.
+- Keep split panes resizable by capping each pane's minimum width, and fix the split-pane status line and active-tab indicator.
+- Stop the embedded editor's Run button from clipping in a narrow pane.
+- Fix missing favorite indicators in command history.
+
+### Tests
+
+- Add title-bar tests and expand coverage for the tab workspace, terminal view, and workspace status.
+
 ## 0.3.2 - 2026-05-26
 
 ### Added

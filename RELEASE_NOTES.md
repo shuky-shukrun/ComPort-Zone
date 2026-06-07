@@ -1,3 +1,61 @@
+# ComPort Zone v0.4.0 Release Notes
+
+Release date: 2026-06-07
+
+ComPort Zone v0.4.0 is a major redesign of the desktop app into a modern, VS Code-style workbench. The window chrome is now a single unified title row, the left drawer has become an activity bar with four curated views (Favorites, Saved Commands, Files, and History), the terminal and command-file editor have been reworked, and split panes are now properly resizable. The release also ships a rewritten README with new screenshots and GIFs.
+
+## Highlights
+
+- A unified, VS Code-style title row (menu, command search, and window controls) on a frameless custom title bar, with a design-token system and theme-aware icons.
+- Favorites: star individual Quick Commands and Quick Files, surfaced in a dedicated drawer view alongside Saved Commands, Files, and History.
+- A structured terminal with a tab-name prompt leader, inline autocomplete ghost text, a timestamp toggle, and configurable line spacing.
+- A redesigned command-file editor with a shared find/replace overlay, a richer completion popup, and inline saved-command descriptions.
+- Resizable split panes with per-pane minimum widths, plus fixes for several split-screen bugs.
+- A rewritten README with fresh screenshots and GIFs captured from the new UI.
+
+## What's New
+
+### Modern UI shell
+
+- Merged the menu bar, command search, and window controls into a single VS Code-style title row on a frameless custom title bar.
+- Added a design-token system and theme-aware Tabler icons, with polish across the app.
+
+### Favorites and the activity-bar drawer
+
+- Reworked Quick Access into a Favorites model: star individual commands and files.
+- The drawer now offers four curated views — Favorites, Saved Commands (grouped, text or hex), Files, and History (re-send, star, or promote to a saved command) — in a collapsible, resizable, scrollable layout.
+- Seeded default example commands and command files for first run.
+
+### Terminal and editor
+
+- Added a tab-name terminal prompt leader and inline autocomplete ghost text.
+- Unified editor and terminal autocomplete so Tab accepts a completion and Enter never does.
+- Added a shared find/replace overlay, a redesigned completion popup with descriptions, and inline display of the current line's saved-command description.
+- Added a terminal timestamp toggle and configurable line spacing, and improved line wrapping.
+
+### Split workspace
+
+- Made split panes resizable with a per-pane minimum-width cap.
+- Fixed new tabs landing in the wrong pane, the tab context menu targeting the wrong tab, and the split status line and active-tab indicator.
+
+### Responsive chrome and docs
+
+- Crowded tab strips collapse into a `⋯` overflow menu, and command bars collapse to a single primary button when the window is very narrow.
+- The embedded editor's Run button no longer clips in a narrow pane, and the active tab's terminal or editor is focused on launch.
+- Rewrote the README around the features users care about, with new screenshots and GIFs.
+
+## Upgrading
+
+Settings, Quick Commands, and Quick Files under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.3.2 Release Notes
 
 Release date: 2026-05-26
