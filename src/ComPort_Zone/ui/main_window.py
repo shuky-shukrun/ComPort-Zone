@@ -599,12 +599,23 @@ class MainWindow(QMainWindow):
             label_limit=30,
             draggable=True,
         )
+        self.refresh_shared_drawer_history()
+        self._sync_shared_sort_combos()
+
+    def refresh_shared_drawer_history(self) -> None:
+        """Rebuild only the history list.
+
+        Sending a command changes *history* and nothing else, so re-populating the
+        (potentially huge) saved-command, favorites and files lists on every Enter is
+        pure waste — with hundreds of saved commands that rebuild dominates the send
+        latency. The send path calls this focused refresh instead of the full one."""
+        if not hasattr(self, "shared_drawer"):
+            return
         populate_quick_history_list(
             self.shared_drawer.quick_history_list,
             list(reversed(self.history_catalog.all_commands()))[:80],
             favorite_commands={command.command.strip() for command in self.favorite_quick_commands_snapshot()},
         )
-        self._sync_shared_sort_combos()
 
     def _sync_shared_sort_combos(self) -> None:
         for combo, mode in (
@@ -1721,7 +1732,10 @@ class MainWindow(QMainWindow):
         for session in self.iter_sessions():
             session.history_store.add(command)
             session._update_completion_model()
-        self.refresh_shared_drawer()
+        # Only the history list changes on send — refresh just that, not the whole
+        # side bar (rebuilding every saved-command row is what made sending slow with
+        # hundreds of saved commands).
+        self.refresh_shared_drawer_history()
         self.save_settings()
 
     def remove_command_from_history(self, command: str) -> bool:
@@ -1730,7 +1744,7 @@ class MainWindow(QMainWindow):
             session.history_store.remove(command)
             session._update_completion_model()
         if removed:
-            self.refresh_shared_drawer()
+            self.refresh_shared_drawer_history()
             self.save_settings()
         return removed
 

@@ -1018,6 +1018,73 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_send_refreshes_history_only_not_the_saved_command_list(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_send_perf.json")
+        settings_path.unlink(missing_ok=True)
+        self.assertTrue(
+            SettingsService(SettingsStore(settings_path)).save(
+                AppSettings(
+                    check_for_updates_on_launch=False,
+                    quick_commands=[
+                        QuickCommand(command=f"CMD{i}?", description=f"d{i}") for i in range(5)
+                    ],
+                )
+            )
+        )
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            window.resize(1180, 720)
+            window.show()
+            self.qt.processEvents()
+
+            # Recording a sent command must refresh *only* the history list — rebuilding
+            # the whole side bar (every saved-command row) on each Enter was a real
+            # performance regression with hundreds of saved commands.
+            full_calls: list[int] = []
+            history_calls: list[int] = []
+            real_full = window.refresh_shared_drawer
+            real_history = window.refresh_shared_drawer_history
+
+            def spy_full(*args, **kwargs):
+                full_calls.append(1)
+                return real_full(*args, **kwargs)
+
+            def spy_history(*args, **kwargs):
+                history_calls.append(1)
+                return real_history(*args, **kwargs)
+
+            window.refresh_shared_drawer = spy_full
+            window.refresh_shared_drawer_history = spy_history
+
+            window.record_command("PINGUNIQUE?")
+            self.qt.processEvents()
+
+            self.assertEqual(full_calls, [])  # no expensive full side-bar rebuild
+            self.assertTrue(history_calls)  # history-only refresh ran
+            history_list = window.shared_drawer.quick_history_list
+            self.assertTrue(
+                any("PINGUNIQUE?" in history_list.item(i).text() for i in range(history_list.count()))
+            )
+            # Saved-command list is untouched (still the five seeded commands).
+            self.assertEqual(window.shared_drawer.quick_command_list.count(), 5)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_input_clears_after_enter_send_even_if_completion_reapplies(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_input_clear.json")
         settings_path.unlink(missing_ok=True)
