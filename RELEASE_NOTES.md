@@ -1,3 +1,29 @@
+# ComPort Zone v0.4.1 Release Notes
+
+Release date: 2026-06-07
+
+ComPort Zone v0.4.1 is a hot-fix release that restores send responsiveness for users with large Quick Command libraries.
+
+## Highlights
+
+- Sending a command is fast again regardless of how many Quick Commands are saved.
+
+## Fixed
+
+- Pressing Enter to send a command rebuilt the entire side bar — every saved-command, favorites, and file row — on each send, even though only the history list changes. With hundreds of saved commands that full rebuild dominated send latency (a regression introduced after v0.3.2). Sending now refreshes only the history list, so send time no longer scales with the size of your Quick Command library.
+
+## Upgrading
+
+Settings, Quick Commands, and Quick Files under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+Run the full suite with:
+
+```powershell
+.\run_tests.bat
+```
+
+---
+
 # ComPort Zone v0.4.0 Release Notes
 
 Release date: 2026-06-07

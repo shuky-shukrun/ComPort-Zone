@@ -2,6 +2,12 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## 0.4.1 - 2026-06-07
+
+### Fixed
+
+- Fix slow command sending when many commands are saved: pressing Enter no longer rebuilds the entire side bar (saved commands, favorites, and files) on every send — only the history list refreshes, so send latency no longer grows with the number of saved Quick Commands. This restores the responsiveness regressed after 0.3.2.
+
 ## 0.4.0 - 2026-06-07
 
 ### Added
