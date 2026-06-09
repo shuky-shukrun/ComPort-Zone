@@ -191,6 +191,138 @@ class QuickActionsSidebarTests(unittest.TestCase):
             sidebar.deleteLater()
             parent.deleteLater()
 
+    def test_inline_edit_and_remove_dispatch_by_id(self) -> None:
+        parent = QWidget()
+        calls: list[str] = []
+        edits: list[str] = []
+        removes: list[str] = []
+        actions = make_actions(calls)
+        actions.command_edit_by_id = lambda cid: edits.append(cid)
+        actions.command_delete_by_id = lambda cid: removes.append(cid)
+        sidebar = QuickActionsSidebar(
+            actions=actions,
+            command_primary_label="Send",
+            file_primary_label="Run",
+            parent=parent,
+        )
+        try:
+            populate_quick_command_list(
+                sidebar.quick_command_list,
+                [QuickCommand(id="a", command="*RST"), QuickCommand(id="b", command="*IDN?")],
+            )
+            item = sidebar.quick_command_list.item(1)
+            sidebar.quick_command_list.actionTriggered.emit(item, "edit")
+            sidebar.quick_command_list.actionTriggered.emit(item, "remove")
+            # The id-based callbacks fire with the clicked row's id (works from the
+            # favourites list too), and the selection-based fallbacks are untouched.
+            self.assertEqual(edits, ["b"])
+            self.assertEqual(removes, ["b"])
+            self.assertNotIn("edit-command", calls)
+            self.assertNotIn("delete-command", calls)
+            self.assertIs(sidebar.quick_command_list.currentItem(), item)
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
+    def test_inline_edit_remove_fall_back_to_selection_actions(self) -> None:
+        # With no id-based callback wired (the editor/per-tab drawers), the glyph
+        # selects the row then runs the selection-based edit/delete action.
+        parent = QWidget()
+        calls: list[str] = []
+        sidebar = QuickActionsSidebar(
+            actions=make_actions(calls),
+            command_primary_label="Insert",
+            file_primary_label="Open",
+            parent=parent,
+        )
+        try:
+            populate_quick_command_list(
+                sidebar.quick_command_list, [QuickCommand(id="a", command="*RST")]
+            )
+            item = sidebar.quick_command_list.item(0)
+            sidebar.quick_command_list.actionTriggered.emit(item, "edit")
+            sidebar.quick_command_list.actionTriggered.emit(item, "remove")
+            self.assertEqual(calls, ["edit-command", "delete-command"])
+            self.assertIs(sidebar.quick_command_list.currentItem(), item)
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
+    def test_builtin_context_menu_lists_actions_and_favorites_wording(self) -> None:
+        from ComPort_Zone.models import QuickFile
+        from ComPort_Zone.quick_actions_panel import populate_quick_file_list
+
+        parent = QWidget()
+        calls: list[str] = []
+        toggles: list[tuple[str, bool]] = []
+        edits: list[str] = []
+        removes: list[str] = []
+        actions = make_actions(calls)
+        actions.command_favorite_toggle = lambda cid, fav: toggles.append((cid, fav))
+        actions.command_edit_by_id = lambda cid: edits.append(cid)
+        actions.command_delete_by_id = lambda cid: removes.append(cid)
+        actions.file_favorite_toggle = lambda fid, fav: None
+        sidebar = QuickActionsSidebar(
+            actions=actions,
+            command_primary_label="Send",
+            file_primary_label="Run",
+            parent=parent,
+        )
+        try:
+            populate_quick_command_list(
+                sidebar.quick_command_list, [QuickCommand(id="a", command="*RST", favorite=False)]
+            )
+            # The saved-commands menu: Send · Add to Favorites · Edit · Remove.
+            saved_item = sidebar.quick_command_list.item(0)
+            saved_menu = sidebar._build_command_menu(
+                sidebar.quick_command_list, saved_item, is_favorites=False
+            )
+            labels = [a.text() for a in saved_menu.actions() if a.text()]
+            self.assertEqual(labels, ["Send", "Add to Favorites", "Edit", "Remove"])
+
+            # The favourites menu spells out the scope split: the star drops it from
+            # favourites, while Remove deletes it from saved.
+            populate_quick_command_list(
+                sidebar.favorite_command_list,
+                [QuickCommand(id="a", command="*RST", favorite=True)],
+            )
+            fav_item = sidebar.favorite_command_list.item(0)
+            fav_menu = sidebar._build_command_menu(
+                sidebar.favorite_command_list, fav_item, is_favorites=True
+            )
+            fav_labels = [a.text() for a in fav_menu.actions() if a.text()]
+            self.assertEqual(
+                fav_labels, ["Send", "Remove from Favorites", "Edit", "Remove from Saved"]
+            )
+
+            # Triggering the menu entries routes through the by-id dispatch.
+            {a.text(): a for a in fav_menu.actions()}["Edit"].trigger()
+            {a.text(): a for a in fav_menu.actions()}["Remove from Saved"].trigger()
+            {a.text(): a for a in fav_menu.actions()}["Remove from Favorites"].trigger()
+            self.assertEqual(edits, ["a"])
+            self.assertEqual(removes, ["a"])
+            self.assertEqual(toggles, [("a", False)])
+
+            # Files get the same menu shape (Run as the primary entry).
+            populate_quick_file_list(
+                sidebar.quick_file_list, [QuickFile(id="f1", label="Boot", path="C:/b.cpz")]
+            )
+            file_menu = sidebar._build_file_menu(
+                sidebar.quick_file_list, sidebar.quick_file_list.item(0), is_favorites=False
+            )
+            self.assertEqual(
+                [a.text() for a in file_menu.actions() if a.text()],
+                ["Run", "Add to Favorites", "Edit", "Remove"],
+            )
+
+            # The favourites lists are flagged so their glyph tooltips match the menu.
+            self.assertTrue(sidebar.favorite_command_list.is_favorites)
+            self.assertTrue(sidebar.favorite_file_list.is_favorites)
+            self.assertFalse(sidebar.quick_command_list.is_favorites)
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
     def test_favorites_panels_are_collapsible_and_share_a_splitter(self) -> None:
         parent = QWidget()
         sidebar = QuickActionsSidebar(

@@ -1421,6 +1421,60 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_favorite_row_remove_deletes_from_saved_but_star_only_unfavorites(self) -> None:
+        # The inline ✕ on a favourite row removes the command from *saved* (and so
+        # from favourites), while the star only drops it from favourites — and both
+        # outcomes are mirrored across the saved and favourites lists.
+        from ComPort_Zone.models import QuickCommand
+
+        settings_path = Path(__file__).with_name("_tmp_settings_fav_row_remove.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        def texts(quick_list):
+            return [quick_list.item(i).text() for i in range(quick_list.count())]
+
+        def item_named(quick_list, text):
+            return next(
+                quick_list.item(i) for i in range(quick_list.count()) if quick_list.item(i).text() == text
+            )
+
+        try:
+            window = app_module.MainWindow()
+            drawer = window.shared_drawer
+            window.add_quick_command(QuickCommand(command="FAVR:KEEP", favorite=True))
+            window.add_quick_command(QuickCommand(command="FAVR:GONE", favorite=True))
+
+            # The star on a favourite row only unfavourites it (stays in saved).
+            drawer.favorite_command_list.actionTriggered.emit(
+                item_named(drawer.favorite_command_list, "FAVR:KEEP"), "star"
+            )
+            self.assertNotIn("FAVR:KEEP", texts(drawer.favorite_command_list))
+            self.assertIn("FAVR:KEEP", texts(drawer.quick_command_list))
+
+            # The ✕ on a favourite row deletes it from saved (and so favourites).
+            drawer.favorite_command_list.actionTriggered.emit(
+                item_named(drawer.favorite_command_list, "FAVR:GONE"), "remove"
+            )
+            self.assertNotIn("FAVR:GONE", texts(drawer.favorite_command_list))
+            self.assertNotIn("FAVR:GONE", texts(drawer.quick_command_list))
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_quick_command_sidebar_has_csv_import_export_actions(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_command_sidebar_csv.json")
         settings_path.unlink(missing_ok=True)

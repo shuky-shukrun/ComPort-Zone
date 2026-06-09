@@ -16,6 +16,7 @@ from ComPort_Zone.quick_actions_panel import (
     create_quick_command_list,
     create_quick_file_list,
     item_ids_in_order,
+    action_tooltip,
     populate_quick_command_list,
     populate_quick_file_list,
     row_action_keys,
@@ -103,9 +104,12 @@ class QuickActionsPanelTests(unittest.TestCase):
             parent.deleteLater()
 
     def test_file_rows_expose_star_then_play_and_carry_favorite_state(self) -> None:
-        # Files are favouritable now: a star (toggle) sits left of the play glyph.
-        self.assertEqual(row_action_keys("file"), ["star", "play"])
-        self.assertEqual(row_action_keys("command"), ["star", "send"])
+        # Rows carry remove · edit · star · send/play so a saved entry can be
+        # deleted or edited inline; send/play stays rightmost.
+        self.assertEqual(row_action_keys("file"), ["remove", "edit", "star", "play"])
+        self.assertEqual(row_action_keys("command"), ["remove", "edit", "star", "send"])
+        # History is unchanged.
+        self.assertEqual(row_action_keys("history"), ["remove", "favorite", "save", "send"])
 
         parent = QWidget()
         try:
@@ -121,6 +125,28 @@ class QuickActionsPanelTests(unittest.TestCase):
             self.assertFalse(bool(quick_list.item(1).data(ROLE_FAVORITE)))
         finally:
             parent.deleteLater()
+
+    def test_action_tooltip_distinguishes_remove_from_saved_vs_unfavorite(self) -> None:
+        # On the favourites list the ✕ deletes from saved (everywhere); its tooltip
+        # must say so, while the star is only an unfavourite.
+        fav_remove = action_tooltip("remove", "command", favorite=True, is_favorites=True)
+        self.assertIn("saved", fav_remove.lower())
+        self.assertIn("favorites", fav_remove.lower())
+        self.assertEqual(
+            action_tooltip("star", "command", favorite=True, is_favorites=True),
+            "Remove from favorites",
+        )
+        # On the saved list the ✕ also removes from saved (no favourites caveat).
+        self.assertEqual(
+            action_tooltip("remove", "file", favorite=False, is_favorites=False),
+            "Remove file from saved",
+        )
+        self.assertEqual(
+            action_tooltip("star", "command", favorite=False, is_favorites=False),
+            "Add to favorites",
+        )
+        self.assertEqual(action_tooltip("edit", "command", False, False), "Edit")
+        self.assertEqual(action_tooltip("remove", "history", False, False), "Remove from history")
 
     def test_empty_quick_lists_expose_hint_without_adding_rows(self) -> None:
         parent = QWidget()

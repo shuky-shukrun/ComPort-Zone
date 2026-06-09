@@ -73,6 +73,9 @@ class QuickCommandDialog(QDialog):
             send_mode=self.mode_combo.currentText(),
             group=self.group_input.text().strip() or "General",
             line_ending_override=str(self.line_ending_combo.currentData() or ""),
+            # Preserve favourite membership across an edit — the dialog has no star,
+            # so dropping it here would silently unfavourite the command.
+            favorite=self._original.favorite,
             created_at=self._original.created_at or now,
             updated_at=now,
         )
@@ -129,6 +132,8 @@ class QuickFileDialog(QDialog):
             id=self._original.id,
             label=self.label_input.text().strip() or Path(path).name,
             path=path,
+            # Preserve favourite membership across an edit (see QuickCommandDialog).
+            favorite=self._original.favorite,
             created_at=self._original.created_at or now,
             updated_at=now,
         )

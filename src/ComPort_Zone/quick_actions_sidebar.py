@@ -7,7 +7,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPushButton, QStyle, QToolButton, QWidget
 
-from .icons import set_button_icon
+from .icons import set_action_icon, set_button_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES
 from .quick_actions_panel import (
     ROLE_FAVORITE,
@@ -43,9 +43,13 @@ class QuickActionsSidebarActions:
     # Favorites / history actions (optional; wired by the shared drawer host).
     command_use_by_id: Callable[[str], None] | None = None        # inline send by command id
     command_favorite_toggle: Callable[[str, bool], None] | None = None  # (command_id, favorite)
+    command_edit_by_id: Callable[[str], None] | None = None       # inline edit by command id
+    command_delete_by_id: Callable[[str], None] | None = None     # inline remove (from saved) by command id
     file_use_by_id: Callable[[str], None] | None = None           # inline run by file id
     file_open_by_id: Callable[[str], None] | None = None          # open-in-editor by file id (double-click)
     file_favorite_toggle: Callable[[str, bool], None] | None = None     # (quick_file_id, favorite)
+    file_edit_by_id: Callable[[str], None] | None = None          # inline edit by file id
+    file_delete_by_id: Callable[[str], None] | None = None        # inline remove (from saved) by file id
     history_favorite: Callable[[str], None] | None = None         # add history text to favorites
     history_save: Callable[[str], None] | None = None             # add history text to saved
     history_remove: Callable[[str], None] | None = None           # remove history text
@@ -105,6 +109,10 @@ class QuickActionsSidebar(QuickActionsDrawer):
         parent: QWidget | None = None,
     ) -> None:
         self.actions = actions
+        # Labels for the built-in right-click menu's primary entry (Send / Run, or
+        # Insert / Open in the editor) so it matches the inline send/play glyph.
+        self._command_primary_label = command_primary_label
+        self._file_primary_label = file_primary_label
         # Populates a groups menu (used by both the group button and the ⋯ overflow
         # when the group button is collapsed). Host-supplied; None on hidden drawers.
         self._group_menu_provider = group_menu_provider
@@ -120,11 +128,12 @@ class QuickActionsSidebar(QuickActionsDrawer):
             drag_drop=True,
         )
         # Favorites: a curated view of saved commands (star toggles membership);
-        # drag-reorder writes an independent favourites order.
+        # drag-reorder writes an independent favourites order. The favourite lists
+        # always use the built-in, list-aware menu (their ✕ removes from saved,
+        # which the host's saved-list menu callback does not distinguish).
         self.favorite_command_list = create_quick_command_list(
             parent,
-            tooltip="Send · star removes from favorites · drag to reorder favorites.",
-            context_menu_requested=command_context_menu_requested,
+            tooltip="Send · star removes from favorites · ✕ removes from saved · drag to reorder.",
             drag_drop=True,
         )
         self.quick_file_list = create_quick_file_list(
@@ -136,9 +145,34 @@ class QuickActionsSidebar(QuickActionsDrawer):
         # Favorite files: the star-filtered file view (mirrors favourite commands).
         self.favorite_file_list = create_quick_file_list(
             parent,
-            tooltip="Run · star removes from favorites · drag to reorder favorites.",
-            context_menu_requested=file_context_menu_requested,
+            tooltip="Run · star removes from favorites · ✕ removes from saved · drag to reorder.",
             drag_drop=True,
+        )
+        # Flag the favourites lists so their inline glyphs / tooltips / menu spell
+        # out that ✕ deletes from saved while the star only drops from favourites.
+        self.favorite_command_list.is_favorites = True
+        self.favorite_file_list.is_favorites = True
+        # Built-in right-click menu (Send/Run · favourite toggle · Edit · Remove).
+        # The saved lists defer to a host-supplied menu when one is given (the
+        # legacy terminal/editor drawers); otherwise — and always for favourites —
+        # the sidebar shows its own menu.
+        if command_context_menu_requested is None:
+            self._enable_context_menu(
+                self.quick_command_list,
+                lambda pos: self._show_command_menu(self.quick_command_list, pos, is_favorites=False),
+            )
+        self._enable_context_menu(
+            self.favorite_command_list,
+            lambda pos: self._show_command_menu(self.favorite_command_list, pos, is_favorites=True),
+        )
+        if file_context_menu_requested is None:
+            self._enable_context_menu(
+                self.quick_file_list,
+                lambda pos: self._show_file_menu(self.quick_file_list, pos, is_favorites=False),
+            )
+        self._enable_context_menu(
+            self.favorite_file_list,
+            lambda pos: self._show_file_menu(self.favorite_file_list, pos, is_favorites=True),
         )
         self.quick_history_list = create_quick_history_list(
             parent,
@@ -337,6 +371,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
             quick_list.apply_theme_palette(palette)
 
     def _on_command_action(self, quick_list, item, key: str) -> None:
+        if item is None:
+            return
         quick_list.setCurrentItem(item)
         command_id = str(item.data(ROLE_ID) or "")
         if key == "star":
@@ -344,12 +380,20 @@ class QuickActionsSidebar(QuickActionsDrawer):
             if toggle is not None and command_id:
                 toggle(command_id, not bool(item.data(ROLE_FAVORITE)))
             return
+        if key == "edit":
+            self._dispatch_by_id(command_id, self.actions.command_edit_by_id, self.actions.edit_command)
+            return
+        if key == "remove":
+            self._dispatch_by_id(command_id, self.actions.command_delete_by_id, self.actions.delete_command)
+            return
         if self.actions.command_use_by_id is not None and command_id:
             self.actions.command_use_by_id(command_id)
         else:
             self.actions.command_primary()
 
     def _on_file_action(self, quick_list, item, key: str) -> None:
+        if item is None:
+            return
         quick_list.setCurrentItem(item)
         file_id = str(item.data(ROLE_ID) or "")
         if key == "star":
@@ -357,12 +401,32 @@ class QuickActionsSidebar(QuickActionsDrawer):
             if toggle is not None and file_id:
                 toggle(file_id, not bool(item.data(ROLE_FAVORITE)))
             return
+        if key == "edit":
+            self._dispatch_by_id(file_id, self.actions.file_edit_by_id, self.actions.edit_file)
+            return
+        if key == "remove":
+            self._dispatch_by_id(file_id, self.actions.file_delete_by_id, self.actions.delete_file)
+            return
         # play -> run by id (works from either file list); fall back to the
         # selection-based primary for drawers that only drive one list.
         if self.actions.file_use_by_id is not None and file_id:
             self.actions.file_use_by_id(file_id)
         else:
             self.actions.file_primary()
+
+    @staticmethod
+    def _dispatch_by_id(
+        item_id: str,
+        by_id: Callable[[str], None] | None,
+        fallback: Callable[[], None],
+    ) -> None:
+        """Run the id-based callback when wired (correct from either the saved or the
+        favourites list), else the selection-based one — the caller has already
+        selected the clicked row, so the fallback acts on it."""
+        if by_id is not None and item_id:
+            by_id(item_id)
+        else:
+            fallback()
 
     def _on_file_double_clicked(self, quick_list, item) -> None:
         quick_list.setCurrentItem(item)
@@ -382,6 +446,90 @@ class QuickActionsSidebar(QuickActionsDrawer):
         }.get(key)
         if callback is not None:
             callback(text)
+
+    # ---- Built-in right-click menu (mirrors the inline row glyphs) ------------
+    @staticmethod
+    def _enable_context_menu(quick_list, handler: Callable) -> None:
+        quick_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        quick_list.customContextMenuRequested.connect(handler)
+
+    def _menu_action(self, menu: QMenu, label: str, icon: str, callback: Callable[[], None]) -> QAction:
+        action = QAction(label, menu)
+        set_action_icon(action, icon, 14)
+        action.triggered.connect(lambda _checked=False, cb=callback: cb())
+        menu.addAction(action)
+        return action
+
+    def _show_command_menu(self, quick_list, pos, *, is_favorites: bool) -> None:
+        item = quick_list.itemAt(pos)
+        if item is None:
+            return
+        quick_list.setCurrentItem(item)
+        self._build_command_menu(quick_list, item, is_favorites=is_favorites).exec(
+            quick_list.mapToGlobal(pos)
+        )
+
+    def _build_command_menu(self, quick_list, item, *, is_favorites: bool) -> QMenu:
+        command_id = str(item.data(ROLE_ID) or "")
+        starred = bool(item.data(ROLE_FAVORITE)) or is_favorites
+        menu = QMenu(quick_list)
+        self._menu_action(
+            menu, self._command_primary_label, "send",
+            lambda it=item: self._on_command_action(quick_list, it, "send"),
+        )
+        menu.addSeparator()
+        if self.actions.command_favorite_toggle is not None and command_id:
+            self._menu_action(
+                menu,
+                "Remove from Favorites" if starred else "Add to Favorites",
+                "star-fill" if starred else "star",
+                lambda it=item: self._on_command_action(quick_list, it, "star"),
+            )
+        self._menu_action(
+            menu, "Edit", "edit",
+            lambda it=item: self._on_command_action(quick_list, it, "edit"),
+        )
+        # On a favourite row, ✕ deletes from saved (not just favourites) — say so.
+        self._menu_action(
+            menu, "Remove from Saved" if is_favorites else "Remove", "x",
+            lambda it=item: self._on_command_action(quick_list, it, "remove"),
+        )
+        return menu
+
+    def _show_file_menu(self, quick_list, pos, *, is_favorites: bool) -> None:
+        item = quick_list.itemAt(pos)
+        if item is None:
+            return
+        quick_list.setCurrentItem(item)
+        self._build_file_menu(quick_list, item, is_favorites=is_favorites).exec(
+            quick_list.mapToGlobal(pos)
+        )
+
+    def _build_file_menu(self, quick_list, item, *, is_favorites: bool) -> QMenu:
+        file_id = str(item.data(ROLE_ID) or "")
+        starred = bool(item.data(ROLE_FAVORITE)) or is_favorites
+        menu = QMenu(quick_list)
+        self._menu_action(
+            menu, self._file_primary_label, "play",
+            lambda it=item: self._on_file_action(quick_list, it, "play"),
+        )
+        menu.addSeparator()
+        if self.actions.file_favorite_toggle is not None and file_id:
+            self._menu_action(
+                menu,
+                "Remove from Favorites" if starred else "Add to Favorites",
+                "star-fill" if starred else "star",
+                lambda it=item: self._on_file_action(quick_list, it, "star"),
+            )
+        self._menu_action(
+            menu, "Edit", "edit",
+            lambda it=item: self._on_file_action(quick_list, it, "edit"),
+        )
+        self._menu_action(
+            menu, "Remove from Saved" if is_favorites else "Remove", "x",
+            lambda it=item: self._on_file_action(quick_list, it, "remove"),
+        )
+        return menu
 
     @staticmethod
     def _trigger_inline(quick_list, item, primary: Callable[[], None]) -> None:
