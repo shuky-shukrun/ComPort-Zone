@@ -13,6 +13,7 @@ All notable changes to ComPort Zone are documented here.
 
 - On a Favorites row, make the scope of each control explicit: ✕ removes the item from Saved entirely (deleting it everywhere) while the star only drops it from Favorites — spelled out in both the glyph tooltips and the context-menu wording.
 - Editing or removing a saved command or file now reflects in the Favorites view immediately, and vice versa.
+- Adding a quick file now opens the file explorer first; the editor dialog then appears pre-filled with the chosen file's name and path (both still editable).
 
 ### Fixed
 

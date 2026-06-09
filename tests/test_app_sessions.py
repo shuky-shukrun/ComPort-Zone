@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QKeyEvent, QTextCursor
@@ -1464,6 +1465,57 @@ class AppSessionTests(unittest.TestCase):
             )
             self.assertNotIn("FAVR:GONE", texts(drawer.favorite_command_list))
             self.assertNotIn("FAVR:GONE", texts(drawer.quick_command_list))
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_add_quick_file_opens_picker_then_prefills_dialog(self) -> None:
+        # The Files "+" opens the file explorer first, then the editor dialog
+        # pre-filled with the chosen file's name + path (both still editable).
+        from PySide6.QtWidgets import QDialog, QFileDialog
+        from ComPort_Zone.ui.dialogs import QuickFileDialog
+
+        settings_path = Path(__file__).with_name("_tmp_settings_add_file_picker.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        chosen = str(Path(__file__).with_name("picked_bringup.txt"))
+        try:
+            window = app_module.MainWindow()
+            window.delete_all_quick_files(confirm=False)  # drop any seeded sample file
+
+            # Picker returns a file; the seeded editor dialog auto-accepts.
+            with mock.patch.object(
+                QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (chosen, ""))
+            ), mock.patch.object(QuickFileDialog, "exec", lambda self: QDialog.DialogCode.Accepted):
+                window.add_quick_file()  # the "+" entry point (no QuickFile passed)
+
+            files = window.quick_files_snapshot()
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].label, Path(chosen).name)  # name defaults to the file name
+            self.assertEqual(files[0].path, chosen)
+            # The picker's directory is remembered for next time.
+            self.assertEqual(window.settings.last_script_path, str(Path(chosen).parent))
+
+            # Cancelling the picker adds nothing (no dialog, no row).
+            with mock.patch.object(
+                QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", ""))
+            ):
+                window.add_quick_file()
+            self.assertEqual(len(window.quick_files_snapshot()), 1)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

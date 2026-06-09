@@ -276,14 +276,21 @@ class QuickActionController:
         QApplication.clipboard().setText(command.command)
         self._set_status(f"Copied quick command: {_short_label(command.display_label(), 32)}")
 
-    def add_quick_file(self, quick_file: QuickFile | None = None) -> None:
+    def add_quick_file(self, quick_file: QuickFile | None = None, *, prompt: bool | None = None) -> None:
         self._refresh_from_settings()
-        if quick_file is None or isinstance(quick_file, bool):
-            dialog = QuickFileDialog(parent=self.parent)
+        # ``prompt`` decides whether the editor dialog opens: by default it does when
+        # no ready-made QuickFile is supplied. The host's "+" button picks a file
+        # first and passes it with ``prompt=True`` to seed the dialog (label = the
+        # file name, path = the chosen path), both still editable.
+        if prompt is None:
+            prompt = not isinstance(quick_file, QuickFile)
+        if prompt:
+            seed = quick_file if isinstance(quick_file, QuickFile) else None
+            dialog = QuickFileDialog(seed, parent=self.parent)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             quick_file = dialog.quick_file()
-        if not quick_file.path:
+        if not isinstance(quick_file, QuickFile) or not quick_file.path:
             return
         self.library.quick_files.append(quick_file)
         self._commit_files(quick_file.id)

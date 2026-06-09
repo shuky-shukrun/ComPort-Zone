@@ -1618,6 +1618,25 @@ class MainWindow(QMainWindow):
         self.quick_action_controller.add_command_from_text(text, favorite=favorite)
 
     def add_quick_file(self, quick_file: QuickFile | None = None) -> None:
+        # Adding a quick file (the Files "+" / "Add File") starts at the file
+        # explorer: pick a command file, then open the editor dialog pre-filled with
+        # its name + path (both still editable). A QuickFile passed in (tests, command
+        # files) is added directly, without the picker.
+        if quick_file is None or isinstance(quick_file, bool):
+            start_dir = self.settings.last_script_path or str(Path.cwd())
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Add Command File",
+                start_dir,
+                "Command Files (*.cpz *.txt *.cmd *.scr);;ComPort Zone Files (*.cpz);;All Files (*)",
+            )
+            if not path:
+                return
+            self.settings.last_script_path = str(Path(path).parent)
+            self.quick_action_controller.add_quick_file(
+                QuickFile(label=Path(path).name, path=path), prompt=True
+            )
+            return
         self.quick_action_controller.add_quick_file(quick_file)
 
     def edit_quick_file(self, quick_file_id: str) -> None:
