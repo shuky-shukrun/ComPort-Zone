@@ -33,13 +33,14 @@ def clamp_prompt_label(label: str, width: int = _TIMESTAMP_WIDTH) -> str:
     return label[: width - 1] + "…"
 
 
-def prompt_leader_text(label: str, *, timestamps_enabled: bool) -> str:
+def prompt_leader_text(label: str, *, timestamps_enabled: bool, chevron: str = ">") -> str:
     """Columnar leader for the input prompt, mirroring :meth:`_leader_runs`.
 
-    The tab name fills the timestamp column and a ``>`` sits in the direction
-    column, so the caret lines up under the transcript message column. With
-    timestamps off there is no timestamp column, so only the ``>`` shows."""
-    chevron = ">".ljust(_DIR_WIDTH)
+    The tab name fills the timestamp column and ``chevron`` (normally ``>``, or an
+    auto-reconnect spinner frame) sits in the direction column, so the caret lines up
+    under the transcript message column. With timestamps off there is no timestamp
+    column, so only the chevron shows."""
+    chevron = chevron.ljust(_DIR_WIDTH)
     label = clamp_prompt_label(label)
     if timestamps_enabled and label:
         return f"{label.ljust(_TIMESTAMP_WIDTH)} {chevron} "

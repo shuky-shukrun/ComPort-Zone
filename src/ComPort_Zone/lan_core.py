@@ -190,7 +190,7 @@ class LanClient:
         if not profile:
             return
         self._emit(
-            "progress",
+            "status",
             f"Auto-reconnect armed. Retrying every {LAN_RECONNECT_RETRY_INTERVAL_MS} ms.",
         )
         while not stop_event.wait(LAN_RECONNECT_RETRY_INTERVAL_MS / 1000):
@@ -202,7 +202,8 @@ class LanClient:
             if self._attempt_connect(profile, reconnect_attempt=True):
                 self._emit("status", "Auto-reconnect succeeded.")
                 return
-            self._emit("progress", ".")
+            # No per-attempt "." here: the retry state lives in the connection chip
+            # (pulsing "Retrying" pill), not as transcript/log spam.
 
     def _stop_reconnect_thread(self) -> None:
         thread = self._reconnect_thread

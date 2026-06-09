@@ -1799,12 +1799,21 @@ class AppSessionTests(unittest.TestCase):
             )
             self.assertEqual(window.connection_action_button.text(), "Stop Retry")
             self.assertTrue(window.connection_status_label.text().startswith("Retrying | COM99"))
+            # The prompt chevron spins instead of spamming "." into the transcript:
+            # the ">" is swapped for an animated glyph at the cursor.
+            self.assertTrue(session._retrying)
+            self.assertTrue(session._retry_spinner_timer.isActive())
+            self.assertNotIn(">", session.command_input.prompt)
 
             window.connection_action_button.click()
 
             self.assertEqual(disconnect_calls, [True])
             self.assertEqual(window.connection_action_button.text(), "Connect")
             self.assertTrue(window.connection_status_label.text().startswith("Missing | COM99"))
+            # Leaving the retry state stops the spinner and restores the ">" prompt.
+            self.assertFalse(session._retrying)
+            self.assertFalse(session._retry_spinner_timer.isActive())
+            self.assertIn(">", session.command_input.prompt)
             self.assertEqual(
                 window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
                 window.theme.error.lower(),

@@ -74,6 +74,12 @@ TRANSCRIPT_EVENT_CAP = 5000
 # Ghosted hint shown in the empty input line, mirroring the design mockup.
 TERMINAL_INPUT_PLACEHOLDER = "type a command — ↑ recalls history"
 
+# Auto-reconnect spins this glyph where the ">" prompt normally sits — a "working"
+# cue right at the cursor. ASCII so it renders in any terminal font the user picks;
+# dropping ">" also reads as "not ready to send" while the link is down.
+RETRY_SPINNER_FRAMES = ("|", "/", "-", "\\")
+RETRY_SPINNER_INTERVAL_MS = 120
+
 
 class TerminalConnectionStatusLabel(QLabel):
     clicked = Signal()
@@ -131,6 +137,14 @@ class TerminalSessionWidget(QWidget):
         # Stored transcript entries so timestamp/hex toggles re-render all history.
         self._transcript: list[tuple] = []
         self._replaying = False
+        # Auto-reconnect indicator: spin the prompt chevron while retrying. The flag
+        # (not connection_state()) drives the leader so prompt refreshes during
+        # __init__ — before refresh_ports() populates the port list — stay safe.
+        self._retrying = False
+        self._retry_spinner_index = 0
+        self._retry_spinner_timer = QTimer(self)
+        self._retry_spinner_timer.setInterval(RETRY_SPINNER_INTERVAL_MS)
+        self._retry_spinner_timer.timeout.connect(self._advance_retry_spinner)
 
         self._build_ui()
         self.refresh_ports()
@@ -604,17 +618,29 @@ class TerminalSessionWidget(QWidget):
         timestamps are off), plus the placeholder hint."""
         if not hasattr(self, "terminal"):
             return
-        set_prompt = getattr(self.terminal, "set_prompt_text", None)
-        if callable(set_prompt):
-            set_prompt(
-                prompt_leader_text(
-                    self.tab_title,
-                    timestamps_enabled=self.host.settings.timestamps_enabled,
-                )
-            )
+        self._apply_prompt_leader()
         set_placeholder = getattr(self.terminal, "setPlaceholderText", None)
         if callable(set_placeholder):
             set_placeholder(TERMINAL_INPUT_PLACEHOLDER)
+
+    def _apply_prompt_leader(self) -> None:
+        """Push the current prompt leader onto the input. One shared path so theme,
+        tab-title and timestamp refreshes — and each spinner tick — agree on the
+        chevron (``>`` normally, a spinning amber glyph while auto-reconnect retries)."""
+        set_prompt = getattr(self.terminal, "set_prompt_text", None)
+        if not callable(set_prompt):
+            return
+        chevron = RETRY_SPINNER_FRAMES[self._retry_spinner_index] if self._retrying else ">"
+        set_color = getattr(self.terminal, "set_prompt_color", None)
+        if callable(set_color):
+            set_color(self.host.theme.status if self._retrying else self.host.theme.tx)
+        set_prompt(
+            prompt_leader_text(
+                self.tab_title,
+                timestamps_enabled=self.host.settings.timestamps_enabled,
+                chevron=chevron,
+            )
+        )
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()
@@ -1787,6 +1813,7 @@ class TerminalSessionWidget(QWidget):
         self.status_label.setText(self.connection_chip_text())
         self.status_label.setToolTip(f"{self.connection_tooltip()}\nClick to open Connection Settings.")
         set_widget_state(self.status_label, state)
+        self._set_retry_indicator(state == "retrying")
         self.connection_button.setText(self.connection_action_text())
         self.connection_button.setToolTip(self.connection_tooltip())
         set_button_icon(self.connection_button, connection_state_icon(state), 15)
@@ -1796,6 +1823,24 @@ class TerminalSessionWidget(QWidget):
         self.host.update_connection_status(self)
         if update_footer and self.host.tabs.currentWidget() is self:
             self.host.set_status(self._status_text)
+
+    def _set_retry_indicator(self, active: bool) -> None:
+        """Spin the prompt chevron while auto-reconnect is retrying, and restore the
+        plain ``>`` otherwise. Idempotent — safe to call on every connection-UI
+        refresh."""
+        if active == self._retrying:
+            return
+        self._retrying = active
+        if active:
+            self._retry_spinner_index = 0
+            self._retry_spinner_timer.start()
+        else:
+            self._retry_spinner_timer.stop()
+        self._apply_prompt_leader()
+
+    def _advance_retry_spinner(self) -> None:
+        self._retry_spinner_index = (self._retry_spinner_index + 1) % len(RETRY_SPINNER_FRAMES)
+        self._apply_prompt_leader()
 
     def connection_state(self) -> str:
         if self._connected or self.transport.is_connected:

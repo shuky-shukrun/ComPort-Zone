@@ -325,6 +325,16 @@ class IntegratedTerminalEdit(QTextEdit):
         self._reformat_prompt_and_draft()
         self.viewport().update()
 
+    def set_prompt_color(self, color: str) -> None:
+        """Recolor only the prompt leader (the ``<tab>  >`` run), leaving the typed
+        draft and committed transcript untouched — used to flag auto-reconnect amber
+        at the cursor without tinting whatever the user is mid-typing."""
+        if color == self._prompt_color:
+            return
+        self._prompt_color = color
+        self._reformat_prompt_and_draft()
+        self.viewport().update()
+
     def set_prompt_text(self, text: str) -> None:
         """Swap the prompt leader (e.g. ``COM3   >``) in place, keeping the
         committed transcript's colours, the draft text, and the caret offset —
