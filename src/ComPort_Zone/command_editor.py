@@ -173,13 +173,24 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.blockCountChanged.connect(self.update_line_number_area_width)
         self.updateRequest.connect(self.update_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
-        self._line_spacing = LineSpacingController(self)
+        # reactive=False: a per-keystroke block reformat would break native undo
+        # (see LineSpacingController). New lines inherit the height; we re-apply on
+        # the one-shot setPlainText path below.
+        self._line_spacing = LineSpacingController(self, reactive=False)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
 
     def set_line_spacing(self, percent: int) -> None:
         """Set the line spacing as a percentage of the font's natural line height."""
         self._line_spacing.set_percent(percent)
+
+    def setPlainText(self, text: str) -> None:
+        # setPlainText resets every block to the default height, so re-apply spacing
+        # to the freshly loaded content; then clear the undo stack so the load (and
+        # its one-shot spacing pass) isn't an undoable step the user lands on.
+        super().setPlainText(text)
+        self._line_spacing.reapply()
+        self.document().clearUndoRedoStacks()
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.line_number_background = QColor(theme.surface_alt)
@@ -516,6 +527,53 @@ class CommandPlainTextEdit(QPlainTextEdit):
             return
         super().wheelEvent(event)
 
+    def _copy_current_line(self) -> None:
+        """Ctrl+C with no selection copies the whole current line (with its newline),
+        like VS Code / Notepad++."""
+        QApplication.clipboard().setText(self.textCursor().block().text() + "\n")
+
+    def _cut_current_line(self) -> None:
+        """Ctrl+X with no selection cuts the whole current line, newline included —
+        and for the last line takes the *preceding* newline so no empty line is left."""
+        block = self.textCursor().block()
+        text = block.text()
+        cursor = QTextCursor(self.document())
+        if block.next().isValid():
+            cursor.setPosition(block.position())
+            cursor.setPosition(block.next().position(), QTextCursor.MoveMode.KeepAnchor)
+        elif block.previous().isValid():
+            previous = block.previous()
+            cursor.setPosition(previous.position() + len(previous.text()))
+            cursor.setPosition(block.position() + len(text), QTextCursor.MoveMode.KeepAnchor)
+        else:
+            cursor.setPosition(block.position())
+            cursor.setPosition(block.position() + len(text), QTextCursor.MoveMode.KeepAnchor)
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+        cursor.endEditBlock()
+        QApplication.clipboard().setText(text + "\n")
+
+    def _paste_clipboard(self) -> None:
+        clip = QApplication.clipboard().text()
+        if not clip:
+            return
+        cursor = self.textCursor()
+        if cursor.hasSelection() or not clip.endswith("\n"):
+            cursor.insertText(clip)
+            self.setTextCursor(cursor)
+            return
+        # Whole-line paste (clipboard holds full lines, nothing selected): insert the
+        # line(s) above the current one and keep the caret on its original text.
+        position = cursor.position()
+        line_cursor = QTextCursor(self.document())
+        line_cursor.setPosition(cursor.block().position())
+        line_cursor.beginEditBlock()
+        line_cursor.insertText(clip)
+        line_cursor.endEditBlock()
+        restored = self.textCursor()
+        restored.setPosition(min(position + len(clip), self.document().characterCount() - 1))
+        self.setTextCursor(restored)
+
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             if self.find_callback:
@@ -535,6 +593,20 @@ class CommandPlainTextEdit(QPlainTextEdit):
                     return
             elif self.save_callback:
                 self.save_callback()
+                event.accept()
+                return
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and not (
+            event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        ):
+            if event.key() in (Qt.Key.Key_C, Qt.Key.Key_X) and not self.textCursor().hasSelection():
+                if event.key() == Qt.Key.Key_C:
+                    self._copy_current_line()
+                else:
+                    self._cut_current_line()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_V:
+                self._paste_clipboard()
                 event.accept()
                 return
         if self.completer and self.completer.popup().isVisible():

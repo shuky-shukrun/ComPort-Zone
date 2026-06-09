@@ -99,6 +99,61 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_editor_undo_redo_works_with_line_spacing_applied(self) -> None:
+        # Regression: the line-spacing controller reformatted blocks on every
+        # contentsChange, which silently killed Ctrl+Z in the editor.
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.editor.show()
+            dialog.editor.setFocus()
+            dialog.editor.set_line_spacing(115)
+            QTest.keyClicks(dialog.editor, "hello")
+            self.assertEqual(dialog.text(), "hello")
+
+            QTest.keyClick(dialog.editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.text(), "")
+            QTest.keyClick(
+                dialog.editor,
+                Qt.Key.Key_Z,
+                Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+            )
+            self.assertEqual(dialog.text(), "hello")
+            # Spacing is still in force on the typed block.
+            self.assertEqual(
+                dialog.editor.document().findBlockByNumber(0).blockFormat().lineHeight(), 115.0
+            )
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_ctrl_c_x_v_operate_on_whole_line_without_selection(self) -> None:
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.editor.show()
+            dialog.editor.setFocus()
+            dialog.setPlainText("alpha\nbeta")
+            cursor = dialog.editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            dialog.editor.setTextCursor(cursor)
+            QApplication.clipboard().clear()
+
+            # Copy the whole current line (with newline) when nothing is selected.
+            QTest.keyClick(dialog.editor, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(QApplication.clipboard().text(), "alpha\n")
+
+            # Cut removes the whole line.
+            QTest.keyClick(dialog.editor, Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.text(), "beta")
+
+            # Whole-line paste drops the line back in above the current one.
+            QTest.keyClick(dialog.editor, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.text(), "alpha\nbeta")
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
     def test_editor_enter_dismisses_completion_and_inserts_newline(self) -> None:
         # Matches the terminal: only Tab accepts; Enter closes the popup and adds a
         # newline (keyPressEvent path, key delivered to the editor).
