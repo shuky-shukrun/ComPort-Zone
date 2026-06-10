@@ -1,3 +1,45 @@
+# ComPort Zone v0.4.2 Release Notes
+
+Release date: 2026-06-10
+
+ComPort Zone v0.4.2 polishes the desktop workbench: a reorganized menu bar, live theme and font previews, line-wise editing, smarter auto-reconnect, clearer disconnected-state cues, and a batch of editor and UI fixes — including the Line spacing preference now applying to the command-file editor.
+
+## Highlights
+
+- The top menu bar is reorganized into seven task-focused menus.
+- Hover a theme in the Theme menu to preview it live across the whole app before choosing.
+- Cut, copy, and paste whole lines in the terminal and editor with nothing selected (Ctrl+X / Ctrl+C / Ctrl+V).
+- Auto-reconnect retries on a steady interval and shows a single calm prompt spinner instead of dot-spam.
+- Edit or remove any Saved Command, File, or Favorite inline (pencil / ✕) or from a right-click menu.
+
+## What's New
+
+- **Task-focused menus** — the menu bar is grouped into seven menus so common actions are quicker to reach.
+- **Live theme preview** — hovering a theme in the Theme menu applies it instantly across the app; move away to revert, click to keep.
+- **Line-wise clipboard** — with nothing selected, Ctrl+X / Ctrl+C / Ctrl+V operate on the current line in both the terminal and the command-file editor.
+- **Inline side-bar actions** — every Saved Commands, Files, and Favorites row gains inline edit (pencil) and remove (✕) glyphs, plus a right-click menu with send/run, favorite toggle, edit, and remove.
+- **Split downward** — dragging a tab toward the bottom of a pane now splits the workspace down; dragging to the side still splits right.
+
+## Changed
+
+- Auto-reconnect is interval-driven and shows a single prompt spinner instead of a stream of dots.
+- Disconnected state is clearer: the editor Run button is disabled when no terminal is connected, and a disconnected port's prompt, tab name, and input are dimmed.
+- Adding a quick file opens the file explorer first, then a pre-filled editor dialog.
+- Favorites controls spell out their scope (✕ deletes everywhere; the star only drops from Favorites), and edits or removals reflect across Saved and Favorites immediately.
+
+## Fixed
+
+- The **Line spacing** preference now applies to the command-file editor, not just the terminal — the editor re-renders at the configured spacing, with the line-number gutter staying aligned.
+- Undo and redo work correctly in the terminal and command-file editor.
+- The Preferences live font preview is restored, the spin-box steppers work again, and combo-box dropdown rows show their highlight.
+- Editing a favorited command or file no longer unfavorites it.
+
+## Upgrading
+
+Settings, Quick Commands, and Quick Files under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+---
+
 # ComPort Zone v0.4.1 Release Notes
 
 Release date: 2026-06-07

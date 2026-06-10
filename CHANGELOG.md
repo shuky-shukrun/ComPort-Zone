@@ -4,21 +4,33 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+## 0.4.2 - 2026-06-10
+
 ### Added
 
+- Add a live theme preview: hovering a theme in the Theme menu applies it across the whole app instantly, so you can compare looks before committing — move away to revert, click to keep.
+- Add line-wise cut, copy, and paste in the terminal and command-file editor: with nothing selected, Ctrl+X / Ctrl+C / Ctrl+V act on the whole current line.
 - Add inline edit (pencil) and remove (✕) glyphs to every Saved Commands, Files, and Favorites row — alongside the existing star and send/run actions — so an entry can be edited or deleted in one click without opening a menu.
 - Add a right-click context menu on the side bar's command and file rows (saved and favorites) offering the same actions: send/run, add to or remove from favorites, edit, and remove.
 
 ### Changed
 
+- Reorganize the top menu bar into seven task-focused menus so common actions are easier to find.
+- A tab dragged toward the bottom of a pane now splits the workspace downward; dragging toward the side still splits to the right.
+- Auto-reconnect now retries on a steady interval and shows a single calm prompt spinner instead of a stream of dots.
+- Make disconnected state obvious at a glance: the editor's Run button is disabled when no terminal is connected, and a disconnected port's prompt, tab name, and input are dimmed.
 - On a Favorites row, make the scope of each control explicit: ✕ removes the item from Saved entirely (deleting it everywhere) while the star only drops it from Favorites — spelled out in both the glyph tooltips and the context-menu wording.
 - Editing or removing a saved command or file now reflects in the Favorites view immediately, and vice versa.
 - Adding a quick file now opens the file explorer first; the editor dialog then appears pre-filled with the chosen file's name and path (both still editable).
 
 ### Fixed
 
-- Editing a favorited command or file no longer unfavorites it: the edit dialog now preserves favorite membership instead of resetting it.
 - The Line spacing preference now applies to the command-file editor, not just the terminal. Previously the editor ignored the setting; it now re-renders at the configured spacing, with the line-number gutter staying aligned.
+- Fix undo and redo in the terminal and command-file editor.
+- Restore the live font preview in Preferences so font changes are shown before you apply them.
+- Fix the Preferences spin-box steppers (the up/down arrows).
+- Fix a missing highlight on combo-box dropdown rows so the focused row stands out again.
+- Editing a favorited command or file no longer unfavorites it: the edit dialog now preserves favorite membership instead of resetting it.
 
 ## 0.4.1 - 2026-06-07
 
