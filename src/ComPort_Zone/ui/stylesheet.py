@@ -300,6 +300,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
         selection-color: {tx};
     }}
     QComboBox QAbstractItemView::item {{ padding: 5px 8px; border-radius: {RADIUS_SM}px; min-height: 20px; }}
+    /* A styled ::item (border-radius) suppresses the view's
+       selection-background-color, so the highlighted/current row must be
+       painted explicitly or the dropdown shows no marked line. */
+    QComboBox QAbstractItemView::item:hover,
+    QComboBox QAbstractItemView::item:selected {{ background: {hover}; color: {tx}; }}
     """)
 
     # =====================================================================
