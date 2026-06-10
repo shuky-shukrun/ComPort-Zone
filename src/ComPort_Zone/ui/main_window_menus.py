@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Any
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu, QStyle
 
@@ -23,6 +24,9 @@ from ..models import LINE_ENDINGS, RECEIVE_DISPLAY_MODES, THEME_OPTIONS
 from ..quick_actions import SEND_MODES
 
 HARDWARE_FLOW_CONTROL = ("RTS/CTS", "DSR/DTR")
+
+# Dwell time before hovering a theme in the menu applies it as a live preview.
+THEME_PREVIEW_DELAY_MS = 1000
 
 
 @dataclass(slots=True)
@@ -204,18 +208,62 @@ class MainWindowMenuBuilder:
         group = QActionGroup(self.host)
         group.setExclusive(True)
         actions: dict[str, QAction] = {}
+
+        # Live preview: dwelling on a theme for ~1s applies it without saving so
+        # the user can see it; clicking commits, leaving the menu reverts.
+        self._theme_preview_timer = QTimer(self.host)
+        self._theme_preview_timer.setSingleShot(True)
+        self._theme_preview_timer.setInterval(THEME_PREVIEW_DELAY_MS)
+        self._theme_preview_timer.timeout.connect(self._apply_theme_preview)
+        self._theme_preview_pending: str | None = None
+        self._theme_preview_original: str | None = None
+        self._theme_committed = False
+
         for theme_name in THEME_OPTIONS:
             action = QAction(theme_name, self.host)
             action.setCheckable(True)
             action.triggered.connect(
-                lambda _checked=False, name=theme_name: self.host.apply_theme(name)
+                lambda _checked=False, name=theme_name: self._commit_theme(name)
+            )
+            action.hovered.connect(
+                lambda name=theme_name: self._queue_theme_preview(name)
             )
             group.addAction(action)
             submenu.addAction(action)
             actions[theme_name] = action
+
+        submenu.aboutToShow.connect(self._begin_theme_preview)
+        submenu.aboutToHide.connect(self._end_theme_preview)
+
         self._sub["theme_menu"] = submenu
         self._sub["theme_group"] = group
         self._sub["theme_actions"] = actions
+
+    def _begin_theme_preview(self) -> None:
+        self._theme_preview_original = getattr(self.host.settings, "theme", None)
+        self._theme_committed = False
+
+    def _queue_theme_preview(self, name: str) -> None:
+        self._theme_preview_pending = name
+        self._theme_preview_timer.start()  # restart the dwell countdown
+
+    def _apply_theme_preview(self) -> None:
+        if self._theme_preview_pending and not self._theme_committed:
+            self.host.apply_theme(self._theme_preview_pending, save=False)
+
+    def _commit_theme(self, name: str) -> None:
+        self._theme_preview_timer.stop()
+        self._theme_committed = True
+        self.host.apply_theme(name)
+
+    def _end_theme_preview(self) -> None:
+        # Qt emits triggered() before aboutToHide() when an item is clicked, so
+        # _theme_committed is already set for a real selection by the time we get
+        # here; otherwise restore the theme that was active before previewing.
+        self._theme_preview_timer.stop()
+        if not self._theme_committed and self._theme_preview_original:
+            self.host.apply_theme(self._theme_preview_original, save=False)
+        self._theme_preview_pending = None
 
     def _build_terminal_font(self, parent: QMenu) -> None:
         # Zoom controls only — full font configuration lives in Preferences

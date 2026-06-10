@@ -266,5 +266,33 @@ class PreferencesDialogTests(unittest.TestCase):
             dialog.deleteLater()
 
 
+class ThemePreviewTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    def test_hover_previews_without_saving_then_reverts(self) -> None:
+        with make_window("_tmp_settings_menu_theme_preview.json") as window:
+            builder = window.menu_builder
+            original = window.settings.theme
+            self.assertNotEqual(original, "VS Code Dark")
+            builder._begin_theme_preview()
+            builder._queue_theme_preview("VS Code Dark")
+            builder._apply_theme_preview()  # the dwell timer fires this
+            self.assertEqual(window.settings.theme, "VS Code Dark")  # previewed live
+            builder._end_theme_preview()  # left the menu without choosing
+            self.assertEqual(window.settings.theme, original)  # reverted
+
+    def test_click_commits_theme(self) -> None:
+        with make_window("_tmp_settings_menu_theme_commit.json") as window:
+            builder = window.menu_builder
+            builder._begin_theme_preview()
+            builder._queue_theme_preview("VS Code Dark")
+            builder._apply_theme_preview()
+            builder._commit_theme("VS Code Dark")
+            builder._end_theme_preview()  # committed -> no revert
+            self.assertEqual(window.settings.theme, "VS Code Dark")
+
+
 if __name__ == "__main__":
     unittest.main()
