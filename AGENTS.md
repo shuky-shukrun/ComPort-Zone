@@ -52,6 +52,20 @@ Check whitespace before handing off changes:
 git diff --check
 ```
 
+## Releasing A Version
+
+To cut and publish a release (version bump, doc updates, annotated `vX.Y.Z`
+tag, and the GitHub Release), follow the `comport-zone-version-update` skill —
+it is shared by all agents:
+
+- `skills/comport-zone-version-update/SKILL.md` — the full release procedure.
+- `skills/comport-zone-version-update/driver.ps1` — the driver that runs the
+  mechanical, verifiable steps. Safe read-only preview of a release:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File skills\comport-zone-version-update\driver.ps1 preflight -Version X.Y.Z
+```
+
 ## Testing Rules
 
 - The repo uses `unittest` through the included batch and PowerShell scripts. Do not introduce pytest-only instructions unless the project changes.
