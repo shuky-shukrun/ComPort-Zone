@@ -265,6 +265,16 @@ class PreferencesDialogTests(unittest.TestCase):
         finally:
             dialog.deleteLater()
 
+    def test_font_preview_tracks_size(self) -> None:
+        from ComPort_Zone.ui.dialogs import PreferencesDialog
+
+        dialog = PreferencesDialog(AppSettings())
+        try:
+            dialog.size_input.setValue(20)
+            self.assertEqual(dialog.font_preview.font().pointSize(), 20)
+        finally:
+            dialog.deleteLater()
+
 
 class ThemePreviewTests(unittest.TestCase):
     @classmethod

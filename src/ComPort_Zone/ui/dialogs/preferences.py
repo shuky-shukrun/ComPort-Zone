@@ -14,17 +14,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ...models import LINE_ENDINGS, THEME_OPTIONS
-from ...widgets import ChevronComboBox
+from ...widgets import ChevronComboBox, apply_line_spacing
 from ..fonts import (
     TERMINAL_FONT_MAX,
     TERMINAL_FONT_MIN,
     TERMINAL_LINE_SPACING_MAX,
     TERMINAL_LINE_SPACING_MIN,
+    pick_mono_font,
     preferred_terminal_font_families,
 )
 
@@ -71,7 +73,9 @@ class PreferencesDialog(QDialog):
 
     def _build_terminal_tab(self, settings) -> QWidget:
         widget = QWidget(self)
-        form = QFormLayout(widget)
+        layout = QVBoxLayout(widget)
+        form = QFormLayout()
+        layout.addLayout(form)
 
         self.theme_combo = ChevronComboBox(widget)
         for theme_name in THEME_OPTIONS:
@@ -121,7 +125,25 @@ class PreferencesDialog(QDialog):
         )
         form.addRow("Scrollback", self.scrollback_input)
 
+        # Live font/spacing preview (restored from the old Terminal Font dialog).
+        self.font_preview = QTextEdit(widget)
+        self.font_preview.setReadOnly(True)
+        self.font_preview.setFixedHeight(92)
+        self.font_preview.setPlainText("SYS Connected\nTX> *IDN?\nComPort Zone,Terminal,0.0.2")
+        layout.addWidget(self.font_preview)
+
+        self.family_combo.currentTextChanged.connect(self._update_font_preview)
+        self.size_input.valueChanged.connect(self._update_font_preview)
+        self.line_spacing_input.valueChanged.connect(self._update_font_preview)
+        self._update_font_preview()
+
         return widget
+
+    def _update_font_preview(self) -> None:
+        self.font_preview.setFont(
+            pick_mono_font(int(self.size_input.value()), self.selected_family())
+        )
+        apply_line_spacing(self.font_preview, int(self.line_spacing_input.value()))
 
     def _build_connection_tab(self, settings) -> QWidget:
         widget = QWidget(self)
