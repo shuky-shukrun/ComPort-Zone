@@ -1,7 +1,7 @@
 """Shared completion-popup key policy and helpers.
 
 The terminal command line (:class:`ComPort_Zone.widgets.IntegratedTerminalEdit`) and
-the command-file editor (:class:`ComPort_Zone.command_editor.CommandPlainTextEdit`)
+the command-file editor (:class:`ComPort_Zone.command_editor.CommandTextEdit`)
 both drive a ``QCompleter`` popup. They used to each re-implement the key handling
 and popup navigation, which drifted apart (the editor accepted on Enter while the
 terminal only accepted on Tab). This module is the single source of truth so the two

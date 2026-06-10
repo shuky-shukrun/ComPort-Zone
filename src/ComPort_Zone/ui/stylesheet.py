@@ -596,7 +596,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     # Command-file editor (.app-editor) + syntax gutter
     # =====================================================================
     parts.append(f"""
-    QPlainTextEdit#commandFileEditor {{
+    QTextEdit#commandFileEditor {{
         background: {term_bg};
         color: {tx};
         border: none;
@@ -604,7 +604,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
         selection-background-color: {sel};
         selection-color: {tx};
     }}
-    QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
+    QTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
         border-top: 2px solid transparent;
         border-image: url({grad_line}) 2 0 0 0 stretch;
     }}

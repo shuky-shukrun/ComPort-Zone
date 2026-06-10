@@ -127,6 +127,47 @@ class CommandEditorTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_editor_line_spacing_changes_rendered_line_height(self) -> None:
+        # Regression: the editor used to be a QPlainTextEdit, whose layout ignores
+        # proportional line height, so the line-spacing setting was a no-op in the
+        # editor (only the terminal, a QTextEdit, honored it). As a QTextEdit the
+        # editor must now actually render wider spacing. Measuring the data-model
+        # lineHeight is not enough — that was already 115 while nothing moved — so
+        # this asserts the on-screen distance between consecutive lines grows.
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.resize(640, 480)
+            dialog.show()
+            self.qt.processEvents()
+            dialog.setPlainText("alpha\nbravo\ncharlie")
+            self.qt.processEvents()
+            editor = dialog.editor
+
+            def line_delta() -> int:
+                doc = editor.document()
+                top0 = editor.cursorRect(QTextCursor(doc.findBlockByNumber(0))).top()
+                top1 = editor.cursorRect(QTextCursor(doc.findBlockByNumber(1))).top()
+                return top1 - top0
+
+            editor.set_line_spacing(100)
+            self.qt.processEvents()
+            base = line_delta()
+
+            editor.set_line_spacing(160)
+            self.qt.processEvents()
+            spaced = line_delta()
+
+            self.assertGreater(base, 0)
+            self.assertGreater(spaced, base)
+
+            editor.set_line_spacing(100)
+            self.qt.processEvents()
+            self.assertEqual(line_delta(), base)
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
     def test_editor_ctrl_c_x_v_operate_on_whole_line_without_selection(self) -> None:
         dialog = CommandFileEditorDialog(sources=CommandEditorSources())
         try:

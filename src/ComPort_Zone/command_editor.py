@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QStringListModel, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QStringListModel, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
     QLineEdit,
     QPushButton,
     QSizePolicy,
@@ -131,7 +130,7 @@ class CommandEditorQuickActionCallbacks:
 
 
 class LineNumberArea(QWidget):
-    def __init__(self, editor: "CommandPlainTextEdit") -> None:
+    def __init__(self, editor: "CommandTextEdit") -> None:
         super().__init__(editor)
         self.editor = editor
 
@@ -142,7 +141,7 @@ class LineNumberArea(QWidget):
         self.editor.line_number_area_paint_event(event)
 
 
-class CommandPlainTextEdit(QPlainTextEdit):
+class CommandTextEdit(QTextEdit):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.line_number_area = LineNumberArea(self)
@@ -170,8 +169,12 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.search_match_background = QColor(VS_CODE_DARK.search_highlight)
         self.search_current_background = QColor(VS_CODE_DARK.accent_soft)
         self.search_match_foreground = QColor(VS_CODE_DARK.text)
-        self.blockCountChanged.connect(self.update_line_number_area_width)
-        self.updateRequest.connect(self.update_line_number_area)
+        # QTextEdit (not QPlainTextEdit) so proportional line spacing actually
+        # renders. QTextEdit has no firstVisibleBlock/updateRequest, so the gutter
+        # is driven off the document layout + scrollbar instead (see below).
+        self.document().blockCountChanged.connect(self.update_line_number_area_width)
+        self.verticalScrollBar().valueChanged.connect(self._refresh_line_number_area)
+        self.textChanged.connect(self._refresh_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
         # reactive=False: a per-keystroke block reformat would break native undo
         # (see LineSpacingController). New lines inherit the height; we re-apply on
@@ -291,19 +294,17 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.replace_callback = replace_callback
 
     def line_number_area_width(self) -> int:
-        digits = len(str(max(1, self.blockCount())))
+        digits = len(str(max(1, self.document().blockCount())))
         return 12 + self.fontMetrics().horizontalAdvance("9") * digits
 
-    def update_line_number_area_width(self, _block_count: int) -> None:
+    def update_line_number_area_width(self, _block_count: int = 0) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
-    def update_line_number_area(self, rect: QRect, dy: int) -> None:
-        if dy:
-            self.line_number_area.scroll(0, dy)
-        else:
-            self.line_number_area.update(0, rect.y(), self.line_number_area.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self.update_line_number_area_width(0)
+    def _refresh_line_number_area(self, *_args) -> None:
+        # QTextEdit has no updateRequest(rect, dy); repaint the whole gutter on
+        # scroll/edit and keep its width in step with the block count.
+        self.update_line_number_area_width()
+        self.line_number_area.update()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -316,24 +317,30 @@ class CommandPlainTextEdit(QPlainTextEdit):
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), self.line_number_background)
         painter.setPen(self.line_number_foreground)
-        block = self.firstVisibleBlock()
-        block_number = block.blockNumber()
-        top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
-        bottom = top + int(self.blockBoundingRect(block).height())
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                painter.drawText(
-                    0,
-                    top,
-                    self.line_number_area.width() - 4,
-                    self.fontMetrics().height(),
-                    Qt.AlignmentFlag.AlignRight,
-                    str(block_number + 1),
-                )
+        # QTextEdit lacks firstVisibleBlock/contentOffset, so derive each block's
+        # viewport position from cursorRect (it already accounts for scroll and the
+        # document margin) and its height from the document layout. Both reflect the
+        # active line spacing, so the numbers stay aligned with the wrapped text.
+        layout = self.document().documentLayout()
+        width = self.line_number_area.width() - 4
+        line_height = self.fontMetrics().height()
+        block = self.cursorForPosition(QPoint(0, 0)).block()
+        while block.isValid():
+            top = int(self.cursorRect(QTextCursor(block)).top())
+            if top > event.rect().bottom():
+                break
+            if block.isVisible():
+                height = int(layout.blockBoundingRect(block).height())
+                if top + height >= event.rect().top():
+                    painter.drawText(
+                        0,
+                        top,
+                        width,
+                        line_height,
+                        Qt.AlignmentFlag.AlignRight,
+                        str(block.blockNumber() + 1),
+                    )
             block = block.next()
-            top = bottom
-            bottom = top + int(self.blockBoundingRect(block).height())
-            block_number += 1
 
     def highlight_current_line(self) -> None:
         self._apply_extra_selections()
@@ -712,7 +719,7 @@ class CommandFileEditorDialog(QDialog):
         self.warn_unknown.setChecked(True)
         self.warn_unknown.toggled.connect(self._warn_unknown_changed)
 
-        self.editor = CommandPlainTextEdit(self)
+        self.editor = CommandTextEdit(self)
         self.editor.setObjectName("commandFileEditor")
         self.editor.setFont(QFont("Cascadia Mono", 10))
         self.editor.set_save_callbacks(self.save, self.save_as)
@@ -1263,7 +1270,7 @@ class CommandFileEditorDialog(QDialog):
         layout.addWidget(self.status_label, 1)
         layout.addWidget(self.warn_unknown)
         self.wrap_toggle = self._status_toggle("wrap", "Wrap long lines", self._toggle_wrap)
-        self.wrap_toggle.setChecked(True)  # QPlainTextEdit wraps by default
+        self.wrap_toggle.setChecked(True)  # QTextEdit wraps to widget width by default
         layout.addWidget(self.wrap_toggle)
         # ⋯ overflow: as the bar narrows these secondary controls fold into its menu,
         # keeping only the Run button (mirrors the terminal's command bar).
@@ -1379,7 +1386,7 @@ class CommandFileEditorDialog(QDialog):
 
     def _toggle_wrap(self, checked: bool) -> None:
         self.editor.setLineWrapMode(
-            QPlainTextEdit.LineWrapMode.WidgetWidth if checked else QPlainTextEdit.LineWrapMode.NoWrap
+            QTextEdit.LineWrapMode.WidgetWidth if checked else QTextEdit.LineWrapMode.NoWrap
         )
 
     def _add_font_controls(self, layout: QHBoxLayout, parent: QWidget) -> None:

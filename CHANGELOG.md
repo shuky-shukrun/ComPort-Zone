@@ -18,6 +18,7 @@ All notable changes to ComPort Zone are documented here.
 ### Fixed
 
 - Editing a favorited command or file no longer unfavorites it: the edit dialog now preserves favorite membership instead of resetting it.
+- The Line spacing preference now applies to the command-file editor, not just the terminal. Previously the editor ignored the setting; it now re-renders at the configured spacing, with the line-number gutter staying aligned.
 
 ## 0.4.1 - 2026-06-07
 
