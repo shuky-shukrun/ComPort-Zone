@@ -1658,10 +1658,14 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             file_titles = [action.text() for action in window.file_menu.actions()]
+            self.assertIn("Import / Export", file_titles)
 
-            self.assertIn("App Settings Import / Export...", file_titles)
-            self.assertNotIn("Import App Settings", file_titles)
-            self.assertNotIn("Export App Settings", file_titles)
+            import_export_titles = [
+                action.text() for action in window.import_export_menu.actions()
+            ]
+            self.assertIn("App Settings Import / Export...", import_export_titles)
+            self.assertNotIn("Import App Settings", import_export_titles)
+            self.assertNotIn("Export App Settings", import_export_titles)
 
             dialog = app_module.AppSettingsTransferDialog(parent=window)
             label_text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
@@ -2563,21 +2567,20 @@ class AppSessionTests(unittest.TestCase):
             window = app_module.MainWindow()
             menu_bar = window.menuBar()
             top_level = [action.text() for action in menu_bar.actions()]
-            self.assertEqual(top_level, ["File", "Edit", "View", "Session", "Serial", "Tools", "Help"])
+            self.assertEqual(
+                top_level,
+                ["File", "Edit", "View", "Connection", "Terminal", "Tools", "Help"],
+            )
 
             tools_titles = [action.text() for action in window.tools_menu.actions()]
             self.assertIn("Command Palette", tools_titles)
-            self.assertIn("Command Files", tools_titles)
-            self.assertIn("Quick Commands", tools_titles)
-            self.assertIn("Quick Files", tools_titles)
-
-            command_file_titles = [action.text() for action in window.command_files_menu.actions()]
-            self.assertIn("New Command File", command_file_titles)
-            self.assertIn("Open Command File Editor", command_file_titles)
-            self.assertIn("Run in Terminal", command_file_titles)
-            self.assertIn("Run Command File", command_file_titles)
-            self.assertIn("Pause / Resume Command File", command_file_titles)
-            self.assertIn("Stop Command File", command_file_titles)
+            self.assertIn("Run Command File", tools_titles)
+            self.assertIn("Pause / Resume Command File", tools_titles)
+            self.assertIn("Stop Command File", tools_titles)
+            self.assertIn("Run in Terminal", tools_titles)
+            self.assertIn("Add Saved Command...", tools_titles)
+            self.assertIn("Add Saved File...", tools_titles)
+            self.assertIn("Open Config Folder", tools_titles)
             stop_file_actions = [
                 action
                 for action in window.findChildren(QAction)
@@ -2585,25 +2588,38 @@ class AppSessionTests(unittest.TestCase):
             ]
             self.assertTrue(any(action.shortcut().toString() == "Ctrl+." for action in stop_file_actions))
 
-            quick_command_titles = [action.text() for action in window.quick_commands_menu.actions()]
-            self.assertIn("Save Current Input", quick_command_titles)
-            self.assertIn("Delete All Quick Commands", quick_command_titles)
-            self.assertIn("Import CSV", quick_command_titles)
-            self.assertIn("Export CSV", quick_command_titles)
+            file_titles = [action.text() for action in window.file_menu.actions()]
+            self.assertIn("New Command File", file_titles)
+            self.assertIn("Open Command File Editor", file_titles)
+            self.assertIn("Open Recent", file_titles)
+            self.assertIn("Save Command File", file_titles)
+            self.assertIn("Send File...", file_titles)
+            self.assertIn("Close Other Tabs", file_titles)
+            self.assertIn("Preferences...", file_titles)
 
-            quick_file_titles = [action.text() for action in window.quick_files_menu.actions()]
-            self.assertIn("Run Selected", quick_file_titles)
-            self.assertIn("Edit Selected File", quick_file_titles)
-            self.assertIn("Delete All Quick Files", quick_file_titles)
-            self.assertIn("Import CSV", quick_file_titles)
-            self.assertIn("Export CSV", quick_file_titles)
+            connection_titles = [action.text() for action in window.connection_menu.actions()]
+            self.assertIn("Connect / Disconnect", connection_titles)
+            self.assertIn("Send Mode", connection_titles)
+            self.assertIn("Line Ending", connection_titles)
+            self.assertIn("DTR", connection_titles)
+            self.assertIn("RTS", connection_titles)
+            self.assertIn("Send Break", connection_titles)
+
+            terminal_titles = [action.text() for action in window.terminal_menu.actions()]
+            self.assertIn("Rename Tab", terminal_titles)
+            self.assertIn("Clear Terminal", terminal_titles)
+            self.assertIn("Start / Stop Log", terminal_titles)
+            self.assertIn("Open Log Folder", terminal_titles)
 
             edit_titles = [action.text() for action in window.edit_menu.actions()]
             self.assertIn("Find", edit_titles)
             self.assertIn("Replace", edit_titles)
+            self.assertIn("Convert Selection", edit_titles)
             self.assertIn("Clear Command History", edit_titles)
 
             help_titles = [action.text() for action in window.help_menu.actions()]
+            self.assertIn("Keyboard Shortcuts...", help_titles)
+            self.assertIn("Report a Bug", help_titles)
             self.assertIn("Check for Updates", help_titles)
             self.assertIn("Check for Updates on Launch", help_titles)
         finally:

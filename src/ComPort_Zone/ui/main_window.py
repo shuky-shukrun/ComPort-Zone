@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import ClassVar, cast
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QIcon
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -50,6 +51,7 @@ from ..models import (
     QuickCommand,
     QuickFile,
     RECEIVE_DISPLAY_MODES,
+    RECENT_FILES_LIMIT,
     SerialProfile,
     TerminalSessionState,
     WorkspaceLayoutState,
@@ -61,6 +63,7 @@ from ..settings_service import SettingsService
 from ..storage import SettingsStore, default_config_path
 from ..themes import THEMES, ThemePalette
 from ..version_check import (
+    GITHUB_ISSUES_URL,
     GITHUB_LATEST_RELEASE_API_URL,
     GITHUB_REPOSITORY_URL,
     VersionCheckResult,
@@ -71,7 +74,12 @@ from ..workspace_settings_controller import WorkspaceSettingsController
 from ..workspace_state import WorkspaceStateService
 from .command_file_targets import CommandFileRunCoordinator
 from .command_palette_entries import workspace_tab_palette_entries
-from .dialogs import CommandPaletteDialog, TerminalFontSettingsDialog, VersionUpdateDialog
+from .dialogs import (
+    CommandPaletteDialog,
+    PreferencesDialog,
+    TerminalFontSettingsDialog,
+    VersionUpdateDialog,
+)
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
 from .split_workspace import SplitWorkspaceWidget
@@ -788,6 +796,8 @@ class MainWindow(QMainWindow):
         elif isinstance(path, str):
             path = Path(path)
         self.add_command_file_tab(path=path)
+        if path is not None:
+            self.record_recent_file(str(path))
 
     def add_command_file_tab(self, path: Path | None = None, state: CommandFileTabState | None = None) -> CommandFileEditorDialog:
         editor = CommandFileEditorDialog(
@@ -1889,6 +1899,182 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
         return dialog
 
+    # ------------------------------------------------------- menu actions (new)
+
+    def show_preferences(self) -> None:
+        dialog = PreferencesDialog(self.settings, self, host=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        dialog.apply_to(self.settings)
+        # apply_terminal_font_settings() re-applies every session's settings
+        # (scrollback / wrap / RX / font) plus editor fonts; theme separately.
+        self.apply_theme(self.settings.theme, save=False)
+        self.apply_terminal_font_settings()
+        action = getattr(self, "check_for_updates_on_launch_action", None)
+        if action is not None:
+            action.blockSignals(True)
+            action.setChecked(self.settings.check_for_updates_on_launch)
+            action.blockSignals(False)
+        self.save_settings()
+
+    def reset_font_size(self) -> None:
+        # 10 pt matches AppSettings.terminal_font_size's default.
+        self.settings.terminal_font_size = 10
+        self.apply_terminal_font_settings()
+        self.save_settings()
+
+    def paste_into_focused(self) -> None:
+        # Focus stays on the previously-active widget while a menu is open, so
+        # this pastes into the command input / editor the user was last in.
+        widget = QApplication.focusWidget()
+        paste = getattr(widget, "paste", None)
+        if callable(paste):
+            paste()
+
+    def close_other_current_session(self) -> None:
+        self.close_other_sessions(self.tabs.currentIndex())
+
+    def save_current_command_file(self) -> bool:
+        editor = self.current_command_file_editor()
+        if editor is None:
+            return False
+        saved = editor.save()
+        if saved and getattr(editor, "path", None):
+            self.record_recent_file(str(editor.path))
+        return saved
+
+    def save_current_command_file_as(self) -> bool:
+        editor = self.current_command_file_editor()
+        if editor is None:
+            return False
+        saved = editor.save_as()
+        if saved and getattr(editor, "path", None):
+            self.record_recent_file(str(editor.path))
+        return saved
+
+    # ----- Recent files (File > Open Recent)
+
+    def record_recent_file(self, path: str) -> None:
+        text = str(path).strip()
+        if not text:
+            return
+        recent = [item for item in self.settings.recent_files if item != text]
+        recent.insert(0, text)
+        del recent[RECENT_FILES_LIMIT:]
+        self.settings.recent_files = recent
+        self.save_settings()
+
+    def open_recent_file(self, path: str) -> None:
+        if not Path(path).exists():
+            self.settings.recent_files = [
+                item for item in self.settings.recent_files if item != path
+            ]
+            self.save_settings()
+            self.set_status(f"File not found: {path}")
+            return
+        self.open_command_file_editor(Path(path))
+
+    def clear_recent_files(self) -> None:
+        if not self.settings.recent_files:
+            return
+        self.settings.recent_files = []
+        self.save_settings()
+        self.set_status("Cleared recent files.")
+
+    def populate_open_recent_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        recent = list(self.settings.recent_files)
+        if not recent:
+            empty = menu.addAction("No Recent Files")
+            empty.setEnabled(False)
+            return
+        for path in recent:
+            action = menu.addAction(Path(path).name)
+            action.setToolTip(path)
+            action.triggered.connect(
+                lambda _checked=False, target=path: self.open_recent_file(target)
+            )
+        menu.addSeparator()
+        clear_action = menu.addAction("Clear Recent")
+        clear_action.triggered.connect(lambda _checked=False: self.clear_recent_files())
+
+    # ----- Data & reset (Preferences > Data & Reset)
+
+    def clear_all_favorite_commands(self, *, confirm: bool = True) -> bool:
+        return self.quick_action_controller.clear_all_favorite_commands(confirm=confirm)
+
+    def clear_all_favorite_files(self, *, confirm: bool = True) -> bool:
+        return self.quick_action_controller.clear_all_favorite_files(confirm=confirm)
+
+    def factory_reset(self, *, confirm: bool = True) -> bool:
+        if not self._confirm_bulk_delete(
+            "Factory Reset",
+            "Restore all settings to defaults and permanently delete every saved "
+            "command, saved file, favourite, command-history entry, and recent file?\n\n"
+            "This cannot be undone.",
+            confirm=confirm,
+        ):
+            return False
+        # apply_imported_settings() deliberately preserves the saved-command/file
+        # libraries, so empty them first; a default AppSettings() then restores
+        # every preference and leaves history / favourites / recent files empty.
+        self.delete_all_quick_commands(confirm=False)
+        self.delete_all_quick_files(confirm=False)
+        self.apply_imported_settings(AppSettings())
+        self.save_settings()
+        self.set_status("Factory reset complete.")
+        return True
+
+    # ----- Help links / folders
+
+    def _open_folder(self, folder: Path) -> None:
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def open_config_folder(self) -> None:
+        self._open_folder(Path(self.config_path_supplier()).parent)
+
+    def open_log_folder(self) -> None:
+        log_path = (self.settings.log_path or "").strip()
+        folder = Path(log_path) if log_path else Path(self.config_path_supplier()).parent
+        self._open_folder(folder)
+
+    def open_github_repo(self) -> None:
+        QDesktopServices.openUrl(QUrl(GITHUB_REPOSITORY_URL))
+
+    def report_issue(self) -> None:
+        QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL))
+
+    def open_documentation(self) -> None:
+        QDesktopServices.openUrl(QUrl(f"{GITHUB_REPOSITORY_URL}#readme"))
+
+    def show_keyboard_shortcuts(self) -> None:
+        self.build_keyboard_shortcuts_dialog().exec()
+
+    def build_keyboard_shortcuts_dialog(self) -> QDialog:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard Shortcuts")
+        dialog.setMinimumWidth(420)
+        title = QLabel("Keyboard Shortcuts", dialog)
+        title.setObjectName("dialogTitle")
+        rows = "".join(
+            f"<tr><td style='padding:2px 18px 2px 0'>{escape(label)}</td>"
+            f"<td><b>{escape(shortcut)}</b></td></tr>"
+            for label, shortcut in self.command_registry.shortcut_entries()
+        )
+        body = QLabel(f"<table>{rows}</table>" if rows else "No shortcuts are bound.", dialog)
+        body.setTextFormat(Qt.TextFormat.RichText)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, dialog)
+        buttons.accepted.connect(dialog.accept)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(title)
+        layout.addWidget(body)
+        layout.addWidget(buttons)
+        return dialog
+
     def check_for_updates(self, *, automatic: bool = False) -> None:
         if self._version_check_reply is not None:
             if not automatic:
@@ -1995,6 +2181,8 @@ class MainWindow(QMainWindow):
             if not self.confirm_close_command_file_tab(editor):
                 event.ignore()
                 return
+        if self.settings.clear_history_on_exit:
+            self.history_catalog.clear()
         self.save_settings()
         for session in self.iter_sessions():
             session.shutdown()

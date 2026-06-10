@@ -539,6 +539,46 @@ class QuickActionController:
         self._set_status(f"Deleted {count} quick file{'s' if count != 1 else ''}.")
         return True
 
+    def clear_all_favorite_commands(self, *, confirm: bool = True) -> bool:
+        self._refresh_from_settings()
+        count = len(self.library.favorite_commands())
+        if count == 0:
+            self._set_status("No favourite commands to clear.")
+            return False
+        if confirm and not self._confirm_bulk_delete(
+            "Clear Favourite Commands",
+            f"Remove all {count} command{'s' if count != 1 else ''} from Favourites?\n\n"
+            "The saved commands themselves are kept.",
+        ):
+            return False
+        for command in self.library.quick_commands:
+            if command.favorite:
+                command.favorite = False
+                command.updated_at = utc_now_iso()
+        self._commit_commands()
+        self._set_status(f"Cleared {count} favourite command{'s' if count != 1 else ''}.")
+        return True
+
+    def clear_all_favorite_files(self, *, confirm: bool = True) -> bool:
+        self._refresh_from_settings()
+        count = len(self.library.favorite_files())
+        if count == 0:
+            self._set_status("No favourite files to clear.")
+            return False
+        if confirm and not self._confirm_bulk_delete(
+            "Clear Favourite Files",
+            f"Remove all {count} file{'s' if count != 1 else ''} from Favourites?\n\n"
+            "The saved files themselves are kept.",
+        ):
+            return False
+        for quick_file in self.library.quick_files:
+            if quick_file.favorite:
+                quick_file.favorite = False
+                quick_file.updated_at = utc_now_iso()
+        self._commit_files()
+        self._set_status(f"Cleared {count} favourite file{'s' if count != 1 else ''}.")
+        return True
+
     def _commit_commands(self, selected_id: str | None = None) -> None:
         # Keep the favourites order in step with the live favourite set (prunes
         # un-favourited / deleted ids, appends newly-favourited ones).

@@ -1261,7 +1261,7 @@ class TerminalSessionWidget(QWidget):
         failed_index: int | None = None
         for index, line in enumerate(sendable_lines):
             try:
-                self.transport.send_text(line)
+                self.transport.send_text(line, self.profile.line_ending)
             except Exception as exc:
                 failed_index = index
                 self._render_user_send(line, color_role="error")
@@ -1948,6 +1948,91 @@ class TerminalSessionWidget(QWidget):
     def _update_line_ending_label(self) -> None:
         self.line_ending_label.setText(self.profile.line_ending)
         self.host.update_connection_status(self)
+
+    # ------------------------------------------- menu-driven session actions
+
+    def script_snapshot(self):
+        return self.controller.script_snapshot()
+
+    def is_script_active(self) -> bool:
+        snapshot = self.controller.script_snapshot()
+        return snapshot.is_running or snapshot.is_stopping
+
+    def set_send_mode(self, mode: str) -> None:
+        if mode in SEND_MODES:
+            self.mode_combo.setCurrentText(mode)
+
+    def set_line_ending(self, name: str) -> None:
+        if not name or name == self.profile.line_ending:
+            return
+        self.profile.line_ending = name
+        self._update_line_ending_label()
+        self.host.save_settings()
+
+    def supports_signals(self) -> bool:
+        return self.transport_kind == "serial" and self.transport.supports_signals()
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        return self.transport.signal_state()
+
+    def toggle_dtr(self) -> None:
+        self._toggle_signal("dtr")
+
+    def toggle_rts(self) -> None:
+        self._toggle_signal("rts")
+
+    def _toggle_signal(self, name: str) -> None:
+        if not self.supports_signals() or not self.transport.is_connected:
+            return
+        state = self.transport.signal_state()
+        if state is None:
+            return
+        new_value = not (state[0] if name == "dtr" else state[1])
+        applied = (
+            self.transport.set_dtr(new_value)
+            if name == "dtr"
+            else self.transport.set_rts(new_value)
+        )
+        if applied:
+            setattr(self.profile, name, new_value)
+            self.host.set_status(
+                f"{name.upper()} {'asserted' if new_value else 'cleared'}."
+            )
+
+    def send_break(self) -> None:
+        if not self.supports_signals() or not self.transport.is_connected:
+            return
+        if self.transport.send_break():
+            self.host.set_status("Sent break signal.")
+
+    def toggle_auto_reconnect(self) -> None:
+        new_value = not getattr(self.profile, "auto_reconnect", False)
+        self.profile.auto_reconnect = new_value
+        self.host.save_settings()
+        self.host.set_status(
+            f"Auto-reconnect {'enabled' if new_value else 'disabled'} "
+            "(takes effect on the next connect)."
+        )
+
+    def send_file(self) -> None:
+        if not self.transport.is_connected:
+            self.host.set_status("Connect before sending a file.")
+            return
+        start_dir = self.host.settings.last_script_path or str(Path.cwd())
+        path, _ = QFileDialog.getOpenFileName(self, "Send File", start_dir, "All Files (*)")
+        if not path:
+            return
+        try:
+            data = Path(path).read_bytes()
+        except OSError as exc:
+            QMessageBox.critical(self, "Send File", str(exc))
+            return
+        try:
+            self.transport.send_bytes(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Send File", str(exc))
+            return
+        self.host.set_status(f"Sent {len(data)} bytes from {Path(path).name}.")
 
     def shutdown(self) -> None:
         self.event_timer.stop()

@@ -124,6 +124,60 @@ class SerialClient:
         display = "HEX " + format_hex_bytes(data)
         self._write(data, display)
 
+    def set_dtr(self, value: bool) -> bool:
+        """Drive the DTR control line on the live connection. Returns True if applied."""
+        return self._set_signal("dtr", bool(value))
+
+    def set_rts(self, value: bool) -> bool:
+        """Drive the RTS control line on the live connection. Returns True if applied."""
+        return self._set_signal("rts", bool(value))
+
+    def _set_signal(self, name: str, value: bool) -> bool:
+        # _emit() takes self._lock, so capture any error and emit AFTER releasing it.
+        error: str | None = None
+        applied = False
+        with self._lock:
+            port = self._serial
+            if port is not None and port.is_open:
+                try:
+                    setattr(port, name, value)
+                    applied = True
+                except SerialException as exc:
+                    error = str(exc)
+                if applied:
+                    if self._profile is not None:
+                        setattr(self._profile, name, value)
+                    if self._desired_profile is not None:
+                        setattr(self._desired_profile, name, value)
+        if error is not None:
+            self._emit("error", f"Failed to set {name.upper()}: {error}")
+        return applied
+
+    def send_break(self, duration: float = 0.25) -> bool:
+        """Send a serial break condition for ``duration`` seconds."""
+        with self._lock:
+            port = self._serial
+        if port is None or not port.is_open:
+            return False
+        try:
+            port.send_break(duration)
+        except SerialException as exc:
+            self._emit("error", f"Failed to send break: {exc}")
+            return False
+        self._emit("tx", "BREAK")
+        return True
+
+    def current_signal_state(self) -> tuple[bool, bool] | None:
+        """Return the live (DTR, RTS) line state, or None when disconnected."""
+        with self._lock:
+            port = self._serial
+            if port is None or not port.is_open:
+                return None
+            try:
+                return (bool(port.dtr), bool(port.rts))
+            except SerialException:
+                return None
+
     def _write(self, data: bytes, display_text: str) -> None:
         with self._lock:
             port = self._serial

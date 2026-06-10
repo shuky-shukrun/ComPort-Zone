@@ -37,6 +37,10 @@ class FakeSerialTransport:
         self.disconnect_calls: int = 0
         self.sent_text: list[tuple[str, str | None]] = []
         self.sent_bytes: list[bytes] = []
+        # Control-line state (mirrors pyserial defaults) + break counter.
+        self.dtr: bool = True
+        self.rts: bool = True
+        self.break_count: int = 0
 
     # ----------------------------------- TransportAdapter Protocol surface
 
@@ -81,6 +85,32 @@ class FakeSerialTransport:
     def send_bytes(self, data: bytes) -> None:
         self.sent_bytes.append(data)
         self._deliver_next_response()
+
+    def set_dtr(self, value: bool) -> bool:
+        if not self._connected:
+            return False
+        self.dtr = bool(value)
+        return True
+
+    def set_rts(self, value: bool) -> bool:
+        if not self._connected:
+            return False
+        self.rts = bool(value)
+        return True
+
+    def send_break(self, duration: float = 0.25) -> bool:
+        if not self._connected:
+            return False
+        self.break_count += 1
+        return True
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        if not self._connected:
+            return None
+        return (self.dtr, self.rts)
+
+    def supports_signals(self) -> bool:
+        return True
 
     def _deliver_next_response(self) -> None:
         if not self._response_queue:

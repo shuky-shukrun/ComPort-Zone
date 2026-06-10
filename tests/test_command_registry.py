@@ -73,15 +73,17 @@ class CommandRegistryTests(unittest.TestCase):
             ],
         )
 
-    def test_palette_commands_are_backed_by_menu_command_specs(self) -> None:
+    def test_palette_commands_are_backed_by_specs(self) -> None:
         registry = CommandRegistry(FakeHost())
 
-        self.assertLessEqual(
-            set(registry.palette_command_ids()),
-            set(registry.menu_command_ids()),
-        )
+        # Every palette command resolves to a registered spec (some palette
+        # commands now live only in the sidebar / builder submenus, so they are
+        # no longer required to appear in a flat MENU_SECTIONS list).
+        for command_id in registry.palette_command_ids():
+            self.assertIsInstance(registry.spec(command_id).menu_label(), str)
+
         self.assertEqual(
-            registry.menu_items("serial"),
+            registry.menu_items("connection")[:3],
             (
                 "serial.connect_disconnect",
                 "serial.settings",
@@ -89,7 +91,7 @@ class CommandRegistryTests(unittest.TestCase):
             ),
         )
         self.assertIn("edit.find", registry.menu_command_ids("edit"))
-        self.assertIn("quick_files.edit_selected_content", registry.menu_command_ids("quick_files"))
+        self.assertIn("connection.dtr", registry.menu_command_ids("connection"))
 
     def test_registered_callbacks_call_main_window_or_active_session(self) -> None:
         host = FakeHost()

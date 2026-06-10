@@ -7,6 +7,7 @@ from typing import Any
 
 GITHUB_REPOSITORY_URL = "https://github.com/shuky-shukrun/ComPort-Zone"
 GITHUB_RELEASES_URL = f"{GITHUB_REPOSITORY_URL}/releases"
+GITHUB_ISSUES_URL = f"{GITHUB_REPOSITORY_URL}/issues"
 GITHUB_LATEST_RELEASE_API_URL = "https://api.github.com/repos/shuky-shukrun/ComPort-Zone/releases/latest"
 
 _VERSION_PATTERN = re.compile(r"\d+(?:\.\d+)*")
