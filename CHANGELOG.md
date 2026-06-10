@@ -2,6 +2,24 @@
 
 All notable changes to ComPort Zone are documented here.
 
+## Unreleased
+
+### Added
+
+- Add inline edit (pencil) and remove (✕) glyphs to every Saved Commands, Files, and Favorites row — alongside the existing star and send/run actions — so an entry can be edited or deleted in one click without opening a menu.
+- Add a right-click context menu on the side bar's command and file rows (saved and favorites) offering the same actions: send/run, add to or remove from favorites, edit, and remove.
+
+### Changed
+
+- On a Favorites row, make the scope of each control explicit: ✕ removes the item from Saved entirely (deleting it everywhere) while the star only drops it from Favorites — spelled out in both the glyph tooltips and the context-menu wording.
+- Editing or removing a saved command or file now reflects in the Favorites view immediately, and vice versa.
+- Adding a quick file now opens the file explorer first; the editor dialog then appears pre-filled with the chosen file's name and path (both still editable).
+
+### Fixed
+
+- Editing a favorited command or file no longer unfavorites it: the edit dialog now preserves favorite membership instead of resetting it.
+- The Line spacing preference now applies to the command-file editor, not just the terminal. Previously the editor ignored the setting; it now re-renders at the configured spacing, with the line-number gutter staying aligned.
+
 ## 0.4.1 - 2026-06-07
 
 ### Fixed

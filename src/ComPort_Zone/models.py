@@ -449,6 +449,10 @@ def default_quick_files() -> list[QuickFile]:
     ]
 
 
+# Maximum number of recently-opened command files remembered for File › Open Recent.
+RECENT_FILES_LIMIT = 10
+
+
 @dataclass(slots=True)
 class AppSettings:
     transport_kind: str = "serial"
@@ -486,8 +490,10 @@ class AppSettings:
     drawer_width: int = 260
     drawer_page_index: int = 0
     check_for_updates_on_launch: bool = True
+    clear_history_on_exit: bool = False
     log_path: str = ""
     last_script_path: str = ""
+    recent_files: list[str] = field(default_factory=list)
     window_width: int = 1320
     window_height: int = 860
 
@@ -540,9 +546,11 @@ class AppSettings:
                 "updates": {
                     "check_on_launch": self.check_for_updates_on_launch,
                 },
+                "clear_history_on_exit": self.clear_history_on_exit,
                 "paths": {
                     "log": self.log_path,
                     "last_script": self.last_script_path,
+                    "recent_files": list(self.recent_files),
                 },
                 "window": {
                     "width": self.window_width,
@@ -691,8 +699,14 @@ class AppSettings:
             drawer_width=int(drawer.get("width", 260)),
             drawer_page_index=max(0, min(int(drawer.get("page_index", 0)), 1)),
             check_for_updates_on_launch=bool(updates.get("check_on_launch", True)),
+            clear_history_on_exit=bool(app.get("clear_history_on_exit", False)),
             log_path=str(paths.get("log", "")),
             last_script_path=str(paths.get("last_script", "")),
+            recent_files=[
+                str(item).strip()
+                for item in _list_value(paths.get("recent_files"))
+                if str(item).strip()
+            ][:RECENT_FILES_LIMIT],
             window_width=int(window.get("width", 1320)),
             window_height=int(window.get("height", 860)),
         )

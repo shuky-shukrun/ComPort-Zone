@@ -115,7 +115,7 @@ class WorkspaceStatusPresenterTests(unittest.TestCase):
         self.assertEqual(connection_state_color("retrying", theme), theme.status)
         self.assertEqual(connection_state_color("missing", theme), theme.error)
         self.assertEqual(connection_state_color("no-port", theme), theme.muted)
-        self.assertEqual(connection_state_color("closed", theme), theme.text)
+        self.assertEqual(connection_state_color("closed", theme), theme.muted)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,9 @@ def connection_state_color(state: str, theme: ThemePalette) -> str:
         return theme.status
     if state == "missing":
         return theme.error
-    if state == "no-port":
+    # Closed / no-endpoint read as inactive — a muted tab title (and icon) so a
+    # disconnected port is visibly distinct from a live one.
+    if state in ("no-port", "closed"):
         return theme.muted
     return theme.text
 

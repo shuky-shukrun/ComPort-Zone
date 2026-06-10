@@ -46,7 +46,7 @@ class MainWindowMenuBuilderTests(unittest.TestCase):
 
             self.assertEqual(
                 [action.text() for action in host.menuBar().actions()],
-                ["File", "Edit", "View", "Session", "Serial", "Tools", "Help"],
+                ["File", "Edit", "View", "Connection", "Terminal", "Tools", "Help"],
             )
             self.assertIs(host.tools_menu, handles.tools_menu)
             self.assertTrue(host.timestamps_action.isChecked())

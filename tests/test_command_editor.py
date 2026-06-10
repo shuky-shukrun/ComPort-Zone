@@ -11,6 +11,7 @@ from ComPort_Zone.command_editor_core import CommandEditorSources
 from ComPort_Zone.command_run_targets import CommandRunTarget, CommandRunTargetService
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.themes import THEMES
+from ComPort_Zone.ui.stylesheet import build_stylesheet
 
 
 class CommandEditorTests(unittest.TestCase):
@@ -96,6 +97,102 @@ class CommandEditorTests(unittest.TestCase):
             self.qt.processEvents()
             self.assertEqual(dialog.text(), "SINK:CURR?")
         finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_undo_redo_works_with_line_spacing_applied(self) -> None:
+        # Regression: the line-spacing controller reformatted blocks on every
+        # contentsChange, which silently killed Ctrl+Z in the editor.
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.editor.show()
+            dialog.editor.setFocus()
+            dialog.editor.set_line_spacing(115)
+            QTest.keyClicks(dialog.editor, "hello")
+            self.assertEqual(dialog.text(), "hello")
+
+            QTest.keyClick(dialog.editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.text(), "")
+            QTest.keyClick(
+                dialog.editor,
+                Qt.Key.Key_Z,
+                Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+            )
+            self.assertEqual(dialog.text(), "hello")
+            # Spacing is still in force on the typed block.
+            self.assertEqual(
+                dialog.editor.document().findBlockByNumber(0).blockFormat().lineHeight(), 115.0
+            )
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_line_spacing_changes_rendered_line_height(self) -> None:
+        # Regression: the editor used to be a QPlainTextEdit, whose layout ignores
+        # proportional line height, so the line-spacing setting was a no-op in the
+        # editor (only the terminal, a QTextEdit, honored it). As a QTextEdit the
+        # editor must now actually render wider spacing. Measuring the data-model
+        # lineHeight is not enough — that was already 115 while nothing moved — so
+        # this asserts the on-screen distance between consecutive lines grows.
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.resize(640, 480)
+            dialog.show()
+            self.qt.processEvents()
+            dialog.setPlainText("alpha\nbravo\ncharlie")
+            self.qt.processEvents()
+            editor = dialog.editor
+
+            def line_delta() -> int:
+                doc = editor.document()
+                top0 = editor.cursorRect(QTextCursor(doc.findBlockByNumber(0))).top()
+                top1 = editor.cursorRect(QTextCursor(doc.findBlockByNumber(1))).top()
+                return top1 - top0
+
+            editor.set_line_spacing(100)
+            self.qt.processEvents()
+            base = line_delta()
+
+            editor.set_line_spacing(160)
+            self.qt.processEvents()
+            spaced = line_delta()
+
+            self.assertGreater(base, 0)
+            self.assertGreater(spaced, base)
+
+            editor.set_line_spacing(100)
+            self.qt.processEvents()
+            self.assertEqual(line_delta(), base)
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_editor_ctrl_c_x_v_operate_on_whole_line_without_selection(self) -> None:
+        dialog = CommandFileEditorDialog(sources=CommandEditorSources())
+        try:
+            dialog.editor.show()
+            dialog.editor.setFocus()
+            dialog.setPlainText("alpha\nbeta")
+            cursor = dialog.editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            dialog.editor.setTextCursor(cursor)
+            QApplication.clipboard().clear()
+
+            # Copy the whole current line (with newline) when nothing is selected.
+            QTest.keyClick(dialog.editor, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(QApplication.clipboard().text(), "alpha\n")
+
+            # Cut removes the whole line.
+            QTest.keyClick(dialog.editor, Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.text(), "beta")
+
+            # Whole-line paste drops the line back in above the current one.
+            QTest.keyClick(dialog.editor, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.text(), "alpha\nbeta")
+        finally:
+            dialog._dirty = False
             dialog.close()
             dialog.deleteLater()
 
@@ -450,6 +547,39 @@ class CommandEditorTests(unittest.TestCase):
             dialog._dirty = False
             dialog.close()
             dialog.deleteLater()
+
+    def test_editor_run_button_is_disabled_without_a_connected_target(self) -> None:
+        targets: list[CommandRunTarget] = []
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(),
+            run_target_service=CommandRunTargetService(
+                targets_supplier=lambda: list(targets),
+                run_callback=lambda request, target_id: True,
+            ),
+        )
+        try:
+            dialog.refresh_run_targets()
+            self.assertFalse(dialog.run_button.isEnabled())
+            self.assertFalse(dialog.run_target_combo.isEnabled())
+            self.assertEqual(dialog.run_target_combo.currentText(), "No connected terminals")
+
+            targets.append(CommandRunTarget(7, "COM7"))
+            dialog.refresh_run_targets()
+            self.assertTrue(dialog.run_button.isEnabled())
+
+            targets.clear()
+            dialog.refresh_run_targets()
+            self.assertFalse(dialog.run_button.isEnabled())
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_disabled_run_button_has_its_own_grayed_style(self) -> None:
+        # The #id selector outweighs the generic QPushButton:disabled rule, so without
+        # a dedicated rule the Run button stays green even while disabled.
+        sheet = build_stylesheet(THEMES["VS Code Dark"])
+        self.assertIn("QPushButton#editorRunButton:disabled", sheet)
 
 
 if __name__ == "__main__":

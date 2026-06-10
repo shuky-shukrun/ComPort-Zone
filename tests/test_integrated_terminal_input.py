@@ -35,6 +35,73 @@ class IntegratedTerminalEditTests(unittest.TestCase):
             terminal.deleteLater()
             self.qt.processEvents()
 
+    def test_draft_undo_and_redo_revert_typing(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.show()
+            terminal.setFocus()
+            QTest.keyClicks(terminal, "measure")
+            self.assertEqual(terminal.text(), "measure")
+
+            QTest.keyClick(terminal, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.text(), "")
+            QTest.keyClick(terminal, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.text(), "measure")
+            # Ctrl+Shift+Z is an alternate redo.
+            QTest.keyClick(terminal, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.text(), "")
+            QTest.keyClick(
+                terminal,
+                Qt.Key.Key_Z,
+                Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+            )
+            self.assertEqual(terminal.text(), "measure")
+
+            # The committed transcript must never be touched by draft undo.
+            terminal.append_committed_text("SYS Ready\n", "#d4d4d4")
+            QTest.keyClick(terminal, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.toPlainText(), "SYS Ready\n")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_programmatic_draft_swap_resets_undo_history(self) -> None:
+        # History recall / clearing after send go through setText; Ctrl+Z must not
+        # rewind across them into a stale command.
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.show()
+            terminal.setFocus()
+            QTest.keyClicks(terminal, "abc")
+            terminal.setText("recalled")
+            QTest.keyClick(terminal, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.text(), "recalled")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_ctrl_c_and_x_act_on_whole_draft_without_selection(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.show()
+            terminal.setFocus()
+            terminal.setText("freq?")
+            QApplication.clipboard().clear()
+
+            QTest.keyClick(terminal, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(QApplication.clipboard().text(), "freq?")
+
+            QTest.keyClick(terminal, Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.text(), "")
+            self.assertEqual(QApplication.clipboard().text(), "freq?")
+
+            # The whole-line cut is undoable.
+            QTest.keyClick(terminal, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(terminal.text(), "freq?")
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
     def test_shift_enter_adds_draft_line_and_enter_submits(self) -> None:
         terminal = IntegratedTerminalEdit()
         submitted: list[str] = []

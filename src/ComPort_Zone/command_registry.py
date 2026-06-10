@@ -51,6 +51,18 @@ class CommandSpec:
 
 SEPARATOR: None = None
 
+# Submenu placeholders consumed by MainWindowMenuBuilder; each "@..." token in a
+# MENU_SECTIONS tuple is replaced by the matching dynamically-built submenu.
+SUBMENU_OPEN_RECENT = "@open_recent"
+SUBMENU_IMPORT_EXPORT = "@import_export"
+SUBMENU_THEME = "@theme"
+SUBMENU_TERMINAL_FONT = "@terminal_font"
+SUBMENU_RX_DISPLAY = "@rx_display"
+SUBMENU_SEND_MODE = "@send_mode"
+SUBMENU_LINE_ENDING = "@line_ending"
+SUBMENU_CONVERT_SELECTION = "@convert_selection"
+SUBMENU_RUN_IN_TERMINAL = "@run_in_terminal"
+
 
 COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
@@ -87,6 +99,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         "file.exit",
         lambda host: host.close,
         menu_text="Exit",
+        shortcut="Ctrl+Q",
         icon=QStyle.StandardPixmap.SP_TitleBarCloseButton,
     ),
     CommandSpec(
@@ -273,6 +286,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         "command_file.new",
         lambda host: host.new_command_file_editor,
         menu_text="New Command File",
+        shortcut="Ctrl+N",
         icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
         palette_title="New Command File",
         palette_subtitle="Create a command file in the built-in editor",
@@ -282,6 +296,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         "command_file.open_editor",
         lambda host: host.open_command_file_editor,
         menu_text="Open Command File Editor",
+        shortcut="Ctrl+O",
         icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
         palette_title="Open Command File Editor",
         palette_subtitle="Open or edit a command file with autocomplete and validation",
@@ -317,12 +332,6 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         palette_keywords="script batch file pause resume",
     ),
     CommandSpec(
-        "quick_commands.send_selected",
-        lambda host: lambda: host.with_session(lambda session: session.send_selected_quick_command()),
-        menu_text="Send Selected",
-        icon=QStyle.StandardPixmap.SP_ArrowForward,
-    ),
-    CommandSpec(
         "quick_commands.save_current_input",
         lambda host: lambda: host.with_session(lambda session: session.save_current_input_as_quick_command()),
         menu_text="Save Current Input",
@@ -334,20 +343,8 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "quick_commands.add",
         lambda host: host.add_quick_command,
-        menu_text="Add Command",
+        menu_text="Add Saved Command...",
         icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
-    ),
-    CommandSpec(
-        "quick_commands.edit_selected",
-        lambda host: lambda: host.with_session(lambda session: host.edit_quick_command(session.selected_quick_command_id())),
-        menu_text="Edit Selected",
-        icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-    ),
-    CommandSpec(
-        "quick_commands.delete_selected",
-        lambda host: lambda: host.with_session(lambda session: host.delete_quick_command(session.selected_quick_command_id())),
-        menu_text="Delete Selected",
-        icon=QStyle.StandardPixmap.SP_TrashIcon,
     ),
     CommandSpec(
         "quick_commands.delete_all",
@@ -361,7 +358,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "quick_commands.import_csv",
         lambda host: host.import_quick_commands_csv,
-        menu_text="Import CSV",
+        menu_text="Import Saved Commands (CSV)...",
         icon=QStyle.StandardPixmap.SP_DialogOpenButton,
         palette_title="Import Quick Commands from CSV",
         palette_subtitle="Append quick commands from a CSV file",
@@ -370,7 +367,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "quick_commands.export_csv",
         lambda host: host.export_quick_commands_csv,
-        menu_text="Export CSV",
+        menu_text="Export Saved Commands (CSV)...",
         icon=QStyle.StandardPixmap.SP_DialogSaveButton,
         palette_title="Export Quick Commands to CSV",
         palette_subtitle="Save all quick commands to a CSV file",
@@ -388,7 +385,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "quick_files.add",
         lambda host: host.add_quick_file,
-        menu_text="Add File",
+        menu_text="Add Saved File...",
         icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
         palette_title="Add Quick File",
         palette_subtitle="Save a command file path in the left drawer",
@@ -404,18 +401,6 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         palette_keywords="script batch file saved quick edit",
     ),
     CommandSpec(
-        "quick_files.edit_selected",
-        lambda host: lambda: host.with_session(lambda session: host.edit_quick_file(session.selected_quick_file_id())),
-        menu_text="Edit Selected",
-        icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
-    ),
-    CommandSpec(
-        "quick_files.delete_selected",
-        lambda host: lambda: host.with_session(lambda session: host.delete_quick_file(session.selected_quick_file_id())),
-        menu_text="Delete Selected",
-        icon=QStyle.StandardPixmap.SP_TrashIcon,
-    ),
-    CommandSpec(
         "quick_files.delete_all",
         lambda host: host.delete_all_quick_files,
         menu_text="Delete All Quick Files",
@@ -427,7 +412,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "quick_files.import_csv",
         lambda host: host.import_quick_files_csv,
-        menu_text="Import CSV",
+        menu_text="Import Saved Files (CSV)...",
         icon=QStyle.StandardPixmap.SP_DialogOpenButton,
         palette_title="Import Quick Files from CSV",
         palette_subtitle="Append saved command-file paths from a CSV file",
@@ -436,7 +421,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         "quick_files.export_csv",
         lambda host: host.export_quick_files_csv,
-        menu_text="Export CSV",
+        menu_text="Export Saved Files (CSV)...",
         icon=QStyle.StandardPixmap.SP_DialogSaveButton,
         palette_title="Export Quick Files to CSV",
         palette_subtitle="Save all saved command-file paths to a CSV file",
@@ -463,89 +448,241 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         menu_text="About",
         icon=QStyle.StandardPixmap.SP_MessageBoxInformation,
     ),
+    # --- Restructured-menu additions ---------------------------------------
+    CommandSpec(
+        "file.preferences",
+        lambda host: host.show_preferences,
+        menu_text="Preferences...",
+        icon="cog",
+        palette_title="Preferences",
+        palette_subtitle="Theme, fonts, scrollback, logging, reconnect, data & reset",
+        palette_keywords="settings preferences options config theme font scrollback log reset",
+    ),
+    CommandSpec(
+        "file.close_other_tabs",
+        lambda host: host.close_other_current_session,
+        menu_text="Close Other Tabs",
+        icon=QStyle.StandardPixmap.SP_TitleBarCloseButton,
+    ),
+    CommandSpec(
+        "command_file.save",
+        lambda host: host.save_current_command_file,
+        menu_text="Save Command File",
+        icon="save",
+    ),
+    CommandSpec(
+        "command_file.save_as",
+        lambda host: host.save_current_command_file_as,
+        menu_text="Save Command File As...",
+        icon="save-as",
+    ),
+    CommandSpec(
+        "command_file.send_file",
+        lambda host: lambda: host.with_session(lambda session: session.send_file()),
+        menu_text="Send File...",
+        icon=QStyle.StandardPixmap.SP_ArrowForward,
+        palette_title="Send File",
+        palette_subtitle="Stream a file's raw bytes over the active connection",
+        palette_keywords="send file upload bytes raw transfer",
+    ),
+    CommandSpec(
+        "edit.paste",
+        lambda host: host.paste_into_focused,
+        menu_text="Paste",
+        shortcut="Ctrl+Shift+V",
+        icon="copy",
+    ),
+    CommandSpec(
+        "view.move_to_other_pane",
+        lambda host: host.move_tab_to_other_pane,
+        menu_text="Move to Other Pane",
+        icon=QStyle.StandardPixmap.SP_ArrowRight,
+    ),
+    CommandSpec(
+        "view.reset_font",
+        lambda host: host.reset_font_size,
+        menu_text="Reset Zoom",
+        shortcut="Ctrl+0",
+        icon="refresh",
+    ),
+    CommandSpec(
+        "connection.auto_reconnect",
+        lambda host: lambda: host.with_session(lambda session: session.toggle_auto_reconnect()),
+        menu_text="Auto-Reconnect",
+        checkable=True,
+    ),
+    CommandSpec(
+        "connection.dtr",
+        lambda host: lambda: host.with_session(lambda session: session.toggle_dtr()),
+        menu_text="DTR",
+        checkable=True,
+    ),
+    CommandSpec(
+        "connection.rts",
+        lambda host: lambda: host.with_session(lambda session: session.toggle_rts()),
+        menu_text="RTS",
+        checkable=True,
+    ),
+    CommandSpec(
+        "connection.send_break",
+        lambda host: lambda: host.with_session(lambda session: session.send_break()),
+        menu_text="Send Break",
+        icon="bolt",
+        palette_title="Send Break",
+        palette_subtitle="Send a serial break condition on the active connection",
+        palette_keywords="serial break signal line",
+    ),
+    CommandSpec(
+        "terminal.open_log_folder",
+        lambda host: host.open_log_folder,
+        menu_text="Open Log Folder",
+        icon="folder",
+    ),
+    CommandSpec(
+        "tools.open_config_folder",
+        lambda host: host.open_config_folder,
+        menu_text="Open Config Folder",
+        icon="folder",
+        palette_title="Open Config Folder",
+        palette_subtitle="Open the folder holding settings.json",
+        palette_keywords="config settings folder json appdata location",
+    ),
+    CommandSpec(
+        "help.shortcuts",
+        lambda host: host.show_keyboard_shortcuts,
+        menu_text="Keyboard Shortcuts...",
+        icon="list",
+        palette_title="Keyboard Shortcuts",
+        palette_subtitle="Show the keyboard shortcut reference",
+        palette_keywords="keyboard shortcuts keys reference cheat sheet",
+    ),
+    CommandSpec(
+        "help.documentation",
+        lambda host: host.open_documentation,
+        menu_text="Documentation",
+        icon="file",
+    ),
+    CommandSpec(
+        "help.view_on_github",
+        lambda host: host.open_github_repo,
+        menu_text="View on GitHub",
+        icon="info",
+    ),
+    CommandSpec(
+        "help.report_issue",
+        lambda host: host.report_issue,
+        menu_text="Report a Bug",
+        icon="info",
+        palette_title="Report a Bug",
+        palette_subtitle="Open the GitHub issues page in your browser",
+        palette_keywords="bug issue report github feedback",
+    ),
 )
 
 
 MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
     "file": (
         "file.new_tab",
+        "command_file.new",
+        "command_file.open_editor",
+        SUBMENU_OPEN_RECENT,
+        SEPARATOR,
+        "command_file.save",
+        "command_file.save_as",
+        "command_file.send_file",
+        SEPARATOR,
         "file.duplicate_tab",
         "file.close_tab",
+        "file.close_other_tabs",
         SEPARATOR,
-        "file.app_settings_transfer",
+        SUBMENU_IMPORT_EXPORT,
+        "file.preferences",
         SEPARATOR,
         "file.exit",
     ),
     "edit": (
         "edit.copy",
+        "edit.paste",
         "edit.select_all",
         SEPARATOR,
         "edit.find",
         "edit.replace",
-        "edit.clear_terminal",
+        SEPARATOR,
+        SUBMENU_CONVERT_SELECTION,
         SEPARATOR,
         "edit.clear_command_history",
     ),
     "view": (
         "view.toggle_drawer",
+        SEPARATOR,
         "view.split_right",
         "view.split_down",
+        "view.move_to_other_pane",
         "view.join_panes",
         SEPARATOR,
-        "view.increase_font",
-        "view.decrease_font",
-        "view.terminal_font_settings",
+        SUBMENU_THEME,
+        SUBMENU_TERMINAL_FONT,
         SEPARATOR,
         "view.show_timestamps",
         "view.line_wrap",
+        SUBMENU_RX_DISPLAY,
     ),
-    "session": (
-        "session.rename_tab",
-        SEPARATOR,
-        "session.pause_resume",
-        "session.toggle_log",
-    ),
-    "serial": (
+    "connection": (
         "serial.connect_disconnect",
         "serial.settings",
         "serial.refresh_ports",
+        SEPARATOR,
+        SUBMENU_SEND_MODE,
+        SUBMENU_LINE_ENDING,
+        SEPARATOR,
+        "connection.auto_reconnect",
+        "connection.dtr",
+        "connection.rts",
+        "connection.send_break",
     ),
-    "command_files": (
-        "command_file.new",
-        "command_file.open_editor",
+    "terminal": (
+        "session.rename_tab",
+        "edit.clear_terminal",
+        SEPARATOR,
+        "session.pause_resume",
+        SEPARATOR,
+        "session.toggle_log",
+        "terminal.open_log_folder",
+    ),
+    "tools": (
+        "tools.command_palette",
         SEPARATOR,
         "command_file.run",
         "command_file.pause_resume",
         "command_file.stop",
-    ),
-    "quick_commands": (
-        "quick_commands.send_selected",
-        "quick_commands.save_current_input",
+        SUBMENU_RUN_IN_TERMINAL,
         SEPARATOR,
         "quick_commands.add",
-        "quick_commands.edit_selected",
-        "quick_commands.delete_selected",
-        "quick_commands.delete_all",
-        SEPARATOR,
-        "quick_commands.import_csv",
-        "quick_commands.export_csv",
-    ),
-    "quick_files": (
-        "quick_files.run_selected",
         "quick_files.add",
-        "quick_files.edit_selected_content",
-        "quick_files.edit_selected",
-        "quick_files.delete_selected",
-        "quick_files.delete_all",
         SEPARATOR,
-        "quick_files.import_csv",
-        "quick_files.export_csv",
+        "tools.open_config_folder",
     ),
     "help": (
+        "help.shortcuts",
+        SEPARATOR,
+        "help.documentation",
+        "help.view_on_github",
+        "help.report_issue",
+        SEPARATOR,
         "help.check_for_updates",
         "help.check_for_updates_on_launch",
         SEPARATOR,
         "help.about",
+    ),
+    # Populated into the File > Import / Export submenu (not a top-level menu).
+    "import_export": (
+        "file.app_settings_transfer",
+        SEPARATOR,
+        "quick_commands.import_csv",
+        "quick_commands.export_csv",
+        SEPARATOR,
+        "quick_files.import_csv",
+        "quick_files.export_csv",
     ),
 }
 
@@ -610,4 +747,16 @@ class CommandRegistry:
             if menu_key is not None
             else tuple(item for section in MENU_SECTIONS.values() for item in section)
         )
-        return [item for item in items if item is not None]
+        return [
+            item
+            for item in items
+            if item is not None and not item.startswith("@")
+        ]
+
+    def shortcut_entries(self) -> list[tuple[str, str]]:
+        """(label, shortcut) pairs for every command with a keyboard shortcut."""
+        return [
+            (spec.menu_label(), spec.shortcut)
+            for spec in self._specs.values()
+            if spec.shortcut
+        ]

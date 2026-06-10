@@ -9,6 +9,7 @@ from .command_file_parameters import (
     summarize_parameter_occurrences,
 )
 from .connection import COMMON_BAUD_RATES, ConnectionSettingsDialog
+from .preferences import PreferencesDialog
 from .quick_actions import QuickCommandDialog, QuickCommandImportDialog, QuickFileDialog
 from .terminal_font import TerminalFontSettingsDialog
 from .version_update import VersionUpdateDialog
@@ -22,6 +23,7 @@ __all__ = [
     "CommandFileParameterSummary",
     "CommandFileParametersDialog",
     "ConnectionSettingsDialog",
+    "PreferencesDialog",
     "QuickCommandDialog",
     "QuickCommandImportDialog",
     "QuickFileDialog",

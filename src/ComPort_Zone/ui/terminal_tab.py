@@ -74,6 +74,12 @@ TRANSCRIPT_EVENT_CAP = 5000
 # Ghosted hint shown in the empty input line, mirroring the design mockup.
 TERMINAL_INPUT_PLACEHOLDER = "type a command — ↑ recalls history"
 
+# Auto-reconnect spins this glyph where the ">" prompt normally sits — a "working"
+# cue right at the cursor. ASCII so it renders in any terminal font the user picks;
+# dropping ">" also reads as "not ready to send" while the link is down.
+RETRY_SPINNER_FRAMES = ("|", "/", "-", "\\")
+RETRY_SPINNER_INTERVAL_MS = 120
+
 
 class TerminalConnectionStatusLabel(QLabel):
     clicked = Signal()
@@ -131,6 +137,14 @@ class TerminalSessionWidget(QWidget):
         # Stored transcript entries so timestamp/hex toggles re-render all history.
         self._transcript: list[tuple] = []
         self._replaying = False
+        # Auto-reconnect indicator: spin the prompt chevron while retrying. The flag
+        # (not connection_state()) drives the leader so prompt refreshes during
+        # __init__ — before refresh_ports() populates the port list — stay safe.
+        self._retrying = False
+        self._retry_spinner_index = 0
+        self._retry_spinner_timer = QTimer(self)
+        self._retry_spinner_timer.setInterval(RETRY_SPINNER_INTERVAL_MS)
+        self._retry_spinner_timer.timeout.connect(self._advance_retry_spinner)
 
         self._build_ui()
         self.refresh_ports()
@@ -604,17 +618,47 @@ class TerminalSessionWidget(QWidget):
         timestamps are off), plus the placeholder hint."""
         if not hasattr(self, "terminal"):
             return
-        set_prompt = getattr(self.terminal, "set_prompt_text", None)
-        if callable(set_prompt):
-            set_prompt(
-                prompt_leader_text(
-                    self.tab_title,
-                    timestamps_enabled=self.host.settings.timestamps_enabled,
-                )
-            )
+        self._apply_prompt_leader()
         set_placeholder = getattr(self.terminal, "setPlaceholderText", None)
         if callable(set_placeholder):
             set_placeholder(TERMINAL_INPUT_PLACEHOLDER)
+
+    def _apply_prompt_leader(self) -> None:
+        """Push the current prompt leader + ink onto the input. One shared path so
+        theme, tab-title and timestamp refreshes — and each spinner tick — agree on:
+        the chevron (``>`` normally, a spinning glyph while auto-reconnect retries),
+        the leader colour, and the draft ink. While the port is closed/disconnected
+        the leader and the typed text gray out to show nothing can be sent."""
+        set_prompt = getattr(self.terminal, "set_prompt_text", None)
+        if not callable(set_prompt):
+            return
+        theme = self.host.theme
+        connected = self._connected or self.transport.is_connected
+        if self._retrying:
+            chevron = RETRY_SPINNER_FRAMES[self._retry_spinner_index]
+            prompt_color = theme.status
+            draft_color = theme.tx
+        elif connected:
+            chevron = ">"
+            prompt_color = theme.tx
+            draft_color = theme.tx
+        else:
+            chevron = ">"
+            prompt_color = theme.muted
+            draft_color = theme.muted
+        set_prompt_color = getattr(self.terminal, "set_prompt_color", None)
+        if callable(set_prompt_color):
+            set_prompt_color(prompt_color)
+        set_draft_color = getattr(self.terminal, "set_draft_color", None)
+        if callable(set_draft_color):
+            set_draft_color(draft_color)
+        set_prompt(
+            prompt_leader_text(
+                self.tab_title,
+                timestamps_enabled=self.host.settings.timestamps_enabled,
+                chevron=chevron,
+            )
+        )
 
     def _receive_display_mode_changed(self) -> None:
         mode = self.rx_display_combo.currentData()
@@ -1235,7 +1279,7 @@ class TerminalSessionWidget(QWidget):
         failed_index: int | None = None
         for index, line in enumerate(sendable_lines):
             try:
-                self.transport.send_text(line)
+                self.transport.send_text(line, self.profile.line_ending)
             except Exception as exc:
                 failed_index = index
                 self._render_user_send(line, color_role="error")
@@ -1787,6 +1831,8 @@ class TerminalSessionWidget(QWidget):
         self.status_label.setText(self.connection_chip_text())
         self.status_label.setToolTip(f"{self.connection_tooltip()}\nClick to open Connection Settings.")
         set_widget_state(self.status_label, state)
+        self._set_retry_indicator(state == "retrying")
+        self._apply_prompt_leader()
         self.connection_button.setText(self.connection_action_text())
         self.connection_button.setToolTip(self.connection_tooltip())
         set_button_icon(self.connection_button, connection_state_icon(state), 15)
@@ -1796,6 +1842,23 @@ class TerminalSessionWidget(QWidget):
         self.host.update_connection_status(self)
         if update_footer and self.host.tabs.currentWidget() is self:
             self.host.set_status(self._status_text)
+
+    def _set_retry_indicator(self, active: bool) -> None:
+        """Start/stop the prompt-chevron spinner for auto-reconnect. The leader ink and
+        glyph are pushed by ``_apply_prompt_leader`` (called on every connection-UI
+        refresh), so this only owns the timer. Idempotent."""
+        if active == self._retrying:
+            return
+        self._retrying = active
+        if active:
+            self._retry_spinner_index = 0
+            self._retry_spinner_timer.start()
+        else:
+            self._retry_spinner_timer.stop()
+
+    def _advance_retry_spinner(self) -> None:
+        self._retry_spinner_index = (self._retry_spinner_index + 1) % len(RETRY_SPINNER_FRAMES)
+        self._apply_prompt_leader()
 
     def connection_state(self) -> str:
         if self._connected or self.transport.is_connected:
@@ -1903,6 +1966,91 @@ class TerminalSessionWidget(QWidget):
     def _update_line_ending_label(self) -> None:
         self.line_ending_label.setText(self.profile.line_ending)
         self.host.update_connection_status(self)
+
+    # ------------------------------------------- menu-driven session actions
+
+    def script_snapshot(self):
+        return self.controller.script_snapshot()
+
+    def is_script_active(self) -> bool:
+        snapshot = self.controller.script_snapshot()
+        return snapshot.is_running or snapshot.is_stopping
+
+    def set_send_mode(self, mode: str) -> None:
+        if mode in SEND_MODES:
+            self.mode_combo.setCurrentText(mode)
+
+    def set_line_ending(self, name: str) -> None:
+        if not name or name == self.profile.line_ending:
+            return
+        self.profile.line_ending = name
+        self._update_line_ending_label()
+        self.host.save_settings()
+
+    def supports_signals(self) -> bool:
+        return self.transport_kind == "serial" and self.transport.supports_signals()
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        return self.transport.signal_state()
+
+    def toggle_dtr(self) -> None:
+        self._toggle_signal("dtr")
+
+    def toggle_rts(self) -> None:
+        self._toggle_signal("rts")
+
+    def _toggle_signal(self, name: str) -> None:
+        if not self.supports_signals() or not self.transport.is_connected:
+            return
+        state = self.transport.signal_state()
+        if state is None:
+            return
+        new_value = not (state[0] if name == "dtr" else state[1])
+        applied = (
+            self.transport.set_dtr(new_value)
+            if name == "dtr"
+            else self.transport.set_rts(new_value)
+        )
+        if applied:
+            setattr(self.profile, name, new_value)
+            self.host.set_status(
+                f"{name.upper()} {'asserted' if new_value else 'cleared'}."
+            )
+
+    def send_break(self) -> None:
+        if not self.supports_signals() or not self.transport.is_connected:
+            return
+        if self.transport.send_break():
+            self.host.set_status("Sent break signal.")
+
+    def toggle_auto_reconnect(self) -> None:
+        new_value = not getattr(self.profile, "auto_reconnect", False)
+        self.profile.auto_reconnect = new_value
+        self.host.save_settings()
+        self.host.set_status(
+            f"Auto-reconnect {'enabled' if new_value else 'disabled'} "
+            "(takes effect on the next connect)."
+        )
+
+    def send_file(self) -> None:
+        if not self.transport.is_connected:
+            self.host.set_status("Connect before sending a file.")
+            return
+        start_dir = self.host.settings.last_script_path or str(Path.cwd())
+        path, _ = QFileDialog.getOpenFileName(self, "Send File", start_dir, "All Files (*)")
+        if not path:
+            return
+        try:
+            data = Path(path).read_bytes()
+        except OSError as exc:
+            QMessageBox.critical(self, "Send File", str(exc))
+            return
+        try:
+            self.transport.send_bytes(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Send File", str(exc))
+            return
+        self.host.set_status(f"Sent {len(data)} bytes from {Path(path).name}.")
 
     def shutdown(self) -> None:
         self.event_timer.stop()

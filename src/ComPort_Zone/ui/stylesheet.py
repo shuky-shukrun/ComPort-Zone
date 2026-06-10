@@ -269,6 +269,22 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLineEdit:hover, QComboBox:hover {{ border-color: {bd_strong}; }}
     QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border-color: {accent}; }}
     QComboBox {{ padding-right: 24px; }}
+    /* Setting a border on a styled QAbstractSpinBox disables the native
+       steppers, so the up/down buttons must be defined explicitly or they
+       stop responding to clicks. */
+    QAbstractSpinBox {{ padding-right: 20px; }}
+    QAbstractSpinBox::up-button {{
+        subcontrol-origin: border; subcontrol-position: top right;
+        width: 18px; border: none; background: transparent;
+    }}
+    QAbstractSpinBox::down-button {{
+        subcontrol-origin: border; subcontrol-position: bottom right;
+        width: 18px; border: none; background: transparent;
+    }}
+    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{ background: {hover}; }}
+    QAbstractSpinBox::up-arrow {{ image: url({arrow_up}); width: 9px; height: 9px; }}
+    QAbstractSpinBox::down-arrow {{ image: url({arrow_down}); width: 9px; height: 9px; }}
+    QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::down-arrow:disabled {{ image: none; }}
     QComboBox::drop-down {{
         subcontrol-origin: padding; subcontrol-position: center right;
         width: 22px; border: none; background: transparent;
@@ -284,6 +300,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
         selection-color: {tx};
     }}
     QComboBox QAbstractItemView::item {{ padding: 5px 8px; border-radius: {RADIUS_SM}px; min-height: 20px; }}
+    /* A styled ::item (border-radius) suppresses the view's
+       selection-background-color, so the highlighted/current row must be
+       painted explicitly or the dropdown shows no marked line. */
+    QComboBox QAbstractItemView::item:hover,
+    QComboBox QAbstractItemView::item:selected {{ background: {hover}; color: {tx}; }}
     """)
 
     # =====================================================================
@@ -518,6 +539,9 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QPushButton#editorRunButton:hover {{ background: {run_btn_hover}; }}
     QPushButton#editorRunButton:pressed {{ background: {run_btn_press}; }}
+    /* Grayed-out while no terminal is connected to run into. The #id selector
+       outweighs the generic QPushButton:disabled rule, so it needs its own. */
+    QPushButton#editorRunButton:disabled {{ background: {elevated}; color: {tx_faint}; }}
 
     QLabel#editorStatusLabel, QLabel#editorPathLabel {{
         color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px;
@@ -580,7 +604,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     # Command-file editor (.app-editor) + syntax gutter
     # =====================================================================
     parts.append(f"""
-    QPlainTextEdit#commandFileEditor {{
+    QTextEdit#commandFileEditor {{
         background: {term_bg};
         color: {tx};
         border: none;
@@ -588,7 +612,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
         selection-background-color: {sel};
         selection-color: {tx};
     }}
-    QPlainTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
+    QTextEdit#commandFileEditor[activeWorkspaceTab="true"] {{
         border-top: 2px solid transparent;
         border-image: url({grad_line}) 2 0 0 0 stretch;
     }}

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QStringListModel, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QStringListModel, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
     QLineEdit,
     QPushButton,
     QSizePolicy,
@@ -131,7 +130,7 @@ class CommandEditorQuickActionCallbacks:
 
 
 class LineNumberArea(QWidget):
-    def __init__(self, editor: "CommandPlainTextEdit") -> None:
+    def __init__(self, editor: "CommandTextEdit") -> None:
         super().__init__(editor)
         self.editor = editor
 
@@ -142,7 +141,7 @@ class LineNumberArea(QWidget):
         self.editor.line_number_area_paint_event(event)
 
 
-class CommandPlainTextEdit(QPlainTextEdit):
+class CommandTextEdit(QTextEdit):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.line_number_area = LineNumberArea(self)
@@ -170,16 +169,31 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.search_match_background = QColor(VS_CODE_DARK.search_highlight)
         self.search_current_background = QColor(VS_CODE_DARK.accent_soft)
         self.search_match_foreground = QColor(VS_CODE_DARK.text)
-        self.blockCountChanged.connect(self.update_line_number_area_width)
-        self.updateRequest.connect(self.update_line_number_area)
+        # QTextEdit (not QPlainTextEdit) so proportional line spacing actually
+        # renders. QTextEdit has no firstVisibleBlock/updateRequest, so the gutter
+        # is driven off the document layout + scrollbar instead (see below).
+        self.document().blockCountChanged.connect(self.update_line_number_area_width)
+        self.verticalScrollBar().valueChanged.connect(self._refresh_line_number_area)
+        self.textChanged.connect(self._refresh_line_number_area)
         self.cursorPositionChanged.connect(self.highlight_current_line)
-        self._line_spacing = LineSpacingController(self)
+        # reactive=False: a per-keystroke block reformat would break native undo
+        # (see LineSpacingController). New lines inherit the height; we re-apply on
+        # the one-shot setPlainText path below.
+        self._line_spacing = LineSpacingController(self, reactive=False)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
 
     def set_line_spacing(self, percent: int) -> None:
         """Set the line spacing as a percentage of the font's natural line height."""
         self._line_spacing.set_percent(percent)
+
+    def setPlainText(self, text: str) -> None:
+        # setPlainText resets every block to the default height, so re-apply spacing
+        # to the freshly loaded content; then clear the undo stack so the load (and
+        # its one-shot spacing pass) isn't an undoable step the user lands on.
+        super().setPlainText(text)
+        self._line_spacing.reapply()
+        self.document().clearUndoRedoStacks()
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.line_number_background = QColor(theme.surface_alt)
@@ -280,19 +294,17 @@ class CommandPlainTextEdit(QPlainTextEdit):
         self.replace_callback = replace_callback
 
     def line_number_area_width(self) -> int:
-        digits = len(str(max(1, self.blockCount())))
+        digits = len(str(max(1, self.document().blockCount())))
         return 12 + self.fontMetrics().horizontalAdvance("9") * digits
 
-    def update_line_number_area_width(self, _block_count: int) -> None:
+    def update_line_number_area_width(self, _block_count: int = 0) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
-    def update_line_number_area(self, rect: QRect, dy: int) -> None:
-        if dy:
-            self.line_number_area.scroll(0, dy)
-        else:
-            self.line_number_area.update(0, rect.y(), self.line_number_area.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self.update_line_number_area_width(0)
+    def _refresh_line_number_area(self, *_args) -> None:
+        # QTextEdit has no updateRequest(rect, dy); repaint the whole gutter on
+        # scroll/edit and keep its width in step with the block count.
+        self.update_line_number_area_width()
+        self.line_number_area.update()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -305,24 +317,30 @@ class CommandPlainTextEdit(QPlainTextEdit):
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), self.line_number_background)
         painter.setPen(self.line_number_foreground)
-        block = self.firstVisibleBlock()
-        block_number = block.blockNumber()
-        top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
-        bottom = top + int(self.blockBoundingRect(block).height())
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                painter.drawText(
-                    0,
-                    top,
-                    self.line_number_area.width() - 4,
-                    self.fontMetrics().height(),
-                    Qt.AlignmentFlag.AlignRight,
-                    str(block_number + 1),
-                )
+        # QTextEdit lacks firstVisibleBlock/contentOffset, so derive each block's
+        # viewport position from cursorRect (it already accounts for scroll and the
+        # document margin) and its height from the document layout. Both reflect the
+        # active line spacing, so the numbers stay aligned with the wrapped text.
+        layout = self.document().documentLayout()
+        width = self.line_number_area.width() - 4
+        line_height = self.fontMetrics().height()
+        block = self.cursorForPosition(QPoint(0, 0)).block()
+        while block.isValid():
+            top = int(self.cursorRect(QTextCursor(block)).top())
+            if top > event.rect().bottom():
+                break
+            if block.isVisible():
+                height = int(layout.blockBoundingRect(block).height())
+                if top + height >= event.rect().top():
+                    painter.drawText(
+                        0,
+                        top,
+                        width,
+                        line_height,
+                        Qt.AlignmentFlag.AlignRight,
+                        str(block.blockNumber() + 1),
+                    )
             block = block.next()
-            top = bottom
-            bottom = top + int(self.blockBoundingRect(block).height())
-            block_number += 1
 
     def highlight_current_line(self) -> None:
         self._apply_extra_selections()
@@ -516,6 +534,53 @@ class CommandPlainTextEdit(QPlainTextEdit):
             return
         super().wheelEvent(event)
 
+    def _copy_current_line(self) -> None:
+        """Ctrl+C with no selection copies the whole current line (with its newline),
+        like VS Code / Notepad++."""
+        QApplication.clipboard().setText(self.textCursor().block().text() + "\n")
+
+    def _cut_current_line(self) -> None:
+        """Ctrl+X with no selection cuts the whole current line, newline included —
+        and for the last line takes the *preceding* newline so no empty line is left."""
+        block = self.textCursor().block()
+        text = block.text()
+        cursor = QTextCursor(self.document())
+        if block.next().isValid():
+            cursor.setPosition(block.position())
+            cursor.setPosition(block.next().position(), QTextCursor.MoveMode.KeepAnchor)
+        elif block.previous().isValid():
+            previous = block.previous()
+            cursor.setPosition(previous.position() + len(previous.text()))
+            cursor.setPosition(block.position() + len(text), QTextCursor.MoveMode.KeepAnchor)
+        else:
+            cursor.setPosition(block.position())
+            cursor.setPosition(block.position() + len(text), QTextCursor.MoveMode.KeepAnchor)
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+        cursor.endEditBlock()
+        QApplication.clipboard().setText(text + "\n")
+
+    def _paste_clipboard(self) -> None:
+        clip = QApplication.clipboard().text()
+        if not clip:
+            return
+        cursor = self.textCursor()
+        if cursor.hasSelection() or not clip.endswith("\n"):
+            cursor.insertText(clip)
+            self.setTextCursor(cursor)
+            return
+        # Whole-line paste (clipboard holds full lines, nothing selected): insert the
+        # line(s) above the current one and keep the caret on its original text.
+        position = cursor.position()
+        line_cursor = QTextCursor(self.document())
+        line_cursor.setPosition(cursor.block().position())
+        line_cursor.beginEditBlock()
+        line_cursor.insertText(clip)
+        line_cursor.endEditBlock()
+        restored = self.textCursor()
+        restored.setPosition(min(position + len(clip), self.document().characterCount() - 1))
+        self.setTextCursor(restored)
+
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_F and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             if self.find_callback:
@@ -535,6 +600,20 @@ class CommandPlainTextEdit(QPlainTextEdit):
                     return
             elif self.save_callback:
                 self.save_callback()
+                event.accept()
+                return
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and not (
+            event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        ):
+            if event.key() in (Qt.Key.Key_C, Qt.Key.Key_X) and not self.textCursor().hasSelection():
+                if event.key() == Qt.Key.Key_C:
+                    self._copy_current_line()
+                else:
+                    self._cut_current_line()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_V:
+                self._paste_clipboard()
                 event.accept()
                 return
         if self.completer and self.completer.popup().isVisible():
@@ -640,7 +719,7 @@ class CommandFileEditorDialog(QDialog):
         self.warn_unknown.setChecked(True)
         self.warn_unknown.toggled.connect(self._warn_unknown_changed)
 
-        self.editor = CommandPlainTextEdit(self)
+        self.editor = CommandTextEdit(self)
         self.editor.setObjectName("commandFileEditor")
         self.editor.setFont(QFont("Cascadia Mono", 10))
         self.editor.set_save_callbacks(self.save, self.save_as)
@@ -1191,7 +1270,7 @@ class CommandFileEditorDialog(QDialog):
         layout.addWidget(self.status_label, 1)
         layout.addWidget(self.warn_unknown)
         self.wrap_toggle = self._status_toggle("wrap", "Wrap long lines", self._toggle_wrap)
-        self.wrap_toggle.setChecked(True)  # QPlainTextEdit wraps by default
+        self.wrap_toggle.setChecked(True)  # QTextEdit wraps to widget width by default
         layout.addWidget(self.wrap_toggle)
         # ⋯ overflow: as the bar narrows these secondary controls fold into its menu,
         # keeping only the Run button (mirrors the terminal's command bar).
@@ -1307,7 +1386,7 @@ class CommandFileEditorDialog(QDialog):
 
     def _toggle_wrap(self, checked: bool) -> None:
         self.editor.setLineWrapMode(
-            QPlainTextEdit.LineWrapMode.WidgetWidth if checked else QPlainTextEdit.LineWrapMode.NoWrap
+            QTextEdit.LineWrapMode.WidgetWidth if checked else QTextEdit.LineWrapMode.NoWrap
         )
 
     def _add_font_controls(self, layout: QHBoxLayout, parent: QWidget) -> None:

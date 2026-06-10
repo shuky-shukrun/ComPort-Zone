@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QKeyEvent, QTextCursor
@@ -1421,6 +1422,111 @@ class AppSessionTests(unittest.TestCase):
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
 
+    def test_favorite_row_remove_deletes_from_saved_but_star_only_unfavorites(self) -> None:
+        # The inline ✕ on a favourite row removes the command from *saved* (and so
+        # from favourites), while the star only drops it from favourites — and both
+        # outcomes are mirrored across the saved and favourites lists.
+        from ComPort_Zone.models import QuickCommand
+
+        settings_path = Path(__file__).with_name("_tmp_settings_fav_row_remove.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        def texts(quick_list):
+            return [quick_list.item(i).text() for i in range(quick_list.count())]
+
+        def item_named(quick_list, text):
+            return next(
+                quick_list.item(i) for i in range(quick_list.count()) if quick_list.item(i).text() == text
+            )
+
+        try:
+            window = app_module.MainWindow()
+            drawer = window.shared_drawer
+            window.add_quick_command(QuickCommand(command="FAVR:KEEP", favorite=True))
+            window.add_quick_command(QuickCommand(command="FAVR:GONE", favorite=True))
+
+            # The star on a favourite row only unfavourites it (stays in saved).
+            drawer.favorite_command_list.actionTriggered.emit(
+                item_named(drawer.favorite_command_list, "FAVR:KEEP"), "star"
+            )
+            self.assertNotIn("FAVR:KEEP", texts(drawer.favorite_command_list))
+            self.assertIn("FAVR:KEEP", texts(drawer.quick_command_list))
+
+            # The ✕ on a favourite row deletes it from saved (and so favourites).
+            drawer.favorite_command_list.actionTriggered.emit(
+                item_named(drawer.favorite_command_list, "FAVR:GONE"), "remove"
+            )
+            self.assertNotIn("FAVR:GONE", texts(drawer.favorite_command_list))
+            self.assertNotIn("FAVR:GONE", texts(drawer.quick_command_list))
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_add_quick_file_opens_picker_then_prefills_dialog(self) -> None:
+        # The Files "+" opens the file explorer first, then the editor dialog
+        # pre-filled with the chosen file's name + path (both still editable).
+        from PySide6.QtWidgets import QDialog, QFileDialog
+        from ComPort_Zone.ui.dialogs import QuickFileDialog
+
+        settings_path = Path(__file__).with_name("_tmp_settings_add_file_picker.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+
+        chosen = str(Path(__file__).with_name("picked_bringup.txt"))
+        try:
+            window = app_module.MainWindow()
+            window.delete_all_quick_files(confirm=False)  # drop any seeded sample file
+
+            # Picker returns a file; the seeded editor dialog auto-accepts.
+            with mock.patch.object(
+                QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (chosen, ""))
+            ), mock.patch.object(QuickFileDialog, "exec", lambda self: QDialog.DialogCode.Accepted):
+                window.add_quick_file()  # the "+" entry point (no QuickFile passed)
+
+            files = window.quick_files_snapshot()
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].label, Path(chosen).name)  # name defaults to the file name
+            self.assertEqual(files[0].path, chosen)
+            # The picker's directory is remembered for next time.
+            self.assertEqual(window.settings.last_script_path, str(Path(chosen).parent))
+
+            # Cancelling the picker adds nothing (no dialog, no row).
+            with mock.patch.object(
+                QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", ""))
+            ):
+                window.add_quick_file()
+            self.assertEqual(len(window.quick_files_snapshot()), 1)
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
     def test_quick_command_sidebar_has_csv_import_export_actions(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_command_sidebar_csv.json")
         settings_path.unlink(missing_ok=True)
@@ -1552,10 +1658,14 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             file_titles = [action.text() for action in window.file_menu.actions()]
+            self.assertIn("Import / Export", file_titles)
 
-            self.assertIn("App Settings Import / Export...", file_titles)
-            self.assertNotIn("Import App Settings", file_titles)
-            self.assertNotIn("Export App Settings", file_titles)
+            import_export_titles = [
+                action.text() for action in window.import_export_menu.actions()
+            ]
+            self.assertIn("App Settings Import / Export...", import_export_titles)
+            self.assertNotIn("Import App Settings", import_export_titles)
+            self.assertNotIn("Export App Settings", import_export_titles)
 
             dialog = app_module.AppSettingsTransferDialog(parent=window)
             label_text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
@@ -1635,8 +1745,12 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "COM22")
             self.assertEqual(
                 window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
-                window.theme.text.lower(),
+                window.theme.muted.lower(),
             )
+            # The prompt chevron and the typed draft gray out while disconnected, so
+            # it reads as "nothing can be sent".
+            self.assertEqual(session.command_input._prompt_color.lower(), window.theme.muted.lower())
+            self.assertEqual(session.command_input._draft_color.lower(), window.theme.muted.lower())
             self.assertEqual(window.connection_status_label.text(), "Closed | COM22 | 115200 8N1 | CRLF | Log off")
             self.assertEqual(window.connection_action_button.text(), "Connect")
 
@@ -1645,6 +1759,50 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(connect_calls, ["COM22"])
             self.assertEqual(window.connection_status_label.text(), "Closed | COM22 | 115200 8N1 | CRLF | Log off")
             self.assertEqual(window.connection_action_button.text(), "Connect")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_prompt_and_draft_ungray_when_the_port_connects(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_connection_ungray.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.profile = SerialProfile(port="COM22", baudrate=115200, auto_reconnect=False)
+            session._ports = [{"device": "COM22", "description": "Test port", "hwid": ""}]
+            theme = window.theme
+            command_input = session.command_input
+
+            session._update_connection_ui(False)
+            self.assertEqual(command_input._prompt_color.lower(), theme.muted.lower())
+            self.assertEqual(command_input._draft_color.lower(), theme.muted.lower())
+
+            # Connecting restores the live prompt + draft ink.
+            session._connected = True
+            session._update_connection_ui(True)
+            self.assertEqual(command_input._prompt_color.lower(), theme.tx.lower())
+            self.assertEqual(command_input._draft_color.lower(), theme.tx.lower())
+
+            # Disconnecting grays it again.
+            session._connected = False
+            session._update_connection_ui(False)
+            self.assertEqual(command_input._prompt_color.lower(), theme.muted.lower())
+            self.assertEqual(command_input._draft_color.lower(), theme.muted.lower())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1693,12 +1851,21 @@ class AppSessionTests(unittest.TestCase):
             )
             self.assertEqual(window.connection_action_button.text(), "Stop Retry")
             self.assertTrue(window.connection_status_label.text().startswith("Retrying | COM99"))
+            # The prompt chevron spins instead of spamming "." into the transcript:
+            # the ">" is swapped for an animated glyph at the cursor.
+            self.assertTrue(session._retrying)
+            self.assertTrue(session._retry_spinner_timer.isActive())
+            self.assertNotIn(">", session.command_input.prompt)
 
             window.connection_action_button.click()
 
             self.assertEqual(disconnect_calls, [True])
             self.assertEqual(window.connection_action_button.text(), "Connect")
             self.assertTrue(window.connection_status_label.text().startswith("Missing | COM99"))
+            # Leaving the retry state stops the spinner and restores the ">" prompt.
+            self.assertFalse(session._retrying)
+            self.assertFalse(session._retry_spinner_timer.isActive())
+            self.assertIn(">", session.command_input.prompt)
             self.assertEqual(
                 window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
                 window.theme.error.lower(),
@@ -2448,21 +2615,20 @@ class AppSessionTests(unittest.TestCase):
             window = app_module.MainWindow()
             menu_bar = window.menuBar()
             top_level = [action.text() for action in menu_bar.actions()]
-            self.assertEqual(top_level, ["File", "Edit", "View", "Session", "Serial", "Tools", "Help"])
+            self.assertEqual(
+                top_level,
+                ["File", "Edit", "View", "Connection", "Terminal", "Tools", "Help"],
+            )
 
             tools_titles = [action.text() for action in window.tools_menu.actions()]
             self.assertIn("Command Palette", tools_titles)
-            self.assertIn("Command Files", tools_titles)
-            self.assertIn("Quick Commands", tools_titles)
-            self.assertIn("Quick Files", tools_titles)
-
-            command_file_titles = [action.text() for action in window.command_files_menu.actions()]
-            self.assertIn("New Command File", command_file_titles)
-            self.assertIn("Open Command File Editor", command_file_titles)
-            self.assertIn("Run in Terminal", command_file_titles)
-            self.assertIn("Run Command File", command_file_titles)
-            self.assertIn("Pause / Resume Command File", command_file_titles)
-            self.assertIn("Stop Command File", command_file_titles)
+            self.assertIn("Run Command File", tools_titles)
+            self.assertIn("Pause / Resume Command File", tools_titles)
+            self.assertIn("Stop Command File", tools_titles)
+            self.assertIn("Run in Terminal", tools_titles)
+            self.assertIn("Add Saved Command...", tools_titles)
+            self.assertIn("Add Saved File...", tools_titles)
+            self.assertIn("Open Config Folder", tools_titles)
             stop_file_actions = [
                 action
                 for action in window.findChildren(QAction)
@@ -2470,25 +2636,38 @@ class AppSessionTests(unittest.TestCase):
             ]
             self.assertTrue(any(action.shortcut().toString() == "Ctrl+." for action in stop_file_actions))
 
-            quick_command_titles = [action.text() for action in window.quick_commands_menu.actions()]
-            self.assertIn("Save Current Input", quick_command_titles)
-            self.assertIn("Delete All Quick Commands", quick_command_titles)
-            self.assertIn("Import CSV", quick_command_titles)
-            self.assertIn("Export CSV", quick_command_titles)
+            file_titles = [action.text() for action in window.file_menu.actions()]
+            self.assertIn("New Command File", file_titles)
+            self.assertIn("Open Command File Editor", file_titles)
+            self.assertIn("Open Recent", file_titles)
+            self.assertIn("Save Command File", file_titles)
+            self.assertIn("Send File...", file_titles)
+            self.assertIn("Close Other Tabs", file_titles)
+            self.assertIn("Preferences...", file_titles)
 
-            quick_file_titles = [action.text() for action in window.quick_files_menu.actions()]
-            self.assertIn("Run Selected", quick_file_titles)
-            self.assertIn("Edit Selected File", quick_file_titles)
-            self.assertIn("Delete All Quick Files", quick_file_titles)
-            self.assertIn("Import CSV", quick_file_titles)
-            self.assertIn("Export CSV", quick_file_titles)
+            connection_titles = [action.text() for action in window.connection_menu.actions()]
+            self.assertIn("Connect / Disconnect", connection_titles)
+            self.assertIn("Send Mode", connection_titles)
+            self.assertIn("Line Ending", connection_titles)
+            self.assertIn("DTR", connection_titles)
+            self.assertIn("RTS", connection_titles)
+            self.assertIn("Send Break", connection_titles)
+
+            terminal_titles = [action.text() for action in window.terminal_menu.actions()]
+            self.assertIn("Rename Tab", terminal_titles)
+            self.assertIn("Clear Terminal", terminal_titles)
+            self.assertIn("Start / Stop Log", terminal_titles)
+            self.assertIn("Open Log Folder", terminal_titles)
 
             edit_titles = [action.text() for action in window.edit_menu.actions()]
             self.assertIn("Find", edit_titles)
             self.assertIn("Replace", edit_titles)
+            self.assertIn("Convert Selection", edit_titles)
             self.assertIn("Clear Command History", edit_titles)
 
             help_titles = [action.text() for action in window.help_menu.actions()]
+            self.assertIn("Keyboard Shortcuts...", help_titles)
+            self.assertIn("Report a Bug", help_titles)
             self.assertIn("Check for Updates", help_titles)
             self.assertIn("Check for Updates on Launch", help_titles)
         finally:

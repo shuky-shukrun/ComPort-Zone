@@ -280,6 +280,7 @@ class DialogExtractionTests(unittest.TestCase):
             send_mode="Hex Bytes",
             group="Factory",
             line_ending_override="CRLF",
+            favorite=True,
             created_at="2026-01-01T00:00:00Z",
         )
         dialog = QuickCommandDialog(original)
@@ -302,6 +303,9 @@ class DialogExtractionTests(unittest.TestCase):
             self.assertEqual(command.line_ending_override, "LF")
             self.assertEqual(command.created_at, "2026-01-01T00:00:00Z")
             self.assertTrue(command.updated_at)
+            # Editing must not silently unfavourite the command (the dialog has no
+            # star control, so the favourite flag round-trips from the original).
+            self.assertTrue(command.favorite)
         finally:
             dialog.deleteLater()
 
@@ -313,6 +317,20 @@ class DialogExtractionTests(unittest.TestCase):
             self.assertEqual(quick_file.id, "file-1")
             self.assertEqual(quick_file.label, "startup.cmd")
             self.assertEqual(quick_file.path, "C:/scripts/startup.cmd")
+        finally:
+            dialog.deleteLater()
+
+    def test_quick_file_dialog_preserves_favorite_on_edit(self) -> None:
+        dialog = QuickFileDialog(
+            QuickFile(id="file-2", label="Boot", path="C:/scripts/boot.cpz", favorite=True)
+        )
+        try:
+            dialog.label_input.setText("Bring-up")
+            quick_file = dialog.quick_file()
+
+            self.assertEqual(quick_file.id, "file-2")
+            self.assertEqual(quick_file.label, "Bring-up")
+            self.assertTrue(quick_file.favorite)
         finally:
             dialog.deleteLater()
 

@@ -75,6 +75,21 @@ class TransportAdapter(Protocol):
     def send_bytes(self, data: bytes) -> None:
         ...
 
+    def set_dtr(self, value: bool) -> bool:
+        ...
+
+    def set_rts(self, value: bool) -> bool:
+        ...
+
+    def send_break(self, duration: float = 0.25) -> bool:
+        ...
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        ...
+
+    def supports_signals(self) -> bool:
+        ...
+
     def subscribe_events(self) -> Queue[SerialEvent]:
         ...
 
@@ -145,6 +160,21 @@ class SerialTransportAdapter:
     def send_bytes(self, data: bytes) -> None:
         self.client.send_bytes(data)
 
+    def set_dtr(self, value: bool) -> bool:
+        return self.client.set_dtr(value)
+
+    def set_rts(self, value: bool) -> bool:
+        return self.client.set_rts(value)
+
+    def send_break(self, duration: float = 0.25) -> bool:
+        return self.client.send_break(duration)
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        return self.client.current_signal_state()
+
+    def supports_signals(self) -> bool:
+        return True
+
     def subscribe_events(self) -> Queue[SerialEvent]:
         return self.client.subscribe_events()
 
@@ -192,6 +222,21 @@ class LanTransportAdapter:
 
     def send_bytes(self, data: bytes) -> None:
         self.client.send_bytes(data)
+
+    def set_dtr(self, value: bool) -> bool:
+        return False
+
+    def set_rts(self, value: bool) -> bool:
+        return False
+
+    def send_break(self, duration: float = 0.25) -> bool:
+        return False
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        return None
+
+    def supports_signals(self) -> bool:
+        return False
 
     def subscribe_events(self) -> Queue[SerialEvent]:
         return self.client.subscribe_events()

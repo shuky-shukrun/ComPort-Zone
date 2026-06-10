@@ -498,12 +498,31 @@ class SplitWorkspaceWidget(QWidget):
             index = int(bytes(event.mimeData().data(TAB_MIME_TYPE)).decode("ascii"))
         except ValueError:
             return
-        if self.move_tab_to_other_pane(index, orientation=Qt.Orientation.Horizontal):
+        # A drop into the single pane creates a split whose orientation follows where
+        # the tab landed (drag toward the bottom → split down). With two panes the tab
+        # just moves, so keep the layout's current orientation rather than flipping it.
+        orientation = (
+            self._split_orientation_for(event)
+            if len(self._panes) == 1
+            else self.splitter.orientation()
+        )
+        if self.move_tab_to_other_pane(index, orientation=orientation):
             event.acceptProposedAction()
 
     def _event_position(self, event) -> QPoint:
         position = event.position() if hasattr(event, "position") else event.pos()
         return position.toPoint() if hasattr(position, "toPoint") else position
+
+    def _split_orientation_for(self, event) -> Qt.Orientation:
+        """Right vs down for a *new* split, from where the tab is dropped: a drop in
+        the lower half that is more downward than rightward splits down; everything
+        else splits right (the default). The live drop preview shows which you'll get."""
+        position = self._event_position(event)
+        fraction_x = position.x() / max(1, self.width())
+        fraction_y = position.y() / max(1, self.height())
+        if fraction_y > 0.5 and fraction_y > fraction_x:
+            return Qt.Orientation.Vertical
+        return Qt.Orientation.Horizontal
 
     def _dragged_ref_from_event(self, event) -> WorkspaceTabRef | None:
         try:
@@ -517,8 +536,17 @@ class SplitWorkspaceWidget(QWidget):
         if dragged_ref is not None:
             if len(self._panes) == 1:
                 rect = self.rect()
+                if self._split_orientation_for(event) == Qt.Orientation.Vertical:
+                    midpoint = max(1, rect.height() // 2)
+                    return (
+                        QRect(rect.left(), midpoint, rect.width(), max(1, rect.height() - midpoint)),
+                        "Release to split down",
+                    )
                 midpoint = max(1, rect.width() // 2)
-                return QRect(midpoint, rect.top(), max(1, rect.width() - midpoint), rect.height()), "Release to split right"
+                return (
+                    QRect(midpoint, rect.top(), max(1, rect.width() - midpoint), rect.height()),
+                    "Release to split right",
+                )
             target = self._panes[1] if self._panes[0] is dragged_ref.pane else self._panes[0]
             return target.geometry(), "Release to move tab here"
         position = self._event_position(event)

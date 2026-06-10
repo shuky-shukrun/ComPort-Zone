@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Property, QRect, QSize, Qt, Signal
+from PySide6.QtCore import Property, QEvent, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPaintEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -46,15 +47,48 @@ ACTION_ICON = 14
 def row_action_keys(kind: str, favorite: bool = False) -> list[str]:
     """Inline action keys for a row, ordered left-to-right (send/play stays rightmost).
 
-    * saved / favourite command -> star (favourite toggle) + send
-    * quick file                -> star (favourite toggle) + play
+    * saved / favourite command -> remove · edit · star (favourite toggle) · send
+    * quick file                -> remove · edit · star (favourite toggle) · play
     * history                   -> remove · favourite · save · send
+
+    The ``remove`` (✕) and ``edit`` (pencil) glyphs let a row be deleted or edited
+    without opening the right-click menu. On a favourite row the ✕ removes the item
+    from *saved* entirely (the star, by contrast, only drops it from favourites) —
+    see :func:`action_tooltip`.
     """
     if kind == "file":
-        return ["star", "play"]
+        return ["remove", "edit", "star", "play"]
     if kind == "history":
         return ["remove", "favorite", "save", "send"]
-    return ["star", "send"]
+    return ["remove", "edit", "star", "send"]
+
+
+def action_tooltip(key: str, kind: str, favorite: bool, is_favorites: bool) -> str:
+    """Hover text for an inline action glyph.
+
+    ``is_favorites`` marks the favourites list, where the star and ✕ differ in
+    scope: the star drops the row from favourites only, while ✕ deletes it from
+    saved (and therefore everywhere). That distinction is spelled out here so the
+    destructive ✕ never reads as a mere "unfavourite".
+    """
+    if key == "send":
+        return "Send"
+    if key == "play":
+        return "Run"
+    if key == "edit":
+        return "Edit"
+    if key == "save":
+        return "Save to commands"
+    if key in ("star", "favorite"):
+        return "Remove from favorites" if (favorite or is_favorites) else "Add to favorites"
+    if key == "remove":
+        if kind == "history":
+            return "Remove from history"
+        noun = "file" if kind == "file" else "command"
+        if is_favorites:
+            return f"Remove {noun} from saved (also removes it from favorites)"
+        return f"Remove {noun} from saved"
+    return ""
 
 
 def action_zones(rect: QRect, count: int) -> list[QRect]:
@@ -247,9 +281,12 @@ class QuickRowDelegate(QStyledItemDelegate):
             # this too, so adding from history visibly fills the star).
             name = "star-fill" if favorite else "star"
             color = (pal.accent if on else pal.status) if favorite else (pal.status if on else pal.muted)
+        elif key == "edit":
+            name, color = "edit", (pal.text if on else pal.muted)
         elif key == "save":
             name, color = "plus", (pal.accent if on else pal.muted)
         elif key == "remove":
+            # Destructive: lights up red on hover so it never reads like the send glyph.
             name, color = "x", (pal.error if on else pal.muted)
         else:
             return
@@ -275,10 +312,31 @@ class QuickActionList(EmptyHintListWidget):
         self.row_delegate = QuickRowDelegate(palette or COMPORT_DARK, self)
         self.setItemDelegate(self.row_delegate)
         self.setMouseTracking(True)
+        # Set on the favourites lists so the star/✕ glyphs (and their tooltips) can
+        # explain that ✕ removes the row from *saved*, not just from favourites.
+        self.is_favorites = False
 
     def apply_theme_palette(self, palette: ThemePalette) -> None:
         self.row_delegate.set_palette(palette)
         self.viewport().update()
+
+    def viewportEvent(self, event) -> bool:
+        # Per-glyph tooltips: when the cursor rests on an inline action, describe
+        # that action instead of falling back to the row's (command) tooltip.
+        if event.type() == QEvent.Type.ToolTip:
+            row, action = self._hit_test(event.pos())
+            if row >= 0 and action >= 0:
+                item = self.item(row)
+                if item is not None:
+                    kind = str(item.data(ROLE_KIND) or "command")
+                    favorite = bool(item.data(ROLE_FAVORITE))
+                    keys = row_action_keys(kind, favorite)
+                    if 0 <= action < len(keys):
+                        text = action_tooltip(keys[action], kind, favorite, self.is_favorites)
+                        if text:
+                            QToolTip.showText(event.globalPos(), text, self)
+                            return True
+        return super().viewportEvent(event)
 
     def _row_action_keys(self, index) -> list[str]:
         return row_action_keys(str(index.data(ROLE_KIND) or "command"), bool(index.data(ROLE_FAVORITE)))

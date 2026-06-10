@@ -13,12 +13,16 @@ class FakeDragEvent:
         self._mime = QMimeData()
         self._mime.setData(TAB_MIME_TYPE, QByteArray(str(index).encode("ascii")))
         self._position = position
+        self.accepted = False
 
     def mimeData(self) -> QMimeData:
         return self._mime
 
     def position(self) -> QPointF:
         return self._position
+
+    def acceptProposedAction(self) -> None:
+        self.accepted = True
 
 
 class SplitWorkspaceWidgetTests(unittest.TestCase):
@@ -259,6 +263,78 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
 
         workspace.deleteLater()
         tab.deleteLater()
+
+    def test_drop_preview_offers_split_down_for_a_low_drop(self) -> None:
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        workspace.addTab(QWidget(), "Terminal")
+
+        workspace._show_drop_preview(FakeDragEvent(0, QPointF(250, 430)))
+        self.qt.processEvents()
+
+        self.assertEqual(workspace.drop_preview.text(), "Release to split down")
+        # The preview fills the bottom half rather than a right-hand column.
+        self.assertGreater(workspace.drop_preview.geometry().top(), workspace.height() // 2)
+
+        workspace.deleteLater()
+
+    def test_dropping_a_tab_low_splits_the_view_down(self) -> None:
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        workspace.addTab(QWidget(), "Terminal")
+
+        event = FakeDragEvent(0, QPointF(250, 430))
+        workspace.dropEvent(event)
+        self.qt.processEvents()
+
+        self.assertTrue(event.accepted)
+        self.assertEqual(workspace.pane_count(), 2)
+        self.assertEqual(workspace.splitter.orientation(), Qt.Orientation.Vertical)
+
+        workspace.deleteLater()
+
+    def test_dropping_a_tab_to_the_right_splits_the_view_right(self) -> None:
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        workspace.addTab(QWidget(), "Terminal")
+
+        workspace.dropEvent(FakeDragEvent(0, QPointF(750, 120)))
+        self.qt.processEvents()
+
+        self.assertEqual(workspace.pane_count(), 2)
+        self.assertEqual(workspace.splitter.orientation(), Qt.Orientation.Horizontal)
+
+        workspace.deleteLater()
+
+    def test_dragging_a_tab_between_panes_keeps_the_current_orientation(self) -> None:
+        # Regression: the drop used to force a horizontal split, flipping a vertical
+        # (split-down) layout to side-by-side when a tab was dragged between panes.
+        workspace = SplitWorkspaceWidget()
+        workspace.resize(900, 500)
+        workspace.show()
+        self.qt.processEvents()
+        first = QWidget()
+        second = QWidget()
+        workspace.addTab(first, "First")
+        workspace.addTab(second, "Second")
+        workspace.split_current_down()
+        self.qt.processEvents()
+        self.assertEqual(workspace.splitter.orientation(), Qt.Orientation.Vertical)
+
+        workspace.dropEvent(FakeDragEvent(workspace.indexOf(first), QPointF(100, 100)))
+        self.qt.processEvents()
+
+        self.assertEqual(workspace.splitter.orientation(), Qt.Orientation.Vertical)
+
+        workspace.deleteLater()
+        first.deleteLater()
+        second.deleteLater()
 
 
 if __name__ == "__main__":

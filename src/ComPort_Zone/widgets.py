@@ -111,19 +111,33 @@ def apply_line_spacing(text_edit, percent: int) -> None:
 
 
 class LineSpacingController:
-    """Holds a QTextEdit/QPlainTextEdit at a chosen proportional line height, applying
-    it to blocks that appear later — the terminal streams new lines, the editor gains
-    them as the user types — via the document's contentsChange signal."""
+    """Holds a QTextEdit/QPlainTextEdit at a chosen proportional line height.
 
-    def __init__(self, text_edit) -> None:
+    ``reactive`` keeps blocks that appear *programmatically* in sync via the
+    document's ``contentsChange`` signal — the terminal streams new transcript
+    lines that way. The editor passes ``reactive=False``: re-formatting a block
+    inside ``contentsChange`` pushes a stray entry onto the undo stack (and
+    re-enters during an undo), which silently breaks Ctrl+Z. New lines the user
+    types inherit the previous block's height anyway, so the editor only needs a
+    one-shot apply on load / spacing change."""
+
+    def __init__(self, text_edit, *, reactive: bool = True) -> None:
         self._edit = text_edit
         self._percent = 100
         self._applying = False
-        text_edit.document().contentsChange.connect(self._on_contents_change)
+        self._reactive = reactive
+        if reactive:
+            text_edit.document().contentsChange.connect(self._on_contents_change)
 
     def set_percent(self, percent: int) -> None:
         self._percent = max(100, int(percent))
         self._guarded(lambda: apply_line_spacing(self._edit, self._percent))
+
+    def reapply(self) -> None:
+        """Re-apply the current spacing to the whole document — call after a
+        programmatic ``setPlainText``, which resets every block to default height."""
+        if self._percent > 100:
+            self._guarded(lambda: apply_line_spacing(self._edit, self._percent))
 
     def _on_contents_change(self, position: int, _removed: int, added: int) -> None:
         if self._applying or self._percent <= 100:
@@ -147,6 +161,11 @@ class LineSpacingController:
             work()
         finally:
             self._applying = False
+
+
+# Cap the terminal's draft undo history so a long editing session can't grow it
+# without bound (each entry is just a short command line + caret offset).
+DRAFT_UNDO_LIMIT = 200
 
 
 class HistoryLineEdit(QLineEdit):
@@ -306,7 +325,13 @@ class IntegratedTerminalEdit(QTextEdit):
         self._completion_palette: dict[str, str] | None = None
         self.font_zoom_callback: Callable[[int], None] | None = None
         self.setAcceptRichText(False)
+        # Native undo is unusable here: the transcript, prompt and draft share one
+        # document, so QTextEdit's undo would rewind committed output. We keep a
+        # small draft-only history instead (see undo/redo below).
         self.setUndoRedoEnabled(False)
+        self._draft_undo: list[tuple[str, int]] = []
+        self._draft_redo: list[tuple[str, int]] = []
+        self._draft_undo_kind: str | None = None
         self.setAcceptDrops(False)
         self._line_spacing = LineSpacingController(self)
         self._replace_document("", "", 0)
@@ -322,6 +347,26 @@ class IntegratedTerminalEdit(QTextEdit):
         if hint is not None:
             self._hint_color = hint
             self._ghost_color = hint
+        self._reformat_prompt_and_draft()
+        self.viewport().update()
+
+    def set_prompt_color(self, color: str) -> None:
+        """Recolor only the prompt leader (the ``<tab>  >`` run), leaving the typed
+        draft and committed transcript untouched — used to flag auto-reconnect amber
+        at the cursor without tinting whatever the user is mid-typing."""
+        if color == self._prompt_color:
+            return
+        self._prompt_color = color
+        self._reformat_prompt_and_draft()
+        self.viewport().update()
+
+    def set_draft_color(self, color: str) -> None:
+        """Recolor only the editable draft (what the user is typing), leaving the
+        prompt leader and committed transcript untouched — used to gray the input
+        while the port is closed/disconnected."""
+        if color == self._draft_color:
+            return
+        self._draft_color = color
         self._reformat_prompt_and_draft()
         self.viewport().update()
 
@@ -476,6 +521,9 @@ class IntegratedTerminalEdit(QTextEdit):
         return full_text[start:]
 
     def setText(self, text: str) -> None:
+        # Programmatic draft swaps (history recall, clearing after send) start a fresh
+        # context — drop the per-keystroke undo history so Ctrl+Z can't cross them.
+        self._reset_draft_history()
         self._replace_draft(str(text), len(str(text)))
 
     def cursorPosition(self) -> int:
@@ -597,24 +645,80 @@ class IntegratedTerminalEdit(QTextEdit):
         self.setTextCursor(cursor)
         return True
 
+    def copy(self) -> None:
+        if self.textCursor().hasSelection():
+            super().copy()
+            return
+        # No selection: copy the whole draft (the command line being typed) so Ctrl+C
+        # grabs the line without first selecting it.
+        if self.text():
+            QApplication.clipboard().setText(self.text())
+
     def cut(self) -> None:
-        if not self.selection_within_draft():
-            self.copy()
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            if not self.selection_within_draft():
+                self.copy()  # selection reaches into the read-only transcript — copy only
+                return
+            before = self.text()
+            before_offset = self.cursorPosition()
+            super().cut()
+            if self.text() != before:
+                self._record_draft_edit(before, before_offset, "cut")
+                self.textEdited.emit(self.text())
+            return
+        # No selection: cut the whole draft line.
+        if not self.text():
             return
         before = self.text()
-        super().cut()
-        if self.text() != before:
-            self.textEdited.emit(self.text())
+        before_offset = self.cursorPosition()
+        QApplication.clipboard().setText(self.text())
+        self._replace_draft("", 0)
+        self._record_draft_edit(before, before_offset, "cut")
+        self.textEdited.emit(self.text())
+        self._refresh_inline_overlay()
 
     def paste(self) -> None:
         clipboard = QApplication.clipboard()
         self._insert_draft_text(clipboard.text())
 
     def undo(self) -> None:
-        return
+        if not self._draft_undo:
+            return
+        self._draft_redo.append((self.text(), self.cursorPosition()))
+        text, offset = self._draft_undo.pop()
+        self._draft_undo_kind = None
+        self._replace_draft(text, offset)
+        self.textEdited.emit(self.text())
+        self._refresh_inline_overlay()
 
     def redo(self) -> None:
-        return
+        if not self._draft_redo:
+            return
+        self._draft_undo.append((self.text(), self.cursorPosition()))
+        text, offset = self._draft_redo.pop()
+        self._draft_undo_kind = None
+        self._replace_draft(text, offset)
+        self.textEdited.emit(self.text())
+        self._refresh_inline_overlay()
+
+    def _record_draft_edit(self, before_text: str, before_offset: int, kind: str) -> None:
+        """Snapshot the draft before an edit for Ctrl+Z. Consecutive same-kind
+        typing/deleting coalesces into one step (like a native line edit); paste and
+        cut always start a fresh step. Any new edit clears the redo history."""
+        if kind in ("type", "delete") and kind == self._draft_undo_kind and self._draft_undo:
+            self._draft_redo.clear()
+            return
+        self._draft_undo.append((before_text, before_offset))
+        if len(self._draft_undo) > DRAFT_UNDO_LIMIT:
+            self._draft_undo.pop(0)
+        self._draft_redo.clear()
+        self._draft_undo_kind = kind
+
+    def _reset_draft_history(self) -> None:
+        self._draft_undo.clear()
+        self._draft_redo.clear()
+        self._draft_undo_kind = None
 
     def insertFromMimeData(self, source) -> None:
         if source.hasText():
@@ -704,6 +808,17 @@ class IntegratedTerminalEdit(QTextEdit):
             event.accept()
             return
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_Z:
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    self.redo()
+                else:
+                    self.undo()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_Y:
+                self.redo()
+                event.accept()
+                return
             if event.key() == Qt.Key.Key_C:
                 self.copy()
                 event.accept()
@@ -735,11 +850,14 @@ class IntegratedTerminalEdit(QTextEdit):
                 return
 
         before = self.text()
+        before_offset = self.cursorPosition()
         if self._is_editing_key(event):
             self._ensure_cursor_in_draft()
         super().keyPressEvent(event)
         after = self.text()
         if after != before:
+            kind = "delete" if event.key() in {Qt.Key.Key_Backspace, Qt.Key.Key_Delete} else "type"
+            self._record_draft_edit(before, before_offset, kind)
             self.textEdited.emit(after)
             if event.text() and event.text()[-1] in TERMINAL_COMPLETION_TOKEN_CHARS:
                 self.show_completions()
@@ -808,11 +926,13 @@ class IntegratedTerminalEdit(QTextEdit):
         if not text:
             return
         before = self.text()
+        before_offset = self.cursorPosition()
         self._ensure_cursor_in_draft()
         cursor = self.textCursor()
         cursor.insertText(text, self._format(self._draft_color))
         self.setTextCursor(cursor)
         if self.text() != before:
+            self._record_draft_edit(before, before_offset, "paste")
             self.textEdited.emit(self.text())
 
     def _ensure_cursor_in_draft(self) -> None:
