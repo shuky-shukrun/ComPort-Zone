@@ -11,6 +11,7 @@ from ComPort_Zone.command_editor_core import CommandEditorSources
 from ComPort_Zone.command_run_targets import CommandRunTarget, CommandRunTargetService
 from ComPort_Zone.models import QuickCommand, QuickFile
 from ComPort_Zone.themes import THEMES
+from ComPort_Zone.ui.stylesheet import build_stylesheet
 
 
 class CommandEditorTests(unittest.TestCase):
@@ -546,6 +547,39 @@ class CommandEditorTests(unittest.TestCase):
             dialog._dirty = False
             dialog.close()
             dialog.deleteLater()
+
+    def test_editor_run_button_is_disabled_without_a_connected_target(self) -> None:
+        targets: list[CommandRunTarget] = []
+        dialog = CommandFileEditorDialog(
+            sources=CommandEditorSources(),
+            run_target_service=CommandRunTargetService(
+                targets_supplier=lambda: list(targets),
+                run_callback=lambda request, target_id: True,
+            ),
+        )
+        try:
+            dialog.refresh_run_targets()
+            self.assertFalse(dialog.run_button.isEnabled())
+            self.assertFalse(dialog.run_target_combo.isEnabled())
+            self.assertEqual(dialog.run_target_combo.currentText(), "No connected terminals")
+
+            targets.append(CommandRunTarget(7, "COM7"))
+            dialog.refresh_run_targets()
+            self.assertTrue(dialog.run_button.isEnabled())
+
+            targets.clear()
+            dialog.refresh_run_targets()
+            self.assertFalse(dialog.run_button.isEnabled())
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_disabled_run_button_has_its_own_grayed_style(self) -> None:
+        # The #id selector outweighs the generic QPushButton:disabled rule, so without
+        # a dedicated rule the Run button stays green even while disabled.
+        sheet = build_stylesheet(THEMES["VS Code Dark"])
+        self.assertIn("QPushButton#editorRunButton:disabled", sheet)
 
 
 if __name__ == "__main__":

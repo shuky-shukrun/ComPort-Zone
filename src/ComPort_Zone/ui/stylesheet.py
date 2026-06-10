@@ -539,6 +539,9 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QPushButton#editorRunButton:hover {{ background: {run_btn_hover}; }}
     QPushButton#editorRunButton:pressed {{ background: {run_btn_press}; }}
+    /* Grayed-out while no terminal is connected to run into. The #id selector
+       outweighs the generic QPushButton:disabled rule, so it needs its own. */
+    QPushButton#editorRunButton:disabled {{ background: {elevated}; color: {tx_faint}; }}
 
     QLabel#editorStatusLabel, QLabel#editorPathLabel {{
         color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px;
