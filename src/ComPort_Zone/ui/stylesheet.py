@@ -269,6 +269,22 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLineEdit:hover, QComboBox:hover {{ border-color: {bd_strong}; }}
     QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border-color: {accent}; }}
     QComboBox {{ padding-right: 24px; }}
+    /* Setting a border on a styled QAbstractSpinBox disables the native
+       steppers, so the up/down buttons must be defined explicitly or they
+       stop responding to clicks. */
+    QAbstractSpinBox {{ padding-right: 20px; }}
+    QAbstractSpinBox::up-button {{
+        subcontrol-origin: border; subcontrol-position: top right;
+        width: 18px; border: none; background: transparent;
+    }}
+    QAbstractSpinBox::down-button {{
+        subcontrol-origin: border; subcontrol-position: bottom right;
+        width: 18px; border: none; background: transparent;
+    }}
+    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{ background: {hover}; }}
+    QAbstractSpinBox::up-arrow {{ image: url({arrow_up}); width: 9px; height: 9px; }}
+    QAbstractSpinBox::down-arrow {{ image: url({arrow_down}); width: 9px; height: 9px; }}
+    QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::down-arrow:disabled {{ image: none; }}
     QComboBox::drop-down {{
         subcontrol-origin: padding; subcontrol-position: center right;
         width: 22px; border: none; background: transparent;

@@ -135,18 +135,13 @@ class PreferencesDialog(QDialog):
         )
         form.addRow("Default line ending", self.line_ending_combo)
 
-        self.reconnect_initial_input = self._delay_spin(
+        self.reconnect_interval_input = self._delay_spin(
             settings.serial.reconnect_initial_delay_ms, widget
         )
-        form.addRow("Reconnect initial delay", self.reconnect_initial_input)
-
-        self.reconnect_max_input = self._delay_spin(
-            settings.serial.reconnect_max_delay_ms, widget
+        self.reconnect_interval_input.setToolTip(
+            "Auto-reconnect retries at this fixed interval while disconnected."
         )
-        self.reconnect_max_input.setToolTip(
-            "Persisted now; the retry loop currently uses a fixed 1000 ms interval."
-        )
-        form.addRow("Reconnect max delay", self.reconnect_max_input)
+        form.addRow("Reconnect interval", self.reconnect_interval_input)
 
         return widget
 
@@ -268,12 +263,9 @@ class PreferencesDialog(QDialog):
         settings.serial.line_ending = line_ending
         settings.lan.line_ending = line_ending
 
-        initial_delay = int(self.reconnect_initial_input.value())
-        max_delay = int(self.reconnect_max_input.value())
-        settings.serial.reconnect_initial_delay_ms = initial_delay
-        settings.serial.reconnect_max_delay_ms = max_delay
-        settings.lan.reconnect_initial_delay_ms = initial_delay
-        settings.lan.reconnect_max_delay_ms = max_delay
+        interval = int(self.reconnect_interval_input.value())
+        settings.serial.reconnect_initial_delay_ms = interval
+        settings.lan.reconnect_initial_delay_ms = interval
 
         settings.log_path = self.log_path_input.text().strip()
         settings.check_for_updates_on_launch = self.check_updates_checkbox.isChecked()

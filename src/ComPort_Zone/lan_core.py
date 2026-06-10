@@ -189,11 +189,15 @@ class LanClient:
         profile = self.active_profile
         if not profile:
             return
+        interval_ms = max(
+            int(getattr(profile, "reconnect_initial_delay_ms", LAN_RECONNECT_RETRY_INTERVAL_MS)),
+            100,
+        )
         self._emit(
             "status",
-            f"Auto-reconnect armed. Retrying every {LAN_RECONNECT_RETRY_INTERVAL_MS} ms.",
+            f"Auto-reconnect armed. Retrying every {interval_ms} ms.",
         )
-        while not stop_event.wait(LAN_RECONNECT_RETRY_INTERVAL_MS / 1000):
+        while not stop_event.wait(interval_ms / 1000):
             if self._user_disconnect or self.is_connected:
                 return
             profile = self.active_profile

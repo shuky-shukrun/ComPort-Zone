@@ -92,6 +92,19 @@ class SerialSignalTests(unittest.TestCase):
         self.assertFalse(client.set_rts(True))
         self.assertFalse(client.send_break())
 
+    def test_reconnect_loop_uses_profile_interval(self) -> None:
+        from threading import Event
+
+        client = SerialClient()
+        client._desired_profile = SerialProfile(reconnect_initial_delay_ms=250)
+        stop = Event()
+        stop.set()  # exit the loop right after the initial "armed" status emit
+        client._reconnect_loop(stop)
+        messages = []
+        while not client.events.empty():
+            messages.append(client.events.get_nowait().message)
+        self.assertTrue(any("250 ms" in message for message in messages))
+
 
 class ShortcutEntriesTests(unittest.TestCase):
     def test_shortcut_entries_include_bound_shortcuts_only(self) -> None:
@@ -239,12 +252,16 @@ class PreferencesDialogTests(unittest.TestCase):
         dialog = PreferencesDialog(AppSettings(theme="VS Code Dark"))
         try:
             dialog.scrollback_input.setValue(7777)
+            dialog.reconnect_interval_input.setValue(5000)
             dialog.clear_history_checkbox.setChecked(True)
             target = AppSettings()
             dialog.apply_to(target)
             self.assertEqual(target.scrollback_size, 7777)
             self.assertEqual(target.theme, "VS Code Dark")
             self.assertTrue(target.clear_history_on_exit)
+            self.assertEqual(target.serial.reconnect_initial_delay_ms, 5000)
+            self.assertEqual(target.lan.reconnect_initial_delay_ms, 5000)
+            self.assertFalse(hasattr(dialog, "reconnect_max_input"))  # removed field
         finally:
             dialog.deleteLater()
 
