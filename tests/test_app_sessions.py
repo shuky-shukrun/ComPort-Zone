@@ -1745,8 +1745,12 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "COM22")
             self.assertEqual(
                 window.tabs.tabBar().tabTextColor(window.tabs.currentIndex()).name().lower(),
-                window.theme.text.lower(),
+                window.theme.muted.lower(),
             )
+            # The prompt chevron and the typed draft gray out while disconnected, so
+            # it reads as "nothing can be sent".
+            self.assertEqual(session.command_input._prompt_color.lower(), window.theme.muted.lower())
+            self.assertEqual(session.command_input._draft_color.lower(), window.theme.muted.lower())
             self.assertEqual(window.connection_status_label.text(), "Closed | COM22 | 115200 8N1 | CRLF | Log off")
             self.assertEqual(window.connection_action_button.text(), "Connect")
 
@@ -1755,6 +1759,50 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(connect_calls, ["COM22"])
             self.assertEqual(window.connection_status_label.text(), "Closed | COM22 | 115200 8N1 | CRLF | Log off")
             self.assertEqual(window.connection_action_button.text(), "Connect")
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_prompt_and_draft_ungray_when_the_port_connects(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_connection_ungray.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session.profile = SerialProfile(port="COM22", baudrate=115200, auto_reconnect=False)
+            session._ports = [{"device": "COM22", "description": "Test port", "hwid": ""}]
+            theme = window.theme
+            command_input = session.command_input
+
+            session._update_connection_ui(False)
+            self.assertEqual(command_input._prompt_color.lower(), theme.muted.lower())
+            self.assertEqual(command_input._draft_color.lower(), theme.muted.lower())
+
+            # Connecting restores the live prompt + draft ink.
+            session._connected = True
+            session._update_connection_ui(True)
+            self.assertEqual(command_input._prompt_color.lower(), theme.tx.lower())
+            self.assertEqual(command_input._draft_color.lower(), theme.tx.lower())
+
+            # Disconnecting grays it again.
+            session._connected = False
+            session._update_connection_ui(False)
+            self.assertEqual(command_input._prompt_color.lower(), theme.muted.lower())
+            self.assertEqual(command_input._draft_color.lower(), theme.muted.lower())
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

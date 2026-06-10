@@ -624,16 +624,34 @@ class TerminalSessionWidget(QWidget):
             set_placeholder(TERMINAL_INPUT_PLACEHOLDER)
 
     def _apply_prompt_leader(self) -> None:
-        """Push the current prompt leader onto the input. One shared path so theme,
-        tab-title and timestamp refreshes — and each spinner tick — agree on the
-        chevron (``>`` normally, a spinning amber glyph while auto-reconnect retries)."""
+        """Push the current prompt leader + ink onto the input. One shared path so
+        theme, tab-title and timestamp refreshes — and each spinner tick — agree on:
+        the chevron (``>`` normally, a spinning glyph while auto-reconnect retries),
+        the leader colour, and the draft ink. While the port is closed/disconnected
+        the leader and the typed text gray out to show nothing can be sent."""
         set_prompt = getattr(self.terminal, "set_prompt_text", None)
         if not callable(set_prompt):
             return
-        chevron = RETRY_SPINNER_FRAMES[self._retry_spinner_index] if self._retrying else ">"
-        set_color = getattr(self.terminal, "set_prompt_color", None)
-        if callable(set_color):
-            set_color(self.host.theme.status if self._retrying else self.host.theme.tx)
+        theme = self.host.theme
+        connected = self._connected or self.transport.is_connected
+        if self._retrying:
+            chevron = RETRY_SPINNER_FRAMES[self._retry_spinner_index]
+            prompt_color = theme.status
+            draft_color = theme.tx
+        elif connected:
+            chevron = ">"
+            prompt_color = theme.tx
+            draft_color = theme.tx
+        else:
+            chevron = ">"
+            prompt_color = theme.muted
+            draft_color = theme.muted
+        set_prompt_color = getattr(self.terminal, "set_prompt_color", None)
+        if callable(set_prompt_color):
+            set_prompt_color(prompt_color)
+        set_draft_color = getattr(self.terminal, "set_draft_color", None)
+        if callable(set_draft_color):
+            set_draft_color(draft_color)
         set_prompt(
             prompt_leader_text(
                 self.tab_title,
@@ -1814,6 +1832,7 @@ class TerminalSessionWidget(QWidget):
         self.status_label.setToolTip(f"{self.connection_tooltip()}\nClick to open Connection Settings.")
         set_widget_state(self.status_label, state)
         self._set_retry_indicator(state == "retrying")
+        self._apply_prompt_leader()
         self.connection_button.setText(self.connection_action_text())
         self.connection_button.setToolTip(self.connection_tooltip())
         set_button_icon(self.connection_button, connection_state_icon(state), 15)
@@ -1825,9 +1844,9 @@ class TerminalSessionWidget(QWidget):
             self.host.set_status(self._status_text)
 
     def _set_retry_indicator(self, active: bool) -> None:
-        """Spin the prompt chevron while auto-reconnect is retrying, and restore the
-        plain ``>`` otherwise. Idempotent — safe to call on every connection-UI
-        refresh."""
+        """Start/stop the prompt-chevron spinner for auto-reconnect. The leader ink and
+        glyph are pushed by ``_apply_prompt_leader`` (called on every connection-UI
+        refresh), so this only owns the timer. Idempotent."""
         if active == self._retrying:
             return
         self._retrying = active
@@ -1836,7 +1855,6 @@ class TerminalSessionWidget(QWidget):
             self._retry_spinner_timer.start()
         else:
             self._retry_spinner_timer.stop()
-        self._apply_prompt_leader()
 
     def _advance_retry_spinner(self) -> None:
         self._retry_spinner_index = (self._retry_spinner_index + 1) % len(RETRY_SPINNER_FRAMES)

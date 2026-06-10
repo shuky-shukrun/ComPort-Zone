@@ -360,6 +360,16 @@ class IntegratedTerminalEdit(QTextEdit):
         self._reformat_prompt_and_draft()
         self.viewport().update()
 
+    def set_draft_color(self, color: str) -> None:
+        """Recolor only the editable draft (what the user is typing), leaving the
+        prompt leader and committed transcript untouched — used to gray the input
+        while the port is closed/disconnected."""
+        if color == self._draft_color:
+            return
+        self._draft_color = color
+        self._reformat_prompt_and_draft()
+        self.viewport().update()
+
     def set_prompt_text(self, text: str) -> None:
         """Swap the prompt leader (e.g. ``COM3   >``) in place, keeping the
         committed transcript's colours, the draft text, and the caret offset —
