@@ -13,12 +13,15 @@ from ComPort_Zone.dashboard_models import (
     MIN_POLL_INTERVAL_MS,
     ParseRule,
     TilePlacement,
+    default_dashboards,
+    example_dashboard,
     grid_row_count,
     hex_payload_error,
     normalize_layout,
     place_tile,
     set_tile_span,
 )
+from ComPort_Zone.dashboard_parse import CompiledParseRule, ParseOutcome, evaluate_rules
 
 
 def make_entry(entry_id: str, col: int = 0, row: int = 0, span_w: int = 1, span_h: int = 1) -> DashboardEntry:
@@ -254,6 +257,69 @@ class DashboardTabStateTests(unittest.TestCase):
         state = DashboardTabState.from_dict(None)
         self.assertEqual(state.dashboard_id, "")
         self.assertTrue(state.polling_enabled)
+
+
+class ExampleDashboardTests(unittest.TestCase):
+    """The shipped example must stay valid — it is every user's first
+    contact with the feature."""
+
+    def test_default_library_is_the_example(self) -> None:
+        configs = default_dashboards()
+        self.assertEqual([config.name for config in configs], ["Example Dashboard"])
+        self.assertTrue(configs[0].favorite)
+
+    def test_entries_match_the_spec(self) -> None:
+        example = example_dashboard()
+        by_command = {entry.command: entry for entry in example.entries}
+        self.assertEqual(
+            set(by_command), {"*IDN?", "OUTP?", "SYST:FIRM?"}
+        )
+
+        identity = by_command["*IDN?"]
+        self.assertEqual(identity.interval_ms, 60_000)
+        self.assertEqual((identity.tile.span_w, identity.tile.span_h), (2, 1))
+        self.assertEqual(identity.tile.kind, "value")
+        self.assertEqual(identity.parse.value_type, "text")
+
+        firmware = by_command["SYST:FIRM?"]
+        self.assertEqual(firmware.interval_ms, 60_000)
+        self.assertEqual((firmware.tile.span_w, firmware.tile.span_h), (2, 1))
+        self.assertEqual(firmware.tile.kind, "value")
+
+        output = by_command["OUTP?"]
+        self.assertEqual(output.interval_ms, 300)
+        self.assertEqual(output.tile.kind, "led")
+
+    def test_output_rules_map_states_and_labels(self) -> None:
+        output = next(
+            entry for entry in example_dashboard().entries if entry.command == "OUTP?"
+        )
+        on = evaluate_rules(output.rules, ParseOutcome(True, "1", 1.0))
+        off = evaluate_rules(output.rules, ParseOutcome(True, "0", 0.0))
+        self.assertEqual((on.state, on.label), ("ok", "ON"))
+        self.assertEqual((off.state, off.label), ("warn", "OFF"))
+
+    def test_every_entry_is_valid_and_compilable(self) -> None:
+        for entry in example_dashboard().entries:
+            self.assertEqual(entry.validation_errors(), [], msg=entry.command)
+            CompiledParseRule.compile(entry.parse)
+
+    def test_layout_has_no_overlaps(self) -> None:
+        example = example_dashboard()
+        before = {
+            entry.id: (entry.tile.col, entry.tile.row, entry.tile.span_w, entry.tile.span_h)
+            for entry in example.entries
+        }
+        normalize_layout(example.entries, example.columns)
+        after = {
+            entry.id: (entry.tile.col, entry.tile.row, entry.tile.span_w, entry.tile.span_h)
+            for entry in example.entries
+        }
+        self.assertEqual(before, after)
+
+    def test_round_trips_through_dict(self) -> None:
+        example = example_dashboard()
+        self.assertEqual(DashboardConfig.from_dict(example.to_dict()), example)
 
 
 class HexValidationTests(unittest.TestCase):

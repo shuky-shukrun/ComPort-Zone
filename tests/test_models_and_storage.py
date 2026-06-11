@@ -114,6 +114,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings(
             serial=SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
             command_history=["status", "reset"],
+            dashboards=[],  # keep the base min-compat floor in focus here
             quick_commands=[
                 QuickCommand(
                     id="cmd-1",
@@ -361,6 +362,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings(
             transport_kind="lan",
             lan=LanProfile(host="192.168.1.50", port=5025, line_ending="LF"),
+            dashboards=[],  # isolate the LAN floor from the seeded example
         )
 
         payload = settings.to_dict()
@@ -503,11 +505,39 @@ class DashboardSchemaTests(unittest.TestCase):
         )
 
     def test_plain_settings_keep_base_min_compat(self) -> None:
-        payload = AppSettings().to_dict()
+        payload = AppSettings(dashboards=[]).to_dict()
         self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
         self.assertEqual(
             payload["minimum_compatible_schema_version"],
             MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+        )
+
+    def test_first_run_seeds_the_example_dashboard(self) -> None:
+        settings = AppSettings()
+        self.assertEqual([config.name for config in settings.dashboards], ["Example Dashboard"])
+        example = settings.dashboards[0]
+        self.assertTrue(example.favorite)
+        self.assertEqual(
+            [entry.command for entry in example.entries],
+            ["*IDN?", "OUTP?", "SYST:FIRM?"],
+        )
+
+    def test_emptied_dashboard_library_stays_empty(self) -> None:
+        # Deleting the example must stick: a present-but-empty key does not
+        # re-seed (mirrors quick-command behavior).
+        restored = AppSettings.from_dict(AppSettings(dashboards=[]).to_dict())
+        self.assertEqual(restored.dashboards, [])
+
+    def test_app_settings_import_preserves_dashboards(self) -> None:
+        service = SettingsService()
+        current = AppSettings(dashboards=[self.make_dashboard()])
+        # App-settings payloads exclude the libraries section, so the parsed
+        # import seeds defaults; preservation must restore the user's library.
+        imported = AppSettings.from_dict(AppSettings().to_app_settings_dict())
+        merged = service.preserve_quick_actions(imported, current)
+        self.assertEqual(
+            [config.name for config in merged.dashboards],
+            ["PSU Bench"],
         )
 
     def test_dashboards_raise_min_compat_to_dashboard_floor(self) -> None:
@@ -558,7 +588,7 @@ class DashboardSchemaTests(unittest.TestCase):
         self.assertEqual(restored.dashboards[0].entries[0].command, "MEAS:VOLT?")
         self.assertEqual(restored.restored_dashboards[0].target_endpoint, "COM7")
 
-    def test_v4_payload_loads_without_dashboards(self) -> None:
+    def test_v4_payload_loads_and_seeds_example_dashboard(self) -> None:
         payload = AppSettings(serial=SerialProfile(port="COM9")).to_dict()
         payload["schema_version"] = 4
         payload["minimum_compatible_schema_version"] = 2
@@ -568,7 +598,9 @@ class DashboardSchemaTests(unittest.TestCase):
         loaded = SettingsService().settings_from_payload(payload)
 
         self.assertEqual(loaded.serial.port, "COM9")
-        self.assertEqual(loaded.dashboards, [])
+        # A pre-dashboard file has no "dashboards" key, so the upgrade seeds
+        # the shipped example — same as a first run.
+        self.assertEqual([config.name for config in loaded.dashboards], ["Example Dashboard"])
         self.assertEqual(loaded.restored_dashboards, [])
 
     def test_dashboard_workspace_tab_state_round_trips(self) -> None:

@@ -548,3 +548,54 @@ def grid_row_count(entries: list[DashboardEntry]) -> int:
     if not entries:
         return 0
     return max(entry.tile.row + entry.tile.span_h for entry in entries)
+
+
+def example_dashboard() -> DashboardConfig:
+    """The SCPI starter dashboard seeded on first run (favorited so it
+    shows up on the Favorites page immediately)."""
+    return DashboardConfig(
+        name="Example Dashboard",
+        description=(
+            "Shipped example: instrument identity and firmware polled every "
+            "minute, output state polled continuously as an ON/OFF lamp. "
+            "Bind it to a connected terminal tab to start polling."
+        ),
+        favorite=True,
+        columns=4,
+        entries=[
+            DashboardEntry(
+                label="Identity",
+                command="*IDN?",
+                interval_ms=60_000,
+                timeout_ms=1000,
+                parse=ParseRule(kind="line", value_type="text"),
+                tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="value"),
+            ),
+            DashboardEntry(
+                label="Output",
+                command="OUTP?",
+                interval_ms=300,
+                timeout_ms=250,
+                parse=ParseRule(kind="line", value_type="number"),
+                rules=[
+                    ColorRule(op="eq_num", operand="1", state="ok", label="ON"),
+                    ColorRule(op="eq_num", operand="0", state="warn", label="OFF"),
+                ],
+                tile=TilePlacement(col=2, row=0, span_w=1, span_h=1, kind="led"),
+            ),
+            DashboardEntry(
+                label="Firmware",
+                command="SYST:FIRM?",
+                interval_ms=60_000,
+                timeout_ms=1000,
+                parse=ParseRule(kind="line", value_type="text"),
+                tile=TilePlacement(col=0, row=1, span_w=2, span_h=1, kind="value"),
+            ),
+        ],
+    )
+
+
+def default_dashboards() -> list[DashboardConfig]:
+    """Dashboard library seeded on first run (and for settings files from
+    before the dashboard feature)."""
+    return [example_dashboard()]

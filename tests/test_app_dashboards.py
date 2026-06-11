@@ -166,7 +166,7 @@ class DashboardAppTests(unittest.TestCase):
         self.assertIs(window.tabs.currentWidget(), dashboard)
 
     def test_new_dashboard_tab_dedupes_names(self) -> None:
-        window, _path = self.launch_window(AppSettings(), "new")
+        window, _path = self.launch_window(AppSettings(dashboards=[]), "new")
         window.new_dashboard_tab()
         window.new_dashboard_tab()
         for dashboard in window.iter_dashboards():
@@ -519,11 +519,30 @@ class DashboardAppTests(unittest.TestCase):
         self.assertEqual(window.shared_drawer.dashboard_list.count(), 0)
 
     def test_new_dashboard_appears_in_sidebar(self) -> None:
-        window, _path = self.launch_window(AppSettings(), "sidebar_new")
+        window, _path = self.launch_window(AppSettings(dashboards=[]), "sidebar_new")
         window.new_dashboard_tab()
         for dashboard in window.iter_dashboards():
             self.stop_tick_timer(dashboard)
         self.assertEqual(window.shared_drawer.dashboard_list.count(), 1)
+
+    def test_fresh_install_shows_example_dashboard_in_sidebar_and_favorites(self) -> None:
+        window, _path = self.launch_window(AppSettings(), "seeded")
+        drawer = window.shared_drawer
+        names = [
+            drawer.dashboard_list.item(i).text() for i in range(drawer.dashboard_list.count())
+        ]
+        self.assertEqual(names, ["Example Dashboard"])
+        favorite_names = [
+            drawer.favorite_dashboard_list.item(i).text()
+            for i in range(drawer.favorite_dashboard_list.count())
+        ]
+        self.assertEqual(favorite_names, ["Example Dashboard"])
+        # And it opens like any saved dashboard.
+        example_id = window.settings.dashboards[0].id
+        dashboard = window.open_dashboard_tab(example_id)
+        self.assertIsNotNone(dashboard)
+        self.stop_tick_timer(dashboard)
+        self.assertEqual(len(dashboard.config.entries), 3)
 
     # --------------------------------------------------------- performance
 

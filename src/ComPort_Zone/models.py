@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .dashboard_models import DashboardConfig, DashboardTabState
+from .dashboard_models import DashboardConfig, DashboardTabState, default_dashboards
 
 LINE_ENDINGS = {
     "None": "",
@@ -493,7 +493,7 @@ class AppSettings:
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
     restored_dashboards: list[DashboardTabState] = field(default_factory=list)
-    dashboards: list[DashboardConfig] = field(default_factory=list)
+    dashboards: list[DashboardConfig] = field(default_factory=default_dashboards)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
     theme: str = "ComPort Zone Dark"
     timestamps_enabled: bool = True
@@ -725,9 +725,16 @@ class AppSettings:
                 DashboardTabState.from_dict(_dict_value(item))
                 for item in _list_value(workspace.get("dashboard_tabs"))
             ],
+            # Mirror the quick-commands seeding: a missing key (first run or
+            # a pre-dashboard settings file) gets the shipped example; a
+            # present-but-empty list stays empty (the user deleted it).
             dashboards=[
                 DashboardConfig.from_dict(_dict_value(item))
-                for item in _list_value(libraries.get("dashboards"))
+                for item in (
+                    _list_value(libraries.get("dashboards"))
+                    if "dashboards" in libraries
+                    else [config.to_dict() for config in default_dashboards()]
+                )
             ],
             workspace_layout=WorkspaceLayoutState.from_dict(_dict_value(workspace.get("layout"))),
             theme=str(app.get("theme", "ComPort Zone Dark")),
