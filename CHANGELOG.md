@@ -4,6 +4,19 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Added
+
+- **Dashboard View**: a new workspace tab type that polls commands in the background and shows the replies as live tiles.
+  - Each entry has its own interval, timeout, parse rule (first line or regex capture, text or numeric), and ordered color rules that drive the tile state (OK / WARN / FAIL, plus stale and error); LED indicator tiles render GO/NO-GO states with a label override (e.g. "TRIPPED"). The entry editor includes a live tester: paste sample device output and see the parsed value and resulting state.
+  - A dashboard binds to an open terminal tab and shares its connection. Poll traffic stays out of the terminal transcript so the terminal remains usable for manual commands (it still reaches the session log and command-file EXPECT matching; tile tooltips show each entry's raw reply window). Polling pauses automatically while the session is disconnected or a command file is running and resumes by itself; a header chip shows the binding state, and a pause/play control lets you pause manually.
+  - Tiles arrange on a drag-and-drop grid with 1×1–2×2 sizes in an explicit edit-layout mode. Edits auto-save — a live **Saved HH:MM:SS** indicator in the header makes that visible — so there is no unsaved state to lose.
+  - Dashboards are named, saved to the settings library, star-able as favorites, and import/export as JSON. Open them from File > New Dashboard, the Open Dashboard submenu, the tab strip, the command palette, Tools > Dashboards… (Ctrl+Shift+D), or the left drawer's new **Dashboards** rail page, which lists the library with the same inline row actions as commands and files (open, star, rename, delete) plus New / Import / Export / Manage in the header. A third **Favorite Dashboards** panel joins the Favorites page.
+  - Open dashboard tabs restore with the workspace and rebind to their terminal by endpoint. Feature requirements: `docs/dashboard-view-requirements.md`.
+
+### Changed
+
+- Settings schema bumped to v5 for the dashboard library. Files without dashboards remain readable by older builds; LAN-only settings now declare the LAN feature floor (v4) instead of pinning to the newest schema, so future schema bumps no longer lock LAN users out of older builds.
+
 ## 0.4.2 - 2026-06-10
 
 ### Added

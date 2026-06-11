@@ -45,10 +45,12 @@ class FakeSerialClient:
     def disconnect(self) -> None:
         self.connected = False
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
         self.sent_text.append((text, line_ending_override))
 
-    def send_bytes(self, data: bytes) -> None:
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
         self.sent_bytes.append(data)
 
     def subscribe_events(self) -> Queue[SerialEvent]:
@@ -90,10 +92,12 @@ class FakeLanClient:
     def disconnect(self) -> None:
         self.connected = False
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
         self.sent_text.append((text, line_ending_override))
 
-    def send_bytes(self, data: bytes) -> None:
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
         self.sent_bytes.append(data)
 
     def subscribe_events(self) -> Queue[SerialEvent]:

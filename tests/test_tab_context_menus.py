@@ -56,6 +56,29 @@ class FakeEditor:
         self.calls.append("save_as")
 
 
+class FakeDashboardTab:
+    def __init__(self, *, user_paused: bool = False) -> None:
+        self.calls: list[object] = []
+        reasons = frozenset({"user"}) if user_paused else frozenset()
+        self.scheduler = SimpleNamespace(paused_reasons=reasons)
+        self.edit_layout_button = SimpleNamespace(
+            isChecked=lambda: False,
+            toggle=lambda: self.calls.append("toggle_edit_layout"),
+        )
+
+    def tab_title(self) -> str:
+        return "PSU Bench"
+
+    def bind_to_session(self, session_id: int) -> None:
+        self.calls.append(("bind", session_id))
+
+    def add_entry_via_dialog(self) -> None:
+        self.calls.append("add_entry")
+
+    def set_polling_enabled(self, enabled: bool) -> None:
+        self.calls.append(("set_polling_enabled", enabled))
+
+
 class FakeContextMenuHost(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -64,13 +87,17 @@ class FakeContextMenuHost(QMainWindow):
         self.menu_builder = MainWindowMenuBuilder(self, self.command_registry)
         self.session = FakeSession()
         self.editor: FakeEditor | None = None
+        self.dashboard: FakeDashboardTab | None = None
         self.calls: list[object] = []
 
     def session_at(self, _index: int):
-        return None if self.editor else self.session
+        return None if self.editor or self.dashboard else self.session
 
     def command_file_editor_at(self, _index: int):
         return self.editor
+
+    def dashboard_at(self, _index: int):
+        return self.dashboard
 
     def _add_context_action(self, *args, **kwargs):
         return self.menu_builder.add_context_action(*args, **kwargs)
@@ -191,7 +218,55 @@ class TabContextMenuBuilderTests(unittest.TestCase):
         try:
             menu = TabContextMenuBuilder(host).build(-1)
 
-            self.assertEqual(action_titles(menu), ["New Terminal", "New Command File"])
+            self.assertEqual(
+                action_titles(menu),
+                ["New Terminal", "New Command File", "New Dashboard", "Dashboards..."],
+            )
+        finally:
+            host.deleteLater()
+
+    def test_builds_dashboard_tab_context_menu(self) -> None:
+        host = FakeContextMenuHost()
+        host.dashboard = FakeDashboardTab()
+        try:
+            menu = TabContextMenuBuilder(host).build(1)
+
+            self.assertEqual(menu.title(), "PSU Bench")
+            self.assertEqual(
+                action_titles(menu),
+                [
+                    "New Dashboard",
+                    "Rename Dashboard",
+                    "Bind to Terminal",
+                    "Pause Polling",
+                    "Add Entry...",
+                    "Edit Layout",
+                    "Dashboards...",
+                    "Move to Other Pane",
+                    "Split Right",
+                    "Split Down",
+                    "Join Tabs",
+                    "Close Tab",
+                    "Close Other Tabs",
+                    "Close Tabs to the Right",
+                ],
+            )
+
+            next(action for action in menu.actions() if action.text() == "Pause Polling").trigger()
+            self.assertIn(("set_polling_enabled", False), host.dashboard.calls)
+        finally:
+            host.deleteLater()
+
+    def test_dashboard_menu_offers_resume_when_user_paused(self) -> None:
+        host = FakeContextMenuHost()
+        host.dashboard = FakeDashboardTab(user_paused=True)
+        try:
+            menu = TabContextMenuBuilder(host).build(1)
+            titles = action_titles(menu)
+            self.assertIn("Resume Polling", titles)
+            self.assertNotIn("Pause Polling", titles)
+            next(action for action in menu.actions() if action.text() == "Resume Polling").trigger()
+            self.assertIn(("set_polling_enabled", True), host.dashboard.calls)
         finally:
             host.deleteLater()
 

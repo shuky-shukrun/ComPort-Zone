@@ -42,6 +42,14 @@ class CommandFileStatusTab(Protocol):
         ...
 
 
+class DashboardStatusTab(Protocol):
+    def tab_title(self) -> str:
+        ...
+
+    def status_summary(self) -> str:
+        ...
+
+
 def connection_state_color(state: str, theme: ThemePalette) -> str:
     if state == "connected":
         return theme.rx
@@ -66,13 +74,18 @@ class WorkspaceStatusPresenter:
         connection_status_label: QLabel,
         connection_action_button: QPushButton,
         footer: QLabel,
+        dashboard_type: type[QWidget] | None = None,
     ) -> None:
         self.tabs = tabs
         self.terminal_type = terminal_type
         self.command_file_type = command_file_type
+        self.dashboard_type = dashboard_type
         self.connection_status_label = connection_status_label
         self.connection_action_button = connection_action_button
         self.footer = footer
+
+    def _is_dashboard(self, widget: object) -> bool:
+        return self.dashboard_type is not None and isinstance(widget, self.dashboard_type)
 
     def set_status(self, text: str) -> None:
         self.footer.setText(text)
@@ -85,6 +98,8 @@ class WorkspaceStatusPresenter:
                     self._update_terminal_tab(ref.global_index, ref.widget, theme)
                 elif isinstance(ref.widget, self.command_file_type):
                     self._update_command_file_tab(ref.global_index, ref.widget, theme)
+                elif self._is_dashboard(ref.widget):
+                    self._update_dashboard_tab(ref.global_index, ref.widget, theme)
             return
         for index in range(self.tabs.count()):
             widget = self.tabs.widget(index)
@@ -92,6 +107,8 @@ class WorkspaceStatusPresenter:
                 self._update_terminal_tab(index, widget, theme)
             elif isinstance(widget, self.command_file_type):
                 self._update_command_file_tab(index, widget, theme)
+            elif self._is_dashboard(widget):
+                self._update_dashboard_tab(index, widget, theme)
 
     def sync_from_current(self, theme: ThemePalette) -> None:
         widget = self.tabs.currentWidget()
@@ -100,6 +117,11 @@ class WorkspaceStatusPresenter:
             return
         if isinstance(widget, self.command_file_type):
             self._show_command_file_status(widget)
+            return
+        if self._is_dashboard(widget):
+            # Like editor tabs, dashboards carry their status in the footer;
+            # the shared connection chip is hidden for them.
+            self.set_status(widget.status_summary())
             return
         self.connection_status_label.setText("No tab")
         self.connection_action_button.setEnabled(False)
@@ -138,6 +160,14 @@ class WorkspaceStatusPresenter:
         self.tabs.setTabIcon(index, standard_icon(QStyle.StandardPixmap.SP_FileIcon, 18, color))
         self.tabs.setTabToolTip(index, tab.status_summary())
         self._tab_bar_for(index).setTabTextColor(self._local_index_for(index), QColor(color))
+
+    def _update_dashboard_tab(self, index: int, tab: DashboardStatusTab, theme: ThemePalette) -> None:
+        self.tabs.setTabText(index, tab.tab_title())
+        self.tabs.setTabIcon(
+            index, standard_icon(QStyle.StandardPixmap.SP_FileDialogListView, 18, theme.text)
+        )
+        self.tabs.setTabToolTip(index, tab.status_summary())
+        self._tab_bar_for(index).setTabTextColor(self._local_index_for(index), QColor(theme.text))
 
     def _tab_bar_for(self, index: int):
         tab_ref = getattr(self.tabs, "tab_ref", lambda _index: None)(index)

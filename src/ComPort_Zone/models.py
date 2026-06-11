@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .dashboard_models import DashboardConfig, DashboardTabState
+
 LINE_ENDINGS = {
     "None": "",
     "CR": "\r",
@@ -32,8 +34,13 @@ EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
 # Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
 EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
 EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
-SETTINGS_SCHEMA_VERSION = 4
+SETTINGS_SCHEMA_VERSION = 5
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
+# Feature floors: a saved payload declares the highest floor of any
+# feature it actually contains, so files without LAN/dashboard content
+# stay readable by older builds (FR-39 in dashboard-view-requirements).
+LAN_SCHEMA_FLOOR = 4
+DASHBOARD_SCHEMA_FLOOR = 5
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
@@ -331,11 +338,14 @@ class WorkspaceTabState:
     kind: str = "terminal"
     terminal: TerminalSessionState | None = None
     command_file: CommandFileTabState | None = None
+    dashboard: DashboardTabState | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"kind": self.kind}
         if self.kind == "command_file":
             payload["command_file"] = (self.command_file or CommandFileTabState()).to_dict()
+        elif self.kind == "dashboard":
+            payload["dashboard"] = (self.dashboard or DashboardTabState()).to_dict()
         else:
             payload["terminal"] = (self.terminal or TerminalSessionState()).to_dict()
         return payload
@@ -349,6 +359,11 @@ class WorkspaceTabState:
             return cls(
                 kind="command_file",
                 command_file=CommandFileTabState.from_dict(_dict_value(data.get("command_file"))),
+            )
+        if kind == "dashboard":
+            return cls(
+                kind="dashboard",
+                dashboard=DashboardTabState.from_dict(_dict_value(data.get("dashboard"))),
             )
         return cls(
             kind="terminal",
@@ -477,6 +492,8 @@ class AppSettings:
     favorites_splitter_sizes: list[int] = field(default_factory=list)
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
+    restored_dashboards: list[DashboardTabState] = field(default_factory=list)
+    dashboards: list[DashboardConfig] = field(default_factory=list)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
     theme: str = "ComPort Zone Dark"
     timestamps_enabled: bool = True
@@ -507,14 +524,27 @@ class AppSettings:
             return True
         return any(session.transport_kind == "lan" for session in self.restored_tabs)
 
+    def _uses_dashboards(self) -> bool:
+        if self.dashboards or self.restored_dashboards:
+            return True
+        return any(
+            tab.kind == "dashboard"
+            for pane in self.workspace_layout.panes
+            for tab in pane.tabs
+        )
+
+    def minimum_compatible_schema_version(self) -> int:
+        floors = [MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION]
+        if self._uses_lan_transport():
+            floors.append(LAN_SCHEMA_FLOOR)
+        if self._uses_dashboards():
+            floors.append(DASHBOARD_SCHEMA_FLOOR)
+        return max(floors)
+
     def to_dict(self) -> dict[str, Any]:
         transport_kind = self.transport_kind or "serial"
         transport_profile = dict(self.transport_profile or self._default_transport_profile(transport_kind))
-        minimum_compatible_schema = (
-            SETTINGS_SCHEMA_VERSION
-            if self._uses_lan_transport()
-            else MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION
-        )
+        minimum_compatible_schema = self.minimum_compatible_schema_version()
         return {
             "schema_version": SETTINGS_SCHEMA_VERSION,
             "minimum_compatible_schema_version": minimum_compatible_schema,
@@ -570,12 +600,17 @@ class AppSettings:
                 "favorite_file_order": list(self.favorite_file_order),
                 "favorite_command_sort_mode": self.favorite_command_sort_mode,
                 "favorite_file_sort_mode": self.favorite_file_sort_mode,
+                "dashboards": [dashboard.to_dict() for dashboard in self.dashboards],
             },
             "workspace": {
                 "terminal_tabs": [session.to_dict() for session in self.restored_tabs],
                 "command_file_tabs": [
                     command_file.to_dict()
                     for command_file in self.restored_command_files
+                ],
+                "dashboard_tabs": [
+                    dashboard_tab.to_dict()
+                    for dashboard_tab in self.restored_dashboards
                 ],
                 "layout": self.workspace_layout.to_dict(),
             },
@@ -686,6 +721,14 @@ class AppSettings:
                 CommandFileTabState.from_dict(item)
                 for item in _list_value(workspace.get("command_file_tabs"))
             ],
+            restored_dashboards=[
+                DashboardTabState.from_dict(_dict_value(item))
+                for item in _list_value(workspace.get("dashboard_tabs"))
+            ],
+            dashboards=[
+                DashboardConfig.from_dict(_dict_value(item))
+                for item in _list_value(libraries.get("dashboards"))
+            ],
             workspace_layout=WorkspaceLayoutState.from_dict(_dict_value(workspace.get("layout"))),
             theme=str(app.get("theme", "ComPort Zone Dark")),
             timestamps_enabled=bool(app.get("timestamps_enabled", True)),
@@ -697,7 +740,7 @@ class AppSettings:
             receive_display_mode=receive_display_mode,
             drawer_collapsed=bool(drawer.get("collapsed", True)),
             drawer_width=int(drawer.get("width", 260)),
-            drawer_page_index=max(0, min(int(drawer.get("page_index", 0)), 1)),
+            drawer_page_index=max(0, min(int(drawer.get("page_index", 0)), 4)),
             check_for_updates_on_launch=bool(updates.get("check_on_launch", True)),
             clear_history_on_exit=bool(app.get("clear_history_on_exit", False)),
             log_path=str(paths.get("log", "")),

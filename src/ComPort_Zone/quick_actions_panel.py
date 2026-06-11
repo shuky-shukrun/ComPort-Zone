@@ -49,6 +49,7 @@ def row_action_keys(kind: str, favorite: bool = False) -> list[str]:
 
     * saved / favourite command -> remove · edit · star (favourite toggle) · send
     * quick file                -> remove · edit · star (favourite toggle) · play
+    * dashboard                 -> remove · edit (rename) · star · play (open)
     * history                   -> remove · favourite · save · send
 
     The ``remove`` (✕) and ``edit`` (pencil) glyphs let a row be deleted or edited
@@ -56,7 +57,7 @@ def row_action_keys(kind: str, favorite: bool = False) -> list[str]:
     from *saved* entirely (the star, by contrast, only drops it from favourites) —
     see :func:`action_tooltip`.
     """
-    if kind == "file":
+    if kind in ("file", "dashboard"):
         return ["remove", "edit", "star", "play"]
     if kind == "history":
         return ["remove", "favorite", "save", "send"]
@@ -74,9 +75,9 @@ def action_tooltip(key: str, kind: str, favorite: bool, is_favorites: bool) -> s
     if key == "send":
         return "Send"
     if key == "play":
-        return "Run"
+        return "Open" if kind == "dashboard" else "Run"
     if key == "edit":
-        return "Edit"
+        return "Rename" if kind == "dashboard" else "Edit"
     if key == "save":
         return "Save to commands"
     if key in ("star", "favorite"):
@@ -84,6 +85,8 @@ def action_tooltip(key: str, kind: str, favorite: bool, is_favorites: bool) -> s
     if key == "remove":
         if kind == "history":
             return "Remove from history"
+        if kind == "dashboard":
+            return "Delete dashboard"
         noun = "file" if kind == "file" else "command"
         if is_favorites:
             return f"Remove {noun} from saved (also removes it from favorites)"
@@ -104,6 +107,8 @@ QUICK_ACTION_ITEM_HEIGHT = 32
 _PANEL_MAX_HEIGHT = 16_777_215
 FAVORITES_EMPTY_HINT = "No favorites yet — click the star icon next to saved commands or history items to add them."
 QUICK_FILE_EMPTY_HINT = "No quick files yet — click “Add File” to add one."
+DASHBOARD_EMPTY_HINT = "No dashboards yet — click “+” to create one."
+FAVORITE_DASHBOARD_EMPTY_HINT = "No favorite dashboards — star one in the Dashboards page."
 
 
 def short_list_label(text: str, limit: int | None = None) -> str:
@@ -219,6 +224,9 @@ class QuickRowDelegate(QStyledItemDelegate):
 
         if kind == "file":
             painter.drawPixmap(x, cy - 7, standard_icon(QStyle.StandardPixmap.SP_FileIcon, 14, pal.rx).pixmap(14, 14))
+            x += 23
+        elif kind == "dashboard":
+            painter.drawPixmap(x, cy - 7, themed_icon("list", 14, pal.accent).pixmap(14, 14))
             x += 23
         elif kind == "history":
             painter.drawPixmap(x, cy - 7, standard_icon(QStyle.StandardPixmap.SP_FileDialogInfoView, 13, pal.muted).pixmap(13, 13))
@@ -426,6 +434,24 @@ def create_quick_file_list(
     return quick_list
 
 
+def create_dashboard_list(
+    parent: QWidget,
+    *,
+    tooltip: str,
+    placeholder_text: str = DASHBOARD_EMPTY_HINT,
+    context_menu_requested: Callable | None = None,
+) -> QuickActionList:
+    quick_list = QuickActionList(placeholder_text=placeholder_text, parent=parent)
+    quick_list.setObjectName("dashboardList")
+    configure_quick_list(
+        quick_list,
+        tooltip=tooltip,
+        context_menu_requested=context_menu_requested,
+        drag_drop=False,
+    )
+    return quick_list
+
+
 def create_quick_history_list(
     parent: QWidget,
     *,
@@ -562,6 +588,37 @@ def populate_quick_file_list(
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
         quick_list.addItem(item)
         if quick_file.id == selected_id:
+            selected_row = quick_list.count() - 1
+    if selected_row >= 0:
+        quick_list.setCurrentRow(selected_row)
+    return selected_row
+
+
+def populate_dashboard_list(
+    quick_list: QListWidget,
+    dashboards: Iterable,
+    *,
+    selected_id: str = "",
+    label_limit: int | None = None,
+    item_height: int | None = QUICK_ACTION_ITEM_HEIGHT,
+) -> int:
+    """Fill a dashboard list from ``DashboardConfig`` objects (name-sorted
+    by the caller). Rows carry the same roles as command/file rows so the
+    shared delegate and inline actions work unchanged."""
+    quick_list.clear()
+    selected_row = -1
+    for dashboard in dashboards:
+        count = len(dashboard.entries)
+        item = QListWidgetItem(short_list_label(dashboard.name, label_limit))
+        item.setData(ROLE_ID, dashboard.id)
+        item.setData(ROLE_KIND, "dashboard")
+        item.setData(ROLE_SECONDARY, f"{count} entr{'y' if count == 1 else 'ies'}")
+        item.setData(ROLE_FAVORITE, bool(dashboard.favorite))
+        item.setToolTip(dashboard.description or dashboard.name)
+        if item_height is not None:
+            item.setSizeHint(QSize(0, item_height))
+        quick_list.addItem(item)
+        if dashboard.id == selected_id:
             selected_row = quick_list.count() - 1
     if selected_row >= 0:
         quick_list.setCurrentRow(selected_row)

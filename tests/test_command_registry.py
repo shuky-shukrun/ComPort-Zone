@@ -69,6 +69,10 @@ class CommandRegistryTests(unittest.TestCase):
                 "Import Quick Files from CSV",
                 "Export Quick Files to CSV",
                 "Delete All Quick Files",
+                "New Dashboard",
+                "Manage Dashboards",
+                "Import Dashboards from JSON",
+                "Export Dashboards to JSON",
                 "Check for Updates",
             ],
         )

@@ -1251,7 +1251,10 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(calls, [window.tabs.new_tab_button.mapToGlobal(position)])
             menu = window.build_tab_context_menu(-1)
             titles = [action.text() for action in menu.actions() if not action.isSeparator()]
-            self.assertEqual(titles, ["New Terminal", "New Command File"])
+            self.assertEqual(
+                titles,
+                ["New Terminal", "New Command File", "New Dashboard", "Dashboards..."],
+            )
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current
@@ -1557,6 +1560,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Export CSV…", overflow_actions)
             # The legacy 8-button grid is gone; primary actions are inline now.
             self.assertEqual(drawer_action_rows(quick_page), [])
+            # The per-tab terminal drawer stays dashboard-free (the visible
+            # shared drawer carries the Dashboards page).
             self.assertEqual(session.drawer_pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in session.drawer.rail_buttons],

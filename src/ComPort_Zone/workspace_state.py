@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol
 
+from .dashboard_models import DashboardTabState
 from .models import (
     AppSettings,
     CommandFileTabState,
@@ -33,6 +34,11 @@ class CommandFileStateSource(Protocol):
         ...
 
 
+class DashboardStateSource(Protocol):
+    def to_tab_state(self) -> DashboardTabState:
+        ...
+
+
 class WorkspaceRestoreTarget(Protocol):
     def add_session(
         self,
@@ -47,6 +53,9 @@ class WorkspaceRestoreTarget(Protocol):
         path: Path | None = None,
         state: CommandFileTabState | None = None,
     ) -> object:
+        ...
+
+    def add_dashboard_tab(self, state: DashboardTabState) -> object:
         ...
 
     def prompt_current_session_settings(self) -> None:
@@ -82,9 +91,11 @@ class WorkspaceStateService:
         window_width: int,
         window_height: int,
         workspace_layout: WorkspaceLayoutState | None = None,
+        dashboard_tabs: Iterable[DashboardStateSource] = (),
     ) -> AppSettings:
         terminal_sessions = list(terminal_sessions)
         command_file_editors = list(command_file_editors)
+        dashboard_tabs = list(dashboard_tabs)
         if active_session is not None:
             active_state = active_session.to_state()
             settings.transport_kind = active_state.transport_kind or "serial"
@@ -108,6 +119,9 @@ class WorkspaceStateService:
             self.command_file_state(editor)
             for editor in command_file_editors
         ]
+        settings.restored_dashboards = [
+            dashboard.to_tab_state() for dashboard in dashboard_tabs
+        ]
         if workspace_layout is not None:
             settings.workspace_layout = workspace_layout
         else:
@@ -121,6 +135,10 @@ class WorkspaceStateService:
                         + [
                             WorkspaceTabState(kind="command_file", command_file=self.command_file_state(editor))
                             for editor in command_file_editors
+                        ]
+                        + [
+                            WorkspaceTabState(kind="dashboard", dashboard=dashboard.to_tab_state())
+                            for dashboard in dashboard_tabs
                         ],
                     )
                 ]
@@ -163,6 +181,8 @@ class WorkspaceStateService:
         for command_file_state in settings.restored_command_files:
             path = Path(command_file_state.path) if command_file_state.path else None
             target.add_command_file_tab(path=path, state=command_file_state)
+        for dashboard_state in settings.restored_dashboards:
+            target.add_dashboard_tab(dashboard_state)
         if target.workspace_tab_count() == 0:
             target.add_session(prompt_settings=False)
 
@@ -184,6 +204,8 @@ class WorkspaceStateService:
                     state = tab.command_file or CommandFileTabState()
                     path = Path(state.path) if state.path else None
                     target.add_command_file_tab(path=path, state=state)
+                elif tab.kind == "dashboard":
+                    target.add_dashboard_tab(tab.dashboard or DashboardTabState())
                 else:
                     target.add_session(tab.terminal or TerminalSessionState(), prompt_settings=False)
         if callable(finish):

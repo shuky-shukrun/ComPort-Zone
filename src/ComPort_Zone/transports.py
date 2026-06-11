@@ -69,10 +69,12 @@ class TransportAdapter(Protocol):
     def disconnect(self) -> None:
         ...
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
         ...
 
-    def send_bytes(self, data: bytes) -> None:
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
         ...
 
     def set_dtr(self, value: bool) -> bool:
@@ -154,11 +156,22 @@ class SerialTransportAdapter:
     def disconnect(self) -> None:
         self.client.disconnect()
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
-        self.client.send_text(text, line_ending_override)
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
+        # The keyword travels only when set: clients are duck-typed (tests
+        # monkeypatch them with two-arg callables), so plain sends keep the
+        # legacy call shape.
+        if source:
+            self.client.send_text(text, line_ending_override, source=source)
+        else:
+            self.client.send_text(text, line_ending_override)
 
-    def send_bytes(self, data: bytes) -> None:
-        self.client.send_bytes(data)
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
+        if source:
+            self.client.send_bytes(data, source=source)
+        else:
+            self.client.send_bytes(data)
 
     def set_dtr(self, value: bool) -> bool:
         return self.client.set_dtr(value)
@@ -217,11 +230,19 @@ class LanTransportAdapter:
     def disconnect(self) -> None:
         self.client.disconnect()
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
-        self.client.send_text(text, line_ending_override)
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
+        if source:
+            self.client.send_text(text, line_ending_override, source=source)
+        else:
+            self.client.send_text(text, line_ending_override)
 
-    def send_bytes(self, data: bytes) -> None:
-        self.client.send_bytes(data)
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
+        if source:
+            self.client.send_bytes(data, source=source)
+        else:
+            self.client.send_bytes(data)
 
     def set_dtr(self, value: bool) -> bool:
         return False

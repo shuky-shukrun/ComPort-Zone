@@ -2,9 +2,12 @@ import json
 from pathlib import Path
 import unittest
 
+from ComPort_Zone.dashboard_models import DashboardConfig, DashboardEntry, DashboardTabState
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
+    DASHBOARD_SCHEMA_FLOOR,
+    LAN_SCHEMA_FLOOR,
     LanProfile,
     MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
     QuickCommand,
@@ -354,7 +357,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(settings.serial.baudrate, 57600)
         self.assertEqual(settings.to_dict()["transport"]["profile"]["port"], "COM33")
 
-    def test_settings_accept_lan_transport_profile_and_marks_schema_v3_required(self) -> None:
+    def test_settings_accept_lan_transport_profile_and_marks_lan_floor_required(self) -> None:
         settings = AppSettings(
             transport_kind="lan",
             lan=LanProfile(host="192.168.1.50", port=5025, line_ending="LF"),
@@ -364,7 +367,10 @@ class ModelsAndStorageTests(unittest.TestCase):
         loaded = AppSettings.from_dict(payload)
 
         self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
-        self.assertEqual(payload["minimum_compatible_schema_version"], SETTINGS_SCHEMA_VERSION)
+        # LAN content pins the file to the LAN feature floor, not to the
+        # current schema version — otherwise every later schema bump would
+        # needlessly lock LAN users out of older builds.
+        self.assertEqual(payload["minimum_compatible_schema_version"], LAN_SCHEMA_FLOOR)
         self.assertEqual(payload["transport"]["kind"], "lan")
         self.assertEqual(payload["transport"]["profile"]["host"], "192.168.1.50")
         self.assertEqual(payload["transport"]["profile"]["port"], 5025)
@@ -484,6 +490,103 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.quick_command_hidden_groups, ["Factory"])
         self.assertEqual(restored.quick_file_sort_mode, "Title")
         self.assertEqual(restored.serial.port, "COM4")
+
+
+class DashboardSchemaTests(unittest.TestCase):
+    """Schema v5: dashboard persistence and minimum-compatible floors."""
+
+    @staticmethod
+    def make_dashboard() -> DashboardConfig:
+        return DashboardConfig(
+            name="PSU Bench",
+            entries=[DashboardEntry(label="Volts", command="MEAS:VOLT?")],
+        )
+
+    def test_plain_settings_keep_base_min_compat(self) -> None:
+        payload = AppSettings().to_dict()
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(
+            payload["minimum_compatible_schema_version"],
+            MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+        )
+
+    def test_dashboards_raise_min_compat_to_dashboard_floor(self) -> None:
+        payload = AppSettings(dashboards=[self.make_dashboard()]).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_restored_dashboard_tab_raises_min_compat(self) -> None:
+        payload = AppSettings(
+            restored_dashboards=[DashboardTabState(dashboard_id="abc")]
+        ).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_dashboard_workspace_tab_raises_min_compat(self) -> None:
+        layout = WorkspaceLayoutState(
+            panes=[
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(
+                            kind="dashboard", dashboard=DashboardTabState(dashboard_id="abc")
+                        )
+                    ]
+                )
+            ]
+        )
+        payload = AppSettings(workspace_layout=layout).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_lan_and_dashboards_take_highest_floor(self) -> None:
+        settings = AppSettings(
+            transport_kind="lan",
+            lan=LanProfile(host="dut.local"),
+            dashboards=[self.make_dashboard()],
+        )
+        payload = settings.to_dict()
+        self.assertEqual(
+            payload["minimum_compatible_schema_version"],
+            max(LAN_SCHEMA_FLOOR, DASHBOARD_SCHEMA_FLOOR),
+        )
+
+    def test_dashboards_round_trip_through_settings(self) -> None:
+        settings = AppSettings(
+            dashboards=[self.make_dashboard()],
+            restored_dashboards=[DashboardTabState(dashboard_id="abc", target_endpoint="COM7")],
+        )
+        restored = AppSettings.from_dict(settings.to_dict())
+        self.assertEqual(len(restored.dashboards), 1)
+        self.assertEqual(restored.dashboards[0].name, "PSU Bench")
+        self.assertEqual(restored.dashboards[0].entries[0].command, "MEAS:VOLT?")
+        self.assertEqual(restored.restored_dashboards[0].target_endpoint, "COM7")
+
+    def test_v4_payload_loads_without_dashboards(self) -> None:
+        payload = AppSettings(serial=SerialProfile(port="COM9")).to_dict()
+        payload["schema_version"] = 4
+        payload["minimum_compatible_schema_version"] = 2
+        payload["libraries"].pop("dashboards", None)
+        payload["workspace"].pop("dashboard_tabs", None)
+
+        loaded = SettingsService().settings_from_payload(payload)
+
+        self.assertEqual(loaded.serial.port, "COM9")
+        self.assertEqual(loaded.dashboards, [])
+        self.assertEqual(loaded.restored_dashboards, [])
+
+    def test_dashboard_workspace_tab_state_round_trips(self) -> None:
+        tab = WorkspaceTabState(
+            kind="dashboard",
+            dashboard=DashboardTabState(
+                dashboard_id="abc",
+                target_endpoint="COM7",
+                target_title="Terminal 1",
+                polling_enabled=False,
+            ),
+        )
+        restored = WorkspaceTabState.from_dict(json.loads(json.dumps(tab.to_dict())))
+        self.assertEqual(restored.kind, "dashboard")
+        assert restored.dashboard is not None
+        self.assertEqual(restored.dashboard.dashboard_id, "abc")
+        self.assertFalse(restored.dashboard.polling_enabled)
+        self.assertIsNone(restored.terminal)
 
 
 if __name__ == "__main__":

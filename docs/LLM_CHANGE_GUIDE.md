@@ -55,6 +55,12 @@ git diff --check
 | Settings schema/import/export                 | `src/ComPort_Zone/settings_service.py`, `src/ComPort_Zone/storage.py`, `src/ComPort_Zone/models.py`                                | `tests/test_models_and_storage`                               |
 | Workspace settings save/restore               | `src/ComPort_Zone/workspace_state.py`, `src/ComPort_Zone/workspace_settings_controller.py`                                         | matching workspace tests                                      |
 | Dialog UI                                     | `src/ComPort_Zone/ui/dialogs/*`                                                                                                    | `tests/test_dialogs`                                          |
+| Dashboard domain (models, parse, rules)       | `src/ComPort_Zone/dashboard_models.py`, `src/ComPort_Zone/dashboard_parse.py`                                                      | `tests/test_dashboard_models`, `tests/test_dashboard_parse`   |
+| Dashboard polling engine                      | `src/ComPort_Zone/dashboard_engine.py`                                                                                             | `tests/test_dashboard_engine`                                 |
+| Dashboard library/import/export               | `src/ComPort_Zone/dashboard_catalog.py`                                                                                            | `tests/test_dashboard_catalog`                                |
+| Dashboard binding + dispatcher lifecycle      | `src/ComPort_Zone/ui/dashboard_targets.py`                                                                                         | `tests/test_dashboard_targets`                                |
+| Dashboard tab UI (tick loop, tiles, grid)     | `src/ComPort_Zone/ui/dashboard_tab.py`, `src/ComPort_Zone/ui/dashboard_tiles.py`, `src/ComPort_Zone/ui/dashboard_grid.py`          | `tests/test_dashboard_tab`, `tests/test_dashboard_tiles`      |
+| Dashboard dialogs (entry editor, manager)     | `src/ComPort_Zone/ui/dialogs/dashboard_entry.py`, `src/ComPort_Zone/ui/dialogs/dashboard_manager.py`                               | `tests/test_dashboard_tab`, `tests/test_dashboard_manager`    |
 
 ## Do Not Break These Seams
 
@@ -182,6 +188,29 @@ git diff --check
 .\.venv\Scripts\python.exe -m unittest tests/test_batch tests/test_terminal_session_controller tests/test_command_file_targets tests/test_dialogs -q
 ```
 
+### Fix Dashboard Polling
+
+1. *When* an entry polls (due times, pause reasons, fixed-delay reschedule): edit `DashboardPollScheduler` in `src/ComPort_Zone/dashboard_engine.py` — pure logic, test with the injected `FakeClock`.
+2. *How* a poll executes on the wire (drain → send → collect window → parse/timeout): edit `SessionPollDispatcher._execute_transaction` in the same module.
+3. Value extraction or color rules: edit `src/ComPort_Zone/dashboard_parse.py`.
+4. Pause-reason detection (disconnect/batch/tab-closed) and chip text: edit `DashboardTabWidget._tick`/`_check_session_health` in `src/ComPort_Zone/ui/dashboard_tab.py`; session health comes from `DashboardRunCoordinator.session_health`.
+5. Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_engine tests/test_dashboard_parse tests/test_dashboard_tab tests/test_app_dashboards -q
+```
+
+### Fix Dashboard Layout Or Tiles
+
+1. Grid math (placement, spans, overlap repair): edit the Qt-free helpers in `src/ComPort_Zone/dashboard_models.py` (`normalize_layout`/`place_tile`/`set_tile_span`).
+2. Tile rendering/states: edit `src/ComPort_Zone/ui/dashboard_tiles.py` (+ QSS in `ui/stylesheet.py`).
+3. Geometry/drag-drop: edit `src/ComPort_Zone/ui/dashboard_grid.py`.
+4. Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_models tests/test_dashboard_tiles -q
+```
+
 ### Fix Command Editor Search Or Replace
 
 1. Search state/pure logic: edit `src/ComPort_Zone/command_search.py`.
@@ -303,6 +332,10 @@ Run focused tests:
 - App settings JSON import/export intentionally excludes quick actions.
 - `SettingsStore` should remain file I/O only. Schema/payload rules belong to `SettingsService`.
 - Controllers should make behavior decisions. Widgets should apply UI changes.
+- Dashboard TX goes only through `SessionPollDispatcher` (one per bound session, refcounted by `DashboardRunCoordinator`). Never send from the dashboard GUI tick directly — that breaks per-session serialization and puts serial I/O on the GUI thread.
+- Dashboard tile colors come only from `ThemePalette` via the `tileState` QSS property (mapping in `ui/dashboard_tiles.tile_state_color`); no hex literals in dashboard widgets (enforced by `tests/test_dashboard_tiles`).
+- The dashboard domain modules (`dashboard_models/parse/engine/catalog`) must stay Qt-free; they are re-exported via `core/dashboard.py` and `tests/test_core_no_pyside` enforces it.
+- Dashboard configs live-save: every mutation writes to `AppSettings.dashboards` and calls `save_settings()`. There is no dirty state and no confirm-on-close for dashboard tabs.
 
 ## Known Pitfalls
 
