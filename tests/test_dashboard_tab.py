@@ -12,6 +12,7 @@ from unittest.mock import patch
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from ComPort_Zone.dashboard_alerts import ALERT_KIND, RECOVERY_KIND
 from ComPort_Zone.dashboard_engine import DISPATCHER_THREAD_NAME
 from ComPort_Zone.dashboard_models import (
     ColorRule,
@@ -46,9 +47,22 @@ class FakeHost:
     def __init__(self) -> None:
         self.theme = THEMES["ComPort Zone Dark"]
         self.save_count = 0
+        # T13: AppSettings exposes these to the tab via the host Protocol.
+        self.dashboard_alerts_enabled = True
+        self.dashboard_alert_sound = False
 
     def save_settings(self) -> None:
         self.save_count += 1
+
+
+class StubAlertSounder:
+    """Test sounder — counts plays so suite never opens QtMultimedia."""
+
+    def __init__(self) -> None:
+        self.play_count = 0
+
+    def play(self) -> None:
+        self.play_count += 1
 
 
 def wait_for(condition: Callable[[], bool], timeout: float = 1.0) -> bool:
@@ -133,6 +147,7 @@ class DashboardTabTestBase(unittest.TestCase):
             coordinator=self.coordinator,
             clock=self.clock,
             start_timer=False,
+            alert_sounder=StubAlertSounder(),
         )
         self.tabs.append(tab)
         return tab
@@ -491,6 +506,130 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         tab.shutdown()
         self.assertFalse(tab.chart_refresh_timer.isActive())
         # tearDown will call shutdown again — must stay safe.
+
+    def test_alert_on_fail_transition_fires_sound_and_badge(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="fail", label="OVP")]
+        self.host.dashboard_alert_sound = True
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.assertEqual(tab.alerts.unseen_count, 0)
+        self.assertTrue(tab.bell_badge.isHidden())
+
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")  # neutral -> fail edge fires.
+        self.assertEqual(tab.alerts.unseen_count, 1)
+        self.assertFalse(tab.bell_badge.isHidden())
+        self.assertEqual(tab.bell_badge.text(), "1")
+        self.assertEqual(tab.alert_sounder.play_count, 1)
+
+        # Recovery: fail -> neutral is logged but does NOT bump unseen.
+        self.clock.advance_ms(1100)
+        self.run_poll_round(tab, b"12.0\r\n")
+        records = tab.alerts.records()
+        self.assertEqual(records[0].kind, RECOVERY_KIND)
+        self.assertEqual(tab.alerts.unseen_count, 1)
+        # Recoveries never play the sound.
+        self.assertEqual(tab.alert_sounder.play_count, 1)
+
+    def test_alerts_disabled_silences_sound_and_taskbar(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="fail")]
+        self.host.dashboard_alerts_enabled = False
+        self.host.dashboard_alert_sound = True  # but the master is off
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")
+        # History is still recorded — silencing must not hide forensics.
+        self.assertEqual(len(tab.alerts), 1)
+        # But sound never fires.
+        self.assertEqual(tab.alert_sounder.play_count, 0)
+
+    def test_per_entry_alerts_disabled_silences_just_that_one(self) -> None:
+        quiet = volt_entry()
+        quiet.rules = [ColorRule(op="gt", operand="13.0", state="fail")]
+        quiet.alerts_enabled = False
+        tab = self.make_tab(quiet)
+        tab.bind_to_session(1)
+        self.host.dashboard_alert_sound = True
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")
+        # Record still lands so the user can audit, but no sound.
+        self.assertEqual(len(tab.alerts), 1)
+        self.assertEqual(tab.alert_sounder.play_count, 0)
+
+    def test_send_error_alerts_once_timeout_does_not(self) -> None:
+        # FR-58: a stuck device should not machine-gun. The first send
+        # error alerts; the next poll's timeout produces "stale" which
+        # detect_transition deliberately ignores.
+        entry = volt_entry()
+        entry.timeout_ms = 60
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+
+        def explode(text: str, line_ending_override=None, *, source: str = "") -> None:
+            raise RuntimeError("port vanished")
+
+        self.session.transport.send_text = explode  # type: ignore[method-assign]
+        self.clock.advance_ms(50)
+        tab._tick()
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        self.assertEqual(tab.alerts.unseen_count, 1)
+
+        # Restore send (so the next poll tries), but stage no response —
+        # the entry will time out; that must NOT add a second alert.
+        self.session.transport.send_text = (
+            lambda text, line_ending_override=None, *, source="": None
+        )  # type: ignore[method-assign]
+        self.clock.advance_ms(entry.interval_ms + 100)
+        tab._tick()
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        self.assertEqual(tab.alerts.unseen_count, 1)
+
+    def test_repeat_fail_does_not_refire(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="fail")]
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.host.dashboard_alert_sound = True
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")
+        self.clock.advance_ms(1100)
+        self.run_poll_round(tab, b"15.0\r\n")  # still fail
+        self.assertEqual(tab.alerts.unseen_count, 1)
+        self.assertEqual(tab.alert_sounder.play_count, 1)
+
+    def test_bell_button_opens_panel_and_marks_seen(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="fail")]
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")
+        self.assertEqual(tab.alerts.unseen_count, 1)
+        self.assertEqual(tab.tab_title(), "● Bench")
+        tab.bell_button.click()
+        self.assertFalse(tab.alert_panel.isHidden())
+        self.assertEqual(tab.alerts.unseen_count, 0)
+        self.assertEqual(tab.tab_title(), "Bench")
+        # Clicking again hides the panel.
+        tab.bell_button.click()
+        self.assertTrue(tab.alert_panel.isHidden())
+
+    def test_clear_button_drops_history(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="fail")]
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")
+        tab.bell_button.click()
+        tab.alert_panel.clear_button.click()
+        self.assertEqual(len(tab.alerts), 0)
+        self.assertTrue(tab.bell_badge.isHidden())
 
     def test_csv_log_records_polled_values_only(self) -> None:
         import csv

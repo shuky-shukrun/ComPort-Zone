@@ -516,6 +516,11 @@ class AppSettings:
     drawer_page_index: int = 0
     check_for_updates_on_launch: bool = True
     clear_history_on_exit: bool = False
+    # Dashboard alerts (FR-58). Master enable defaults on so the feature
+    # is discoverable; sound defaults off so the app stays quiet without
+    # an explicit opt-in. Per-entry alerts_enabled gates contribution.
+    dashboard_alerts_enabled: bool = True
+    dashboard_alert_sound: bool = False
     log_path: str = ""
     last_script_path: str = ""
     recent_files: list[str] = field(default_factory=list)
@@ -587,6 +592,10 @@ class AppSettings:
                     "check_on_launch": self.check_for_updates_on_launch,
                 },
                 "clear_history_on_exit": self.clear_history_on_exit,
+                "dashboard_alerts": {
+                    "enabled": self.dashboard_alerts_enabled,
+                    "sound": self.dashboard_alert_sound,
+                },
                 "paths": {
                     "log": self.log_path,
                     "last_script": self.last_script_path,
@@ -645,6 +654,7 @@ class AppSettings:
         drawer = _dict_value(app.get("drawer"))
         favorites_layout = _dict_value(app.get("favorites_layout"))
         updates = _dict_value(app.get("updates"))
+        dashboard_alerts = _dict_value(app.get("dashboard_alerts"))
         paths = _dict_value(app.get("paths"))
         window = _dict_value(app.get("window"))
         history = _dict_value(data.get("history"))
@@ -760,6 +770,8 @@ class AppSettings:
             drawer_page_index=max(0, min(int(drawer.get("page_index", 0)), 4)),
             check_for_updates_on_launch=bool(updates.get("check_on_launch", True)),
             clear_history_on_exit=bool(app.get("clear_history_on_exit", False)),
+            dashboard_alerts_enabled=bool(dashboard_alerts.get("enabled", True)),
+            dashboard_alert_sound=bool(dashboard_alerts.get("sound", False)),
             log_path=str(paths.get("log", "")),
             last_script_path=str(paths.get("last_script", "")),
             recent_files=[

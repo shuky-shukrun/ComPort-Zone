@@ -831,6 +831,31 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#dashboardChartBack:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
     QLabel#dashboardChartTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
     QLabel#dashboardChartReadout {{ color: {tx_faint}; font-family: {MONO}; font-size: {MICRO_FS}px; }}
+
+    QLabel#dashboardBellBadge {{
+        background: {red}; color: {on_accent};
+        border: 1px solid {danger_bd}; border-radius: 6px;
+        min-width: 12px; max-height: 12px; padding: 0 2px;
+        font-size: 9px; font-weight: 700;
+    }}
+    QFrame#dashboardAlertPanel {{
+        background: {panel}; color: {tx};
+        border: 1px solid {bd}; border-radius: {RADIUS_LG}px;
+    }}
+    QLabel#dashboardAlertPanelTitle {{ color: {tx}; font-size: 14px; font-weight: 700; }}
+    QLabel#dashboardAlertPanelSubtitle {{ color: {tx_faint}; font-size: {MICRO_FS}px; }}
+    QToolButton#dashboardAlertPanelButton {{
+        background: transparent; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 2px 8px; min-height: 22px;
+    }}
+    QToolButton#dashboardAlertPanelButton:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
+    QListWidget#dashboardAlertList {{
+        background: {elevated}; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_MD}px;
+        font-family: {MONO}; font-size: {MICRO_FS}px;
+    }}
+    QListWidget#dashboardAlertList::item {{ padding: 3px 6px; }}
     """)
 
     return "\n".join(parts)

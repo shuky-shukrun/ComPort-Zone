@@ -24,6 +24,7 @@ from typing import Protocol
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -36,6 +37,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..dashboard_alerts import (
+    ALERT_KIND,
+    RECOVERY_KIND,
+    AlertLog,
+    AlertRecord,
+    detect_transition,
+)
 from ..dashboard_engine import (
     POLL_CANCELLED,
     POLL_OK,
@@ -72,6 +80,8 @@ from ..dashboard_parse import (
 )
 from ..icons import set_button_icon
 from ..themes import ThemePalette
+from .alert_sound import AlertSounder, QtAlertSounder
+from .dashboard_alert_panel import AlertHistoryPanel
 from .dashboard_chart import DEFAULT_SPAN_S, DashboardChartPage
 from .dashboard_grid import DashboardGridWidget
 from .dashboard_tiles import (
@@ -89,6 +99,11 @@ class DashboardHostLike(Protocol):
     """What the tab needs from MainWindow (kept tiny for tests)."""
 
     theme: ThemePalette
+    # Optional alert-related fields. They live on AppSettings; the tab
+    # reads them on every potential alert so a Preferences change takes
+    # effect without a reload.
+    dashboard_alerts_enabled: bool
+    dashboard_alert_sound: bool
 
     def save_settings(self) -> None:
         ...
@@ -134,6 +149,7 @@ class DashboardTabWidget(QWidget):
         coordinator: DashboardCoordinatorLike,
         clock: Callable[[], float] = time.monotonic,
         start_timer: bool = True,
+        alert_sounder: AlertSounder | None = None,
     ) -> None:
         super().__init__()
         self.host = host
@@ -175,6 +191,12 @@ class DashboardTabWidget(QWidget):
         # on the header; settings persist on DashboardConfig. The logger
         # itself is Qt-free so logic stays tested on plain unittest.
         self.value_logger = DashboardValueLogger()
+        # Alert pipeline (FR-57/FR-58): per-tab AlertLog + a debounced
+        # sounder. Sounder is injectable so tests stub QtMultimedia out.
+        self.alerts = AlertLog()
+        self.alert_sounder: AlertSounder = alert_sounder or QtAlertSounder()
+        # Per-entry previous state for transition detection.
+        self._prev_states: dict[str, str] = {}
         self._runtimes: dict[str, TileRuntime] = {}
         self._tick_count = 0
         self._tab_state = tab_state or DashboardTabState(dashboard_id=config.id)
@@ -270,6 +292,21 @@ class DashboardTabWidget(QWidget):
         self.csv_log_button.setFixedHeight(CONTROL_H_SM)
         self.csv_log_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        self.bell_button = QToolButton(header)
+        self.bell_button.setObjectName("dashboardHeaderButton")
+        set_button_icon(self.bell_button, "bell", 15)
+        self.bell_button.setToolTip("Show alerts")
+        self.bell_button.setFixedHeight(CONTROL_H_SM)
+        # Give the badge room to sit in the corner without overlapping
+        # the bell glyph (the icon is centered in this minimum width).
+        self.bell_button.setMinimumWidth(34)
+        self.bell_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bell_button.clicked.connect(self._toggle_alert_panel)
+        self.bell_badge = QLabel("", self.bell_button)
+        self.bell_badge.setObjectName("dashboardBellBadge")
+        self.bell_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bell_badge.hide()
+
         self.add_entry_button = QToolButton(header)
         self.add_entry_button.setObjectName("dashboardHeaderButton")
         self.add_entry_button.setText("Add Entry")
@@ -284,6 +321,7 @@ class DashboardTabWidget(QWidget):
         header_layout.addWidget(self.bind_chip)
         header_layout.addStretch(1)
         header_layout.addWidget(self.save_state_label)
+        header_layout.addWidget(self.bell_button)
         header_layout.addWidget(self.pause_button)
         header_layout.addWidget(self.csv_log_button)
         header_layout.addWidget(self.edit_layout_button)
@@ -329,6 +367,12 @@ class DashboardTabWidget(QWidget):
         self.GRID_PAGE = self.stack.addWidget(self.scroll_area)
         self.CHART_PAGE = self.stack.addWidget(self.chart_page)
 
+        # Alert popover (FR-58). Anchored over the stack so it floats
+        # above the tile grid / chart and repositions on resize.
+        self.alert_panel = AlertHistoryPanel(self.stack, parent=self.stack)
+        self.alert_panel.clearRequested.connect(self._clear_alerts)
+        self.alert_panel.closeRequested.connect(self._refresh_bell_badge)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -351,7 +395,10 @@ class DashboardTabWidget(QWidget):
     # ------------------------------------------------------- tab protocol
 
     def tab_title(self) -> str:
-        return self.config.name
+        # A leading bullet marks unseen alerts so the tab strip itself
+        # carries the signal — clicking the bell + reading clears it.
+        prefix = "● " if self.alerts.unseen_count else ""
+        return f"{prefix}{self.config.name}"
 
     def status_summary(self) -> str:
         count = len(self.config.entries)
@@ -706,6 +753,105 @@ class DashboardTabWidget(QWidget):
         self.host.save_settings()
         self._note_saved()
 
+    # ---------------------------------------------------------- alerts
+
+    def _check_alert_transition(
+        self,
+        entry: DashboardEntry,
+        prev_state: str,
+        new_state: str,
+        outcome: ParseOutcome | None,
+    ) -> None:
+        """Classify the state edge and route the result through the
+        alert pipeline (FR-57/FR-58).
+
+        Both alerts AND recoveries land in the bounded history so the
+        user can audit what happened; only alerts ring the bell and fire
+        attention. Per-entry ``alerts_enabled`` and the master toggle on
+        ``AppSettings`` gate every side effect except the history entry
+        — silencing should never hide forensics.
+        """
+        kind = detect_transition(prev_state, new_state)
+        if not kind:
+            return
+        value_text = ""
+        if outcome is not None:
+            value_text = outcome.value_text or (outcome.error or "")
+        record = AlertRecord(
+            timestamp=datetime.now().strftime("%H:%M:%S"),
+            entry_id=entry.id,
+            entry_label=entry.display_label(),
+            old_state=prev_state,
+            new_state=new_state,
+            value_text=value_text,
+            kind=kind,
+        )
+        self.alerts.append(record)
+        if kind == ALERT_KIND and self._should_fire_attention(entry):
+            self._fire_attention()
+        self._refresh_bell_badge()
+        if not self.alert_panel.isHidden():
+            self.alerts.mark_seen()
+            self.alert_panel.set_records(self.alerts.records())
+        # The tab title carries the unseen marker; the host swapping the
+        # text lives behind stateChanged.
+        self.stateChanged.emit()
+
+    def _should_fire_attention(self, entry: DashboardEntry) -> bool:
+        if not getattr(self.host, "dashboard_alerts_enabled", True):
+            return False
+        return entry.alerts_enabled
+
+    def _fire_attention(self) -> None:
+        """Side effects of a real alert: taskbar flash + (optional) ding.
+
+        Keep this tiny — every condition is checked at the call site, so
+        a stubbed sounder in tests still runs the same code path.
+        """
+        window = self.window()
+        if window is not None:
+            app = QApplication.instance()
+            if app is not None:
+                app.alert(window)
+        if getattr(self.host, "dashboard_alert_sound", False):
+            self.alert_sounder.play()
+
+    def _refresh_bell_badge(self) -> None:
+        count = self.alerts.unseen_count
+        if count == 0:
+            self.bell_badge.hide()
+            self.bell_button.setToolTip("Show alerts")
+            return
+        self.bell_badge.setText(str(count if count < 100 else "99+"))
+        self.bell_badge.adjustSize()
+        # Top-right corner of the bell button.
+        margin = 2
+        bx = self.bell_button.width() - self.bell_badge.width() - margin
+        by = margin
+        self.bell_badge.move(max(0, bx), by)
+        self.bell_badge.raise_()
+        self.bell_badge.show()
+        plural = "" if count == 1 else "s"
+        self.bell_button.setToolTip(f"{count} unseen alert{plural}")
+
+    def _toggle_alert_panel(self) -> None:
+        # ``isHidden()`` is the explicit-hide flag (set by hide() / show())
+        # — ``isVisible()`` requires the whole ancestor chain to be on
+        # screen which isn't true under headless tests.
+        if not self.alert_panel.isHidden():
+            self.alert_panel.hide()
+            self._refresh_bell_badge()
+            return
+        self.alert_panel.open_with(self.alerts)
+        self._refresh_bell_badge()
+        self.stateChanged.emit()
+
+    def _clear_alerts(self) -> None:
+        self.alerts.clear()
+        self.alert_panel.set_records([])
+        self._refresh_bell_badge()
+        self.stateChanged.emit()
+
     def _log_outcome(self, entry: DashboardEntry, outcome: ParseOutcome) -> None:
         """Append the outcome to the CSV (FR-49). Only successful parses
         — timeouts never reach this funnel and explicit parse errors are
@@ -1010,6 +1156,8 @@ class DashboardTabWidget(QWidget):
         if result.status == POLL_OK and result.outcome is not None:
             self._apply_outcome(entry, result.outcome, result.raw_window)
             return
+        existing_runtime = self._runtimes.get(result.entry_id)
+        prev_state = existing_runtime.state if existing_runtime is not None else "neutral"
         runtime = self._runtimes.setdefault(result.entry_id, TileRuntime(entry_id=result.entry_id))
         runtime.last_result_at = self._clock()
         runtime.timestamp_text = datetime.now().strftime("%H:%M:%S")
@@ -1029,11 +1177,18 @@ class DashboardTabWidget(QWidget):
             runtime.color = ""
             runtime.tooltip = f"Send failed: {result.error}"
         self._update_tile(result.entry_id)
+        # Send errors are real alerts (FR-58); timeouts produce "stale"
+        # which detect_transition deliberately ignores.
+        self._check_alert_transition(entry, prev_state, runtime.state, None)
 
     def _apply_outcome(self, entry: DashboardEntry, outcome: ParseOutcome, raw_window: str = "") -> None:
         """The shared value sink (poll results AND derived recomputes):
         verdict -> runtime -> tile, then fan out to dependent derived
         entries. History/CSV/alert hooks attach here (v2 funnel)."""
+        # Capture prev state BEFORE the runtime is overwritten — alert
+        # edge detection needs the transition (FR-57).
+        existing_runtime = self._runtimes.get(entry.id)
+        prev_state = existing_runtime.state if existing_runtime is not None else "neutral"
         runtime = self._runtimes.setdefault(entry.id, TileRuntime(entry_id=entry.id))
         runtime.last_result_at = self._clock()
         runtime.timestamp_text = datetime.now().strftime("%H:%M:%S")
@@ -1062,6 +1217,10 @@ class DashboardTabWidget(QWidget):
         # CSV logging tails the same funnel so derived rows show up too
         # (FR-49). Errors/timeouts are filtered inside _log_outcome.
         self._log_outcome(entry, outcome)
+        # Alert edge detection (FR-57/FR-58). Runs last so the runtime
+        # snapshot is current; ``prev_state`` was captured above so the
+        # transition reflects this exact result.
+        self._check_alert_transition(entry, prev_state, runtime.state, outcome)
         if self._has_derived and entry.is_polled() and outcome.value_number is not None:
             self._latest_numbers[entry.id] = outcome.value_number
             self._recompute_dependents(entry.id)
