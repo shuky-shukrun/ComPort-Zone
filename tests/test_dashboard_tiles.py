@@ -180,6 +180,79 @@ class TileWidgetTests(unittest.TestCase):
         self.assertFalse(tile.sparkline.has_data())
         tile.deleteLater()
 
+    def test_value_tile_double_click_requests_chart(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="number")
+        tile = ValueTileWidget(entry)
+        seen: list[str] = []
+        tile.chartRequested.connect(seen.append)
+        position = QPointF(20, 20)
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonDblClick,
+            position,
+            position,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        tile.mouseDoubleClickEvent(event)
+        self.assertEqual(seen, ["a"])
+        tile.deleteLater()
+
+    def test_value_tile_double_click_inert_in_edit_mode(self) -> None:
+        # Drag-to-place is double-click adjacent; opening the chart from
+        # under an active edit-mode would surprise the user (FR-48 says
+        # open chart, but edit mode owns the gesture).
+        from ComPort_Zone.dashboard_models import ParseRule
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="number")
+        tile = ValueTileWidget(entry)
+        tile.set_edit_mode(True)
+        seen: list[str] = []
+        tile.chartRequested.connect(seen.append)
+        position = QPointF(20, 20)
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonDblClick,
+            position,
+            position,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        tile.mouseDoubleClickEvent(event)
+        self.assertEqual(seen, [])
+        tile.deleteLater()
+
+    def test_value_tile_double_click_ignored_when_text(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="text")
+        tile = ValueTileWidget(entry)
+        seen: list[str] = []
+        tile.chartRequested.connect(seen.append)
+        position = QPointF(20, 20)
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonDblClick,
+            position,
+            position,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        tile.mouseDoubleClickEvent(event)
+        self.assertEqual(seen, [])
+        tile.deleteLater()
+
     def test_set_history_feeds_visible_sparkline(self) -> None:
         from ComPort_Zone.dashboard_models import ParseRule
 

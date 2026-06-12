@@ -408,6 +408,90 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         # paint must still cope.
         self.assertGreaterEqual(len(tab._histories["volts"]), 1)
 
+    def test_open_chart_switches_to_chart_page_and_starts_timer(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.assertEqual(tab.stack.currentIndex(), tab.GRID_PAGE)
+        self.assertFalse(tab.chart_refresh_timer.isActive())
+
+        self.assertTrue(tab.open_chart("volts"))
+        self.assertEqual(tab.stack.currentIndex(), tab.CHART_PAGE)
+        self.assertEqual(tab.chart_entry_id, "volts")
+        self.assertTrue(tab.chart_refresh_timer.isActive())
+
+        tab.close_chart()
+        self.assertEqual(tab.stack.currentIndex(), tab.GRID_PAGE)
+        self.assertEqual(tab.chart_entry_id, "")
+        self.assertFalse(tab.chart_refresh_timer.isActive())
+
+    def test_open_chart_refuses_non_numeric_and_control(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        text_entry = volt_entry()
+        text_entry.id = "mode"
+        text_entry.parse = ParseRule(kind="line", value_type="text")
+        tab = self.make_tab(text_entry, control_entry())
+        tab.bind_to_session(1)
+        self.assertFalse(tab.open_chart("mode"))
+        self.assertFalse(tab.open_chart("ctrl"))
+        self.assertFalse(tab.open_chart("nope"))
+        self.assertEqual(tab.stack.currentIndex(), tab.GRID_PAGE)
+
+    def test_chart_receives_history_on_refresh(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.clock.advance_ms(1100)
+        self.run_poll_round(tab, b"12.5\r\n")
+        self.assertTrue(tab.open_chart("volts"))
+        # Chart view should now hold those two samples.
+        visible = tab.chart_page.chart_view.visible_samples()
+        self.assertEqual(len(visible), 2)
+        self.assertEqual([round(v, 2) for _t, v in visible], [12.0, 12.5])
+
+    def test_chart_closes_when_entry_removed(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        tab.open_chart("volts")
+        self.assertEqual(tab.stack.currentIndex(), tab.CHART_PAGE)
+        tab.remove_entry("volts")
+        self.assertEqual(tab.chart_entry_id, "")
+        self.assertNotEqual(tab.stack.currentIndex(), tab.CHART_PAGE)
+
+    def test_chart_uses_runtime_color_when_set(self) -> None:
+        entry = volt_entry()
+        entry.rules = [
+            ColorRule(op="gt", operand="13.0", state="warn", color="#12ab34")
+        ]
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")
+        tab.open_chart("volts")
+        # Triggers _refresh_chart on the next timer fire; call it directly.
+        tab._refresh_chart()
+        self.assertEqual(tab.chart_page.chart_view._color, "#12ab34")
+
+    def test_config_edit_does_not_clobber_chart_page(self) -> None:
+        # _refresh_empty_state used to unconditionally pick between empty
+        # and grid; that would yank the user off the chart on any edit.
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.bind_to_session(1)
+        tab.open_chart("volts")
+        tab.set_entry_enabled("trip", False)
+        self.assertEqual(tab.stack.currentIndex(), tab.CHART_PAGE)
+        self.assertEqual(tab.chart_entry_id, "volts")
+
+    def test_shutdown_stops_chart_timer(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        tab.open_chart("volts")
+        self.assertTrue(tab.chart_refresh_timer.isActive())
+        tab.shutdown()
+        self.assertFalse(tab.chart_refresh_timer.isActive())
+        # tearDown will call shutdown again — must stay safe.
+
     def test_custom_rule_color_applies_and_clears_on_staleness(self) -> None:
         entry = volt_entry()
         entry.rules = [ColorRule(op="gt", operand="13.0", state="warn", color="#12ab34")]

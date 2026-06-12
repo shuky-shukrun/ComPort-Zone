@@ -51,6 +51,7 @@ class DashboardGridWidget(QWidget):
     tileEnableToggled = Signal(str, bool)
     tilePollNowRequested = Signal(str)
     tileControlActivated = Signal(str)
+    tileChartRequested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -89,6 +90,7 @@ class DashboardGridWidget(QWidget):
                 tile.enableToggled.connect(self.tileEnableToggled)
                 tile.pollNowRequested.connect(self.tilePollNowRequested)
                 tile.activateRequested.connect(self.tileControlActivated)
+                tile.chartRequested.connect(self.tileChartRequested)
                 tile.spanRequested.connect(self._handle_span_request)
                 tile.set_edit_mode(self._edit_mode)
                 tile.apply_theme_palette(self._theme)

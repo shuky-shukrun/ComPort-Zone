@@ -817,6 +817,20 @@ def build_stylesheet(theme: ThemePalette) -> str:
         border: 1px solid {bd_soft};
         border-radius: {RADIUS_MD}px;
     }}
+    QWidget#dashboardChartPage {{ background: {bg}; }}
+    QWidget#dashboardChartView {{
+        background: {elevated};
+        border: 1px solid {bd_soft};
+        border-radius: {RADIUS_LG}px;
+    }}
+    QPushButton#dashboardChartBack {{
+        background: transparent; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 4px 10px; font-weight: 600;
+    }}
+    QPushButton#dashboardChartBack:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
+    QLabel#dashboardChartTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
+    QLabel#dashboardChartReadout {{ color: {tx_faint}; font-family: {MONO}; font-size: {MICRO_FS}px; }}
     """)
 
     return "\n".join(parts)

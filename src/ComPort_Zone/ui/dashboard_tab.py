@@ -70,6 +70,7 @@ from ..dashboard_parse import (
 )
 from ..icons import set_button_icon
 from ..themes import ThemePalette
+from .dashboard_chart import DEFAULT_SPAN_S, DashboardChartPage
 from .dashboard_grid import DashboardGridWidget
 from .dashboard_tiles import (
     TILE_STATE_CAPTIONS,
@@ -110,6 +111,9 @@ class DashboardCoordinatorLike(Protocol):
 
 
 STALENESS_SWEEP_EVERY_TICKS = 10
+# ~10 Hz chart refresh while the chart page is the current view (FR-49);
+# nothing fires when the grid is visible.
+CHART_REFRESH_INTERVAL_MS = 100
 
 
 class DashboardTabWidget(QWidget):
@@ -162,6 +166,9 @@ class DashboardTabWidget(QWidget):
         # fed from _apply_outcome — never persisted (NFR-3).
         self._histories: dict[str, EntryHistory] = {}
         self._theme: ThemePalette = host.theme
+        # Chart-page id (FR-48): "" while the grid is showing, else the
+        # focused entry. The refresh timer fires only while non-empty.
+        self._chart_entry_id: str = ""
         self._runtimes: dict[str, TileRuntime] = {}
         self._tick_count = 0
         self._tab_state = tab_state or DashboardTabState(dashboard_id=config.id)
@@ -183,6 +190,12 @@ class DashboardTabWidget(QWidget):
         self.tick_timer.timeout.connect(self._tick)
         if start_timer:
             self.tick_timer.start(self.TICK_INTERVAL_MS)
+
+        # Chart refresh runs on its own timer so the grid tick stays
+        # untouched. Only starts when the chart opens (FR-49 — visible
+        # only).
+        self.chart_refresh_timer = QTimer(self)
+        self.chart_refresh_timer.timeout.connect(self._refresh_chart)
 
     # ------------------------------------------------------------------ UI
 
@@ -260,6 +273,7 @@ class DashboardTabWidget(QWidget):
         self.grid.tileEnableToggled.connect(self.set_entry_enabled)
         self.grid.tilePollNowRequested.connect(self.poll_now)
         self.grid.tileControlActivated.connect(self._activate_control)
+        self.grid.tileChartRequested.connect(self.open_chart)
         self.grid.set_config(self.config)
 
         self.scroll_area = QScrollArea(self)
@@ -284,9 +298,13 @@ class DashboardTabWidget(QWidget):
         empty_layout.addWidget(empty_hint)
         empty_layout.addStretch(1)
 
+        self.chart_page = DashboardChartPage(self)
+        self.chart_page.backRequested.connect(self.close_chart)
+
         self.stack = QStackedWidget(self)
-        self.stack.addWidget(empty_page)
-        self.stack.addWidget(self.scroll_area)
+        self.EMPTY_PAGE = self.stack.addWidget(empty_page)
+        self.GRID_PAGE = self.stack.addWidget(self.scroll_area)
+        self.CHART_PAGE = self.stack.addWidget(self.chart_page)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -296,7 +314,11 @@ class DashboardTabWidget(QWidget):
         self._refresh_empty_state()
 
     def _refresh_empty_state(self) -> None:
-        self.stack.setCurrentIndex(1 if self.config.entries else 0)
+        # The chart page is its own mode; only switch between empty + grid
+        # so opening the chart doesn't get clobbered by a config edit.
+        if self.stack.currentIndex() == self.CHART_PAGE:
+            return
+        self.stack.setCurrentIndex(self.GRID_PAGE if self.config.entries else self.EMPTY_PAGE)
 
     def _note_saved(self) -> None:
         """Reflect the auto-save in the header (dashboards have no dirty
@@ -348,6 +370,7 @@ class DashboardTabWidget(QWidget):
         """Stop the tick and release every held dispatcher (tab close, app
         close, settings re-apply). Safe to call twice (NFR-4)."""
         self.tick_timer.stop()
+        self.chart_refresh_timer.stop()
         for session_id, dispatcher in list(self._dispatchers.items()):
             dispatcher.cancel_dashboard(self.config.id)
             self.coordinator.release_dispatcher(session_id)
@@ -358,6 +381,7 @@ class DashboardTabWidget(QWidget):
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme
         self.grid.apply_theme_palette(theme)
+        self.chart_page.apply_theme_palette(theme)
         # Color depends on the active theme, so feed every visible tile.
         for entry in self.config.entries:
             self._refresh_sparkline(entry.id)
@@ -512,6 +536,61 @@ class DashboardTabWidget(QWidget):
         if entry is None or not entry.is_polled():
             return False
         return self.scheduler.trigger_now(entry_id)
+
+    # ---------------------------------------------------------- chart page
+
+    def open_chart(self, entry_id: str) -> bool:
+        """Switch the workspace to the chart view for ``entry_id``.
+
+        Numeric polled or derived entries only; controls/text entries are
+        rejected silently. Closing returns to the grid via
+        :meth:`close_chart` (or automatically when the entry is removed,
+        FR-48)."""
+        entry = self.config.entry_by_id(entry_id)
+        if entry is None or not entry.is_numeric() or entry.is_control():
+            return False
+        self._chart_entry_id = entry_id
+        self.chart_page.apply_theme_palette(self._theme)
+        self.chart_page.set_entry(entry)
+        self._refresh_chart()
+        self.stack.setCurrentIndex(self.CHART_PAGE)
+        if not self.chart_refresh_timer.isActive():
+            self.chart_refresh_timer.start(CHART_REFRESH_INTERVAL_MS)
+        return True
+
+    def close_chart(self) -> None:
+        if self.chart_refresh_timer.isActive():
+            self.chart_refresh_timer.stop()
+        self._chart_entry_id = ""
+        # Switch off CHART_PAGE first, then let the empty/grid logic
+        # pick — _refresh_empty_state intentionally guards against
+        # config edits clobbering an open chart, so it would no-op here.
+        self.stack.setCurrentIndex(self.GRID_PAGE if self.config.entries else self.EMPTY_PAGE)
+
+    @property
+    def chart_entry_id(self) -> str:
+        return self._chart_entry_id
+
+    def _refresh_chart(self) -> None:
+        entry_id = self._chart_entry_id
+        if not entry_id:
+            return
+        entry = self.config.entry_by_id(entry_id)
+        if entry is None:
+            # The entry was removed (or kind-converted away from numeric)
+            # while the chart was open — drop back to the grid.
+            self.close_chart()
+            return
+        history = self._histories.get(entry_id)
+        samples = history.samples() if history is not None else []
+        runtime = self._runtimes.get(entry_id)
+        if runtime is not None and runtime.color:
+            color = runtime.color
+        elif runtime is not None:
+            color = tile_state_color(runtime.state, self._theme)
+        else:
+            color = tile_state_color("ok", self._theme)
+        self.chart_page.set_history(samples, color, now=self._clock())
 
     # ------------------------------------------------------------- controls
 
@@ -996,6 +1075,12 @@ class DashboardTabWidget(QWidget):
             entry = self.config.entry_by_id(entry_id)
             if entry is None or not entry.is_numeric():
                 del self._histories[entry_id]
+        # If the chart was open on an entry that just went away (removed
+        # or kind-converted), bail back to the grid (FR-48).
+        if self._chart_entry_id:
+            chart_entry = self.config.entry_by_id(self._chart_entry_id)
+            if chart_entry is None or not chart_entry.is_numeric() or chart_entry.is_control():
+                self.close_chart()
         self.scheduler.configure(schedulable)
         self._refresh_session_topology()
         self.grid.set_config(self.config)

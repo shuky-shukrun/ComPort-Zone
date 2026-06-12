@@ -110,6 +110,7 @@ class TileFrame(QFrame):
     spanRequested = Signal(str, int, int)
     pollNowRequested = Signal(str)
     activateRequested = Signal(str)  # emitted by control tiles only (FR-59)
+    chartRequested = Signal(str)  # emitted by value tiles only (FR-48)
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         """Override on tile kinds that paint their own surfaces (sparkline)."""
@@ -234,6 +235,12 @@ class TileFrame(QFrame):
                 lambda: self.pollNowRequested.emit(self.entry_id)
             )
             menu.addSeparator()
+        if self._entry.is_numeric() and self._entry.tile.kind != "control":
+            chart_action = menu.addAction("Open Chart…")
+            chart_action.triggered.connect(
+                lambda: self.chartRequested.emit(self.entry_id)
+            )
+            menu.addSeparator()
         edit_action = menu.addAction("Edit Entry…")
         edit_action.triggered.connect(lambda: self.editRequested.emit(self.entry_id))
         enabled_action = menu.addAction("Enabled")
@@ -312,6 +319,19 @@ class ValueTileWidget(TileFrame):
         if _apply_custom_style(self.value_label, "color: {color};", runtime.color):
             changed = True
         return changed
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        # Double-click opens the chart (FR-48). Edit mode owns drag, so a
+        # double-click there must not also blow the layout away.
+        if (
+            not self.edit_mode
+            and self._entry.is_numeric()
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self.chartRequested.emit(self.entry_id)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class LedTileWidget(TileFrame):
