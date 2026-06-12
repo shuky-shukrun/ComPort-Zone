@@ -605,6 +605,46 @@ class DashboardSchemaTests(unittest.TestCase):
             payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
         )
 
+    def test_v3_feature_raises_min_compat_to_v3_floor(self) -> None:
+        # A v3-only feature pushes a v2-shaped library to floor v7.
+        from ComPort_Zone.dashboard_models import (
+            EnumOption,
+            EnumSpec,
+            SetpointSpec,
+            TilePlacement,
+        )
+        from ComPort_Zone.models import CONTROL_PANEL_V3_SCHEMA_FLOOR
+
+        v3_variants = {
+            "setpoint kind": lambda c: setattr(c.entries[0].tile, "kind", "setpoint"),
+            "enum kind": lambda c: setattr(c.entries[0].tile, "kind", "enum"),
+            "setpoint spec": lambda c: setattr(
+                c.entries[0],
+                "setpoint",
+                SetpointSpec(command_template="V {value}"),
+            ),
+            "enum spec": lambda c: setattr(
+                c.entries[0],
+                "enum_spec",
+                EnumSpec(options=[EnumOption(label="A", command="A")]),
+            ),
+        }
+        for name, mutate in v3_variants.items():
+            with self.subTest(feature=name):
+                config = self.make_dashboard()
+                mutate(config)
+                payload = AppSettings(dashboards=[config]).to_dict()
+                self.assertEqual(
+                    payload["minimum_compatible_schema_version"],
+                    CONTROL_PANEL_V3_SCHEMA_FLOOR,
+                )
+
+    def test_v1_shaped_library_keeps_v1_floor_on_v3_build(self) -> None:
+        # The whole point of sparse v3: untouched libraries don't move.
+        config = self.make_dashboard()  # v1-shaped
+        payload = AppSettings(dashboards=[config]).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
     def test_lan_and_dashboards_take_highest_floor(self) -> None:
         settings = AppSettings(
             transport_kind="lan",

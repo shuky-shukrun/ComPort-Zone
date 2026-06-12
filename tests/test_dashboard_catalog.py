@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ComPort_Zone.dashboard_catalog import (
     DASHBOARD_EXPORT_KEY,
+    DASHBOARD_EXPORT_V2,
     DASHBOARD_EXPORT_VERSION,
     DashboardCatalog,
     export_dashboards_payload,
@@ -102,9 +103,49 @@ class TransferPayloadTests(unittest.TestCase):
         config = make_config("PSU")
         config.entries[0].poll_mode = "on_connect"
         payload = export_dashboards_payload([config])
-        self.assertEqual(payload[DASHBOARD_EXPORT_KEY], DASHBOARD_EXPORT_VERSION)
+        # A v2-shaped payload (no v3 widgets) stays at version 2 so v2
+        # builds keep importing it. v3 builds keep reading it.
+        self.assertEqual(payload[DASHBOARD_EXPORT_KEY], DASHBOARD_EXPORT_V2)
+        # Also confirm DASHBOARD_EXPORT_VERSION has moved to v3.
+        self.assertEqual(DASHBOARD_EXPORT_VERSION, 3)
         restored = import_dashboards_payload(json.loads(json.dumps(payload)))
         self.assertEqual(restored[0].entries[0].poll_mode, "on_connect")
+
+    def test_export_stamps_version_3_for_v3_features(self) -> None:
+        from ComPort_Zone.dashboard_models import (
+            EnumOption,
+            EnumSpec,
+            SetpointSpec,
+            TilePlacement,
+        )
+
+        config = make_config("Setpoint Bench")
+        config.entries[0].tile = TilePlacement(kind="setpoint")
+        config.entries[0].setpoint = SetpointSpec(
+            command_template="VOLT {value}", max_value=30
+        )
+        payload = export_dashboards_payload([config])
+        # v3 features bump the stamp to the current DASHBOARD_EXPORT_VERSION.
+        self.assertEqual(payload[DASHBOARD_EXPORT_KEY], DASHBOARD_EXPORT_VERSION)
+
+        # An enum-only panel also bumps to version 3.
+        enum_config = make_config("Mode Selector")
+        enum_config.entries[0].tile = TilePlacement(kind="enum")
+        enum_config.entries[0].enum_spec = EnumSpec(
+            options=[EnumOption(label="CV", command="MODE CV")]
+        )
+        self.assertEqual(
+            export_dashboards_payload([enum_config])[DASHBOARD_EXPORT_KEY],
+            DASHBOARD_EXPORT_VERSION,
+        )
+        # Mixed v1 + v3 in one bundle stamps the highest version present.
+        mixed_payload = export_dashboards_payload([make_config("V1"), enum_config])
+        self.assertEqual(mixed_payload[DASHBOARD_EXPORT_KEY], DASHBOARD_EXPORT_VERSION)
+        # A v3 payload round-trips losslessly.
+        restored = import_dashboards_payload(json.loads(json.dumps(payload)))
+        self.assertEqual(restored[0].entries[0].tile.kind, "setpoint")
+        self.assertEqual(restored[0].entries[0].setpoint.command_template, "VOLT {value}")
+        self.assertEqual(restored[0].entries[0].setpoint.max_value, 30)
 
     def test_import_rejects_non_object(self) -> None:
         with self.assertRaises(ValueError):

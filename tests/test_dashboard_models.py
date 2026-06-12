@@ -409,6 +409,266 @@ class V2EntryFieldTests(unittest.TestCase):
         self.assertEqual(restored.csv_log_path, "C:/bench.csv")
 
 
+class V3EntryFieldTests(unittest.TestCase):
+    """Setpoint + enum entries: sparse persistence, predicates, validation."""
+
+    def test_v2_shaped_entry_serializes_with_no_v3_keys(self) -> None:
+        """A panel that doesn't use v3 widgets keeps its v2 payload shape."""
+        from ComPort_Zone.dashboard_models import (
+            entry_uses_v3_features,
+            dashboard_uses_v3_features,
+        )
+
+        v2_entry = DashboardEntry(
+            command="X?",
+            poll_mode="on_connect",
+            rules=[ColorRule(op="gt", operand="1", color="#112233")],
+        )
+        payload = v2_entry.to_dict()
+        # v3-only keys never written when defaults stand.
+        self.assertNotIn("setpoint", payload)
+        self.assertNotIn("enum_spec", payload)
+        self.assertFalse(entry_uses_v3_features(v2_entry))
+        self.assertFalse(
+            dashboard_uses_v3_features(DashboardConfig(entries=[v2_entry]))
+        )
+
+    def test_setpoint_round_trip(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        entry = DashboardEntry(
+            label="Output",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(
+                min_value=0.0,
+                max_value=30.0,
+                step=0.1,
+                decimals=2,
+                unit="V",
+                command_template="VOLT {value}",
+                watch_entry_id="vmeas",
+                confirm=True,
+            ),
+        )
+        self.assertTrue(entry.is_setpoint())
+        self.assertTrue(entry.is_writable())
+        self.assertFalse(entry.is_polled())
+        self.assertFalse(entry.is_numeric())
+        restored = DashboardEntry.from_dict(entry.to_dict())
+        self.assertEqual(restored.tile.kind, "setpoint")
+        self.assertEqual(restored.setpoint.min_value, 0.0)
+        self.assertEqual(restored.setpoint.max_value, 30.0)
+        self.assertEqual(restored.setpoint.step, 0.1)
+        self.assertEqual(restored.setpoint.decimals, 2)
+        self.assertEqual(restored.setpoint.unit, "V")
+        self.assertEqual(restored.setpoint.command_template, "VOLT {value}")
+        self.assertEqual(restored.setpoint.watch_entry_id, "vmeas")
+        self.assertTrue(restored.setpoint.confirm)
+
+    def test_setpoint_render_command_uses_decimals(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        spec = SetpointSpec(
+            command_template="VOLT {value}", decimals=2, min_value=0.0, max_value=10.0
+        )
+        self.assertEqual(spec.render_command(3.14159), "VOLT 3.14")
+        # decimals=0 drops the decimal point entirely.
+        spec.decimals = 0
+        self.assertEqual(spec.render_command(7.4), "VOLT 7")
+
+    def test_setpoint_clamp_keeps_value_in_range(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        spec = SetpointSpec(min_value=0.0, max_value=10.0, step=0.5)
+        self.assertEqual(spec.clamp(-5.0), 0.0)
+        self.assertEqual(spec.clamp(99.0), 10.0)
+        self.assertEqual(spec.clamp(4.2), 4.2)
+
+    def test_setpoint_validation_errors(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        # Empty template
+        self.assertIn(
+            "Command template must not be empty.",
+            SetpointSpec(command_template="").validation_errors("Text"),
+        )
+        # Missing {value}
+        self.assertIn(
+            "Command template must contain {value} exactly once.",
+            SetpointSpec(command_template="VOLT").validation_errors("Text"),
+        )
+        # Duplicate {value}
+        self.assertIn(
+            "Command template must contain {value} exactly once.",
+            SetpointSpec(command_template="V{value} {value}").validation_errors("Text"),
+        )
+        # Min >= max
+        errors = SetpointSpec(
+            command_template="V {value}", min_value=10, max_value=5
+        ).validation_errors("Text")
+        self.assertTrue(any("less than maximum" in e for e in errors))
+        # Step <= 0
+        errors = SetpointSpec(
+            command_template="V {value}", step=0.0, min_value=0, max_value=10
+        ).validation_errors("Text")
+        self.assertTrue(any("Step must be a positive number" in e for e in errors))
+        # Step > range
+        errors = SetpointSpec(
+            command_template="V {value}", step=20, min_value=0, max_value=10
+        ).validation_errors("Text")
+        self.assertTrue(any("Step must be smaller than the value range" in e for e in errors))
+        # Valid spec: no errors.
+        self.assertEqual(
+            SetpointSpec(command_template="V {value}").validation_errors("Text"),
+            [],
+        )
+
+    def test_setpoint_validation_in_hex_mode(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        # The template renders to a stringified number that is not valid
+        # hex; the Hex Bytes branch catches it.
+        errors = SetpointSpec(
+            command_template="{value}", min_value=0, max_value=10, step=1, decimals=0
+        ).validation_errors("Hex Bytes")
+        self.assertTrue(any("Setpoint command" in e for e in errors))
+
+    def test_enum_round_trip(self) -> None:
+        from ComPort_Zone.dashboard_models import EnumOption, EnumSpec
+
+        entry = DashboardEntry(
+            label="Mode",
+            tile=TilePlacement(kind="enum"),
+            enum_spec=EnumSpec(
+                options=[
+                    EnumOption(label="CV", command="MODE CV", match_value="CV"),
+                    EnumOption(label="CC", command="MODE CC", match_value="CC"),
+                    EnumOption(label="OFF", command="OUTP OFF"),
+                ],
+                watch_entry_id="modepoll",
+                confirm=False,
+            ),
+        )
+        self.assertTrue(entry.is_enum())
+        self.assertTrue(entry.is_writable())
+        self.assertFalse(entry.is_polled())
+        restored = DashboardEntry.from_dict(entry.to_dict())
+        self.assertEqual(restored.tile.kind, "enum")
+        self.assertEqual(len(restored.enum_spec.options), 3)
+        self.assertEqual(restored.enum_spec.options[0].label, "CV")
+        self.assertEqual(restored.enum_spec.options[0].command, "MODE CV")
+        self.assertEqual(restored.enum_spec.options[0].match_value, "CV")
+        self.assertEqual(restored.enum_spec.watch_entry_id, "modepoll")
+        self.assertEqual(restored.enum_spec.options[2].match_value, "")
+
+    def test_enum_indicated_index(self) -> None:
+        from ComPort_Zone.dashboard_models import EnumOption, EnumSpec
+
+        spec = EnumSpec(
+            options=[
+                EnumOption(label="CV", command="MODE CV", match_value="CV"),
+                EnumOption(label="CC", command="MODE CC", match_value="CC"),
+                EnumOption(label="OFF", command="OUTP OFF"),
+            ]
+        )
+        self.assertEqual(spec.indicated_index("CV"), 0)
+        self.assertEqual(spec.indicated_index("cc"), 1)  # case-insensitive
+        self.assertEqual(spec.indicated_index(" CV "), 0)  # whitespace-tolerant
+        self.assertEqual(spec.indicated_index("UNKNOWN"), -1)
+        self.assertEqual(spec.indicated_index(""), -1)
+
+    def test_enum_validation_errors(self) -> None:
+        from ComPort_Zone.dashboard_models import EnumOption, EnumSpec
+
+        # No options
+        errors = EnumSpec().validation_errors("Text")
+        self.assertEqual(errors, ["Enum tile needs at least one option."])
+        # Missing label / command
+        errors = EnumSpec(
+            options=[
+                EnumOption(label="", command="X"),
+                EnumOption(label="Y", command=""),
+            ]
+        ).validation_errors("Text")
+        self.assertTrue(any("Option 1: label" in e for e in errors))
+        self.assertTrue(any("Option 2: command" in e for e in errors))
+        # Hex mode: bad command in any option
+        errors = EnumSpec(
+            options=[EnumOption(label="Bad", command="NOTHEX")]
+        ).validation_errors("Hex Bytes")
+        self.assertTrue(any("Option 1:" in e for e in errors))
+
+    def test_writable_predicate_covers_all_writing_tile_kinds(self) -> None:
+        """is_writable() is the master-arm gate; every writing kind must
+        answer True so v3-T5's gate fires uniformly (FR-72)."""
+        self.assertTrue(DashboardEntry(tile=TilePlacement(kind="control")).is_writable())
+        self.assertTrue(DashboardEntry(tile=TilePlacement(kind="setpoint")).is_writable())
+        self.assertTrue(DashboardEntry(tile=TilePlacement(kind="enum")).is_writable())
+        # Non-writing kinds answer False.
+        self.assertFalse(DashboardEntry(tile=TilePlacement(kind="value")).is_writable())
+        self.assertFalse(DashboardEntry(tile=TilePlacement(kind="led")).is_writable())
+
+    def test_entry_uses_v3_features_matrix(self) -> None:
+        from ComPort_Zone.dashboard_models import (
+            EnumOption,
+            EnumSpec,
+            SetpointSpec,
+            entry_uses_v3_features,
+        )
+
+        self.assertFalse(entry_uses_v3_features(DashboardEntry(command="X?")))
+        # Even a v2-feature-loaded entry doesn't flip the v3 predicate.
+        self.assertFalse(
+            entry_uses_v3_features(
+                DashboardEntry(command="X?", poll_mode="on_connect")
+            )
+        )
+        cases = {
+            "setpoint kind": DashboardEntry(tile=TilePlacement(kind="setpoint")),
+            "enum kind": DashboardEntry(tile=TilePlacement(kind="enum")),
+            "setpoint spec without matching kind": DashboardEntry(
+                command="X?",
+                setpoint=SetpointSpec(command_template="V {value}"),
+            ),
+            "enum spec without matching kind": DashboardEntry(
+                command="X?",
+                enum_spec=EnumSpec(options=[EnumOption(label="A", command="A")]),
+            ),
+        }
+        for name, entry in cases.items():
+            with self.subTest(feature=name):
+                self.assertTrue(entry_uses_v3_features(entry))
+
+    def test_validation_branches_for_writing_tiles(self) -> None:
+        """A setpoint/enum entry validates its spec, not command/parse."""
+        from ComPort_Zone.dashboard_models import EnumOption, EnumSpec, SetpointSpec
+
+        setpoint = DashboardEntry(
+            label="V",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(command_template="VOLT {value}"),
+        )
+        # No "Command must not be empty" — the spec carries it.
+        self.assertEqual(setpoint.validation_errors(), [])
+
+        bad_setpoint = DashboardEntry(
+            label="V",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(command_template=""),
+        )
+        errors = bad_setpoint.validation_errors()
+        self.assertTrue(any("Command template" in e for e in errors))
+
+        good_enum = DashboardEntry(
+            label="Mode",
+            tile=TilePlacement(kind="enum"),
+            enum_spec=EnumSpec(
+                options=[EnumOption(label="X", command="MODE X")]
+            ),
+        )
+        self.assertEqual(good_enum.validation_errors(), [])
+
+
 class ExampleDashboardTests(unittest.TestCase):
     """The shipped example must stay valid — it is every user's first
     contact with the feature."""

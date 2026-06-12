@@ -10,6 +10,7 @@ from .dashboard_models import (
     DashboardConfig,
     DashboardTabState,
     dashboard_uses_v2_features,
+    dashboard_uses_v3_features,
     default_dashboards,
 )
 
@@ -39,16 +40,21 @@ EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
 # Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
 EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
 EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
-SETTINGS_SCHEMA_VERSION = 6
+SETTINGS_SCHEMA_VERSION = 7
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 # Feature floors: a saved payload declares the highest floor of any
-# feature it actually contains, so files without LAN/dashboard content
-# stay readable by older builds (FR-39 in dashboard-view-requirements).
+# feature it actually contains, so files without LAN/Control Panel
+# content stay readable by older builds (FR-39 in
+# docs/control-panel-requirements.md).
 LAN_SCHEMA_FLOOR = 4
 DASHBOARD_SCHEMA_FLOOR = 5
 # Dashboard v2 capabilities (poll modes, per-entry targets, derived/control
 # entries, rule colors, CSV logging) — a v1-shaped library keeps floor 5.
 DASHBOARD_V2_SCHEMA_FLOOR = 6
+# Control Panel v3 capabilities (setpoint tiles, enum/dropdown tiles) — a
+# v1/v2-shaped library keeps its prior floor; only a panel that actually
+# uses a v3 widget pushes the floor to 7 (FR-39 v3).
+CONTROL_PANEL_V3_SCHEMA_FLOOR = 7
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
@@ -554,6 +560,8 @@ class AppSettings:
             floors.append(DASHBOARD_SCHEMA_FLOOR)
         if any(dashboard_uses_v2_features(config) for config in self.dashboards):
             floors.append(DASHBOARD_V2_SCHEMA_FLOOR)
+        if any(dashboard_uses_v3_features(config) for config in self.dashboards):
+            floors.append(CONTROL_PANEL_V3_SCHEMA_FLOOR)
         return max(floors)
 
     def to_dict(self) -> dict[str, Any]:

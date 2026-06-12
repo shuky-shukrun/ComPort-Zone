@@ -346,9 +346,11 @@ class DashboardAppTests(unittest.TestCase):
         window.save_settings()
 
         payload = json.loads(settings_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], 6)
+        # schema_version always stamps the latest the producing build
+        # supports (v3 → 7); the floor is the back-compat predicate.
+        self.assertEqual(payload["schema_version"], 7)
         # The test dashboard is v1-shaped, so the library declares the v1
-        # dashboard floor, not the v2 one.
+        # dashboard floor, not v2/v3.
         self.assertEqual(payload["minimum_compatible_schema_version"], 5)
         self.assertEqual(len(payload["libraries"]["dashboards"]), 1)
         kinds = [
@@ -793,11 +795,13 @@ class DashboardAppTests(unittest.TestCase):
         service = SettingsService(SettingsStore(settings_path))
         original = AppSettings(dashboards=[config])
         self.assertTrue(service.save(original))
-        # Sanity: payload declared the v2 schema floor (6).
+        # Sanity: the test config uses v2 features (derived + custom rule
+        # color + control toggle), so the floor pegs to v6 even on a v3
+        # build. schema_version stamps the latest the build supports.
         with settings_path.open(encoding="utf-8") as handle:
             payload = json.load(handle)
-        self.assertGreaterEqual(payload.get("minimum_compatible_schema_version", 0), 6)
-        self.assertEqual(payload["schema_version"], 6)
+        self.assertEqual(payload.get("minimum_compatible_schema_version"), 6)
+        self.assertEqual(payload["schema_version"], 7)
 
         restored = service.load()
         # Every v2 field round-trips intact.

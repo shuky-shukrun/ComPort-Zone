@@ -16,13 +16,18 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .dashboard_models import DashboardConfig, dashboard_uses_v2_features
+from .dashboard_models import (
+    DashboardConfig,
+    dashboard_uses_v2_features,
+    dashboard_uses_v3_features,
+)
 
 DASHBOARD_EXPORT_KEY = "comport_zone_dashboards"
-DASHBOARD_EXPORT_VERSION = 2
+DASHBOARD_EXPORT_VERSION = 3
 # Payloads are stamped with the lowest version that can represent them, so
-# v1 builds keep importing exports of v1-shaped dashboards (FR-39).
+# v1/v2 builds keep importing exports they can fully represent (FR-39).
 DASHBOARD_EXPORT_V1 = 1
+DASHBOARD_EXPORT_V2 = 2
 
 
 class DashboardCatalog:
@@ -125,12 +130,20 @@ class DashboardImportResult:
 
 
 def export_dashboards_payload(configs: list[DashboardConfig]) -> dict[str, Any]:
-    """Versioned JSON-serializable payload for one or more dashboards."""
-    version = (
-        DASHBOARD_EXPORT_VERSION
-        if any(dashboard_uses_v2_features(config) for config in configs)
-        else DASHBOARD_EXPORT_V1
-    )
+    """Versioned JSON-serializable payload for one or more dashboards.
+
+    Stamped with the lowest version that can fully represent the payload,
+    so older builds keep importing exports they can fully model: a
+    v1-shaped collection stays at version 1; a v2-shaped collection
+    stays at version 2; only collections that actually use a v3 widget
+    stamp version 3.
+    """
+    if any(dashboard_uses_v3_features(config) for config in configs):
+        version = DASHBOARD_EXPORT_VERSION
+    elif any(dashboard_uses_v2_features(config) for config in configs):
+        version = DASHBOARD_EXPORT_V2
+    else:
+        version = DASHBOARD_EXPORT_V1
     return {
         DASHBOARD_EXPORT_KEY: version,
         "dashboards": [config.to_dict() for config in configs],

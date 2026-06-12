@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-TILE_KINDS = ("value", "led", "control")
+TILE_KINDS = ("value", "led", "control", "setpoint", "enum")
 # Semantic states a tile can render. "ok"/"warn"/"fail" come from color
 # rules, "neutral" is the no-rule-matched default, "stale" means no recent
 # successful poll, "error" covers send/parse failures.
@@ -36,6 +36,12 @@ POLL_MODES = ("interval", "on_connect")
 ENTRY_SOURCES = ("poll", "derived")
 CONTROL_MODES = ("button", "toggle")
 MAX_EXPRESSION_LENGTH = 256
+# Setpoint hard limits — chosen so the slider's int range never overflows
+# (max steps = (max - min) / step) and the editor dialog stays usable. v3.
+SETPOINT_MIN_DECIMALS = 0
+SETPOINT_MAX_DECIMALS = 6
+SETPOINT_MIN_STEP = 1e-6
+SETPOINT_VALUE_PLACEHOLDER = "{value}"
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 RULE_STATES = ("ok", "warn", "fail")
 COLOR_RULE_OPS = (
@@ -315,6 +321,215 @@ class ControlSpec:
         return errors
 
 
+def format_setpoint_value(value: float, decimals: int) -> str:
+    """Render a setpoint value the way the wire command will see it.
+
+    ``f"{x:.{decimals}f}"`` over ``:g`` because operators expect a fixed
+    number of decimals from a numeric setpoint (entering 12 with
+    decimals=2 sends "12.00"). Trims any trailing decimal-only zero
+    when decimals=0 so the integer form stays clean.
+    """
+    if decimals <= 0:
+        return f"{round(value):d}"
+    return f"{value:.{decimals}f}"
+
+
+@dataclass(slots=True)
+class SetpointSpec:
+    """Configuration of a numeric setpoint tile (v3, FR-63..FR-67).
+
+    The tile shows a slider + spinbox bound to a float value in
+    ``[min_value, max_value]`` with ``step`` granularity, and sends a
+    single command derived from ``command_template`` (one ``{value}``
+    placeholder, formatted with ``decimals`` precision). Optional
+    ``watch_entry_id`` mirrors a polled tile's latest value as a
+    readback line under the input.
+    """
+
+    min_value: float = 0.0
+    max_value: float = 100.0
+    step: float = 1.0
+    decimals: int = 2
+    unit: str = ""
+    command_template: str = ""
+    watch_entry_id: str = ""
+    confirm: bool = False
+
+    def is_default(self) -> bool:
+        return self == SetpointSpec()
+
+    def clamp(self, value: float) -> float:
+        """Snap ``value`` into [min, max] for the dialog's typed-value path."""
+        return max(self.min_value, min(self.max_value, float(value)))
+
+    def render_command(self, value: float) -> str:
+        """Build the command string sent for ``value`` (no-op when no template)."""
+        return self.command_template.replace(
+            SETPOINT_VALUE_PLACEHOLDER, format_setpoint_value(value, self.decimals)
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.min_value != 0.0:
+            payload["min_value"] = self.min_value
+        if self.max_value != 100.0:
+            payload["max_value"] = self.max_value
+        if self.step != 1.0:
+            payload["step"] = self.step
+        if self.decimals != 2:
+            payload["decimals"] = self.decimals
+        if self.unit:
+            payload["unit"] = self.unit
+        if self.command_template:
+            payload["command_template"] = self.command_template
+        if self.watch_entry_id:
+            payload["watch_entry_id"] = self.watch_entry_id
+        if self.confirm:
+            payload["confirm"] = True
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "SetpointSpec":
+        if not data:
+            return cls()
+        decimals = _clamp_int(
+            data.get("decimals", 2),
+            SETPOINT_MIN_DECIMALS,
+            SETPOINT_MAX_DECIMALS,
+            2,
+        )
+        return cls(
+            min_value=float(data.get("min_value", 0.0)),
+            max_value=float(data.get("max_value", 100.0)),
+            step=float(data.get("step", 1.0)),
+            decimals=decimals,
+            unit=str(data.get("unit", "")),
+            command_template=str(data.get("command_template", "")),
+            watch_entry_id=str(data.get("watch_entry_id", "")),
+            confirm=bool(data.get("confirm", False)),
+        )
+
+    def validation_errors(self, send_mode: str) -> list[str]:
+        """Edit-time errors that block dialog OK. Reference validity (the
+        watched entry must exist and be a polled tile) lives at the dialog
+        level — same pattern as the derived-tile expression check."""
+        errors: list[str] = []
+        if not self.command_template.strip():
+            errors.append("Command template must not be empty.")
+        elif self.command_template.count(SETPOINT_VALUE_PLACEHOLDER) != 1:
+            errors.append(
+                f"Command template must contain {SETPOINT_VALUE_PLACEHOLDER} exactly once."
+            )
+        if self.min_value >= self.max_value:
+            errors.append("Minimum must be less than maximum.")
+        if self.step <= SETPOINT_MIN_STEP:
+            errors.append("Step must be a positive number.")
+        elif self.max_value > self.min_value and self.step > (self.max_value - self.min_value):
+            errors.append("Step must be smaller than the value range.")
+        if send_mode == "Hex Bytes" and self.command_template.strip():
+            # Render with a sample value so a templated hex command can
+            # actually be checked end-to-end at edit time.
+            sample = self.render_command(self.clamp(self.min_value + self.step))
+            hex_error = hex_payload_error(sample)
+            if hex_error:
+                errors.append(f"Setpoint command: {hex_error}")
+        return errors
+
+
+@dataclass(slots=True)
+class EnumOption:
+    """One option in an enum/dropdown tile (v3, FR-68..FR-71)."""
+
+    label: str = ""
+    command: str = ""
+    match_value: str = ""
+
+    def is_default(self) -> bool:
+        return self == EnumOption()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.label:
+            payload["label"] = self.label
+        if self.command:
+            payload["command"] = self.command
+        if self.match_value:
+            payload["match_value"] = self.match_value
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "EnumOption":
+        if not data:
+            return cls()
+        return cls(
+            label=str(data.get("label", "")),
+            command=str(data.get("command", "")),
+            match_value=str(data.get("match_value", "")),
+        )
+
+
+@dataclass(slots=True)
+class EnumSpec:
+    """Configuration of an enum/dropdown selector tile (v3)."""
+
+    options: list[EnumOption] = field(default_factory=list)
+    watch_entry_id: str = ""
+    confirm: bool = False
+
+    def is_default(self) -> bool:
+        return not self.options and not self.watch_entry_id and not self.confirm
+
+    def indicated_index(self, value_text: str) -> int:
+        """Index of the first option whose match_value matches ``value_text``
+        (trimmed, case-insensitive); -1 when nothing matches or no watch."""
+        if not value_text:
+            return -1
+        needle = value_text.strip().casefold()
+        for index, option in enumerate(self.options):
+            if option.match_value and option.match_value.strip().casefold() == needle:
+                return index
+        return -1
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.options:
+            payload["options"] = [option.to_dict() for option in self.options]
+        if self.watch_entry_id:
+            payload["watch_entry_id"] = self.watch_entry_id
+        if self.confirm:
+            payload["confirm"] = True
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "EnumSpec":
+        if not data:
+            return cls()
+        return cls(
+            options=[
+                EnumOption.from_dict(_dict_value(item))
+                for item in _list_value(data.get("options"))
+            ],
+            watch_entry_id=str(data.get("watch_entry_id", "")),
+            confirm=bool(data.get("confirm", False)),
+        )
+
+    def validation_errors(self, send_mode: str) -> list[str]:
+        errors: list[str] = []
+        if not self.options:
+            errors.append("Enum tile needs at least one option.")
+            return errors
+        for index, option in enumerate(self.options, start=1):
+            if not option.label.strip():
+                errors.append(f"Option {index}: label must not be empty.")
+            if not option.command.strip():
+                errors.append(f"Option {index}: command must not be empty.")
+            elif send_mode == "Hex Bytes":
+                hex_error = hex_payload_error(option.command)
+                if hex_error:
+                    errors.append(f"Option {index}: {hex_error}")
+        return errors
+
+
 @dataclass(slots=True)
 class TilePlacement:
     """Grid position and footprint of an entry's tile."""
@@ -377,6 +592,9 @@ class DashboardEntry:
     show_sparkline: bool = True
     alerts_enabled: bool = True
     control: ControlSpec = field(default_factory=ControlSpec)
+    # --- v3 fields (sparse in to_dict) ---------------------------------
+    setpoint: SetpointSpec = field(default_factory=SetpointSpec)
+    enum_spec: EnumSpec = field(default_factory=EnumSpec)
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
@@ -386,15 +604,30 @@ class DashboardEntry:
     def is_control(self) -> bool:
         return self.tile.kind == "control"
 
+    def is_setpoint(self) -> bool:
+        return self.tile.kind == "setpoint"
+
+    def is_enum(self) -> bool:
+        return self.tile.kind == "enum"
+
+    def is_writable(self) -> bool:
+        """Whether this entry sends on user action (button/toggle/setpoint/enum).
+
+        The master arm gate fires here (v3, FR-72): any writing tile is
+        refused while the panel is disarmed; non-writing tiles ignore
+        arming state.
+        """
+        return self.is_control() or self.is_setpoint() or self.is_enum()
+
     def is_derived(self) -> bool:
         return self.source == "derived"
 
     def is_polled(self) -> bool:
-        return not self.is_control() and not self.is_derived()
+        return not self.is_writable() and not self.is_derived()
 
     def is_numeric(self) -> bool:
         """Whether this entry produces numeric values (history/sparkline/chart)."""
-        if self.is_control():
+        if self.is_writable():
             return False
         return self.is_derived() or self.parse.value_type == "number"
 
@@ -438,6 +671,13 @@ class DashboardEntry:
         control_payload = self.control.to_dict()
         if control_payload:
             payload["control"] = control_payload
+        # v3 fields: written only when non-default (FR-39 v3 sparse contract).
+        setpoint_payload = self.setpoint.to_dict()
+        if setpoint_payload:
+            payload["setpoint"] = setpoint_payload
+        enum_payload = self.enum_spec.to_dict()
+        if enum_payload:
+            payload["enum_spec"] = enum_payload
         return payload
 
     @classmethod
@@ -479,6 +719,8 @@ class DashboardEntry:
             show_sparkline=bool(data.get("show_sparkline", True)),
             alerts_enabled=bool(data.get("alerts_enabled", True)),
             control=ControlSpec.from_dict(_dict_value(data.get("control"))),
+            setpoint=SetpointSpec.from_dict(_dict_value(data.get("setpoint"))),
+            enum_spec=EnumSpec.from_dict(_dict_value(data.get("enum_spec"))),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
@@ -486,14 +728,21 @@ class DashboardEntry:
     def validation_errors(self) -> list[str]:
         """Human-readable problems that should block saving this entry.
 
-        Branches by entry kind: control entries validate their ControlSpec
-        instead of command/schedule/parse; derived entries validate the
-        expression's presence and size (reference resolution needs sibling
-        context and lives in ``dashboard_expr``).
+        Branches by entry kind: writing entries (control/setpoint/enum)
+        validate their spec instead of command/schedule/parse; derived
+        entries validate the expression's presence and size (reference
+        resolution needs sibling context and lives in ``dashboard_expr``).
+        Color rules apply to non-writing entries only.
         """
         errors: list[str] = []
         if self.is_control():
             errors.extend(self.control.validation_errors(self.send_mode))
+            return errors
+        if self.is_setpoint():
+            errors.extend(self.setpoint.validation_errors(self.send_mode))
+            return errors
+        if self.is_enum():
+            errors.extend(self.enum_spec.validation_errors(self.send_mode))
             return errors
         if self.is_derived():
             if not self.expression.strip():
@@ -732,6 +981,28 @@ def dashboard_uses_v2_features(config: DashboardConfig) -> bool:
         or bool(config.csv_log_path)
         or any(entry_uses_v2_features(entry) for entry in config.entries)
     )
+
+
+def entry_uses_v3_features(entry: DashboardEntry) -> bool:
+    """Whether this entry uses any persisted v3 capability (FR-39 v3).
+
+    A v3 panel pushes the schema floor to v7 only when at least one of
+    its entries carries a v3 feature. Setpoint/enum kinds are detected
+    via the tile kind so a misconfigured entry (kind set without spec
+    payload) still gates correctly; a non-default spec also counts so a
+    leftover SetpointSpec without the matching kind never silently
+    downgrades.
+    """
+    return (
+        entry.tile.kind == "setpoint"
+        or entry.tile.kind == "enum"
+        or not entry.setpoint.is_default()
+        or not entry.enum_spec.is_default()
+    )
+
+
+def dashboard_uses_v3_features(config: DashboardConfig) -> bool:
+    return any(entry_uses_v3_features(entry) for entry in config.entries)
 
 
 def example_dashboard() -> DashboardConfig:
