@@ -286,7 +286,7 @@ class DashboardTabWidget(QWidget):
         self.save_state_label = QLabel("", header)
         self.save_state_label.setObjectName("dashboardSaveState")
         self.save_state_label.setToolTip(
-            "Dashboard changes save automatically — this shows the last save time."
+            "Control Panel changes save automatically — this shows the last save time."
         )
 
         self.pause_button = QToolButton(header)
@@ -753,17 +753,17 @@ class DashboardTabWidget(QWidget):
         self.config.csv_log_enabled = True
         self._refresh_csv_button_state()
         self._save_config()
-        self.coordinator.notify(f"Logging dashboard values to {path}.")
+        self.coordinator.notify(f"Logging control panel values to {path}.")
 
     def _prompt_for_csv_path(self) -> str:
         """File picker for the CSV destination. Returns "" on cancel."""
         suggested = (
             self.config.csv_log_path
-            or f"{self.config.name.replace(' ', '_') or 'dashboard'}.csv"
+            or f"{self.config.name.replace(' ', '_') or 'control_panel'}.csv"
         )
         path, _filter = QFileDialog.getSaveFileName(
             self,
-            "Log dashboard values to CSV",
+            "Log control panel values to CSV",
             suggested,
             "CSV files (*.csv);;All files (*)",
         )
@@ -777,7 +777,7 @@ class DashboardTabWidget(QWidget):
         except OSError as exc:
             self.config.csv_log_enabled = False
             self.coordinator.notify(
-                f"Dashboard CSV log paused (could not open {path}): {exc}"
+                f"Control Panel CSV log paused (could not open {path}): {exc}"
             )
 
     def _fail_csv_logging(self, message: str) -> None:
@@ -1232,7 +1232,7 @@ class DashboardTabWidget(QWidget):
                 text = f"Unbound · {len(lines)} target(s)"
             else:
                 text = "Unbound"
-            tooltip = "Bind this dashboard to a terminal tab to start polling."
+            tooltip = "Bind this control panel to a terminal tab to start polling."
         elif not self._has_entry_overrides:
             # Single-target dashboards keep the exact v1 chip language.
             label, status, healthy = lines[0]

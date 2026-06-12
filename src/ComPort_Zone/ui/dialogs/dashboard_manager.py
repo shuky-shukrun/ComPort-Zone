@@ -47,7 +47,7 @@ class DashboardManagerDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Dashboards")
+        self.setWindowTitle("Control Panels")
         self.setMinimumSize(460, 360)
         self._catalog = catalog
         self._open_dashboard = open_dashboard
@@ -91,7 +91,8 @@ class DashboardManagerDialog(QDialog):
         body.addLayout(buttons_column)
 
         self.hint_label = QLabel(
-            "Dashboards poll commands in the background over a bound terminal tab.",
+            "Control Panels poll commands in the background and drive controls "
+            "over a bound terminal tab.",
             self,
         )
         self.hint_label.setObjectName("dialogHint")
@@ -149,7 +150,12 @@ class DashboardManagerDialog(QDialog):
             self.accept()
 
     def _create_new(self) -> None:
-        name, accepted = QInputDialog.getText(self, "New Dashboard", "Dashboard name", text="Dashboard")
+        name, accepted = QInputDialog.getText(
+            self,
+            "New Control Panel",
+            "Control Panel name",
+            text="Control Panel",
+        )
         if not accepted or not name.strip():
             return
         config = self._catalog.add(DashboardConfig(name=name.strip()))
@@ -162,14 +168,19 @@ class DashboardManagerDialog(QDialog):
         config = self._catalog.by_id(dashboard_id)
         if config is None:
             return
-        name, accepted = QInputDialog.getText(self, "Rename Dashboard", "Dashboard name", text=config.name)
+        name, accepted = QInputDialog.getText(
+            self,
+            "Rename Control Panel",
+            "Control Panel name",
+            text=config.name,
+        )
         if accepted and name.strip() and self._catalog.rename(dashboard_id, name):
             self._changed()
 
     def _duplicate_selected(self) -> None:
         clone = self._catalog.duplicate(self.selected_dashboard_id())
         if clone is not None:
-            self._set_status(f"Duplicated dashboard as {clone.name}.")
+            self._set_status(f"Duplicated control panel as {clone.name}.")
             self._changed()
 
     def _delete_selected(self) -> None:
@@ -179,32 +190,32 @@ class DashboardManagerDialog(QDialog):
             return
         answer = QMessageBox.question(
             self,
-            "Delete Dashboard",
-            f"Delete dashboard '{config.name}'? This cannot be undone.",
+            "Delete Control Panel",
+            f"Delete control panel '{config.name}'? This cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        # An open tab for this dashboard is closed too (FR-4).
+        # An open tab for this control panel is closed too (FR-4).
         self._close_dashboard_tab(dashboard_id)
         if self._catalog.remove(dashboard_id):
-            self._set_status(f"Deleted dashboard {config.name}.")
+            self._set_status(f"Deleted control panel {config.name}.")
             self._changed()
 
     def _import_json(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Import Dashboards",
+            "Import Control Panels",
             str(Path.home()),
-            "Dashboard Files (*.json);;All Files (*)",
+            "Control Panel Files (*.json);;All Files (*)",
         )
         if not path:
             return
         try:
             configs = read_dashboards_json(Path(path))
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Import Dashboards", str(exc))
+            QMessageBox.warning(self, "Import Control Panels", str(exc))
             return
         result = merge_imported(self._catalog, configs)
         self._set_status(result.summary())
@@ -213,15 +224,15 @@ class DashboardManagerDialog(QDialog):
     def _export_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Dashboards",
-            str(Path.home() / "dashboards.json"),
-            "Dashboard Files (*.json);;All Files (*)",
+            "Export Control Panels",
+            str(Path.home() / "control-panels.json"),
+            "Control Panel Files (*.json);;All Files (*)",
         )
         if not path:
             return
         try:
             count = write_dashboards_json(Path(path), self._catalog.all())
         except OSError as exc:
-            QMessageBox.warning(self, "Export Dashboards", str(exc))
+            QMessageBox.warning(self, "Export Control Panels", str(exc))
             return
-        self._set_status(f"Exported {count} dashboard(s) to {path}.")
+        self._set_status(f"Exported {count} control panel(s) to {path}.")

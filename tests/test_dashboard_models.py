@@ -675,30 +675,52 @@ class ExampleDashboardTests(unittest.TestCase):
 
     def test_default_library_is_the_example(self) -> None:
         configs = default_dashboards()
-        self.assertEqual([config.name for config in configs], ["Example Dashboard"])
+        self.assertEqual([config.name for config in configs], ["Example Control Panel"])
         self.assertTrue(configs[0].favorite)
 
     def test_entries_match_the_spec(self) -> None:
         example = example_dashboard()
-        by_command = {entry.command: entry for entry in example.entries}
+        polled_by_command = {
+            entry.command: entry for entry in example.entries if entry.command
+        }
+        # v3 example also ships a setpoint + enum entry — those have no
+        # poll command, so they don't appear in this map.
         self.assertEqual(
-            set(by_command), {"*IDN?", "OUTP?", "SYST:FIRM?"}
+            set(polled_by_command),
+            {"*IDN?", "OUTP?", "SYST:FIRM?", "SOUR:FUNC:MODE?"},
         )
 
-        identity = by_command["*IDN?"]
+        identity = polled_by_command["*IDN?"]
         self.assertEqual(identity.poll_mode, "on_connect")
         self.assertEqual((identity.tile.span_w, identity.tile.span_h), (2, 1))
         self.assertEqual(identity.tile.kind, "value")
         self.assertEqual(identity.parse.value_type, "text")
 
-        firmware = by_command["SYST:FIRM?"]
+        firmware = polled_by_command["SYST:FIRM?"]
         self.assertEqual(firmware.poll_mode, "on_connect")
         self.assertEqual((firmware.tile.span_w, firmware.tile.span_h), (2, 1))
         self.assertEqual(firmware.tile.kind, "value")
 
-        output = by_command["OUTP?"]
+        output = polled_by_command["OUTP?"]
         self.assertEqual(output.interval_ms, 300)
         self.assertEqual(output.tile.kind, "led")
+
+        # v3 additions: a setpoint and an enum tile.
+        setpoint_entries = [e for e in example.entries if e.is_setpoint()]
+        self.assertEqual(len(setpoint_entries), 1)
+        setpoint = setpoint_entries[0]
+        self.assertEqual(setpoint.setpoint.command_template, "VOLT {value}")
+        self.assertEqual(setpoint.setpoint.min_value, 0.0)
+        self.assertEqual(setpoint.setpoint.max_value, 30.0)
+        self.assertEqual(setpoint.setpoint.watch_entry_id, output.id)
+
+        enum_entries = [e for e in example.entries if e.is_enum()]
+        self.assertEqual(len(enum_entries), 1)
+        enum_entry = enum_entries[0]
+        self.assertEqual(
+            [opt.label for opt in enum_entry.enum_spec.options],
+            ["OFF", "CV", "CC"],
+        )
 
     def test_output_rules_map_states_and_labels(self) -> None:
         output = next(

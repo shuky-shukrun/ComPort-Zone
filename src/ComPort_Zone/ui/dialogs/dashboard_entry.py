@@ -124,7 +124,7 @@ class DashboardEntryDialog(QDialog):
         context: EntryDialogContext | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Dashboard Entry")
+        self.setWindowTitle("Control Panel Entry")
         self.setMinimumWidth(620)  # six rule columns fit without a scrollbar
         self._original = entry or DashboardEntry()
         self._context = context or EntryDialogContext()
@@ -176,7 +176,7 @@ class DashboardEntryDialog(QDialog):
 
         # --- target session (v2, FR-54) ----------------------------------
         self.target_combo = ChevronComboBox(self)
-        self.target_combo.addItem("Dashboard binding (default)", DASHBOARD_DEFAULT_TARGET)
+        self.target_combo.addItem("Control panel binding (default)", DASHBOARD_DEFAULT_TARGET)
         stored = original.target_endpoint
         stored_listed = False
         for endpoint, label, connected in self._context.bind_targets:

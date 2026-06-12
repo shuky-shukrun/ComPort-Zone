@@ -55,7 +55,7 @@ class TabContextMenuBuilder:
         host._add_context_command_action(menu, "dashboard.new")
         host._add_context_action(
             menu,
-            "Rename Dashboard",
+            "Rename Control Panel",
             lambda tab_index=index: host.rename_dashboard(tab_index),
             icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
         )

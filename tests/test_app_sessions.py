@@ -1253,7 +1253,12 @@ class AppSessionTests(unittest.TestCase):
             titles = [action.text() for action in menu.actions() if not action.isSeparator()]
             self.assertEqual(
                 titles,
-                ["New Terminal", "New Command File", "New Dashboard", "Dashboards..."],
+                [
+                    "New Terminal",
+                    "New Command File",
+                    "New Control Panel",
+                    "Control Panels...",
+                ],
             )
         finally:
             app_module.default_config_path = old_config_path

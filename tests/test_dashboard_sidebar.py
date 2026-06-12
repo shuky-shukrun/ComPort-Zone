@@ -105,9 +105,10 @@ class DashboardSidebarTests(unittest.TestCase):
 
     def test_rail_has_dashboards_mode(self) -> None:
         tooltips = [button.toolTip() for button in self.sidebar.rail_buttons]
-        self.assertIn("Dashboards", tooltips)
+        self.assertIn("Control Panels", tooltips)
         self.assertEqual(
-            tooltips, ["Favorites", "Saved Commands", "Files", "Dashboards", "History"]
+            tooltips,
+            ["Favorites", "Saved Commands", "Files", "Control Panels", "History"],
         )
 
     def test_inline_actions_dispatch_by_id(self) -> None:
@@ -151,7 +152,9 @@ class DashboardSidebarTests(unittest.TestCase):
             self.sidebar.dashboard_list, item, is_favorites=False
         )
         titles = [action.text() for action in menu.actions() if not action.isSeparator()]
-        self.assertEqual(titles, ["Open", "Add to Favorites", "Rename", "Delete Dashboard"])
+        self.assertEqual(
+            titles, ["Open", "Add to Favorites", "Rename", "Delete Control Panel"]
+        )
         menu.deleteLater()
 
     def test_favorites_page_includes_dashboard_panel(self) -> None:

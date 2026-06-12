@@ -521,12 +521,17 @@ class DashboardSchemaTests(unittest.TestCase):
 
     def test_first_run_seeds_the_example_dashboard(self) -> None:
         settings = AppSettings()
-        self.assertEqual([config.name for config in settings.dashboards], ["Example Dashboard"])
+        self.assertEqual(
+            [config.name for config in settings.dashboards],
+            ["Example Control Panel"],
+        )
         example = settings.dashboards[0]
         self.assertTrue(example.favorite)
+        # Setpoint + enum entries have no poll command; filter to the
+        # polled subset for this ordering check.
         self.assertEqual(
-            [entry.command for entry in example.entries],
-            ["*IDN?", "OUTP?", "SYST:FIRM?"],
+            [entry.command for entry in example.entries if entry.command],
+            ["*IDN?", "OUTP?", "SOUR:FUNC:MODE?", "SYST:FIRM?"],
         )
 
     def test_emptied_dashboard_library_stays_empty(self) -> None:
@@ -597,12 +602,16 @@ class DashboardSchemaTests(unittest.TestCase):
                     payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
                 )
 
-    def test_seeded_example_declares_v2_floor(self) -> None:
-        # The shipped example uses on_connect (FR-52), so a fresh install's
-        # library declares the v2 floor — accepted in the v2 plan.
+    def test_seeded_example_declares_v3_floor(self) -> None:
+        # The shipped example now bundles a setpoint and an enum tile
+        # (v3 features), so a fresh install's library declares the v3
+        # floor — accepted in the v3 plan.
+        from ComPort_Zone.models import CONTROL_PANEL_V3_SCHEMA_FLOOR
+
         payload = AppSettings().to_dict()
         self.assertEqual(
-            payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+            payload["minimum_compatible_schema_version"],
+            CONTROL_PANEL_V3_SCHEMA_FLOOR,
         )
 
     def test_v3_feature_raises_min_compat_to_v3_floor(self) -> None:
@@ -680,7 +689,10 @@ class DashboardSchemaTests(unittest.TestCase):
         self.assertEqual(loaded.serial.port, "COM9")
         # A pre-dashboard file has no "dashboards" key, so the upgrade seeds
         # the shipped example — same as a first run.
-        self.assertEqual([config.name for config in loaded.dashboards], ["Example Dashboard"])
+        self.assertEqual(
+            [config.name for config in loaded.dashboards],
+            ["Example Control Panel"],
+        )
         self.assertEqual(loaded.restored_dashboards, [])
 
     def test_dashboard_workspace_tab_state_round_trips(self) -> None:

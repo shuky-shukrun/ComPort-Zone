@@ -172,7 +172,7 @@ class DashboardAppTests(unittest.TestCase):
         for dashboard in window.iter_dashboards():
             self.stop_tick_timer(dashboard)
         names = sorted(config.name for config in window.settings.dashboards)
-        self.assertEqual(names, ["Dashboard", "Dashboard (2)"])
+        self.assertEqual(names, ["Control Panel", "Control Panel (2)"])
         self.assertEqual(len(window.iter_dashboards()), 2)
 
     def test_open_unknown_dashboard_reports_status(self) -> None:
@@ -537,18 +537,19 @@ class DashboardAppTests(unittest.TestCase):
         names = [
             drawer.dashboard_list.item(i).text() for i in range(drawer.dashboard_list.count())
         ]
-        self.assertEqual(names, ["Example Dashboard"])
+        self.assertEqual(names, ["Example Control Panel"])
         favorite_names = [
             drawer.favorite_dashboard_list.item(i).text()
             for i in range(drawer.favorite_dashboard_list.count())
         ]
-        self.assertEqual(favorite_names, ["Example Dashboard"])
-        # And it opens like any saved dashboard.
+        self.assertEqual(favorite_names, ["Example Control Panel"])
+        # And it opens like any saved control panel.
         example_id = window.settings.dashboards[0].id
         dashboard = window.open_dashboard_tab(example_id)
         self.assertIsNotNone(dashboard)
         self.stop_tick_timer(dashboard)
-        self.assertEqual(len(dashboard.config.entries), 3)
+        # v3 ships 6 entries: identity, output, mode, firmware, setpoint, enum.
+        self.assertEqual(len(dashboard.config.entries), 6)
 
     # --------------------------------------------------------- performance
 

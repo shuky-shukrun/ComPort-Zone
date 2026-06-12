@@ -970,7 +970,7 @@ class MainWindow(QMainWindow):
         return cast(DashboardTabWidget | None, self.tab_workspace.dashboard_at(index))
 
     def new_dashboard_tab(self) -> None:
-        config = self.dashboard_catalog.add(DashboardConfig(name="Dashboard"))
+        config = self.dashboard_catalog.add(DashboardConfig(name="Control Panel"))
         self.save_settings()
         self.open_dashboard_tab(config.id)
         self.refresh_dashboard_lists()
@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
                 return dashboard
         config = self.dashboard_catalog.by_id(dashboard_id)
         if config is None:
-            self.set_status("That dashboard no longer exists.")
+            self.set_status("That control panel no longer exists.")
             return None
         return self._create_dashboard_tab(config, DashboardTabState(dashboard_id=dashboard_id))
 
@@ -993,7 +993,7 @@ class MainWindow(QMainWindow):
         tab with a notice instead of crashing)."""
         config = self.dashboard_catalog.by_id(state.dashboard_id)
         if config is None:
-            self.set_status("A restored dashboard tab was skipped: its dashboard was deleted.")
+            self.set_status("A restored control panel tab was skipped: its config was deleted.")
             return None
         for dashboard in self.iter_dashboards():
             if dashboard.config.id == config.id:
@@ -1036,7 +1036,7 @@ class MainWindow(QMainWindow):
             return
         self.tabs.setCurrentIndex(index)
         name, accepted = QInputDialog.getText(
-            self, "Rename Dashboard", "Dashboard name", text=dashboard.config.name
+            self, "Rename Control Panel", "Control Panel name", text=dashboard.config.name
         )
         cleaned = name.strip()
         if accepted and cleaned:
@@ -1058,7 +1058,7 @@ class MainWindow(QMainWindow):
         menu.clear()
         configs = self.dashboard_catalog.all()
         if not configs:
-            action = menu.addAction("No saved dashboards")
+            action = menu.addAction("No saved control panels")
             action.setEnabled(False)
             return
         for config in configs:
@@ -1071,16 +1071,16 @@ class MainWindow(QMainWindow):
     def import_dashboards_json(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Import Dashboards",
+            "Import Control Panels",
             str(Path.home()),
-            "Dashboard Files (*.json);;All Files (*)",
+            "Control Panel Files (*.json);;All Files (*)",
         )
         if not path:
             return
         try:
             configs = read_dashboards_json(Path(path))
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Import Dashboards", str(exc))
+            QMessageBox.warning(self, "Import Control Panels", str(exc))
             return
         result = merge_imported(self.dashboard_catalog, configs)
         self.save_settings()
@@ -1089,22 +1089,22 @@ class MainWindow(QMainWindow):
 
     def export_dashboards_json(self) -> None:
         if not self.settings.dashboards:
-            self.set_status("No dashboards to export yet.")
+            self.set_status("No control panels to export yet.")
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Dashboards",
-            str(Path.home() / "dashboards.json"),
-            "Dashboard Files (*.json);;All Files (*)",
+            "Export Control Panels",
+            str(Path.home() / "control-panels.json"),
+            "Control Panel Files (*.json);;All Files (*)",
         )
         if not path:
             return
         try:
             count = write_dashboards_json(Path(path), self.dashboard_catalog.all())
         except OSError as exc:
-            QMessageBox.warning(self, "Export Dashboards", str(exc))
+            QMessageBox.warning(self, "Export Control Panels", str(exc))
             return
-        self.set_status(f"Exported {count} dashboard(s) to {path}.")
+        self.set_status(f"Exported {count} control panel(s) to {path}.")
 
     def resolve_dashboard_bindings(self) -> None:
         """Endpoint-hint rebinding after a workspace restore (FR-38)."""
@@ -1151,7 +1151,7 @@ class MainWindow(QMainWindow):
                 self.refresh_dashboard_lists()
                 return
         name, accepted = QInputDialog.getText(
-            self, "Rename Dashboard", "Dashboard name", text=config.name
+            self, "Rename Control Panel", "Control Panel name", text=config.name
         )
         if accepted and name.strip() and self.dashboard_catalog.rename(dashboard_id, name):
             self.save_settings()
@@ -1163,8 +1163,8 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self,
-            "Delete Dashboard",
-            f"Delete dashboard '{config.name}'? This cannot be undone.",
+            "Delete Control Panel",
+            f"Delete control panel '{config.name}'? This cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1172,7 +1172,7 @@ class MainWindow(QMainWindow):
             return
         self.close_dashboard_tab_by_id(dashboard_id)
         if self.dashboard_catalog.remove(dashboard_id):
-            self.set_status(f"Deleted dashboard {config.name}.")
+            self.set_status(f"Deleted control panel {config.name}.")
             self.save_settings()
             self.refresh_dashboard_lists()
 

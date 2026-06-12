@@ -557,43 +557,48 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         palette_subtitle="Show the keyboard shortcut reference",
         palette_keywords="keyboard shortcuts keys reference cheat sheet",
     ),
-    # --- Dashboard view -----------------------------------------------------
+    # --- Control panel (formerly Dashboard view; the command ids stay) ----
     CommandSpec(
         "dashboard.new",
         lambda host: host.new_dashboard_tab,
-        menu_text="New Dashboard",
+        menu_text="New Control Panel",
         icon=QStyle.StandardPixmap.SP_FileDialogListView,
-        palette_title="New Dashboard",
-        palette_subtitle="Create a dashboard of background-polled commands",
-        palette_keywords="dashboard tiles poll monitor values gauges background",
+        palette_title="New Control Panel",
+        palette_subtitle="Create a control panel of background-polled commands and controls",
+        palette_keywords=(
+            "control panel dashboard tiles poll monitor values gauges background "
+            "setpoint enum hmi"
+        ),
     ),
     CommandSpec(
         "dashboard.manage",
         lambda host: host.show_dashboard_manager,
-        menu_text="Dashboards...",
+        menu_text="Control Panels...",
         shortcut="Ctrl+Shift+D",
         icon=QStyle.StandardPixmap.SP_FileDialogListView,
-        palette_title="Manage Dashboards",
-        palette_subtitle="Open, rename, duplicate, import or export saved dashboards",
-        palette_keywords="dashboard manage library open rename duplicate delete",
+        palette_title="Manage Control Panels",
+        palette_subtitle="Open, rename, duplicate, import or export saved control panels",
+        palette_keywords=(
+            "control panel dashboard manage library open rename duplicate delete"
+        ),
     ),
     CommandSpec(
         "dashboard.import_json",
         lambda host: host.import_dashboards_json,
-        menu_text="Import Dashboards (JSON)...",
+        menu_text="Import Control Panels (JSON)...",
         icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-        palette_title="Import Dashboards from JSON",
-        palette_subtitle="Merge dashboards from a ComPort Zone dashboard file",
-        palette_keywords="dashboard json import merge transfer",
+        palette_title="Import Control Panels from JSON",
+        palette_subtitle="Merge control panels from a ComPort Zone control panel file",
+        palette_keywords="control panel dashboard json import merge transfer",
     ),
     CommandSpec(
         "dashboard.export_json",
         lambda host: host.export_dashboards_json,
-        menu_text="Export Dashboards (JSON)...",
+        menu_text="Export Control Panels (JSON)...",
         icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-        palette_title="Export Dashboards to JSON",
-        palette_subtitle="Save all dashboards to a transferable JSON file",
-        palette_keywords="dashboard json export share transfer backup",
+        palette_title="Export Control Panels to JSON",
+        palette_subtitle="Save all control panels to a transferable JSON file",
+        palette_keywords="control panel dashboard json export share transfer backup",
     ),
     CommandSpec(
         "help.documentation",

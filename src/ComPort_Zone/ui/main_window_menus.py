@@ -198,7 +198,7 @@ class MainWindowMenuBuilder:
         self._sub["open_recent"] = submenu
 
     def _build_open_dashboard(self, parent: QMenu) -> None:
-        submenu = parent.addMenu("Open Dashboard")
+        submenu = parent.addMenu("Open Control Panel")
         set_action_icon(submenu, QStyle.StandardPixmap.SP_FileDialogListView)
         submenu.aboutToShow.connect(
             lambda menu=submenu: self.host.populate_open_dashboard_menu(menu)

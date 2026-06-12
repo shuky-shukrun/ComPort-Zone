@@ -2138,7 +2138,7 @@ class DashboardEntryDialogTests(unittest.TestCase):
         )
         dialog = DashboardEntryDialog(entry, context=context)
         labels = [dialog.target_combo.itemText(i) for i in range(dialog.target_combo.count())]
-        self.assertEqual(labels[0], "Dashboard binding (default)")
+        self.assertEqual(labels[0], "Control panel binding (default)")
         self.assertIn("Terminal 1 · Serial", labels)
         self.assertIn("Terminal 2 · Serial (disconnected)", labels)
         self.assertIn("COM77 (not open)", labels)

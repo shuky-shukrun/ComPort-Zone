@@ -1006,14 +1006,18 @@ def dashboard_uses_v3_features(config: DashboardConfig) -> bool:
 
 
 def example_dashboard() -> DashboardConfig:
-    """The SCPI starter dashboard seeded on first run (favorited so it
+    """The SCPI starter control panel seeded on first run (favorited so it
     shows up on the Favorites page immediately)."""
+    output_entry_id = "example-output"
+    mode_entry_id = "example-mode"
     return DashboardConfig(
-        name="Example Dashboard",
+        name="Example Control Panel",
         description=(
             "Shipped example: instrument identity and firmware fetched once "
             "on every connect, output state polled continuously as an ON/OFF "
-            "lamp. Bind it to a connected terminal tab to start polling."
+            "lamp, plus a setpoint slider for output voltage and an enum for "
+            "regulation mode. Bind it to a connected terminal tab and click "
+            "Arm in the header to enable controls."
         ),
         favorite=True,
         columns=4,
@@ -1027,6 +1031,7 @@ def example_dashboard() -> DashboardConfig:
                 tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="value"),
             ),
             DashboardEntry(
+                id=output_entry_id,
                 label="Output",
                 command="OUTP?",
                 interval_ms=300,
@@ -1039,12 +1044,48 @@ def example_dashboard() -> DashboardConfig:
                 tile=TilePlacement(col=2, row=0, span_w=1, span_h=1, kind="led"),
             ),
             DashboardEntry(
+                id=mode_entry_id,
+                label="Mode",
+                command="SOUR:FUNC:MODE?",
+                interval_ms=500,
+                timeout_ms=250,
+                parse=ParseRule(kind="line", value_type="text"),
+                tile=TilePlacement(col=3, row=0, span_w=1, span_h=1, kind="value"),
+            ),
+            DashboardEntry(
                 label="Firmware",
                 command="SYST:FIRM?",
                 poll_mode="on_connect",
                 timeout_ms=1000,
                 parse=ParseRule(kind="line", value_type="text"),
                 tile=TilePlacement(col=0, row=1, span_w=2, span_h=1, kind="value"),
+            ),
+            DashboardEntry(
+                label="Output voltage",
+                tile=TilePlacement(col=0, row=2, span_w=2, span_h=1, kind="setpoint"),
+                setpoint=SetpointSpec(
+                    min_value=0.0,
+                    max_value=30.0,
+                    step=0.1,
+                    decimals=2,
+                    unit="V",
+                    command_template="VOLT {value}",
+                    watch_entry_id=output_entry_id,
+                    confirm=False,
+                ),
+            ),
+            DashboardEntry(
+                label="Regulation",
+                tile=TilePlacement(col=2, row=2, span_w=2, span_h=1, kind="enum"),
+                enum_spec=EnumSpec(
+                    options=[
+                        EnumOption(label="OFF", command="OUTP OFF", match_value="OFF"),
+                        EnumOption(label="CV", command="SOUR:FUNC:MODE CV", match_value="CV"),
+                        EnumOption(label="CC", command="SOUR:FUNC:MODE CC", match_value="CC"),
+                    ],
+                    watch_entry_id=mode_entry_id,
+                    confirm=False,
+                ),
             ),
         ],
     )

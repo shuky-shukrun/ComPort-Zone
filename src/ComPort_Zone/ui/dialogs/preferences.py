@@ -56,7 +56,7 @@ class PreferencesDialog(QDialog):
         tabs.addTab(self._build_terminal_tab(settings), "Terminal")
         tabs.addTab(self._build_connection_tab(settings), "Connection")
         tabs.addTab(self._build_logging_tab(settings), "Logging")
-        tabs.addTab(self._build_dashboards_tab(settings), "Dashboards")
+        tabs.addTab(self._build_dashboards_tab(settings), "Control Panels")
         tabs.addTab(self._build_updates_tab(settings), "Updates")
         tabs.addTab(self._build_data_reset_tab(settings), "Data & Reset")
 
@@ -202,7 +202,7 @@ class PreferencesDialog(QDialog):
             widget,
         ))
         layout.itemAt(layout.count() - 1).widget().setWordWrap(True)
-        self.dashboard_alerts_checkbox = QCheckBox("Show dashboard alerts", widget)
+        self.dashboard_alerts_checkbox = QCheckBox("Show control panel alerts", widget)
         self.dashboard_alerts_checkbox.setChecked(settings.dashboard_alerts_enabled)
         self.dashboard_alerts_checkbox.setToolTip(
             "Master switch — when off, no badge, taskbar flash, or sound fires."

@@ -86,7 +86,7 @@ def action_tooltip(key: str, kind: str, favorite: bool, is_favorites: bool) -> s
         if kind == "history":
             return "Remove from history"
         if kind == "dashboard":
-            return "Delete dashboard"
+            return "Delete control panel"
         noun = "file" if kind == "file" else "command"
         if is_favorites:
             return f"Remove {noun} from saved (also removes it from favorites)"
@@ -107,8 +107,8 @@ QUICK_ACTION_ITEM_HEIGHT = 32
 _PANEL_MAX_HEIGHT = 16_777_215
 FAVORITES_EMPTY_HINT = "No favorites yet — click the star icon next to saved commands or history items to add them."
 QUICK_FILE_EMPTY_HINT = "No quick files yet — click “Add File” to add one."
-DASHBOARD_EMPTY_HINT = "No dashboards yet — click “+” to create one."
-FAVORITE_DASHBOARD_EMPTY_HINT = "No favorite dashboards — star one in the Dashboards page."
+DASHBOARD_EMPTY_HINT = "No control panels yet — click “+” to create one."
+FAVORITE_DASHBOARD_EMPTY_HINT = "No favorite control panels — star one in the Control Panels page."
 
 
 def short_list_label(text: str, limit: int | None = None) -> str:

@@ -194,11 +194,11 @@ class QuickActionsSidebar(QuickActionsDrawer):
         # Dashboards: the saved-dashboard library plus its starred subset.
         self.dashboard_list = create_dashboard_list(
             parent,
-            tooltip="Click ▶ to open a dashboard. Star to add it to favorites.",
+            tooltip="Click ▶ to open a control panel. Star to add it to favorites.",
         )
         self.favorite_dashboard_list = create_dashboard_list(
             parent,
-            tooltip="Open · star removes from favorites · ✕ deletes the dashboard.",
+            tooltip="Open · star removes from favorites · ✕ deletes the control panel.",
             placeholder_text=FAVORITE_DASHBOARD_EMPTY_HINT,
         )
         self.favorite_dashboard_list.is_favorites = True
@@ -331,15 +331,15 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent=parent,
         )
 
-        # Dashboards rail: the saved-dashboard library with open/star/rename/
+        # Control Panels rail: the saved-panel library with open/star/rename/
         # delete row actions; the ⋯ menu carries the library-wide operations.
         dashboard_page = QuickActionsPanel(
-            title="Dashboards",
+            title="Control Panels",
             quick_list=self.dashboard_list,
             header_icon="list",
             header_buttons=(
                 self._header_button(
-                    "+", "New dashboard", lambda: self._dashboard_action(actions.new_dashboard), parent
+                    "+", "New control panel", lambda: self._dashboard_action(actions.new_dashboard), parent
                 ),
                 self._overflow_button(parent, [
                     ("Manage…", actions.manage_dashboards),
@@ -371,7 +371,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent=parent,
         )
         self.favorite_dashboards_panel = QuickActionsPanel(
-            title="Favorite Dashboards",
+            title="Favorite Control Panels",
             quick_list=self.favorite_dashboard_list,
             header_icon="star",
             collapsible=True,
@@ -413,7 +413,9 @@ class QuickActionsSidebar(QuickActionsDrawer):
         ]
         if include_dashboards:
             rail_modes.append(
-                QuickActionsRailMode("dashboards", "list", "Dashboards", ("dashboard",))
+                QuickActionsRailMode(
+                    "dashboards", "list", "Control Panels", ("dashboard",)
+                )
             )
         if include_history:
             rail_modes.append(
@@ -675,7 +677,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             lambda it=item: self._on_dashboard_action(quick_list, it, "edit"),
         )
         self._menu_action(
-            menu, "Delete Dashboard", "x",
+            menu, "Delete Control Panel", "x",
             lambda it=item: self._on_dashboard_action(quick_list, it, "remove"),
         )
         return menu

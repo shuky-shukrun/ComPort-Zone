@@ -220,7 +220,12 @@ class TabContextMenuBuilderTests(unittest.TestCase):
 
             self.assertEqual(
                 action_titles(menu),
-                ["New Terminal", "New Command File", "New Dashboard", "Dashboards..."],
+                [
+                    "New Terminal",
+                    "New Command File",
+                    "New Control Panel",
+                    "Control Panels...",
+                ],
             )
         finally:
             host.deleteLater()
@@ -235,13 +240,13 @@ class TabContextMenuBuilderTests(unittest.TestCase):
             self.assertEqual(
                 action_titles(menu),
                 [
-                    "New Dashboard",
-                    "Rename Dashboard",
+                    "New Control Panel",
+                    "Rename Control Panel",
                     "Bind to Terminal",
                     "Pause Polling",
                     "Add Entry...",
                     "Edit Layout",
-                    "Dashboards...",
+                    "Control Panels...",
                     "Move to Other Pane",
                     "Split Right",
                     "Split Down",
