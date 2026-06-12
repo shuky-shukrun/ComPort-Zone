@@ -24,6 +24,7 @@ from typing import Protocol
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -55,6 +56,7 @@ from ..dashboard_expr import (
     rewrite_references,
 )
 from ..dashboard_history import EntryHistory
+from ..dashboard_value_log import DashboardValueLogger
 from ..dashboard_models import (
     DashboardConfig,
     DashboardEntry,
@@ -169,6 +171,10 @@ class DashboardTabWidget(QWidget):
         # Chart-page id (FR-48): "" while the grid is showing, else the
         # focused entry. The refresh timer fires only while non-empty.
         self._chart_entry_id: str = ""
+        # CSV value log (FR-49..FR-51): one logger per tab. Toggle lives
+        # on the header; settings persist on DashboardConfig. The logger
+        # itself is Qt-free so logic stays tested on plain unittest.
+        self.value_logger = DashboardValueLogger()
         self._runtimes: dict[str, TileRuntime] = {}
         self._tick_count = 0
         self._tab_state = tab_state or DashboardTabState(dashboard_id=config.id)
@@ -185,6 +191,13 @@ class DashboardTabWidget(QWidget):
             self.pause_button.setToolTip("Resume polling")
         self._configure_entries(save=False)
         self.refresh_binding_state()
+        # Restore CSV logging from the config (FR-49): if the toggle was
+        # on and a path is set, reopen the file silently. A missing dir
+        # or unwritable path turns the toggle off + reports — restart
+        # never crashes on a vanished USB drive.
+        if self.config.csv_log_enabled and self.config.csv_log_path:
+            self._resume_csv_logging(self.config.csv_log_path)
+        self._refresh_csv_button_state()
 
         self.tick_timer = QTimer(self)
         self.tick_timer.timeout.connect(self._tick)
@@ -248,6 +261,15 @@ class DashboardTabWidget(QWidget):
         self.edit_layout_button.setFixedHeight(CONTROL_H_SM)
         self.edit_layout_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        self.csv_log_button = QToolButton(header)
+        self.csv_log_button.setObjectName("dashboardHeaderButton")
+        self.csv_log_button.setCheckable(True)
+        self.csv_log_button.setToolTip("Log values to CSV")
+        set_button_icon(self.csv_log_button, "save", 15)
+        self.csv_log_button.toggled.connect(self._csv_log_toggled)
+        self.csv_log_button.setFixedHeight(CONTROL_H_SM)
+        self.csv_log_button.setCursor(Qt.CursorShape.PointingHandCursor)
+
         self.add_entry_button = QToolButton(header)
         self.add_entry_button.setObjectName("dashboardHeaderButton")
         self.add_entry_button.setText("Add Entry")
@@ -263,6 +285,7 @@ class DashboardTabWidget(QWidget):
         header_layout.addStretch(1)
         header_layout.addWidget(self.save_state_label)
         header_layout.addWidget(self.pause_button)
+        header_layout.addWidget(self.csv_log_button)
         header_layout.addWidget(self.edit_layout_button)
         header_layout.addWidget(self.add_entry_button)
 
@@ -371,6 +394,7 @@ class DashboardTabWidget(QWidget):
         close, settings re-apply). Safe to call twice (NFR-4)."""
         self.tick_timer.stop()
         self.chart_refresh_timer.stop()
+        self.value_logger.close()
         for session_id, dispatcher in list(self._dispatchers.items()):
             dispatcher.cancel_dashboard(self.config.id)
             self.coordinator.release_dispatcher(session_id)
@@ -591,6 +615,120 @@ class DashboardTabWidget(QWidget):
         else:
             color = tile_state_color("ok", self._theme)
         self.chart_page.set_history(samples, color, now=self._clock())
+
+    # --------------------------------------------------------- CSV logging
+
+    def _csv_log_toggled(self, checked: bool) -> None:
+        """Header toggle — prompts for a path on first enable, reuses the
+        saved path on subsequent toggles. A write/open failure flips the
+        toggle back off and reports through the coordinator (FR-50)."""
+        if not checked:
+            self.value_logger.close()
+            self.config.csv_log_enabled = False
+            self._refresh_csv_button_state()
+            self._save_config()
+            return
+        path = self.config.csv_log_path
+        if not path:
+            picked = self._prompt_for_csv_path()
+            if not picked:
+                # User cancelled — keep the toggle off so state stays
+                # consistent with what they see (FR-50).
+                self.csv_log_button.blockSignals(True)
+                self.csv_log_button.setChecked(False)
+                self.csv_log_button.blockSignals(False)
+                self._refresh_csv_button_state()
+                return
+            path = picked
+            self.config.csv_log_path = picked
+        try:
+            self.value_logger.open(path)
+        except OSError as exc:
+            self._fail_csv_logging(f"Could not open {path}: {exc}")
+            return
+        self.config.csv_log_enabled = True
+        self._refresh_csv_button_state()
+        self._save_config()
+        self.coordinator.notify(f"Logging dashboard values to {path}.")
+
+    def _prompt_for_csv_path(self) -> str:
+        """File picker for the CSV destination. Returns "" on cancel."""
+        suggested = (
+            self.config.csv_log_path
+            or f"{self.config.name.replace(' ', '_') or 'dashboard'}.csv"
+        )
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Log dashboard values to CSV",
+            suggested,
+            "CSV files (*.csv);;All files (*)",
+        )
+        return path
+
+    def _resume_csv_logging(self, path: str) -> None:
+        """Open ``path`` for append at construction; on failure clear the
+        config flag so the next save doesn't perpetuate a stale state."""
+        try:
+            self.value_logger.open(path)
+        except OSError as exc:
+            self.config.csv_log_enabled = False
+            self.coordinator.notify(
+                f"Dashboard CSV log paused (could not open {path}): {exc}"
+            )
+
+    def _fail_csv_logging(self, message: str) -> None:
+        """Disable logging and notify; called on open or write errors."""
+        self.value_logger.close()
+        self.config.csv_log_enabled = False
+        self.csv_log_button.blockSignals(True)
+        self.csv_log_button.setChecked(False)
+        self.csv_log_button.blockSignals(False)
+        self._refresh_csv_button_state()
+        self._save_config()
+        self.coordinator.notify(message)
+
+    def _refresh_csv_button_state(self) -> None:
+        active = self.value_logger.enabled
+        if self.csv_log_button.isChecked() != active:
+            self.csv_log_button.blockSignals(True)
+            self.csv_log_button.setChecked(active)
+            self.csv_log_button.blockSignals(False)
+        path = self.value_logger.path or self.config.csv_log_path
+        if active and path:
+            self.csv_log_button.setToolTip(f"Logging values to {path}")
+        elif path:
+            self.csv_log_button.setToolTip(f"Resume logging to {path}")
+        else:
+            self.csv_log_button.setToolTip("Log values to CSV")
+
+    def _save_config(self) -> None:
+        self.config.touch()
+        self.host.save_settings()
+        self._note_saved()
+
+    def _log_outcome(self, entry: DashboardEntry, outcome: ParseOutcome) -> None:
+        """Append the outcome to the CSV (FR-49). Only successful parses
+        — timeouts never reach this funnel and explicit parse errors are
+        skipped here so the log stays a clean record of working polls."""
+        if not self.value_logger.enabled:
+            return
+        if outcome.error or not outcome.matched:
+            return
+        runtime = self._runtimes.get(entry.id)
+        state = runtime.state if runtime is not None else "neutral"
+        try:
+            self.value_logger.log(
+                dashboard=self.config.name,
+                entry_id=entry.id,
+                label=entry.display_label(),
+                value_text=outcome.value_text,
+                value_number=outcome.value_number,
+                state=state,
+            )
+        except OSError as exc:
+            # Disk pulled, permissions lost — fail loud and turn the
+            # toggle off so the user sees what happened (FR-50).
+            self._fail_csv_logging(f"CSV log write failed: {exc}")
 
     # ------------------------------------------------------------- controls
 
@@ -921,6 +1059,9 @@ class DashboardTabWidget(QWidget):
             history.append(self._clock(), float(outcome.value_number))
         self._update_tile(entry.id)
         self._refresh_sparkline(entry.id)
+        # CSV logging tails the same funnel so derived rows show up too
+        # (FR-49). Errors/timeouts are filtered inside _log_outcome.
+        self._log_outcome(entry, outcome)
         if self._has_derived and entry.is_polled() and outcome.value_number is not None:
             self._latest_numbers[entry.id] = outcome.value_number
             self._recompute_dependents(entry.id)

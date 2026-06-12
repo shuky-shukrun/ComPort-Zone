@@ -492,6 +492,172 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         self.assertFalse(tab.chart_refresh_timer.isActive())
         # tearDown will call shutdown again — must stay safe.
 
+    def test_csv_log_records_polled_values_only(self) -> None:
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        # Programmatically toggle on with a preset path so the QFileDialog
+        # never opens during tests.
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+        self.assertTrue(tab.value_logger.enabled)
+
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["entry_id"], "volts")
+        self.assertEqual(rows[0]["value_number"], "12")
+        self.assertEqual(rows[0]["state"], "neutral")
+
+    def test_csv_log_skips_timeouts_and_parse_errors(self) -> None:
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        # Tight timeout so we can force a timeout result; the parse rule
+        # is numeric so a non-numeric response will produce an error.
+        entry = volt_entry()
+        entry.timeout_ms = 60
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+
+        # Timeout: no response staged, advance past the timeout.
+        self.clock.advance_ms(50)
+        tab._tick()
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty(), timeout=1.0))
+        tab._tick()
+
+        # Parse error: numeric expected, text arrives.
+        self.clock.advance_ms(entry.interval_ms + 100)
+        self.run_poll_round(tab, b"NOPE\r\n")
+
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        # Neither the timeout nor the parse error should appear.
+        self.assertEqual(rows, [])
+
+    def test_csv_log_records_derived_outcomes(self) -> None:
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry())
+        tab.bind_to_session(1)
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        ids = [row["entry_id"] for row in rows]
+        self.assertEqual(sorted(ids), ["amps", "power", "volts"])
+        power_row = next(row for row in rows if row["entry_id"] == "power")
+        self.assertEqual(power_row["value_number"], "24")
+
+    def test_csv_log_toggle_persists_in_config(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        tab = self.make_tab(volt_entry())
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+        self.assertTrue(tab.config.csv_log_enabled)
+        self.assertEqual(tab.config.csv_log_path, str(log_path))
+        tab.csv_log_button.setChecked(False)
+        self.assertFalse(tab.config.csv_log_enabled)
+        # Path stays so re-enabling later picks up where it left off.
+        self.assertEqual(tab.config.csv_log_path, str(log_path))
+
+    def test_csv_log_open_failure_clears_toggle(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        # Point the path at a directory; open() will raise OSError when
+        # it tries to open the directory for write.
+        bad_path = tmp / "dir.csv"
+        bad_path.mkdir()
+        status: list[str] = []
+        self.coordinator._set_status = status.append
+        tab = self.make_tab(volt_entry())
+        tab.config.csv_log_path = str(bad_path)
+        tab.csv_log_button.setChecked(True)
+        self.assertFalse(tab.value_logger.enabled)
+        self.assertFalse(tab.csv_log_button.isChecked())
+        self.assertFalse(tab.config.csv_log_enabled)
+        self.assertTrue(any("Could not open" in text for text in status))
+
+    def test_csv_log_resumes_on_construction(self) -> None:
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        # Pre-seed a tab so the file has a header + one row.
+        first = self.make_tab(volt_entry())
+        first.bind_to_session(1)
+        first.config.csv_log_path = str(log_path)
+        first.csv_log_button.setChecked(True)
+        self.clock.advance_ms(50)
+        self.run_poll_round(first, b"12.0\r\n")
+        first.shutdown()
+        # Build a fresh tab whose config already has logging enabled and
+        # the path set — construction should reopen, NOT rewrite header.
+        from ComPort_Zone.dashboard_models import (
+            DashboardConfig,
+            DashboardTabState,
+        )
+        from ComPort_Zone.ui.dashboard_tab import DashboardTabWidget
+
+        config = DashboardConfig(
+            name="Bench",
+            entries=[volt_entry()],
+            csv_log_enabled=True,
+            csv_log_path=str(log_path),
+        )
+        second = DashboardTabWidget(
+            self.host,
+            config,
+            DashboardTabState(dashboard_id=config.id),
+            coordinator=self.coordinator,
+            clock=self.clock,
+            start_timer=False,
+        )
+        self.tabs.append(second)
+        self.assertTrue(second.value_logger.enabled)
+        second.bind_to_session(1)
+        self.clock.advance_ms(2000)
+        self.run_poll_round(second, b"12.5\r\n")
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        # Both polls landed, header appears only once (DictReader sees 2).
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row["value_number"] for row in rows], ["12", "12.5"])
+
     def test_custom_rule_color_applies_and_clears_on_staleness(self) -> None:
         entry = volt_entry()
         entry.rules = [ColorRule(op="gt", operand="13.0", state="warn", color="#12ab34")]
