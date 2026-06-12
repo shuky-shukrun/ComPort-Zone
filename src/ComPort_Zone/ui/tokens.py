@@ -70,6 +70,7 @@ SESSION_TAB_H = 36        # .app-tabs
 WINDOW_BTN_W = 46         # .cpz-wbtn
 APP_ICON = 19             # .cpz-appicon
 LIVE_DOT = 7              # .app-tab .tdot / title live dot
+LED_LAMP = 18             # dashboard LED tile lamp diameter
 
 # --- Typography (px, matching the handoff) ----------------------------------
 UI_FS = 12                # --ui-fs

@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from .models import AppSettings, WorkspaceLayoutState
 from .settings_service import SettingsService
-from .workspace_state import CommandFileStateSource, TerminalStateSource, WorkspaceStateService
+from .workspace_state import (
+    CommandFileStateSource,
+    DashboardStateSource,
+    TerminalStateSource,
+    WorkspaceStateService,
+)
 
 
 class WorkspaceSettingsController:
@@ -29,6 +34,7 @@ class WorkspaceSettingsController:
         apply_settings_to_ui: Callable[[], None],
         set_status: Callable[[str], None],
         workspace_layout_supplier: Callable[[], WorkspaceLayoutState | None] | None = None,
+        dashboard_tabs_supplier: Callable[[], Iterable[DashboardStateSource]] | None = None,
     ) -> None:
         self.settings_service = settings_service
         self.workspace_state_service = workspace_state_service
@@ -41,6 +47,7 @@ class WorkspaceSettingsController:
         self._active_session_supplier = active_session_supplier
         self._terminal_sessions_supplier = terminal_sessions_supplier
         self._command_file_editors_supplier = command_file_editors_supplier
+        self._dashboard_tabs_supplier = dashboard_tabs_supplier or (lambda: ())
         self._workspace_layout_supplier = workspace_layout_supplier or (lambda: None)
         self._command_history_supplier = command_history_supplier
         self._window_size_supplier = window_size_supplier
@@ -62,6 +69,7 @@ class WorkspaceSettingsController:
             active_session=self._active_session_supplier(),
             terminal_sessions=self._terminal_sessions_supplier(),
             command_file_editors=self._command_file_editors_supplier(),
+            dashboard_tabs=self._dashboard_tabs_supplier(),
             workspace_layout=self._workspace_layout_supplier(),
             command_history=self._command_history_supplier(),
             window_width=width,

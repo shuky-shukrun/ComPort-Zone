@@ -30,6 +30,12 @@ class CommandFilePaletteTab(Protocol):
     def status_summary(self) -> str: ...
 
 
+class DashboardPaletteTab(Protocol):
+    def tab_title(self) -> str: ...
+
+    def status_summary(self) -> str: ...
+
+
 def workspace_tab_palette_entries(
     *,
     tab_count: int,
@@ -37,24 +43,42 @@ def workspace_tab_palette_entries(
     command_file_editor_at: Callable[[int], CommandFilePaletteTab | None],
     tab_text: Callable[[int], str],
     activate_tab: Callable[[int], None],
+    dashboard_at: Callable[[int], DashboardPaletteTab | None] = lambda _index: None,
 ) -> list[CommandPaletteEntry]:
     entries: list[CommandPaletteEntry] = []
     for index in range(tab_count):
         session = session_at(index)
         editor = command_file_editor_at(index)
-        title = session.tab_title if session else editor.tab_title() if editor else tab_text(index)
+        dashboard = dashboard_at(index)
+        if session:
+            title = session.tab_title
+        elif editor:
+            title = editor.tab_title()
+        elif dashboard:
+            title = dashboard.tab_title()
+        else:
+            title = tab_text(index)
         if session:
             endpoint_getter = getattr(session, "connection_endpoint", None)
             endpoint = str(endpoint_getter()) if callable(endpoint_getter) else str(session.profile.port or "No port")
         else:
             endpoint = "No port"
-        subtitle = session.connection_status_text() if session else editor.status_summary() if editor else endpoint
-        icon = QStyle.StandardPixmap.SP_ComputerIcon if session else QStyle.StandardPixmap.SP_FileIcon
-        keywords = (
-            f"switch tab terminal session {index + 1} {title} {endpoint} {session.title}"
-            if session
-            else f"switch tab command file editor script {index + 1} {title}"
-        )
+        if session:
+            subtitle = session.connection_status_text()
+            icon = QStyle.StandardPixmap.SP_ComputerIcon
+            keywords = f"switch tab terminal session {index + 1} {title} {endpoint} {session.title}"
+        elif dashboard:
+            subtitle = dashboard.status_summary()
+            icon = QStyle.StandardPixmap.SP_FileDialogListView
+            keywords = f"switch tab dashboard tiles poll {index + 1} {title}"
+        elif editor:
+            subtitle = editor.status_summary()
+            icon = QStyle.StandardPixmap.SP_FileIcon
+            keywords = f"switch tab command file editor script {index + 1} {title}"
+        else:
+            subtitle = endpoint
+            icon = QStyle.StandardPixmap.SP_FileIcon
+            keywords = f"switch tab {index + 1} {title}"
         entries.append(
             CommandPaletteEntry(
                 title=f"Switch to Tab {index + 1}: {title}",

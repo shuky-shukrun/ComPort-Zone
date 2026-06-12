@@ -10,11 +10,13 @@ from PySide6.QtWidgets import QMenu, QPushButton, QStyle, QToolButton, QWidget
 from .icons import set_action_icon, set_button_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES
 from .quick_actions_panel import (
+    FAVORITE_DASHBOARD_EMPTY_HINT,
     ROLE_FAVORITE,
     ROLE_ID,
     QuickActionsDrawer,
     QuickActionsPanel,
     QuickActionsRailMode,
+    create_dashboard_list,
     create_quick_command_list,
     create_quick_file_list,
     create_quick_history_list,
@@ -54,6 +56,15 @@ class QuickActionsSidebarActions:
     history_save: Callable[[str], None] | None = None             # add history text to saved
     history_remove: Callable[[str], None] | None = None           # remove history text
     run_file: Callable[[], None] | None = None                    # run an ad-hoc file (not saved)
+    # Dashboard actions (wired by the shared drawer host; None hides the page).
+    dashboard_open_by_id: Callable[[str], None] | None = None
+    dashboard_favorite_toggle: Callable[[str, bool], None] | None = None
+    dashboard_rename_by_id: Callable[[str], None] | None = None
+    dashboard_delete_by_id: Callable[[str], None] | None = None
+    new_dashboard: Callable[[], None] | None = None
+    import_dashboards: Callable[[], None] | None = None
+    export_dashboards: Callable[[], None] | None = None
+    manage_dashboards: Callable[[], None] | None = None
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -100,6 +111,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
         command_selection_changed: Callable[[], None] | None = None,
         file_selection_changed: Callable[[], None] | None = None,
         include_history: bool = False,
+        include_dashboards: bool = False,
         history_primary: Callable[[str], None] | None = None,
         history_context_menu_requested: Callable | None = None,
         settings_callback: Callable[[], None] | None = None,
@@ -178,6 +190,34 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent,
             tooltip="Send · remove from history · add to favorites · add to saved.",
             context_menu_requested=history_context_menu_requested,
+        )
+        # Dashboards: the saved-dashboard library plus its starred subset.
+        self.dashboard_list = create_dashboard_list(
+            parent,
+            tooltip="Click ▶ to open a dashboard. Star to add it to favorites.",
+        )
+        self.favorite_dashboard_list = create_dashboard_list(
+            parent,
+            tooltip="Open · star removes from favorites · ✕ deletes the dashboard.",
+            placeholder_text=FAVORITE_DASHBOARD_EMPTY_HINT,
+        )
+        self.favorite_dashboard_list.is_favorites = True
+        for dashboard_list in (self.dashboard_list, self.favorite_dashboard_list):
+            dashboard_list.actionTriggered.connect(
+                lambda item, key, lst=dashboard_list: self._on_dashboard_action(lst, item, key)
+            )
+            dashboard_list.itemDoubleClicked.connect(
+                lambda item, lst=dashboard_list: self._on_dashboard_action(lst, item, "play")
+            )
+        self._enable_context_menu(
+            self.dashboard_list,
+            lambda pos: self._show_dashboard_menu(self.dashboard_list, pos, is_favorites=False),
+        )
+        self._enable_context_menu(
+            self.favorite_dashboard_list,
+            lambda pos: self._show_dashboard_menu(
+                self.favorite_dashboard_list, pos, is_favorites=True
+            ),
         )
 
         # Inline row affordances: select the clicked row, then run the chosen action.
@@ -291,8 +331,29 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent=parent,
         )
 
-        # Favorites rail surfaces two curated panels: favourite commands + files.
-        # They are collapsible and share a draggable splitter (see splitter_groups).
+        # Dashboards rail: the saved-dashboard library with open/star/rename/
+        # delete row actions; the ⋯ menu carries the library-wide operations.
+        dashboard_page = QuickActionsPanel(
+            title="Dashboards",
+            quick_list=self.dashboard_list,
+            header_icon="list",
+            header_buttons=(
+                self._header_button(
+                    "+", "New dashboard", lambda: self._dashboard_action(actions.new_dashboard), parent
+                ),
+                self._overflow_button(parent, [
+                    ("Manage…", actions.manage_dashboards),
+                    None,
+                    ("Import JSON…", actions.import_dashboards),
+                    ("Export JSON…", actions.export_dashboards),
+                ]),
+            ),
+            parent=parent,
+        )
+
+        # Favorites rail surfaces three curated panels: favourite commands,
+        # files and dashboards. They are collapsible and share a draggable
+        # splitter (see splitter_groups).
         self.favorites_panel = QuickActionsPanel(
             title="Favorite Commands",
             quick_list=self.favorite_command_list,
@@ -309,6 +370,13 @@ class QuickActionsSidebar(QuickActionsDrawer):
             collapsible=True,
             parent=parent,
         )
+        self.favorite_dashboards_panel = QuickActionsPanel(
+            title="Favorite Dashboards",
+            quick_list=self.favorite_dashboard_list,
+            header_icon="star",
+            collapsible=True,
+            parent=parent,
+        )
         favorites_page = self.favorites_panel
         favorite_files_page = self.favorite_files_panel
         history_page = QuickActionsPanel(
@@ -317,6 +385,10 @@ class QuickActionsSidebar(QuickActionsDrawer):
             header_icon=QStyle.StandardPixmap.SP_FileDialogInfoView,
             parent=parent,
         )
+        # The Dashboards page only belongs to the shared app drawer — the
+        # editor's embedded drawer keeps its insert/open-focused pages and
+        # leaves the (unwired) dashboard actions out entirely.
+        favorites_sections: tuple[str, ...] = ("favorites", "favorite_file")
         sections = {
             "favorites": favorites_page,
             "favorite_file": favorite_files_page,
@@ -324,13 +396,25 @@ class QuickActionsSidebar(QuickActionsDrawer):
             "file": file_page,
             "history": history_page,
         }
-        # Favorites surfaces starred commands + files; the other rails hold the
-        # full Saved Commands / Files lists (where you star items).
+        if include_dashboards:
+            sections["favorite_dashboard"] = self.favorite_dashboards_panel
+            sections["dashboard"] = dashboard_page
+            favorites_sections = ("favorites", "favorite_file", "favorite_dashboard")
+        else:
+            self.favorite_dashboards_panel.setVisible(False)
+            dashboard_page.setVisible(False)
+        # Favorites surfaces starred commands + files (+ dashboards in the
+        # shared drawer); the other rails hold the full Saved Commands /
+        # Files / Dashboards lists (where you star items).
         rail_modes = [
-            QuickActionsRailMode("all", "star", "Favorites", ("favorites", "favorite_file")),
+            QuickActionsRailMode("all", "star", "Favorites", favorites_sections),
             QuickActionsRailMode("commands", "term", "Saved Commands", ("command",)),
             QuickActionsRailMode("files", "file", "Files", ("file",)),
         ]
+        if include_dashboards:
+            rail_modes.append(
+                QuickActionsRailMode("dashboards", "list", "Dashboards", ("dashboard",))
+            )
         if include_history:
             rail_modes.append(
                 QuickActionsRailMode("history", QStyle.StandardPixmap.SP_FileDialogInfoView, "History", ("history",))
@@ -350,7 +434,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             rail_modes=rail_modes,
             on_page_requested=on_page_requested,
             settings_callback=settings_callback,
-            splitter_groups=[("favorites", "favorite_file")],
+            splitter_groups=[favorites_sections],
             rail_width=rail_width,
             parent=parent,
         )
@@ -366,6 +450,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.favorite_command_list,
             self.quick_file_list,
             self.favorite_file_list,
+            self.dashboard_list,
+            self.favorite_dashboard_list,
             self.quick_history_list,
         ):
             quick_list.apply_theme_palette(palette)
@@ -435,6 +521,34 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.actions.file_open_by_id(file_id)
         elif self._file_double_clicked is not None:
             self._file_double_clicked()
+
+    @staticmethod
+    def _dashboard_action(callback: Callable[[], None] | None) -> None:
+        if callback is not None:
+            callback()
+
+    def _on_dashboard_action(self, quick_list, item, key: str) -> None:
+        if item is None:
+            return
+        quick_list.setCurrentItem(item)
+        dashboard_id = str(item.data(ROLE_ID) or "")
+        if not dashboard_id:
+            return
+        if key == "star":
+            toggle = self.actions.dashboard_favorite_toggle
+            if toggle is not None:
+                toggle(dashboard_id, not bool(item.data(ROLE_FAVORITE)))
+            return
+        if key == "edit":
+            if self.actions.dashboard_rename_by_id is not None:
+                self.actions.dashboard_rename_by_id(dashboard_id)
+            return
+        if key == "remove":
+            if self.actions.dashboard_delete_by_id is not None:
+                self.actions.dashboard_delete_by_id(dashboard_id)
+            return
+        if self.actions.dashboard_open_by_id is not None:
+            self.actions.dashboard_open_by_id(dashboard_id)
 
     def _on_history_action(self, item, key: str) -> None:
         text = item.text()
@@ -528,6 +642,41 @@ class QuickActionsSidebar(QuickActionsDrawer):
         self._menu_action(
             menu, "Remove from Saved" if is_favorites else "Remove", "x",
             lambda it=item: self._on_file_action(quick_list, it, "remove"),
+        )
+        return menu
+
+    def _show_dashboard_menu(self, quick_list, pos, *, is_favorites: bool) -> None:
+        item = quick_list.itemAt(pos)
+        if item is None:
+            return
+        quick_list.setCurrentItem(item)
+        self._build_dashboard_menu(quick_list, item, is_favorites=is_favorites).exec(
+            quick_list.mapToGlobal(pos)
+        )
+
+    def _build_dashboard_menu(self, quick_list, item, *, is_favorites: bool) -> QMenu:
+        dashboard_id = str(item.data(ROLE_ID) or "")
+        starred = bool(item.data(ROLE_FAVORITE)) or is_favorites
+        menu = QMenu(quick_list)
+        self._menu_action(
+            menu, "Open", "play",
+            lambda it=item: self._on_dashboard_action(quick_list, it, "play"),
+        )
+        menu.addSeparator()
+        if self.actions.dashboard_favorite_toggle is not None and dashboard_id:
+            self._menu_action(
+                menu,
+                "Remove from Favorites" if starred else "Add to Favorites",
+                "star-fill" if starred else "star",
+                lambda it=item: self._on_dashboard_action(quick_list, it, "star"),
+            )
+        self._menu_action(
+            menu, "Rename", "edit",
+            lambda it=item: self._on_dashboard_action(quick_list, it, "edit"),
+        )
+        self._menu_action(
+            menu, "Delete Dashboard", "x",
+            lambda it=item: self._on_dashboard_action(quick_list, it, "remove"),
         )
         return menu
 

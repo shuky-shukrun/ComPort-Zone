@@ -32,6 +32,7 @@ from .. import __version__
 from .. import quick_actions as _quick_actions
 from ..quick_actions_panel import (
     item_ids_in_order,
+    populate_dashboard_list,
     populate_quick_command_list,
     populate_quick_file_list,
     populate_quick_history_list,
@@ -42,6 +43,13 @@ from ..app_settings_controller import AppSettingsController
 from ..command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
 from ..command_registry import CommandPaletteEntry, CommandRegistry
 from ..command_run_targets import CommandRunRequest, CommandRunTarget
+from ..dashboard_catalog import (
+    DashboardCatalog,
+    merge_imported,
+    read_dashboards_json,
+    write_dashboards_json,
+)
+from ..dashboard_models import DashboardConfig, DashboardTabState
 from ..history import HistoryStore
 from ..icons import retint_icons, set_icon_color, standard_icon
 from ..models import (
@@ -74,12 +82,15 @@ from ..workspace_settings_controller import WorkspaceSettingsController
 from ..workspace_state import WorkspaceStateService
 from .command_file_targets import CommandFileRunCoordinator
 from .command_palette_entries import workspace_tab_palette_entries
+from .dashboard_tab import DashboardTabWidget
+from .dashboard_targets import DashboardRunCoordinator
 from .dialogs import (
     CommandPaletteDialog,
     PreferencesDialog,
     TerminalFontSettingsDialog,
     VersionUpdateDialog,
 )
+from .dialogs.dashboard_manager import DashboardManagerDialog
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font, pick_ui_font
 from .main_window_menus import MainWindowMenuBuilder
 from .split_workspace import SplitWorkspaceWidget
@@ -149,6 +160,7 @@ class MainWindow(QMainWindow):
             command_history_supplier=lambda: self.history_catalog.all_commands(),
             window_size_supplier=lambda: (self.width(), self.height()),
             workspace_layout_supplier=self.capture_workspace_layout,
+            dashboard_tabs_supplier=self.iter_dashboards,
             clear_workspace=self._clear_workspace_for_settings_apply,
             rebuild_runtime_state=self._rebuild_runtime_state_from_settings,
             restore_workspace=lambda: self.restore_sessions(prompt_first_settings=False),
@@ -208,6 +220,7 @@ class MainWindow(QMainWindow):
             self.tabs,
             terminal_type=TerminalSessionWidget,
             command_file_type=CommandFileEditorDialog,
+            dashboard_type=DashboardTabWidget,
             add_session=self.add_session,
             confirm_close_command_file_tab=self.confirm_close_command_file_tab,
             save_settings=self.save_settings,
@@ -216,6 +229,7 @@ class MainWindow(QMainWindow):
             self.tabs,
             terminal_type=TerminalSessionWidget,
             command_file_type=CommandFileEditorDialog,
+            dashboard_type=DashboardTabWidget,
             connection_status_label=self.connection_status_label,
             connection_action_button=self.connection_action_button,
             footer=self.footer,
@@ -228,6 +242,13 @@ class MainWindow(QMainWindow):
             set_status=self.set_status,
             target_icon_color=lambda: self.theme.rx,
             focus_session=self._focus_session_tab,
+        )
+        self.dashboard_runs = DashboardRunCoordinator(
+            sessions_supplier=self.iter_sessions,
+            dashboards_supplier=self.iter_dashboards,
+            is_widget_open=lambda widget: self.tabs.indexOf(widget) >= 0,
+            set_status=self.set_status,
+            target_icon_color=lambda: self.theme.rx,
         )
         self._build_menus()
         self.apply_theme(self.theme.name)
@@ -336,8 +357,8 @@ class MainWindow(QMainWindow):
         drawer = getattr(self, "shared_drawer", None)
         if drawer is None or drawer.favorites_splitter is None:
             return
-        # Splitter sizes only matter when both panels are expanded.
-        if drawer.favorites_panel.is_collapsed() or drawer.favorite_files_panel.is_collapsed():
+        # Splitter sizes only matter when every panel is expanded.
+        if any(panel.is_collapsed() for panel in self._favorites_panels(drawer)):
             return
         splitter = drawer.favorites_splitter
         sizes = [int(size) for size in self.settings.favorites_splitter_sizes]
@@ -402,6 +423,14 @@ class MainWindow(QMainWindow):
                 history_save=lambda text: self.add_saved_command_from_text(text, favorite=False),
                 history_remove=self.remove_command_from_history,
                 run_file=self.run_command_file_dialog,
+                dashboard_open_by_id=self.open_dashboard_tab,
+                dashboard_favorite_toggle=self.set_dashboard_favorite,
+                dashboard_rename_by_id=self.rename_dashboard_by_id,
+                dashboard_delete_by_id=self.delete_dashboard_by_id,
+                new_dashboard=self.new_dashboard_tab,
+                import_dashboards=self.import_dashboards_json,
+                export_dashboards=self.export_dashboards_json,
+                manage_dashboards=self.show_dashboard_manager,
             ),
             command_primary_label="Send",
             file_primary_label="Run",
@@ -416,6 +445,7 @@ class MainWindow(QMainWindow):
             favorite_command_order_changed=self._shared_persist_favorite_command_order,
             favorite_file_order_changed=self._shared_persist_favorite_file_order,
             include_history=True,
+            include_dashboards=True,
             history_primary=self._shared_resend_history,
             settings_callback=self.show_command_palette,
             group_menu_provider=self._populate_group_menu,
@@ -430,6 +460,7 @@ class MainWindow(QMainWindow):
         # Favorites page layout: collapse toggles + resize splitter, persisted.
         drawer.favorites_panel.collapseToggled.connect(self._persist_favorites_layout)
         drawer.favorite_files_panel.collapseToggled.connect(self._persist_favorites_layout)
+        drawer.favorite_dashboards_panel.collapseToggled.connect(self._persist_favorites_layout)
         if drawer.favorites_splitter is not None:
             drawer.favorites_splitter.splitterMoved.connect(
                 lambda *_: QTimer.singleShot(0, self._persist_favorites_layout)
@@ -450,21 +481,25 @@ class MainWindow(QMainWindow):
         drawer.favorite_files_panel.set_collapsed(self.settings.favorite_file_collapsed)
         self._update_favorites_fill_cap(drawer)
 
+    def _favorites_panels(self, drawer) -> tuple:
+        return (
+            drawer.favorites_panel,
+            drawer.favorite_files_panel,
+            drawer.favorite_dashboards_panel,
+        )
+
     def _update_favorites_fill_cap(self, drawer) -> None:
-        """When both favourites panels are collapsed, cap the splitter to its two
-        headers so the wrapper's top spacer pushes them to the bottom of the dock;
-        otherwise let the splitter fill."""
+        """When every favourites panel is collapsed, cap the splitter to its
+        headers so the wrapper's top spacer pushes them to the bottom of the
+        dock; otherwise let the splitter fill."""
         splitter = drawer.favorites_splitter
         if splitter is None:
             return
-        both_collapsed = (
-            drawer.favorites_panel.is_collapsed() and drawer.favorite_files_panel.is_collapsed()
-        )
-        if both_collapsed:
+        panels = self._favorites_panels(drawer)
+        if all(panel.is_collapsed() for panel in panels):
             cap = (
-                drawer.favorites_panel.maximumHeight()
-                + drawer.favorite_files_panel.maximumHeight()
-                + splitter.handleWidth()
+                sum(panel.maximumHeight() for panel in panels)
+                + splitter.handleWidth() * (len(panels) - 1)
                 + 4
             )
             splitter.setMaximumHeight(cap)
@@ -479,11 +514,10 @@ class MainWindow(QMainWindow):
         self.settings.favorite_file_collapsed = drawer.favorite_files_panel.is_collapsed()
         self._update_favorites_fill_cap(drawer)
         splitter = drawer.favorites_splitter
-        both_expanded = (
-            not drawer.favorites_panel.is_collapsed()
-            and not drawer.favorite_files_panel.is_collapsed()
+        both_expanded = all(
+            not panel.is_collapsed() for panel in self._favorites_panels(drawer)
         )
-        # Only a both-expanded layout is a real resize worth persisting.
+        # Only an all-expanded layout is a real resize worth persisting.
         if splitter is not None and splitter.isVisible() and both_expanded:
             sizes = [int(size) for size in splitter.sizes()]
             if len(sizes) == splitter.count() and all(size > 0 for size in sizes):
@@ -611,6 +645,7 @@ class MainWindow(QMainWindow):
             label_limit=30,
             draggable=True,
         )
+        self.refresh_dashboard_lists()
         self.refresh_shared_drawer_history()
         self._sync_shared_sort_combos()
 
@@ -919,6 +954,228 @@ class MainWindow(QMainWindow):
             return
         self.tabs.setCurrentWidget(session)
 
+    # ------------------------------------------------------------ dashboards
+
+    @property
+    def dashboard_catalog(self) -> DashboardCatalog:
+        return DashboardCatalog(self.settings.dashboards)
+
+    def iter_dashboards(self) -> list[DashboardTabWidget]:
+        return cast(list[DashboardTabWidget], self.tab_workspace.iter_dashboards())
+
+    def current_dashboard(self) -> DashboardTabWidget | None:
+        return cast(DashboardTabWidget | None, self.tab_workspace.current_dashboard())
+
+    def dashboard_at(self, index: int) -> DashboardTabWidget | None:
+        return cast(DashboardTabWidget | None, self.tab_workspace.dashboard_at(index))
+
+    def new_dashboard_tab(self) -> None:
+        config = self.dashboard_catalog.add(DashboardConfig(name="Dashboard"))
+        self.save_settings()
+        self.open_dashboard_tab(config.id)
+        self.refresh_dashboard_lists()
+
+    def open_dashboard_tab(self, dashboard_id: str) -> DashboardTabWidget | None:
+        """Open a saved dashboard; if it is already open, focus that tab
+        (one config is never edited from two tabs, FR-6)."""
+        for dashboard in self.iter_dashboards():
+            if dashboard.config.id == dashboard_id:
+                self.tabs.setCurrentWidget(dashboard)
+                return dashboard
+        config = self.dashboard_catalog.by_id(dashboard_id)
+        if config is None:
+            self.set_status("That dashboard no longer exists.")
+            return None
+        return self._create_dashboard_tab(config, DashboardTabState(dashboard_id=dashboard_id))
+
+    def add_dashboard_tab(self, state: DashboardTabState) -> DashboardTabWidget | None:
+        """Workspace-restore entry point (FR-40: a missing config skips the
+        tab with a notice instead of crashing)."""
+        config = self.dashboard_catalog.by_id(state.dashboard_id)
+        if config is None:
+            self.set_status("A restored dashboard tab was skipped: its dashboard was deleted.")
+            return None
+        for dashboard in self.iter_dashboards():
+            if dashboard.config.id == config.id:
+                return dashboard
+        return self._create_dashboard_tab(config, state)
+
+    def _create_dashboard_tab(
+        self, config: DashboardConfig, state: DashboardTabState
+    ) -> DashboardTabWidget:
+        dashboard = DashboardTabWidget(self, config, state, coordinator=self.dashboard_runs)
+        dashboard.stateChanged.connect(self.update_tab_titles)
+        dashboard.stateChanged.connect(self.sync_status_from_current_session)
+        # Renames and entry-count changes made inside the tab show up in the
+        # sidebar's dashboard lists immediately.
+        dashboard.stateChanged.connect(self.refresh_dashboard_lists)
+        index = self.tabs.addTab(
+            dashboard,
+            standard_icon(QStyle.StandardPixmap.SP_FileDialogListView),
+            dashboard.tab_title(),
+        )
+        self.tab_workspace.attach_tab_close_button(index, dashboard)
+        self.tabs.setCurrentIndex(index)
+        dashboard.apply_theme_palette(self.theme)
+        self.update_tab_titles()
+        self.update_workspace_split_chrome()
+        self.save_settings()
+        return dashboard
+
+    def close_dashboard_tab_by_id(self, dashboard_id: str) -> None:
+        for dashboard in self.iter_dashboards():
+            if dashboard.config.id == dashboard_id:
+                index = self.tabs.indexOf(dashboard)
+                if index >= 0:
+                    self.close_session(index)
+                return
+
+    def rename_dashboard(self, index: int) -> None:
+        dashboard = self.dashboard_at(index)
+        if dashboard is None:
+            return
+        self.tabs.setCurrentIndex(index)
+        name, accepted = QInputDialog.getText(
+            self, "Rename Dashboard", "Dashboard name", text=dashboard.config.name
+        )
+        cleaned = name.strip()
+        if accepted and cleaned:
+            unique = self.dashboard_catalog.unique_name(cleaned, exclude_id=dashboard.config.id)
+            dashboard.rename(unique)
+            self.update_tab_titles()
+
+    def show_dashboard_manager(self) -> None:
+        DashboardManagerDialog(
+            catalog=self.dashboard_catalog,
+            open_dashboard=self.open_dashboard_tab,
+            close_dashboard_tab=self.close_dashboard_tab_by_id,
+            save_settings=lambda: (self.save_settings(), self.refresh_dashboard_lists()),
+            set_status=self.set_status,
+            parent=self,
+        ).exec()
+
+    def populate_open_dashboard_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        configs = self.dashboard_catalog.all()
+        if not configs:
+            action = menu.addAction("No saved dashboards")
+            action.setEnabled(False)
+            return
+        for config in configs:
+            action = menu.addAction(config.name)
+            action.setIcon(standard_icon(QStyle.StandardPixmap.SP_FileDialogListView, 16))
+            action.triggered.connect(
+                lambda _checked=False, dashboard_id=config.id: self.open_dashboard_tab(dashboard_id)
+            )
+
+    def import_dashboards_json(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Dashboards",
+            str(Path.home()),
+            "Dashboard Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            configs = read_dashboards_json(Path(path))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Import Dashboards", str(exc))
+            return
+        result = merge_imported(self.dashboard_catalog, configs)
+        self.save_settings()
+        self.refresh_dashboard_lists()
+        self.set_status(result.summary())
+
+    def export_dashboards_json(self) -> None:
+        if not self.settings.dashboards:
+            self.set_status("No dashboards to export yet.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Dashboards",
+            str(Path.home() / "dashboards.json"),
+            "Dashboard Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            count = write_dashboards_json(Path(path), self.dashboard_catalog.all())
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Dashboards", str(exc))
+            return
+        self.set_status(f"Exported {count} dashboard(s) to {path}.")
+
+    def resolve_dashboard_bindings(self) -> None:
+        """Endpoint-hint rebinding after a workspace restore (FR-38)."""
+        for dashboard in self.iter_dashboards():
+            dashboard.resolve_persisted_binding()
+
+    def refresh_dashboard_lists(self) -> None:
+        """Repopulate the sidebar's Dashboards page and Favorite Dashboards
+        panel from the library (called after any catalog mutation)."""
+        drawer = getattr(self, "shared_drawer", None)
+        if drawer is None:
+            return
+        configs = self.dashboard_catalog.all()
+        populate_dashboard_list(
+            drawer.dashboard_list,
+            configs,
+            selected_id=selected_item_id(drawer.dashboard_list),
+            label_limit=30,
+        )
+        populate_dashboard_list(
+            drawer.favorite_dashboard_list,
+            [config for config in configs if config.favorite],
+            selected_id=selected_item_id(drawer.favorite_dashboard_list),
+            label_limit=30,
+        )
+
+    def set_dashboard_favorite(self, dashboard_id: str, favorite: bool) -> None:
+        config = self.dashboard_catalog.by_id(dashboard_id)
+        if config is None:
+            return
+        config.favorite = favorite
+        config.touch()
+        self.save_settings()
+        self.refresh_dashboard_lists()
+
+    def rename_dashboard_by_id(self, dashboard_id: str) -> None:
+        config = self.dashboard_catalog.by_id(dashboard_id)
+        if config is None:
+            return
+        # An open tab owns its config's name label — rename through it.
+        for dashboard in self.iter_dashboards():
+            if dashboard.config.id == dashboard_id:
+                self.rename_dashboard(self.tabs.indexOf(dashboard))
+                self.refresh_dashboard_lists()
+                return
+        name, accepted = QInputDialog.getText(
+            self, "Rename Dashboard", "Dashboard name", text=config.name
+        )
+        if accepted and name.strip() and self.dashboard_catalog.rename(dashboard_id, name):
+            self.save_settings()
+            self.refresh_dashboard_lists()
+
+    def delete_dashboard_by_id(self, dashboard_id: str) -> None:
+        config = self.dashboard_catalog.by_id(dashboard_id)
+        if config is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete Dashboard",
+            f"Delete dashboard '{config.name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.close_dashboard_tab_by_id(dashboard_id)
+        if self.dashboard_catalog.remove(dashboard_id):
+            self.set_status(f"Deleted dashboard {config.name}.")
+            self.save_settings()
+            self.refresh_dashboard_lists()
+
     def show_find_in_current_tab(self) -> None:
         editor = self.current_command_file_editor()
         if editor:
@@ -944,6 +1201,7 @@ class MainWindow(QMainWindow):
                 tab_count=self.tabs.count(),
                 session_at=self.session_at,
                 command_file_editor_at=self.command_file_editor_at,
+                dashboard_at=self.dashboard_at,
                 tab_text=self.tabs.tabText,
                 activate_tab=self.tabs.setCurrentIndex,
             ),
@@ -964,6 +1222,9 @@ class MainWindow(QMainWindow):
             self,
             prompt_first_settings=prompt_first_settings,
         )
+        # Tabs are recreated in pane order, so a dashboard may precede its
+        # terminal; bindings resolve only after every tab exists.
+        self.resolve_dashboard_bindings()
 
     def _should_prompt_first_session_settings(self) -> bool:
         return not self.settings.workspace_layout.panes and not self.settings.restored_tabs
@@ -1032,6 +1293,10 @@ class MainWindow(QMainWindow):
                             kind="command_file",
                             command_file=self.workspace_state_service.command_file_state(widget),
                         )
+                    )
+                elif isinstance(widget, DashboardTabWidget):
+                    tab_states.append(
+                        WorkspaceTabState(kind="dashboard", dashboard=widget.to_tab_state())
                     )
             panes.append(WorkspacePaneState(tabs=tab_states, active_tab=max(0, pane.currentIndex())))
         active_pane = max(0, self.tabs.pane_index(self.tabs.active_pane()))
@@ -1260,7 +1525,10 @@ class MainWindow(QMainWindow):
         # lives in the footer). Hide the shared widgets for both so the status line
         # is not duplicated or cut off while an editor tab is active.
         is_editor = isinstance(active_widget, CommandFileEditorDialog)
-        show_shared_connection = not terminal_owns_status and not is_editor
+        # Dashboards are also connectionless tabs — their binding state lives in
+        # their own header chip and the footer, so the shared chip hides too.
+        is_dashboard = isinstance(active_widget, DashboardTabWidget)
+        show_shared_connection = not terminal_owns_status and not is_editor and not is_dashboard
         self.connection_status_label.setVisible(show_shared_connection)
         self.connection_action_button.setVisible(show_shared_connection)
 
@@ -1284,6 +1552,9 @@ class MainWindow(QMainWindow):
 
     def update_connection_status(self, session: TerminalSessionWidget | None = None) -> None:
         self.refresh_command_file_targets()
+        # Binding chips react to connect/disconnect immediately instead of
+        # waiting for the next dashboard tick.
+        self.dashboard_runs.refresh_dashboards()
         # The shared status bar belongs to the selected tab; background tab
         # updates should refresh shared targets without replacing it.
         self.workspace_status.sync_from_current(self.theme)
@@ -1297,9 +1568,10 @@ class MainWindow(QMainWindow):
         self.set_drawer_collapsed(not self.settings.drawer_collapsed)
 
     def normalized_drawer_page_index(self, index: int | None = None) -> int:
-        # Rail modes: All (0), Quick Send (1), Command Files (2), History (3).
+        # Rail modes: Favorites (0), Quick Send (1), Command Files (2),
+        # Dashboards (3), History (4).
         page_index = self.settings.drawer_page_index if index is None else index
-        return max(0, min(int(page_index), 3))
+        return max(0, min(int(page_index), 4))
 
     def apply_drawer_state_to_current_tab(self) -> None:
         self.update_workspace_split_chrome()
@@ -1856,11 +2128,15 @@ class MainWindow(QMainWindow):
             session = self.session_at(index)
             if session:
                 session.shutdown()
+            dashboard = self.dashboard_at(index)
+            if dashboard:
+                dashboard.shutdown()
             widget = self.tabs.widget(index)
             self.tabs.removeTab(index)
             if widget:
                 widget.deleteLater()
         self.tabs.join_panes()
+        self.dashboard_runs.shutdown()
 
     def _rebuild_runtime_state_from_settings(self, settings: AppSettings) -> None:
         self.quick_actions = self._quick_action_library_from_settings()
@@ -2160,6 +2436,8 @@ class MainWindow(QMainWindow):
             editor.apply_theme_palette(self.theme)
         for session in self.iter_sessions():
             session.apply_theme_palette()
+        for dashboard in self.iter_dashboards():
+            dashboard.apply_theme_palette(self.theme)
         # Qt caches QIcon pixmaps, so persistent buttons and menu icons do not
         # recolor on their own — re-tint them after the new color is in effect.
         retint_icons(self)
@@ -2184,6 +2462,9 @@ class MainWindow(QMainWindow):
         if self.settings.clear_history_on_exit:
             self.history_catalog.clear()
         self.save_settings()
+        for dashboard in self.iter_dashboards():
+            dashboard.shutdown()
+        self.dashboard_runs.shutdown()
         for session in self.iter_sessions():
             session.shutdown()
         super().closeEvent(event)

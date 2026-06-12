@@ -37,6 +37,8 @@ class FakeSerialTransport:
         self.disconnect_calls: int = 0
         self.sent_text: list[tuple[str, str | None]] = []
         self.sent_bytes: list[bytes] = []
+        # TX origin per send, in call order ("" = user/batch, "dashboard" = poll).
+        self.sent_sources: list[str] = []
         # Control-line state (mirrors pyserial defaults) + break counter.
         self.dtr: bool = True
         self.rts: bool = True
@@ -78,12 +80,16 @@ class FakeSerialTransport:
         self.disconnect_calls += 1
         self._connected = False
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
         self.sent_text.append((text, line_ending_override))
+        self.sent_sources.append(source)
         self._deliver_next_response()
 
-    def send_bytes(self, data: bytes) -> None:
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
         self.sent_bytes.append(data)
+        self.sent_sources.append(source)
         self._deliver_next_response()
 
     def set_dtr(self, value: bool) -> bool:

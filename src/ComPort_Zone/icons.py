@@ -48,6 +48,7 @@ MOCKUP_ICONS = {
     "replace": (16, 1.3, '<path d="M2.5 5.5h9M9 3l2.5 2.5-2.5 2.5" /><path d="M13.5 10.5h-9M7 13l-2.5-2.5 2.5-2.5" />', False),
     "save-as": (16, 1.15, '<path d="M2.5 3a.5 .5 0 0 1 .5 -.5h5.5l1.5 1.5v3" /><path d="M3 13.5a.5 .5 0 0 1 -.5 -.5V2.5" /><path d="M3 13.5h5" /><path d="M4.5 2.5v2.5h3.5v-2.5" /><path d="M12.6 8.4l2 2-4 4H8.6v-2z" />', False),
     "plug":        (16, 1.3, '<path d="M5 2v3M11 2v3M3.5 5h9v3a4.5 4.5 0 0 1 -9 0V5zM8 12.5V15" />', False),
+    "bell":        (16, 1.3, '<path d="M8 2.2a3.5 3.5 0 0 0 -3.5 3.5v2L3 10.5h10L11.5 7.7v-2A3.5 3.5 0 0 0 8 2.2zM6.5 13a1.5 1.5 0 0 0 3 0" /><path d="M8 1v1.2" />', False),
     "send":        (16, 1.4, '<path d="M2.5 8h9M8 4l4 4-4 4" />', False),
     "arrow-right": (16, 1.4, '<path d="M2.5 8h9M8 4l4 4-4 4" />', False),
     "arrow-left":  (16, 1.4, '<path d="M13.5 8h-9M8 4l-4 4 4 4" />', False),

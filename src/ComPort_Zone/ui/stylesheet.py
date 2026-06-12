@@ -28,8 +28,10 @@ from .tokens import (
     CONTROL_H,
     FONT_BTN_W,
     LABEL_FS,
+    LED_LAMP,
     MENU_BAR_H,
     MICRO_FS,
+    RADIUS_LG,
     RADIUS_MD,
     RADIUS_SM,
     SESSION_TAB_H,
@@ -709,6 +711,151 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QCheckBox::indicator:checked {{ border: none; image: url({check_img}); }}
     QCheckBox::indicator:checked:hover {{ image: url({check_img}); }}
+    """)
+
+    # =====================================================================
+    # Dashboard view — tiles, grid, binding chip
+    # =====================================================================
+    # State colors mirror ui/dashboard_tiles.tile_state_color: ok=tx green,
+    # warn=status amber, fail/error=error red, stale/neutral=muted.
+    stale_ink = mix_hex(tx2, bg, 0.75)
+    parts.append(f"""
+    QWidget#dashboardGrid {{ background: {bg}; }}
+    QWidget#dashboardHeader {{
+        background: {panel};
+        border-bottom: 1px solid {bd_soft};
+    }}
+    QToolButton#dashboardHeaderButton {{
+        background: transparent; border: none; border-radius: {RADIUS_SM}px;
+        color: {tx2}; padding: 2px 7px; min-height: 24px;
+    }}
+    QToolButton#dashboardHeaderButton:hover {{ background: {hover}; color: {tx}; }}
+    QToolButton#dashboardHeaderButton:pressed {{ background: {press_bg}; }}
+    QToolButton#dashboardHeaderButton:checked {{ background: {ghost_on_bg}; color: {accent}; }}
+    QToolButton#dashboardHeaderButton:checked:hover {{ background: {press_bg}; }}
+    QLabel#dashboardSaveState {{
+        color: {tx_faint}; font-size: {MICRO_FS}px; font-family: {MONO}; padding: 0 4px;
+    }}
+    QFrame#dashboardTile {{
+        background: {elevated};
+        border: 1px solid {bd_soft};
+        border-radius: {RADIUS_LG}px;
+    }}
+    QFrame#dashboardTile[tileState="ok"] {{ border: 1px solid {ok_bd}; }}
+    QFrame#dashboardTile[tileState="warn"] {{ border: 1px solid {mix_hex(amber, bg, 0.5)}; }}
+    QFrame#dashboardTile[tileState="fail"],
+    QFrame#dashboardTile[tileState="error"] {{ border: 1px solid {danger_bd}; }}
+    QFrame#dashboardTile[editMode="true"] {{ border: 1px dashed {accent}; }}
+    QFrame#dashboardTile[entryEnabled="false"] {{ border: 1px dashed {bd}; }}
+    QFrame#dashboardTile QLabel {{ background: transparent; }}
+    QFrame#dashboardTile[entryEnabled="false"] QLabel {{ color: {tx_faint}; }}
+
+    QLabel#tileTitle {{
+        color: {tx2};
+        font-size: {LABEL_FS}px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+    }}
+    QLabel#tileTimestamp {{ color: {tx_faint}; font-size: {MICRO_FS}px; font-family: {MONO}; }}
+    QLabel#tileValue {{
+        color: {tx};
+        font-family: {MONO};
+        font-size: 21px;
+        font-weight: 600;
+    }}
+    QLabel#tileValue[tileState="ok"] {{ color: {green}; }}
+    QLabel#tileValue[tileState="warn"] {{ color: {amber}; }}
+    QLabel#tileValue[tileState="fail"], QLabel#tileValue[tileState="error"] {{ color: {red}; }}
+    QLabel#tileValue[tileState="stale"] {{ color: {stale_ink}; }}
+
+    QLabel#tileLamp {{
+        border-radius: {LED_LAMP // 2}px;
+        background: {stale_ink};
+        border: 1px solid {bd_strong};
+    }}
+    QLabel#tileLamp[tileState="ok"] {{ background: {green}; border-color: {ok_bd}; }}
+    QLabel#tileLamp[tileState="warn"] {{ background: {amber}; border-color: {mix_hex(amber, bg, 0.5)}; }}
+    QLabel#tileLamp[tileState="fail"], QLabel#tileLamp[tileState="error"]
+        {{ background: {red}; border-color: {danger_bd}; }}
+    QLabel#tileStateCaption {{ color: {tx}; font-weight: 700; font-size: 15px; }}
+    QLabel#tileStateCaption[tileState="ok"] {{ color: {green}; }}
+    QLabel#tileStateCaption[tileState="warn"] {{ color: {amber}; }}
+    QLabel#tileStateCaption[tileState="fail"], QLabel#tileStateCaption[tileState="error"]
+        {{ color: {red}; }}
+    QLabel#tileStateCaption[tileState="stale"] {{ color: {stale_ink}; }}
+
+    QPushButton#tileControlButton {{
+        background: {hover}; color: {tx};
+        border: 1px solid {bd_strong}; border-radius: {RADIUS_MD}px;
+        font-weight: 700; padding: 6px 18px; min-height: 26px;
+    }}
+    QPushButton#tileControlButton:hover {{ background: {press_bg}; border-color: {accent}; }}
+    QPushButton#tileControlButton:pressed {{ background: {press_bg}; }}
+    QPushButton#tileControlButton:disabled {{ color: {tx_faint}; background: transparent; }}
+    QPushButton#tileControlButton[controlState="on"] {{
+        background: {ok_bg}; color: {green}; border-color: {ok_bd};
+    }}
+
+    QLabel#dashboardBindChip {{
+        background: {elevated}; color: {tx2};
+        border: 1px solid {bd}; border-radius: {RADIUS_MD}px;
+        padding: 2px 8px; font-size: {MICRO_FS}px;
+    }}
+    QLabel#dashboardBindChip[state="polling"] {{
+        background: {ok_bg}; color: {green}; border-color: {ok_bd};
+    }}
+    QLabel#dashboardBindChip[state="paused"] {{
+        background: {warn_bg}; color: {amber}; border-color: {mix_hex(amber, bg, 0.5)};
+    }}
+    QLabel#dashboardBindChip[state="unbound"] {{
+        background: {err_bg}; color: {red}; border-color: {danger_bd};
+    }}
+    QLabel#dashboardEmptyTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
+    QLabel#dashboardEmptyHint {{ color: {tx2}; }}
+    QWidget#dashboardPreviewStrip {{
+        background: {bg};
+        border: 1px solid {bd_soft};
+        border-radius: {RADIUS_MD}px;
+    }}
+    QWidget#dashboardChartPage {{ background: {bg}; }}
+    QWidget#dashboardChartView {{
+        background: {elevated};
+        border: 1px solid {bd_soft};
+        border-radius: {RADIUS_LG}px;
+    }}
+    QPushButton#dashboardChartBack {{
+        background: transparent; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 4px 10px; font-weight: 600;
+    }}
+    QPushButton#dashboardChartBack:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
+    QLabel#dashboardChartTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
+    QLabel#dashboardChartReadout {{ color: {tx_faint}; font-family: {MONO}; font-size: {MICRO_FS}px; }}
+
+    QLabel#dashboardBellBadge {{
+        background: {red}; color: {on_accent};
+        border: 1px solid {danger_bd}; border-radius: 6px;
+        min-width: 12px; max-height: 12px; padding: 0 2px;
+        font-size: 9px; font-weight: 700;
+    }}
+    QFrame#dashboardAlertPanel {{
+        background: {panel}; color: {tx};
+        border: 1px solid {bd}; border-radius: {RADIUS_LG}px;
+    }}
+    QLabel#dashboardAlertPanelTitle {{ color: {tx}; font-size: 14px; font-weight: 700; }}
+    QLabel#dashboardAlertPanelSubtitle {{ color: {tx_faint}; font-size: {MICRO_FS}px; }}
+    QToolButton#dashboardAlertPanelButton {{
+        background: transparent; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 2px 8px; min-height: 22px;
+    }}
+    QToolButton#dashboardAlertPanelButton:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
+    QListWidget#dashboardAlertList {{
+        background: {elevated}; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_MD}px;
+        font-family: {MONO}; font-size: {MICRO_FS}px;
+    }}
+    QListWidget#dashboardAlertList::item {{ padding: 3px 6px; }}
     """)
 
     return "\n".join(parts)

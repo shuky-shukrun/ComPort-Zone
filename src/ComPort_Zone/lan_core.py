@@ -92,19 +92,21 @@ class LanClient:
         self._stop_reconnect_thread()
         self._close_socket(emit_event=True, reason="Disconnected.", unexpected=False)
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+    def send_text(
+        self, text: str, line_ending_override: str | None = None, *, source: str = ""
+    ) -> None:
         profile = self.active_profile
         if not profile:
             raise RuntimeError("No LAN profile is active.")
         line_ending = line_ending_override or profile.line_ending
         payload = apply_line_ending(text, line_ending)
-        self._write(payload, text)
+        self._write(payload, text, source=source)
 
-    def send_bytes(self, data: bytes) -> None:
+    def send_bytes(self, data: bytes, *, source: str = "") -> None:
         display = "HEX " + format_hex_bytes(data)
-        self._write(data, display)
+        self._write(data, display, source=source)
 
-    def _write(self, data: bytes, display_text: str) -> None:
+    def _write(self, data: bytes, display_text: str, *, source: str = "") -> None:
         with self._lock:
             connection = self._socket
         if connection is None:
@@ -115,7 +117,7 @@ class LanClient:
             self._emit("error", f"Write failed: {exc}")
             self._handle_connection_loss(str(exc))
             raise RuntimeError(str(exc)) from exc
-        self._emit("tx", display_text)
+        self._emit("tx", display_text, source=source)
 
     def _attempt_connect(self, profile: LanProfile, reconnect_attempt: bool) -> bool:
         if not profile.host.strip() or not 1 <= int(profile.port) <= 65535:
@@ -240,8 +242,8 @@ class LanClient:
             if reason:
                 self._emit("error" if unexpected else "status", reason)
 
-    def _emit(self, kind: str, message: str, *, raw: bytes = b"") -> None:
-        event = SerialEvent(kind=kind, message=message, raw=raw)
+    def _emit(self, kind: str, message: str, *, raw: bytes = b"", source: str = "") -> None:
+        event = SerialEvent(kind=kind, message=message, raw=raw, source=source)
         self.events.put(event)
         with self._lock:
             subscribers = list(self._event_subscribers)

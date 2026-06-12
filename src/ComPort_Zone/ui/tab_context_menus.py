@@ -32,6 +32,8 @@ class TabContextMenuBuilder:
         if index < 0:
             host._add_context_command_action(menu, "file.new_tab")
             host._add_context_command_action(menu, "command_file.new")
+            host._add_context_command_action(menu, "dashboard.new")
+            host._add_context_command_action(menu, "dashboard.manage")
             return menu
 
         session = host.session_at(index)
@@ -39,9 +41,65 @@ class TabContextMenuBuilder:
         if editor:
             self._build_editor_menu(menu, index, editor)
             return menu
+        dashboard = host.dashboard_at(index)
+        if dashboard:
+            self._build_dashboard_menu(menu, index, dashboard)
+            return menu
 
         self._build_terminal_menu(menu, index, session)
         return menu
+
+    def _build_dashboard_menu(self, menu: QMenu, index: int, dashboard: Any) -> None:
+        host = self.host
+        menu.setTitle(dashboard.tab_title())
+        host._add_context_command_action(menu, "dashboard.new")
+        host._add_context_action(
+            menu,
+            "Rename Dashboard",
+            lambda tab_index=index: host.rename_dashboard(tab_index),
+            icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        )
+        bind_menu = menu.addMenu("Bind to Terminal")
+        bind_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ComputerIcon))
+        bind_menu.aboutToShow.connect(
+            lambda menu=bind_menu, target=dashboard: host.dashboard_runs.populate_bind_menu(
+                menu, target.bind_to_session
+            )
+        )
+        polling_enabled = "user" not in dashboard.scheduler.paused_reasons
+        host._add_context_action(
+            menu,
+            "Pause Polling" if polling_enabled else "Resume Polling",
+            lambda target=dashboard, enabled=polling_enabled: target.set_polling_enabled(
+                not enabled
+            ),
+            icon=QStyle.StandardPixmap.SP_MediaPause
+            if polling_enabled
+            else QStyle.StandardPixmap.SP_MediaPlay,
+        )
+        host._add_context_action(
+            menu,
+            "Add Entry...",
+            dashboard.add_entry_via_dialog,
+            icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+        )
+        edit_layout_action = host._add_context_action(
+            menu,
+            "Edit Layout",
+            lambda target=dashboard: target.edit_layout_button.toggle(),
+        )
+        edit_layout_action.setCheckable(True)
+        edit_layout_action.setChecked(dashboard.edit_layout_button.isChecked())
+        host._add_context_command_action(menu, "dashboard.manage")
+        menu.addSeparator()
+        self._add_split_actions(menu, index)
+        menu.addSeparator()
+        host._add_context_command_action(
+            menu,
+            "file.close_tab",
+            lambda tab_index=index: host.close_session(tab_index),
+        )
+        self._add_common_close_actions(menu, index)
 
     def _build_editor_menu(self, menu: QMenu, index: int, editor: Any) -> None:
         host = self.host

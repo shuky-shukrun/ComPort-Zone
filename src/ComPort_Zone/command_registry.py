@@ -54,6 +54,7 @@ SEPARATOR: None = None
 # Submenu placeholders consumed by MainWindowMenuBuilder; each "@..." token in a
 # MENU_SECTIONS tuple is replaced by the matching dynamically-built submenu.
 SUBMENU_OPEN_RECENT = "@open_recent"
+SUBMENU_OPEN_DASHBOARD = "@open_dashboard"
 SUBMENU_IMPORT_EXPORT = "@import_export"
 SUBMENU_THEME = "@theme"
 SUBMENU_TERMINAL_FONT = "@terminal_font"
@@ -556,6 +557,44 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         palette_subtitle="Show the keyboard shortcut reference",
         palette_keywords="keyboard shortcuts keys reference cheat sheet",
     ),
+    # --- Dashboard view -----------------------------------------------------
+    CommandSpec(
+        "dashboard.new",
+        lambda host: host.new_dashboard_tab,
+        menu_text="New Dashboard",
+        icon=QStyle.StandardPixmap.SP_FileDialogListView,
+        palette_title="New Dashboard",
+        palette_subtitle="Create a dashboard of background-polled commands",
+        palette_keywords="dashboard tiles poll monitor values gauges background",
+    ),
+    CommandSpec(
+        "dashboard.manage",
+        lambda host: host.show_dashboard_manager,
+        menu_text="Dashboards...",
+        shortcut="Ctrl+Shift+D",
+        icon=QStyle.StandardPixmap.SP_FileDialogListView,
+        palette_title="Manage Dashboards",
+        palette_subtitle="Open, rename, duplicate, import or export saved dashboards",
+        palette_keywords="dashboard manage library open rename duplicate delete",
+    ),
+    CommandSpec(
+        "dashboard.import_json",
+        lambda host: host.import_dashboards_json,
+        menu_text="Import Dashboards (JSON)...",
+        icon=QStyle.StandardPixmap.SP_DialogOpenButton,
+        palette_title="Import Dashboards from JSON",
+        palette_subtitle="Merge dashboards from a ComPort Zone dashboard file",
+        palette_keywords="dashboard json import merge transfer",
+    ),
+    CommandSpec(
+        "dashboard.export_json",
+        lambda host: host.export_dashboards_json,
+        menu_text="Export Dashboards (JSON)...",
+        icon=QStyle.StandardPixmap.SP_DialogSaveButton,
+        palette_title="Export Dashboards to JSON",
+        palette_subtitle="Save all dashboards to a transferable JSON file",
+        palette_keywords="dashboard json export share transfer backup",
+    ),
     CommandSpec(
         "help.documentation",
         lambda host: host.open_documentation,
@@ -586,6 +625,9 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         "command_file.new",
         "command_file.open_editor",
         SUBMENU_OPEN_RECENT,
+        SEPARATOR,
+        "dashboard.new",
+        SUBMENU_OPEN_DASHBOARD,
         SEPARATOR,
         "command_file.save",
         "command_file.save_as",
@@ -657,6 +699,8 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         "command_file.stop",
         SUBMENU_RUN_IN_TERMINAL,
         SEPARATOR,
+        "dashboard.manage",
+        SEPARATOR,
         "quick_commands.add",
         "quick_files.add",
         SEPARATOR,
@@ -683,6 +727,9 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         SEPARATOR,
         "quick_files.import_csv",
         "quick_files.export_csv",
+        SEPARATOR,
+        "dashboard.import_json",
+        "dashboard.export_json",
     ),
 }
 
@@ -714,6 +761,10 @@ PALETTE_COMMAND_IDS: tuple[str, ...] = (
     "quick_files.import_csv",
     "quick_files.export_csv",
     "quick_files.delete_all",
+    "dashboard.new",
+    "dashboard.manage",
+    "dashboard.import_json",
+    "dashboard.export_json",
     "help.check_for_updates",
 )
 

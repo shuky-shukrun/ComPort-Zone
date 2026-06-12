@@ -2,9 +2,19 @@ import json
 from pathlib import Path
 import unittest
 
+from ComPort_Zone.dashboard_models import (
+    ColorRule,
+    DashboardConfig,
+    DashboardEntry,
+    DashboardTabState,
+    TilePlacement,
+)
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
+    DASHBOARD_SCHEMA_FLOOR,
+    DASHBOARD_V2_SCHEMA_FLOOR,
+    LAN_SCHEMA_FLOOR,
     LanProfile,
     MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
     QuickCommand,
@@ -111,6 +121,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings(
             serial=SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
             command_history=["status", "reset"],
+            dashboards=[],  # keep the base min-compat floor in focus here
             quick_commands=[
                 QuickCommand(
                     id="cmd-1",
@@ -354,17 +365,21 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(settings.serial.baudrate, 57600)
         self.assertEqual(settings.to_dict()["transport"]["profile"]["port"], "COM33")
 
-    def test_settings_accept_lan_transport_profile_and_marks_schema_v3_required(self) -> None:
+    def test_settings_accept_lan_transport_profile_and_marks_lan_floor_required(self) -> None:
         settings = AppSettings(
             transport_kind="lan",
             lan=LanProfile(host="192.168.1.50", port=5025, line_ending="LF"),
+            dashboards=[],  # isolate the LAN floor from the seeded example
         )
 
         payload = settings.to_dict()
         loaded = AppSettings.from_dict(payload)
 
         self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
-        self.assertEqual(payload["minimum_compatible_schema_version"], SETTINGS_SCHEMA_VERSION)
+        # LAN content pins the file to the LAN feature floor, not to the
+        # current schema version — otherwise every later schema bump would
+        # needlessly lock LAN users out of older builds.
+        self.assertEqual(payload["minimum_compatible_schema_version"], LAN_SCHEMA_FLOOR)
         self.assertEqual(payload["transport"]["kind"], "lan")
         self.assertEqual(payload["transport"]["profile"]["host"], "192.168.1.50")
         self.assertEqual(payload["transport"]["profile"]["port"], 5025)
@@ -484,6 +499,166 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.quick_command_hidden_groups, ["Factory"])
         self.assertEqual(restored.quick_file_sort_mode, "Title")
         self.assertEqual(restored.serial.port, "COM4")
+
+
+class DashboardSchemaTests(unittest.TestCase):
+    """Schema v5: dashboard persistence and minimum-compatible floors."""
+
+    @staticmethod
+    def make_dashboard() -> DashboardConfig:
+        return DashboardConfig(
+            name="PSU Bench",
+            entries=[DashboardEntry(label="Volts", command="MEAS:VOLT?")],
+        )
+
+    def test_plain_settings_keep_base_min_compat(self) -> None:
+        payload = AppSettings(dashboards=[]).to_dict()
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(
+            payload["minimum_compatible_schema_version"],
+            MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+        )
+
+    def test_first_run_seeds_the_example_dashboard(self) -> None:
+        settings = AppSettings()
+        self.assertEqual([config.name for config in settings.dashboards], ["Example Dashboard"])
+        example = settings.dashboards[0]
+        self.assertTrue(example.favorite)
+        self.assertEqual(
+            [entry.command for entry in example.entries],
+            ["*IDN?", "OUTP?", "SYST:FIRM?"],
+        )
+
+    def test_emptied_dashboard_library_stays_empty(self) -> None:
+        # Deleting the example must stick: a present-but-empty key does not
+        # re-seed (mirrors quick-command behavior).
+        restored = AppSettings.from_dict(AppSettings(dashboards=[]).to_dict())
+        self.assertEqual(restored.dashboards, [])
+
+    def test_app_settings_import_preserves_dashboards(self) -> None:
+        service = SettingsService()
+        current = AppSettings(dashboards=[self.make_dashboard()])
+        # App-settings payloads exclude the libraries section, so the parsed
+        # import seeds defaults; preservation must restore the user's library.
+        imported = AppSettings.from_dict(AppSettings().to_app_settings_dict())
+        merged = service.preserve_quick_actions(imported, current)
+        self.assertEqual(
+            [config.name for config in merged.dashboards],
+            ["PSU Bench"],
+        )
+
+    def test_dashboards_raise_min_compat_to_dashboard_floor(self) -> None:
+        payload = AppSettings(dashboards=[self.make_dashboard()]).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_restored_dashboard_tab_raises_min_compat(self) -> None:
+        payload = AppSettings(
+            dashboards=[],  # isolate the restored-tab floor from the seeded example
+            restored_dashboards=[DashboardTabState(dashboard_id="abc")],
+        ).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_dashboard_workspace_tab_raises_min_compat(self) -> None:
+        layout = WorkspaceLayoutState(
+            panes=[
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(
+                            kind="dashboard", dashboard=DashboardTabState(dashboard_id="abc")
+                        )
+                    ]
+                )
+            ]
+        )
+        payload = AppSettings(dashboards=[], workspace_layout=layout).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_v2_feature_raises_min_compat_to_v2_floor(self) -> None:
+        base = self.make_dashboard()  # v1-shaped -> floor 5
+        self.assertEqual(
+            AppSettings(dashboards=[base]).to_dict()["minimum_compatible_schema_version"],
+            DASHBOARD_SCHEMA_FLOOR,
+        )
+        v2_variants = {
+            "poll_mode": lambda c: setattr(c.entries[0], "poll_mode", "on_connect"),
+            "target": lambda c: setattr(c.entries[0], "target_endpoint", "COM9"),
+            "control": lambda c: setattr(c.entries[0].tile, "kind", "control"),
+            "rule color": lambda c: c.entries[0].rules.append(
+                ColorRule(op="gt", operand="1", color="#112233")
+            ),
+            "csv": lambda c: setattr(c, "csv_log_enabled", True),
+        }
+        for name, mutate in v2_variants.items():
+            with self.subTest(feature=name):
+                config = self.make_dashboard()
+                mutate(config)
+                payload = AppSettings(dashboards=[config]).to_dict()
+                self.assertEqual(
+                    payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+                )
+
+    def test_seeded_example_declares_v2_floor(self) -> None:
+        # The shipped example uses on_connect (FR-52), so a fresh install's
+        # library declares the v2 floor — accepted in the v2 plan.
+        payload = AppSettings().to_dict()
+        self.assertEqual(
+            payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+        )
+
+    def test_lan_and_dashboards_take_highest_floor(self) -> None:
+        settings = AppSettings(
+            transport_kind="lan",
+            lan=LanProfile(host="dut.local"),
+            dashboards=[self.make_dashboard()],
+        )
+        payload = settings.to_dict()
+        self.assertEqual(
+            payload["minimum_compatible_schema_version"],
+            max(LAN_SCHEMA_FLOOR, DASHBOARD_SCHEMA_FLOOR),
+        )
+
+    def test_dashboards_round_trip_through_settings(self) -> None:
+        settings = AppSettings(
+            dashboards=[self.make_dashboard()],
+            restored_dashboards=[DashboardTabState(dashboard_id="abc", target_endpoint="COM7")],
+        )
+        restored = AppSettings.from_dict(settings.to_dict())
+        self.assertEqual(len(restored.dashboards), 1)
+        self.assertEqual(restored.dashboards[0].name, "PSU Bench")
+        self.assertEqual(restored.dashboards[0].entries[0].command, "MEAS:VOLT?")
+        self.assertEqual(restored.restored_dashboards[0].target_endpoint, "COM7")
+
+    def test_v4_payload_loads_and_seeds_example_dashboard(self) -> None:
+        payload = AppSettings(serial=SerialProfile(port="COM9")).to_dict()
+        payload["schema_version"] = 4
+        payload["minimum_compatible_schema_version"] = 2
+        payload["libraries"].pop("dashboards", None)
+        payload["workspace"].pop("dashboard_tabs", None)
+
+        loaded = SettingsService().settings_from_payload(payload)
+
+        self.assertEqual(loaded.serial.port, "COM9")
+        # A pre-dashboard file has no "dashboards" key, so the upgrade seeds
+        # the shipped example — same as a first run.
+        self.assertEqual([config.name for config in loaded.dashboards], ["Example Dashboard"])
+        self.assertEqual(loaded.restored_dashboards, [])
+
+    def test_dashboard_workspace_tab_state_round_trips(self) -> None:
+        tab = WorkspaceTabState(
+            kind="dashboard",
+            dashboard=DashboardTabState(
+                dashboard_id="abc",
+                target_endpoint="COM7",
+                target_title="Terminal 1",
+                polling_enabled=False,
+            ),
+        )
+        restored = WorkspaceTabState.from_dict(json.loads(json.dumps(tab.to_dict())))
+        self.assertEqual(restored.kind, "dashboard")
+        assert restored.dashboard is not None
+        self.assertEqual(restored.dashboard.dashboard_id, "abc")
+        self.assertFalse(restored.dashboard.polling_enabled)
+        self.assertIsNone(restored.terminal)
 
 
 if __name__ == "__main__":

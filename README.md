@@ -52,6 +52,10 @@ The integrated editor opens command files as workspace tabs with line numbers, s
 <img src="docs/media/comport-zone-command-editor.png" alt="The command-file editor with syntax-highlighted batch DSL and a run bar" width="900">
 </div>
 
+### Dashboards: live values without retyping
+
+Build a dashboard of the values you keep checking — voltages, temperatures, fault flags — and let it poll them in the background. Each tile is one command with its own interval, response parse rule (first line or a regex capture), and ordered color rules that turn the tile green/amber/red from the reply; LED tiles make GO/NO-GO states readable across the room, control tiles (button or toggle) *send* on click for ON/OFF rails or zeroing offsets, and **computed tiles** show derived values like `{Volts} * {Amps}` over your other tiles. Numeric tiles paint a 120 s sparkline under the value; double-click any one to open a full chart page with span presets (1/5/30/60 min) and a hover crosshair. A dashboard binds to one of your open terminal tabs and shares its connection — or, with per-entry overrides, one dashboard can drive **multiple devices at once**. Poll traffic stays out of the transcript so the terminal remains yours for manual commands; polling pauses automatically while the port is disconnected or a command file is running, and resumes by itself. Transitions into FAIL/ERROR ring a bell with an unseen badge, flash the taskbar, and (optionally) play a short tone — silenceable per tile or globally. Optional CSV logging captures every parsed value for unattended runs. Arrange tiles on a drag-and-drop grid (with 2×1/2×2 sizes), keep named dashboards in your library and the drawer's Dashboards page, star favorites, share them as JSON, and they restore with your workspace — `File > New Dashboard` or **Ctrl+Shift+D** to manage them.
+
 ### A workspace that splits
 
 Drag tabs into side-by-side or stacked panes to watch a terminal while you edit the script that drives it, or compare two devices at once. The drawer, themes, terminal font, and settings stay consistent across panes.

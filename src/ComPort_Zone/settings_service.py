@@ -84,4 +84,8 @@ class SettingsService:
         imported.quick_command_sort_mode = current.quick_command_sort_mode
         imported.quick_command_hidden_groups = list(current.quick_command_hidden_groups)
         imported.quick_file_sort_mode = current.quick_file_sort_mode
+        # Dashboards are a library too (excluded from app-settings transfer
+        # payloads); without this, an import would replace the user's
+        # dashboards with the seeded defaults.
+        imported.dashboards = list(current.dashboards)
         return imported

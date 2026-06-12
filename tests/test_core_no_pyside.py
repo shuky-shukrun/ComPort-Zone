@@ -26,6 +26,7 @@ SRC_PATH = REPO_ROOT / "src"
 CORE_SUBMODULES = (
     "batch",
     "command_file_service",
+    "dashboard",
     "history",
     "lan_core",
     "library_lookup",

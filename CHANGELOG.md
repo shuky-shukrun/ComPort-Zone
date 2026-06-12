@@ -4,6 +4,36 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Added
+
+- **Dashboard View v2.0**: nine new capabilities on top of the original Dashboard View — history visualization, multi-device polling, control tiles, derived (computed) tiles, alerts, and richer color customization. All charting is custom-painted (QPainter) — no new dependencies.
+  - **In-tile sparklines** — every numeric tile renders a trend strip under the value over a 120 s window, colored by the current verdict (custom rule color when set, else the theme state color). Per-entry `show_sparkline` toggle; samples are bounded at 600/3600 s and never persisted (FR-46/FR-47).
+  - **Large chart page** — double-click a numeric tile (or use its "Open Chart…" context action) to open a full-tab chart for one entry with axis ticks, span presets (1/5/30/60 min), follow-live mode, and a hover crosshair showing the nearest sample's value and time-offset (FR-48/FR-49). Back returns to the grid; the chart auto-closes if the entry is deleted.
+  - **CSV value logging** — a Log CSV button in the dashboard header writes every successful poll/derived parse to a file (timestamp, dashboard, entry id, label, text/number, state). Header written once on first open and re-opens append; toggle + path persist on the dashboard and resume automatically at restart (FR-49..FR-51).
+  - **Run-once on connect + Poll Now** — entries can be set to poll only when their bound terminal (re)connects (FR-52); a "Poll Now" item on the tile context menu fires any pollable entry on demand (FR-53). The shipped Example Dashboard's identity/firmware tiles now use this mode.
+  - **Per-entry session binding** — an entry can override the dashboard default and target a different open terminal tab, so one dashboard can drive multiple devices at once (FR-54..FR-56). The binding chip aggregates state across targets; each entry stays paused/stale independently when its own session disconnects or runs a command file.
+  - **Alerts on FAIL/ERROR** — state transitions into `fail`/`error` ring a bell button in the header with an unseen-count badge, flash the taskbar (`QApplication.alert`), prefix the tab title with `● ` until the user reads the new entries, and optionally play a short tone (bundled `assets/alert.wav`, falls back to `QApplication.beep` if QtMultimedia is unavailable). Master enable + sound toggles live on a new **Dashboards** Preferences tab; per-entry `alerts_enabled` silences attention without burying the history (FR-57/FR-58).
+  - **Control tiles** — a new tile kind that *sends* on click instead of polling. Button mode fires a single command; toggle mode alternates ON/OFF and can mirror its visual from a watched polled tile's verdict. Optional confirmation prompt; click is gated by the same connect/batch checks as polls and flows through the same per-session dispatcher FIFO so control sends never interleave with dashboard traffic (FR-59/FR-60).
+  - **Derived/computed tiles** — entries can be defined by an expression over sibling tile labels (e.g. `{Volts} * {Amps}`). The expression evaluator is a safe AST whitelist (arithmetic + `abs/min/max/round/sqrt`); references are resolved against the dashboard's current entries with single-level depth so cycles are structurally impossible. Renaming a referenced entry rewrites every sibling expression so derived tiles keep working (FR-61).
+  - **Per-rule custom colors** — each color rule can carry an explicit `#rrggbb` that overrides the theme state color everywhere the verdict renders: value text, LED lamp/caption, sparkline stroke, and chart series. The entry editor's rules table gets a color swatch column with click-to-pick and right-click-to-reset (FR-62).
+  - **Entry editor redesign** — the dialog now fits in a 1366×768 work area with OK/Cancel always on screen: a live tile preview (real tile widgets fed by the same parse/evaluate pipeline as the tester) sits above three tabs (General / Polling / Response & Rules), and tabs that don't apply to the entry's shape are hidden. Two latent v1 bugs fell out of the rebuild — QComboBox `findData` compares Python tuples by identity (the size combo was never pre-selecting wide tiles) and `values()` used to mutate the original placement on every preview refresh.
+
+### Changed
+
+- Settings schema bumped to v6 for the v2 dashboard features. Dashboards that use only v1 fields still declare the v5 floor; v1-shaped exports still stamp `version: 1`. The fresh-install Example Dashboard uses on-connect polling, so a brand-new settings file declares min-compat 6 (existing users' v1-shaped library keeps the v5 floor on disk).
+
+- **Dashboard View**: a new workspace tab type that polls commands in the background and shows the replies as live tiles.
+  - Each entry has its own interval, timeout, parse rule (first line or regex capture, text or numeric), and ordered color rules that drive the tile state (OK / WARN / FAIL, plus stale and error); LED indicator tiles render GO/NO-GO states with a label override (e.g. "TRIPPED"). The entry editor includes a live tester: paste sample device output and see the parsed value and resulting state.
+  - A dashboard binds to an open terminal tab and shares its connection. Poll traffic stays out of the terminal transcript so the terminal remains usable for manual commands (it still reaches the session log and command-file EXPECT matching; tile tooltips show each entry's raw reply window). Polling pauses automatically while the session is disconnected or a command file is running and resumes by itself; a header chip shows the binding state, and a pause/play control lets you pause manually.
+  - Tiles arrange on a drag-and-drop grid with 1×1–2×2 sizes in an explicit edit-layout mode. Edits auto-save — a live **Saved HH:MM:SS** indicator in the header makes that visible — so there is no unsaved state to lose.
+  - Dashboards are named, saved to the settings library, star-able as favorites, and import/export as JSON. Open them from File > New Dashboard, the Open Dashboard submenu, the tab strip, the command palette, Tools > Dashboards… (Ctrl+Shift+D), or the left drawer's new **Dashboards** rail page, which lists the library with the same inline row actions as commands and files (open, star, rename, delete) plus New / Import / Export / Manage in the header. A third **Favorite Dashboards** panel joins the Favorites page.
+  - Ships with a favorited **Example Dashboard** — instrument identity and firmware polled every minute as wide tiles, output state polled continuously as an ON/OFF lamp — so the feature is one bind away from showing live data (delete it like any saved dashboard; it stays deleted).
+  - Open dashboard tabs restore with the workspace and rebind to their terminal by endpoint. Feature requirements: `docs/dashboard-view-requirements.md`.
+
+### Changed
+
+- Settings schema bumped to v5 for the dashboard library. Files without dashboards remain readable by older builds; LAN-only settings now declare the LAN feature floor (v4) instead of pinning to the newest schema, so future schema bumps no longer lock LAN users out of older builds.
+
 ## 0.4.2 - 2026-06-10
 
 ### Added
