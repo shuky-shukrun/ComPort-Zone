@@ -28,16 +28,27 @@ from threading import Lock
 from typing import TextIO
 
 # Columns in fixed order so consumers (Excel, pandas) can rely on the
-# header — never reordered without bumping the dashboard CSV schema.
+# header — never reordered without bumping the schema. v3 adds ``kind``
+# (poll/derived/control) so monitoring data and control actions land in
+# one auditable file (FR-50/FR-76/FR-77). Pre-v3 logs that lack the
+# column read back fine because csv.DictReader treats missing columns
+# as missing keys.
 VALUE_LOG_FIELDS = (
     "timestamp",
     "dashboard",
     "entry_id",
     "label",
+    "kind",
     "value_text",
     "value_number",
     "state",
 )
+
+# Accepted ``kind`` values; passed by the tab on every log() call.
+LOG_KIND_POLL = "poll"
+LOG_KIND_DERIVED = "derived"
+LOG_KIND_CONTROL = "control"
+LOG_KINDS = (LOG_KIND_POLL, LOG_KIND_DERIVED, LOG_KIND_CONTROL)
 
 
 def _format_value_number(value: float | None) -> str:
@@ -96,13 +107,16 @@ class DashboardValueLogger:
         dashboard: str,
         entry_id: str,
         label: str,
+        kind: str,
         value_text: str,
         value_number: float | None,
         state: str,
         timestamp: datetime | None = None,
     ) -> bool:
         """Append one row. Returns False when logging is disabled (so the
-        caller's hot path stays free of conditionals)."""
+        caller's hot path stays free of conditionals). ``kind`` is one
+        of ``LOG_KINDS``; values outside that set still write through
+        but consumers should treat them as future-version markers."""
         if self._handle is None or self._writer is None:
             return False
         when = timestamp or datetime.now().astimezone()
@@ -111,6 +125,7 @@ class DashboardValueLogger:
             "dashboard": dashboard,
             "entry_id": entry_id,
             "label": label,
+            "kind": kind,
             "value_text": value_text,
             "value_number": _format_value_number(value_number),
             "state": state,

@@ -86,7 +86,14 @@ from ..dashboard_history import (
     nearest_sample,
     nice_ticks,
 )
-from ..dashboard_value_log import VALUE_LOG_FIELDS, DashboardValueLogger
+from ..dashboard_value_log import (
+    LOG_KIND_CONTROL,
+    LOG_KIND_DERIVED,
+    LOG_KIND_POLL,
+    LOG_KINDS,
+    VALUE_LOG_FIELDS,
+    DashboardValueLogger,
+)
 from ..dashboard_expr import (
     EXPR_FUNCTIONS,
     MAX_EXPRESSION_NODES,
@@ -124,6 +131,10 @@ __all__ = [
     "downsample_minmax",
     "nearest_sample",
     "nice_ticks",
+    "LOG_KIND_CONTROL",
+    "LOG_KIND_DERIVED",
+    "LOG_KIND_POLL",
+    "LOG_KINDS",
     "VALUE_LOG_FIELDS",
     "DashboardValueLogger",
     "EXPR_FUNCTIONS",

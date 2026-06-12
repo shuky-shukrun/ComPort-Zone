@@ -656,6 +656,8 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         self.assertEqual(rows[0]["entry_id"], "volts")
         self.assertEqual(rows[0]["value_number"], "12")
         self.assertEqual(rows[0]["state"], "neutral")
+        # v3: poll rows carry kind="poll".
+        self.assertEqual(rows[0]["kind"], "poll")
 
     def test_csv_log_skips_timeouts_and_parse_errors(self) -> None:
         import csv
@@ -1329,6 +1331,89 @@ class ControlTileTests(DashboardTabTestBase):
         edited.control = ControlSpec()
         tab.apply_entry_edit(edited)
         self.assertIsInstance(tab.grid.tile("ctrl"), ValueTileWidget)
+
+    def test_csv_log_records_control_send(self) -> None:
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-ctrl-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+        self.addCleanup(tab.value_logger.close)
+
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "control")
+        self.assertEqual(rows[0]["entry_id"], "ctrl")
+        self.assertEqual(rows[0]["value_text"], "OUTP ON")
+        self.assertEqual(rows[0]["state"], "ok")
+        self.assertEqual(rows[0]["value_number"], "")
+
+    def test_csv_log_records_control_send_error(self) -> None:
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-ctrl-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+        self.addCleanup(tab.value_logger.close)
+
+        def explode(text, line_ending_override=None, *, source=""):
+            raise RuntimeError("port lost")
+
+        self.session.transport.send_text = explode  # type: ignore[method-assign]
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kind"], "control")
+        self.assertEqual(rows[0]["state"], "error")
+        # Errors still carry the attempted command for auditability.
+        self.assertEqual(rows[0]["value_text"], "OUTP ON")
+
+    def test_confirm_no_does_not_log(self) -> None:
+        from unittest.mock import patch
+        import csv
+        import tempfile
+        from pathlib import Path
+        from PySide6.QtWidgets import QMessageBox
+
+        tmp = Path(tempfile.mkdtemp(prefix="dash-ctrl-csv-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        log_path = tmp / "values.csv"
+        tab = self.make_tab(control_entry(confirm=True))
+        tab.bind_to_session(1)
+        tab.config.csv_log_path = str(log_path)
+        tab.csv_log_button.setChecked(True)
+        self.addCleanup(tab.value_logger.close)
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ):
+            self.assertFalse(tab._activate_control("ctrl"))
+
+        with log_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        # Cancellation never logs — only sends that left the queue.
+        self.assertEqual(rows, [])
 
 
 def setpoint_entry(

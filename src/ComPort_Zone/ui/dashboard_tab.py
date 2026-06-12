@@ -65,7 +65,12 @@ from ..dashboard_expr import (
     rewrite_references,
 )
 from ..dashboard_history import EntryHistory
-from ..dashboard_value_log import DashboardValueLogger
+from ..dashboard_value_log import (
+    LOG_KIND_CONTROL,
+    LOG_KIND_DERIVED,
+    LOG_KIND_POLL,
+    DashboardValueLogger,
+)
 from ..dashboard_models import (
     DashboardConfig,
     DashboardEntry,
@@ -187,6 +192,10 @@ class DashboardTabWidget(QWidget):
         # ids, and the ON/OFF state each in-flight click aims for.
         self._controls_by_watch: dict[str, list[str]] = {}
         self._control_intent: dict[str, bool] = {}
+        # The exact command actually sent for each in-flight control,
+        # consumed by _handle_control_result to write the audit row
+        # (FR-77). Keyed by entry id; popped on result.
+        self._control_sent_command: dict[str, str] = {}
         # v3 writable tiles (FR-66): watched input id -> dependent
         # writable entry ids (setpoint readback, enum indicator). Built
         # in _configure_entries; consumed in _apply_outcome.
@@ -910,11 +919,13 @@ class DashboardTabWidget(QWidget):
             return
         runtime = self._runtimes.get(entry.id)
         state = runtime.state if runtime is not None else "neutral"
+        kind = LOG_KIND_DERIVED if entry.is_derived() else LOG_KIND_POLL
         try:
             self.value_logger.log(
                 dashboard=self.config.name,
                 entry_id=entry.id,
                 label=entry.display_label(),
+                kind=kind,
                 value_text=outcome.value_text,
                 value_number=outcome.value_number,
                 state=state,
@@ -1007,6 +1018,7 @@ class DashboardTabWidget(QWidget):
             return False
         if intent is not None:
             self._control_intent[entry_id] = intent
+        self._control_sent_command[entry_id] = command
         if isinstance(tile, ControlTileWidget):
             tile.set_pending(True)
         elif isinstance(tile, SetpointTileWidget):
@@ -1045,6 +1057,7 @@ class DashboardTabWidget(QWidget):
         elif isinstance(tile, EnumTileWidget):
             tile.set_pending(False)
         intent = self._control_intent.pop(result.entry_id, None)
+        sent_command = self._control_sent_command.pop(result.entry_id, "")
         if entry is None:
             return
         runtime = self._runtimes.setdefault(
@@ -1070,6 +1083,46 @@ class DashboardTabWidget(QWidget):
             runtime.tooltip = f"Send failed: {result.error}"
         # Cancelled sends just clear the pending state.
         self._update_tile(result.entry_id)
+        # Audit row: every send that left the queue writes one CSV row
+        # — success and error both, so the trail is honest (FR-77).
+        # Cancellations (user picked No on the confirm) never reach
+        # here because they're refused before submit, so this hook
+        # excludes them by construction.
+        self._log_control(entry, result, sent_command)
+
+    def _log_control(
+        self,
+        entry: DashboardEntry,
+        result: ControlResult,
+        sent_command: str,
+    ) -> None:
+        """Append a kind='control' row to the per-panel CSV (FR-77).
+
+        ``value_text`` carries the post-template-substitution command
+        actually sent so the audit trail captures exactly what the
+        device saw. State is "ok" on POLL_OK and "error" on
+        POLL_SEND_ERROR; cancelled / unknown statuses don't audit.
+        """
+        if not self.value_logger.enabled:
+            return
+        if result.status == POLL_OK:
+            state = "ok"
+        elif result.status == POLL_SEND_ERROR:
+            state = "error"
+        else:
+            return
+        try:
+            self.value_logger.log(
+                dashboard=self.config.name,
+                entry_id=entry.id,
+                label=entry.display_label(),
+                kind=LOG_KIND_CONTROL,
+                value_text=sent_command,
+                value_number=None,
+                state=state,
+            )
+        except OSError as exc:
+            self._fail_csv_logging(f"CSV log write failed: {exc}")
 
     # -------------------------------------------------------- master arm
 
@@ -1565,6 +1618,9 @@ class DashboardTabWidget(QWidget):
         for entry_id in list(self._control_intent):
             if self.config.entry_by_id(entry_id) is None:
                 del self._control_intent[entry_id]
+        for entry_id in list(self._control_sent_command):
+            if self.config.entry_by_id(entry_id) is None:
+                del self._control_sent_command[entry_id]
         # History clears when the entry goes away OR when it stops being
         # numeric (e.g. converted to a control tile) — re-enabling later
         # should start fresh rather than replay old samples (FR-46).
