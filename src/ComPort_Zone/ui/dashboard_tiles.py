@@ -19,6 +19,7 @@ from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
 from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
@@ -667,11 +668,156 @@ class SetpointTileWidget(TileFrame):
         return self._entry.setpoint.render_command(self._value)
 
 
+class EnumTileWidget(TileFrame):
+    """Multi-position selector with one command per option (v3, FR-68..FR-71).
+
+    Internally a QComboBox plus a Send (▶) button. The user picks an
+    option from the dropdown and clicks Send to fire that option's
+    command — same FIFO dispatcher as control/setpoint. An optional
+    watch_entry_id highlights the option whose ``match_value`` matches
+    the watched polled tile (decoupled from the user's combo selection
+    so they can still send a different option).
+    """
+
+    def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
+        super().__init__(entry, parent)
+        self._pending = False
+        self._indicated_index = -1
+
+        self.combo = QComboBox(self)
+        self.combo.setObjectName("tileEnumCombo")
+        self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self.send_button = QPushButton("▶", self)
+        self.send_button.setObjectName("tileEnumSend")
+        self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.send_button.setFixedWidth(36)
+        self.send_button.clicked.connect(
+            lambda: self.activateRequested.emit(self.entry_id)
+        )
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(SPACE_SM)
+        row.addWidget(self.combo, 1)
+        row.addWidget(self.send_button)
+
+        self.body_layout.addStretch(1)
+        self.body_layout.addLayout(row)
+        self.body_layout.addStretch(1)
+
+        self._populate_options()
+        self._refresh_send_enabled()
+
+    # ----------------------------------------------------------- public
+
+    def update_entry(self, entry: DashboardEntry) -> None:
+        super().update_entry(entry)
+        self._populate_options()
+        self._refresh_send_enabled()
+
+    def _render_runtime(self, runtime: TileRuntime) -> bool:
+        return False
+
+    @property
+    def pending(self) -> bool:
+        return self._pending
+
+    def set_pending(self, pending: bool) -> None:
+        if self._pending != pending:
+            self._pending = pending
+            if pending and self.send_button.text() != "…":
+                self.send_button.setText("…")
+            elif not pending and self.send_button.text() == "…":
+                self.send_button.setText("▶")
+            self._refresh_send_enabled()
+
+    @property
+    def indicated_index(self) -> int:
+        return self._indicated_index
+
+    def set_indicated_index(self, index: int) -> None:
+        """Highlight an option without changing the user's selection.
+
+        Used by the funnel to mirror the watched polled tile's value
+        — operators still keep their own choice in the combo (FR-70).
+        """
+        valid = -1 <= index < self.combo.count()
+        if not valid or index == self._indicated_index:
+            return
+        prev = self._indicated_index
+        self._indicated_index = index
+        # Use a foreground-role tweak on the indicated row so QSS rules
+        # apply uniformly regardless of theme.
+        for row in (prev, index):
+            if 0 <= row < self.combo.count():
+                self.combo.setItemData(
+                    row,
+                    "on" if row == index else "off",
+                    int(Qt.ItemDataRole.UserRole) + 1,
+                )
+        self.combo.update()
+
+    def update_indicator(self, value_text: str) -> None:
+        """Recompute the indicated option from the watched value."""
+        self.set_indicated_index(self._entry.enum_spec.indicated_index(value_text))
+
+    def selected_command(self) -> str:
+        """Return the command for whatever option the user has picked."""
+        index = self.combo.currentIndex()
+        options = self._entry.enum_spec.options
+        if 0 <= index < len(options):
+            return options[index].command
+        return ""
+
+    def selected_label(self) -> str:
+        index = self.combo.currentIndex()
+        options = self._entry.enum_spec.options
+        if 0 <= index < len(options):
+            return options[index].label
+        return ""
+
+    def set_edit_mode(self, enabled: bool) -> None:
+        super().set_edit_mode(enabled)
+        for widget in (self.combo, self.send_button):
+            widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, enabled)
+        self._refresh_send_enabled()
+
+    # ----------------------------------------------------------- internals
+
+    def _populate_options(self) -> None:
+        # Preserve the user's selection across config edits when possible.
+        prior_label = self.selected_label()
+        self.combo.blockSignals(True)
+        try:
+            self.combo.clear()
+            for option in self._entry.enum_spec.options:
+                self.combo.addItem(option.label or "(unnamed)")
+            if prior_label:
+                index = self.combo.findText(prior_label)
+                if index >= 0:
+                    self.combo.setCurrentIndex(index)
+        finally:
+            self.combo.blockSignals(False)
+        self._indicated_index = -1  # caller re-applies via update_indicator
+
+    def _refresh_send_enabled(self) -> None:
+        enabled = (
+            self._entry.enabled
+            and not self._pending
+            and not self.edit_mode
+            and self.combo.count() > 0
+        )
+        self.send_button.setEnabled(enabled)
+        self.combo.setEnabled(self._entry.enabled and not self.edit_mode)
+
+
 TILE_CLASSES: dict[str, type[TileFrame]] = {
     "value": ValueTileWidget,
     "led": LedTileWidget,
     "control": ControlTileWidget,
     "setpoint": SetpointTileWidget,
+    "enum": EnumTileWidget,
 }
 
 

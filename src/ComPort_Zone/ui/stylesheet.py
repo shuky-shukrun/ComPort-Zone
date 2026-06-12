@@ -836,6 +836,23 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QLabel#tileSetpointReadback[tileState="stale"] {{ color: {stale_ink}; }}
 
+    QComboBox#tileEnumCombo {{
+        background: {field}; color: {tx};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 3px 8px; min-height: 22px;
+    }}
+    QComboBox#tileEnumCombo:focus {{ border-color: {accent}; }}
+    QComboBox#tileEnumCombo:disabled {{ color: {tx_faint}; }}
+    QComboBox#tileEnumCombo::drop-down {{ width: 18px; border: none; }}
+    QPushButton#tileEnumSend {{
+        background: {hover}; color: {tx};
+        border: 1px solid {bd_strong}; border-radius: {RADIUS_SM}px;
+        font-weight: 700; min-height: 22px;
+    }}
+    QPushButton#tileEnumSend:hover {{ background: {press_bg}; border-color: {accent}; }}
+    QPushButton#tileEnumSend:pressed {{ background: {press_bg}; }}
+    QPushButton#tileEnumSend:disabled {{ color: {tx_faint}; background: transparent; }}
+
     QLabel#dashboardBindChip {{
         background: {elevated}; color: {tx2};
         border: 1px solid {bd}; border-radius: {RADIUS_MD}px;

@@ -307,6 +307,61 @@ class DashboardEntryDialog(QDialog):
         setpoint_form.addRow("", self.setpoint_confirm_check)
         self._setpoint_form = setpoint_form
 
+        # --- enum / dropdown (v3, FR-68..FR-71) --------------------------
+        self._enum_options = list(original.enum_spec.options)
+        self.enum_table = QTableWidget(0, 3, self)
+        self.enum_table.setHorizontalHeaderLabels(["Label", "Command", "Match value"])
+        self.enum_table.horizontalHeader().setStretchLastSection(True)
+        self.enum_table.verticalHeader().setVisible(False)
+        self.enum_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.enum_table.setFixedHeight(140)
+        self.enum_table.setColumnWidth(0, 96)
+        self.enum_table.setColumnWidth(1, 160)
+        for option in self._enum_options:
+            self._append_enum_row(option.label, option.command, option.match_value)
+
+        enum_add = QPushButton("Add", self)
+        enum_add.clicked.connect(lambda: self._append_enum_row("", "", ""))
+        enum_remove = QPushButton("Remove", self)
+        enum_remove.clicked.connect(self._remove_enum_row)
+        enum_up = QPushButton("Up", self)
+        enum_up.clicked.connect(lambda: self._move_enum_row(-1))
+        enum_down = QPushButton("Down", self)
+        enum_down.clicked.connect(lambda: self._move_enum_row(1))
+        enum_buttons = QHBoxLayout()
+        enum_buttons.addWidget(enum_add)
+        enum_buttons.addWidget(enum_remove)
+        enum_buttons.addStretch(1)
+        enum_buttons.addWidget(enum_up)
+        enum_buttons.addWidget(enum_down)
+
+        self.enum_watch_combo = ChevronComboBox(self)
+        self.enum_watch_combo.addItem("None — no indicator", "")
+        stored_enum_watch = original.enum_spec.watch_entry_id
+        enum_watch_listed = False
+        for watch_id, watch_label in self._context.watch_candidates:
+            self.enum_watch_combo.addItem(watch_label, watch_id)
+            if watch_id == stored_enum_watch:
+                enum_watch_listed = True
+        if stored_enum_watch and not enum_watch_listed:
+            self.enum_watch_combo.addItem(
+                f"{stored_enum_watch} (missing)", stored_enum_watch
+            )
+        self._select_data(self.enum_watch_combo, stored_enum_watch)
+        self.enum_confirm_check = QCheckBox(
+            "Ask for confirmation before sending", self
+        )
+        self.enum_confirm_check.setChecked(original.enum_spec.confirm)
+
+        self.enum_box = QGroupBox("Options", self)
+        enum_layout = QVBoxLayout(self.enum_box)
+        enum_layout.addWidget(self.enum_table)
+        enum_layout.addLayout(enum_buttons)
+        enum_extras_form = QFormLayout()
+        enum_extras_form.addRow("Indicator follows", self.enum_watch_combo)
+        enum_extras_form.addRow("", self.enum_confirm_check)
+        enum_layout.addLayout(enum_extras_form)
+
         # --- parse rule ---------------------------------------------------
         self.parse_kind_combo = ChevronComboBox(self)
         for kind, label in PARSE_KIND_LABELS:
@@ -402,6 +457,7 @@ class DashboardEntryDialog(QDialog):
         general_layout.addLayout(general_form)
         general_layout.addWidget(self.control_box)
         general_layout.addWidget(self.setpoint_box)
+        general_layout.addWidget(self.enum_box)
         general_layout.addStretch(1)
 
         polling_form = QFormLayout()
@@ -496,6 +552,8 @@ class DashboardEntryDialog(QDialog):
             spin.valueChanged.connect(lambda *_: self._refresh_preview())
         self.setpoint_unit_input.textChanged.connect(self._refresh_preview)
         self.setpoint_template_input.textChanged.connect(self._refresh_preview)
+        # v3 enum table feeds the preview.
+        self.enum_table.cellChanged.connect(lambda *_: self._refresh_preview())
         self._preview_ready = True
         self._refresh_schedule_enablement()
         self._refresh_control_enablement()
@@ -569,6 +627,7 @@ class DashboardEntryDialog(QDialog):
         self._rules_box.setVisible(not is_writable)
         self.control_box.setVisible(is_control)
         self.setpoint_box.setVisible(is_setpoint)
+        self.enum_box.setVisible(is_enum)
         # Pages with nothing left to offer disappear entirely.
         self.tabs.setTabVisible(self.POLLING_TAB, not is_derived)
         self.tabs.setTabVisible(self.RESPONSE_TAB, not is_writable)
@@ -774,6 +833,49 @@ class DashboardEntryDialog(QDialog):
             )
         return rules
 
+    # ----------------------------------------------------------- enum table
+
+    def _append_enum_row(self, label: str, command: str, match_value: str) -> None:
+        row = self.enum_table.rowCount()
+        self.enum_table.insertRow(row)
+        self.enum_table.setItem(row, 0, QTableWidgetItem(label))
+        self.enum_table.setItem(row, 1, QTableWidgetItem(command))
+        self.enum_table.setItem(row, 2, QTableWidgetItem(match_value))
+
+    def _remove_enum_row(self) -> None:
+        row = self.enum_table.currentRow()
+        if row >= 0:
+            self.enum_table.removeRow(row)
+
+    def _move_enum_row(self, delta: int) -> None:
+        row = self.enum_table.currentRow()
+        target = row + delta
+        if row < 0 or not 0 <= target < self.enum_table.rowCount():
+            return
+        options = self._enum_options_from_table()
+        options[row], options[target] = options[target], options[row]
+        self.enum_table.setRowCount(0)
+        for option in options:
+            self._append_enum_row(option.label, option.command, option.match_value)
+        self.enum_table.selectRow(target)
+
+    def _enum_options_from_table(self):
+        from ...dashboard_models import EnumOption
+
+        options = []
+        for row in range(self.enum_table.rowCount()):
+            label_item = self.enum_table.item(row, 0)
+            command_item = self.enum_table.item(row, 1)
+            match_item = self.enum_table.item(row, 2)
+            options.append(
+                EnumOption(
+                    label=label_item.text().strip() if label_item else "",
+                    command=command_item.text().strip() if command_item else "",
+                    match_value=match_item.text().strip() if match_item else "",
+                )
+            )
+        return options
+
     # -------------------------------------------------------------- tester
 
     def _parse_rule_from_fields(self) -> ParseRule:
@@ -886,6 +988,14 @@ class DashboardEntryDialog(QDialog):
             )
         else:
             setpoint = SetpointSpec()
+        if is_enum:
+            enum_spec = EnumSpec(
+                options=self._enum_options_from_table(),
+                watch_entry_id=str(self.enum_watch_combo.currentData() or ""),
+                confirm=self.enum_confirm_check.isChecked(),
+            )
+        else:
+            enum_spec = EnumSpec()
         return DashboardEntry(
             id=original.id,
             label=self.label_input.text().strip(),
@@ -912,7 +1022,7 @@ class DashboardEntryDialog(QDialog):
             alerts_enabled=original.alerts_enabled,
             control=control,
             setpoint=setpoint,
-            enum_spec=original.enum_spec,  # v3-T4 will fill the enum branch
+            enum_spec=enum_spec,
             created_at=original.created_at or utc_now_iso(),
             updated_at=utc_now_iso(),
         )

@@ -87,6 +87,7 @@ from .dashboard_grid import DashboardGridWidget
 from .dashboard_tiles import (
     TILE_STATE_CAPTIONS,
     ControlTileWidget,
+    EnumTileWidget,
     SetpointTileWidget,
     TileRuntime,
     ValueTileWidget,
@@ -902,6 +903,8 @@ class DashboardTabWidget(QWidget):
             return False
         if isinstance(tile, SetpointTileWidget) and tile.pending:
             return False
+        if isinstance(tile, EnumTileWidget) and tile.pending:
+            return False
         label = entry.display_label()
         session_id = self._entry_session.get(entry_id)
         gate = self._gates.get(session_id) if session_id is not None else None
@@ -932,8 +935,16 @@ class DashboardTabWidget(QWidget):
                 return False
             command = tile.rendered_command()
             confirm = entry.setpoint.confirm
+        elif entry.is_enum():
+            if not isinstance(tile, EnumTileWidget):
+                return False
+            command = tile.selected_command()
+            if not command:
+                self.coordinator.notify(f"{label}: pick an option first.")
+                return False
+            confirm = entry.enum_spec.confirm
         else:
-            return False  # enum routing lands in v3-T4
+            return False
         if confirm and not self._confirm_control(label, command):
             return False
         request = ControlRequest(
@@ -952,6 +963,8 @@ class DashboardTabWidget(QWidget):
         if isinstance(tile, ControlTileWidget):
             tile.set_pending(True)
         elif isinstance(tile, SetpointTileWidget):
+            tile.set_pending(True)
+        elif isinstance(tile, EnumTileWidget):
             tile.set_pending(True)
         return True
 
@@ -981,6 +994,8 @@ class DashboardTabWidget(QWidget):
         if isinstance(tile, ControlTileWidget):
             tile.set_pending(False)
         elif isinstance(tile, SetpointTileWidget):
+            tile.set_pending(False)
+        elif isinstance(tile, EnumTileWidget):
             tile.set_pending(False)
         intent = self._control_intent.pop(result.entry_id, None)
         if entry is None:
@@ -1246,8 +1261,12 @@ class DashboardTabWidget(QWidget):
         self._refresh_sparkline(entry.id)
         # v3: setpoint readback + enum indicator mirror the funneled
         # entry's value into any writing tile that watches it (FR-66/70).
+        # Enum indicators match against the raw parsed value (no unit),
+        # so the outcome's value_text is what we pass for matching.
         if entry.id in self._writable_watchers:
-            self._refresh_writable_readbacks(entry.id, runtime)
+            self._refresh_writable_readbacks(
+                entry.id, runtime, raw_value_text=outcome.value_text
+            )
         # CSV logging tails the same funnel so derived rows show up too
         # (FR-49). Errors/timeouts are filtered inside _log_outcome.
         self._log_outcome(entry, outcome)
@@ -1363,17 +1382,29 @@ class DashboardTabWidget(QWidget):
         tile.set_history(history.samples(), color, now=self._clock())
 
     def _refresh_writable_readbacks(
-        self, input_entry_id: str, runtime: TileRuntime
+        self,
+        input_entry_id: str,
+        runtime: TileRuntime,
+        raw_value_text: str | None = None,
     ) -> None:
         """Push the watched entry's latest verdict into every writing
-        tile that watches it (FR-66/70). Setpoint tiles update their
-        readback line; enum tiles update their indicated row (v3-T4)."""
+        tile that watches it: setpoint tiles update their readback line
+        (FR-66); enum tiles update their indicated option (FR-70).
+
+        Setpoint readbacks show the formatted ``runtime.value_text``
+        (with the polled tile's unit) — that's what ops want to see.
+        Enum indicators match against the raw parsed value
+        (``raw_value_text``) because option ``match_value`` is the
+        wire-level token, not the display label.
+        """
         color = runtime.color or tile_state_color(runtime.state, self._theme)
+        match_text = raw_value_text if raw_value_text is not None else runtime.value_text
         for watcher_id in self._writable_watchers.get(input_entry_id, ()):
             tile = self.grid.tile(watcher_id)
             if isinstance(tile, SetpointTileWidget):
                 tile.set_readback(runtime.value_text, runtime.state, color)
-            # Enum indicator wiring lands with v3-T4.
+            elif isinstance(tile, EnumTileWidget):
+                tile.update_indicator(match_text)
 
     # -------------------------------------------------------- config edits
 

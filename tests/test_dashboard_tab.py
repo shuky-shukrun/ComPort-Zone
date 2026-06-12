@@ -1529,6 +1529,168 @@ class SetpointTileTests(DashboardTabTestBase):
         self.assertIsInstance(tab.grid.tile("sp"), ValueTileWidget)
 
 
+def enum_entry(
+    *,
+    options=None,
+    watch_entry_id: str = "",
+    confirm: bool = False,
+) -> DashboardEntry:
+    from ComPort_Zone.dashboard_models import EnumOption, EnumSpec
+
+    if options is None:
+        options = [
+            EnumOption(label="CV", command="MODE CV", match_value="CV"),
+            EnumOption(label="CC", command="MODE CC", match_value="CC"),
+            EnumOption(label="OFF", command="OUTP OFF"),
+        ]
+    return DashboardEntry(
+        id="mode",
+        label="Mode",
+        tile=TilePlacement(col=0, row=3, kind="enum"),
+        enum_spec=EnumSpec(
+            options=options,
+            watch_entry_id=watch_entry_id,
+            confirm=confirm,
+        ),
+    )
+
+
+class EnumTileTests(DashboardTabTestBase):
+    """Enum/dropdown widget end-to-end (v3, FR-68..FR-71)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.status_messages: list[str] = []
+        self.coordinator._set_status = self.status_messages.append
+
+    def test_combo_lists_options_send_routes_selected_command(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        tab = self.make_tab(enum_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("mode")
+        assert isinstance(tile, EnumTileWidget)
+        # Combo carries one item per option.
+        self.assertEqual(
+            [tile.combo.itemText(i) for i in range(tile.combo.count())],
+            ["CV", "CC", "OFF"],
+        )
+        tile.combo.setCurrentIndex(1)  # CC
+        self.assertTrue(tab._activate_control("mode"))
+        self.assertTrue(tile.pending)
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+        self.assertEqual(self.session.transport.sent_text, [("MODE CC", None)])
+        self.assertEqual(self.session.transport.sent_sources, ["dashboard"])
+
+    def test_send_button_click_path(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        tab = self.make_tab(enum_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("mode")
+        assert isinstance(tile, EnumTileWidget)
+        tile.combo.setCurrentIndex(2)  # OFF
+        tile.send_button.click()
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+        self.assertEqual(self.session.transport.sent_text, [("OUTP OFF", None)])
+
+    def test_indicator_follows_watched_entry(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        polled = volt_entry()
+        polled.id = "modepoll"
+        polled.label = "Measured mode"
+        polled.parse.value_type = "text"
+        en = enum_entry(watch_entry_id="modepoll")
+        tab = self.make_tab(polled, en)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"CC\r\n")
+        tile = tab.grid.tile("mode")
+        assert isinstance(tile, EnumTileWidget)
+        self.assertEqual(tile.indicated_index, 1)
+        # Watched value changes -> indicator follows.
+        self.clock.advance_ms(1100)
+        self.run_poll_round(tab, b"cv\r\n")  # case-insensitive match
+        self.assertEqual(tile.indicated_index, 0)
+        # Combo selection is independent of indicator.
+        tile.combo.setCurrentIndex(2)
+        self.assertEqual(tile.indicated_index, 0)
+
+    def test_indicator_misses_unknown_value(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        polled = volt_entry()
+        polled.id = "modepoll"
+        polled.parse.value_type = "text"
+        en = enum_entry(watch_entry_id="modepoll")
+        tab = self.make_tab(polled, en)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"UNKNOWN\r\n")
+        tile = tab.grid.tile("mode")
+        assert isinstance(tile, EnumTileWidget)
+        self.assertEqual(tile.indicated_index, -1)
+
+    def test_send_blocks_during_batch_and_disconnect(self) -> None:
+        tab = self.make_tab(enum_entry())
+        tab.bind_to_session(1)
+        self.session.batch_running = True
+        tab._tick()
+        self.assertFalse(tab._activate_control("mode"))
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.session.batch_running = False
+        self.session.transport.disconnect()
+        tab._tick()
+        self.assertFalse(tab._activate_control("mode"))
+        self.assertEqual(self.session.transport.sent_text, [])
+
+    def test_confirm_no_blocks_send(self) -> None:
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+
+        tab = self.make_tab(enum_entry(confirm=True))
+        tab.bind_to_session(1)
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ):
+            self.assertFalse(tab._activate_control("mode"))
+        self.assertEqual(self.session.transport.sent_text, [])
+
+    def test_enum_never_scheduled(self) -> None:
+        tab = self.make_tab(enum_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(60_000)
+        tab._tick()
+        tab._tick()
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertFalse(tab.poll_now("mode"))
+
+    def test_edit_mode_makes_widgets_inert(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        tab = self.make_tab(enum_entry())
+        tile = tab.grid.tile("mode")
+        assert isinstance(tile, EnumTileWidget)
+        tab.grid.set_edit_mode(True)
+        self.assertFalse(tile.send_button.isEnabled())
+        for widget in (tile.combo, tile.send_button):
+            self.assertTrue(
+                widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            )
+
+    def test_enum_kind_change_recreates_tile(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        tab = self.make_tab(enum_entry())
+        self.assertIsInstance(tab.grid.tile("mode"), EnumTileWidget)
+        edited = enum_entry()
+        edited.tile.kind = "value"
+        edited.command = "MODE?"
+        tab.apply_entry_edit(edited)
+        self.assertIsInstance(tab.grid.tile("mode"), ValueTileWidget)
+
+
 class DashboardTabBindingTests(DashboardTabTestBase):
     def test_unbound_by_default(self) -> None:
         tab = self.make_tab(volt_entry())
@@ -1980,6 +2142,77 @@ class DashboardEntryDialogTests(unittest.TestCase):
         self.assertEqual(dialog.result(), 0)
         # Fix and re-validate.
         dialog.setpoint_template_input.setText("VOLT {value}")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 1)
+        dialog.deleteLater()
+
+    def test_enum_kind_shows_enum_shape(self) -> None:
+        from ComPort_Zone.dashboard_models import EnumOption, EnumSpec
+        from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
+
+        entry = DashboardEntry(
+            label="Mode",
+            tile=TilePlacement(kind="enum"),
+            enum_spec=EnumSpec(
+                options=[
+                    EnumOption(label="CV", command="MODE CV"),
+                    EnumOption(label="CC", command="MODE CC"),
+                ]
+            ),
+        )
+        dialog = DashboardEntryDialog(entry, context=self.control_context())
+        self.assertEqual(dialog.tile_kind_combo.currentData(), "enum")
+        self.assertFalse(dialog.enum_box.isHidden())
+        # Other writing groups stay hidden.
+        self.assertTrue(dialog.control_box.isHidden())
+        self.assertTrue(dialog.setpoint_box.isHidden())
+        # Options table pre-loaded.
+        self.assertEqual(dialog.enum_table.rowCount(), 2)
+        self.assertEqual(dialog.enum_table.item(0, 0).text(), "CV")
+        # Preview tile is the real EnumTileWidget.
+        self.assertIsInstance(dialog.preview_tile, EnumTileWidget)
+        self.assertEqual(dialog.enabled_check.text(), "Enable this selector")
+        dialog.deleteLater()
+
+    def test_enum_values_round_trip(self) -> None:
+        from ComPort_Zone.dashboard_models import EnumOption, EnumSpec
+
+        entry = DashboardEntry(
+            label="Mode",
+            tile=TilePlacement(kind="enum"),
+            enum_spec=EnumSpec(
+                options=[
+                    EnumOption(label="CV", command="MODE CV", match_value="CV"),
+                    EnumOption(label="CC", command="MODE CC", match_value="CC"),
+                ],
+                watch_entry_id="modepoll",
+                confirm=True,
+            ),
+        )
+        dialog = DashboardEntryDialog(entry, context=self.control_context())
+        result = dialog.values()
+        self.assertTrue(result.is_enum())
+        self.assertEqual(len(result.enum_spec.options), 2)
+        self.assertEqual(result.enum_spec.options[0].label, "CV")
+        self.assertEqual(result.enum_spec.options[0].command, "MODE CV")
+        self.assertEqual(result.enum_spec.options[0].match_value, "CV")
+        self.assertTrue(result.enum_spec.confirm)
+        # Polling and other writing fields cleared.
+        self.assertEqual(result.command, "")
+        self.assertEqual(result.rules, [])
+        self.assertEqual(result.setpoint.command_template, "")
+        dialog.deleteLater()
+
+    def test_enum_validation_requires_options(self) -> None:
+        # No options yet -> OK gated.
+        dialog = DashboardEntryDialog(context=self.control_context())
+        index = dialog.tile_kind_combo.findData("enum")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 0)
+        self.assertIn("at least one option", dialog.error_label.text())
+        # Add an option.
+        dialog._append_enum_row("CV", "MODE CV", "")
         dialog._accept_if_valid()
         self.assertEqual(dialog.result(), 1)
         dialog.deleteLater()
