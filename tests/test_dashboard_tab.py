@@ -317,6 +317,97 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         self.assertEqual(value_tile.property("tileState"), "error")
         self.assertIn("port vanished", value_tile.toolTip())
 
+    def test_history_collected_for_numeric_polls(self) -> None:
+        # The sparkline pipeline starts at _apply_outcome (FR-46): every
+        # successful numeric poll appends a (clock, value) sample.
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.assertNotIn("volts", tab._histories)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.assertEqual(len(tab._histories["volts"]), 1)
+        self.clock.advance_ms(1100)
+        self.run_poll_round(tab, b"12.5\r\n")
+        self.assertEqual(len(tab._histories["volts"]), 2)
+        # Tile actually paints something now.
+        tile = tab.grid.tile("volts")
+        from ComPort_Zone.ui.dashboard_tiles import ValueTileWidget
+
+        assert isinstance(tile, ValueTileWidget)
+        self.assertTrue(tile.sparkline.has_data())
+
+    def test_history_ignores_text_and_errors(self) -> None:
+        # Text entries and parse errors must not pollute the ring (the
+        # sparkline domain is "numeric trend").
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        text_entry = volt_entry()
+        text_entry.id = "mode"
+        text_entry.parse = ParseRule(kind="line", value_type="text")
+        bad_entry = volt_entry()
+        bad_entry.id = "bad"
+        tab = self.make_tab(text_entry, bad_entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        # Text outcome and a non-number "ERR" both reach _apply_outcome
+        # but should NOT land in the history rings.
+        self.run_poll_round(tab, b"CV\r\n", b"ERR\r\n")
+        self.assertNotIn("mode", tab._histories)
+        self.assertNotIn("bad", tab._histories)
+
+    def test_history_collected_for_derived_entries(self) -> None:
+        # Derived tiles route their computed value through _apply_outcome
+        # too, so the sparkline pipeline applies (FR-47).
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        self.assertEqual(len(tab._histories["power"]), 1)
+        latest = tab._histories["power"].latest()
+        assert latest is not None
+        self.assertEqual(latest[1], 24.0)
+
+    def test_history_cleared_when_entry_removed(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.assertIn("volts", tab._histories)
+        tab.remove_entry("volts")
+        self.assertNotIn("volts", tab._histories)
+
+    def test_history_cleared_when_entry_becomes_non_numeric(self) -> None:
+        # Editing parse to text drops the ring; the next text poll must
+        # not append (was a tempting one-line miss).
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.assertIn("volts", tab._histories)
+        edited = volt_entry()
+        edited.parse = ParseRule(kind="line", value_type="text")
+        tab.apply_entry_edit(edited)
+        self.assertNotIn("volts", tab._histories)
+
+    def test_window_slide_runs_on_staleness_sweep(self) -> None:
+        # A long quiet period should still slide the sparkline window so
+        # samples eventually age out; this also exercises the sweep path
+        # against entries that have histories but no tile-runtime yet.
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.clock.advance_ms(2_000)  # > sweep cadence
+        # Trigger the sweep tick (every 10th _tick at 100 ms).
+        for _ in range(10):
+            tab._tick()
+        # The history itself doesn't get pruned — only the visible window
+        # slides — but the call path must not raise and the sparkline's
+        # paint must still cope.
+        self.assertGreaterEqual(len(tab._histories["volts"]), 1)
+
     def test_custom_rule_color_applies_and_clears_on_staleness(self) -> None:
         entry = volt_entry()
         entry.rules = [ColorRule(op="gt", operand="13.0", state="warn", color="#12ab34")]

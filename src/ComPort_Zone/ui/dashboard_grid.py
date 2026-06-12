@@ -91,6 +91,7 @@ class DashboardGridWidget(QWidget):
                 tile.activateRequested.connect(self.tileControlActivated)
                 tile.spanRequested.connect(self._handle_span_request)
                 tile.set_edit_mode(self._edit_mode)
+                tile.apply_theme_palette(self._theme)
                 tile.show()
                 self._tiles[entry.id] = tile
             else:
@@ -105,6 +106,8 @@ class DashboardGridWidget(QWidget):
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme
+        for tile in self._tiles.values():
+            tile.apply_theme_palette(theme)
 
     # ------------------------------------------------------------ edit mode
 

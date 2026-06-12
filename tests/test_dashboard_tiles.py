@@ -16,6 +16,7 @@ from ComPort_Zone.dashboard_models import (
 )
 from ComPort_Zone.themes import THEMES
 from ComPort_Zone.ui.dashboard_grid import GRID_GUTTER, DashboardGridWidget
+from ComPort_Zone.ui.dashboard_sparkline import SparklineWidget
 from ComPort_Zone.ui.dashboard_tiles import (
     ControlTileWidget,
     LedTileWidget,
@@ -132,6 +133,63 @@ class TileWidgetTests(unittest.TestCase):
         plain = TileRuntime(entry_id="a", value_text="5 V", state="ok")
         self.assertTrue(tile.update_runtime(plain))
         self.assertEqual(tile.value_label.styleSheet(), "")
+        tile.deleteLater()
+
+    def test_value_tile_hosts_sparkline_for_numeric_entries(self) -> None:
+        entry = make_entry("a")  # default parse value_type is "number"
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        entry.parse = ParseRule(kind="line", value_type="number")
+        tile = ValueTileWidget(entry)
+        self.assertIsInstance(tile.sparkline, SparklineWidget)
+        self.assertTrue(tile.sparkline.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_value_tile_hides_sparkline_for_text_entries(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="text")
+        tile = ValueTileWidget(entry)
+        self.assertFalse(tile.sparkline.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_value_tile_hides_sparkline_when_show_sparkline_off(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="number")
+        entry.show_sparkline = False
+        tile = ValueTileWidget(entry)
+        self.assertFalse(tile.sparkline.isVisibleTo(tile))
+        # Re-enabling via update_entry shows it again.
+        entry.show_sparkline = True
+        tile.update_entry(entry)
+        self.assertTrue(tile.sparkline.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_set_history_ignored_when_sparkline_hidden(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="number")
+        entry.show_sparkline = False
+        tile = ValueTileWidget(entry)
+        changed = tile.set_history([(0.0, 1.0), (1.0, 2.0)], "", now=1.0)
+        self.assertFalse(changed)
+        self.assertFalse(tile.sparkline.has_data())
+        tile.deleteLater()
+
+    def test_set_history_feeds_visible_sparkline(self) -> None:
+        from ComPort_Zone.dashboard_models import ParseRule
+
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="number")
+        tile = ValueTileWidget(entry)
+        self.assertTrue(
+            tile.set_history([(0.0, 1.0), (1.0, 2.0)], "#abcdef", now=1.0)
+        )
+        self.assertTrue(tile.sparkline.has_data())
         tile.deleteLater()
 
     def test_led_tile_custom_color_set_and_cleared(self) -> None:

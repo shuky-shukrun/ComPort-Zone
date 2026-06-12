@@ -54,6 +54,7 @@ from ..dashboard_expr import (
     compile_expression,
     rewrite_references,
 )
+from ..dashboard_history import EntryHistory
 from ..dashboard_models import (
     DashboardConfig,
     DashboardEntry,
@@ -70,7 +71,13 @@ from ..dashboard_parse import (
 from ..icons import set_button_icon
 from ..themes import ThemePalette
 from .dashboard_grid import DashboardGridWidget
-from .dashboard_tiles import TILE_STATE_CAPTIONS, ControlTileWidget, TileRuntime
+from .dashboard_tiles import (
+    TILE_STATE_CAPTIONS,
+    ControlTileWidget,
+    TileRuntime,
+    ValueTileWidget,
+    tile_state_color,
+)
 from .dialogs.dashboard_entry import DashboardEntryDialog, EntryDialogContext
 from .tokens import CONTROL_H_SM, SPACE_LG, SPACE_MD, SPACE_XL
 
@@ -151,6 +158,10 @@ class DashboardTabWidget(QWidget):
         # ids, and the ON/OFF state each in-flight click aims for.
         self._controls_by_watch: dict[str, list[str]] = {}
         self._control_intent: dict[str, bool] = {}
+        # v2 sparkline history (FR-46/FR-47): one ring per numeric entry,
+        # fed from _apply_outcome — never persisted (NFR-3).
+        self._histories: dict[str, EntryHistory] = {}
+        self._theme: ThemePalette = host.theme
         self._runtimes: dict[str, TileRuntime] = {}
         self._tick_count = 0
         self._tab_state = tab_state or DashboardTabState(dashboard_id=config.id)
@@ -345,7 +356,11 @@ class DashboardTabWidget(QWidget):
         self._bound_session_id = None
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
+        self._theme = theme
         self.grid.apply_theme_palette(theme)
+        # Color depends on the active theme, so feed every visible tile.
+        for entry in self.config.entries:
+            self._refresh_sparkline(entry.id)
 
     # ------------------------------------------------------------- binding
 
@@ -820,7 +835,13 @@ class DashboardTabWidget(QWidget):
             runtime.tooltip = f"{outcome.error}\nRX window: {raw_window[-500:]}"
         else:
             runtime.tooltip = f"RX window: {raw_window[-500:]}"
+        # Numeric outcomes feed the sparkline history (poll + derived,
+        # FR-46/FR-47); cleared with the runtime in _configure_entries.
+        if entry.is_numeric() and outcome.value_number is not None and not outcome.error:
+            history = self._histories.setdefault(entry.id, EntryHistory())
+            history.append(self._clock(), float(outcome.value_number))
         self._update_tile(entry.id)
+        self._refresh_sparkline(entry.id)
         if self._has_derived and entry.is_polled() and outcome.value_number is not None:
             self._latest_numbers[entry.id] = outcome.value_number
             self._recompute_dependents(entry.id)
@@ -855,6 +876,11 @@ class DashboardTabWidget(QWidget):
 
     def _sweep_staleness(self) -> None:
         now = self._clock()
+        # 1 Hz window slide so the sparkline "ages out" old samples even
+        # while polling is paused (FR-46).
+        for entry in self.config.entries:
+            if entry.is_numeric() and entry.id in self._histories:
+                self._refresh_sparkline(entry.id)
         for entry in self.config.entries:
             runtime = self._runtimes.get(entry.id)
             if runtime is None or not entry.enabled:
@@ -906,6 +932,23 @@ class DashboardTabWidget(QWidget):
             if isinstance(control_tile, ControlTileWidget):
                 control_tile.set_on(bool(runtime is not None and runtime.state == "ok"))
 
+    def _refresh_sparkline(self, entry_id: str) -> None:
+        tile = self.grid.tile(entry_id)
+        if not isinstance(tile, ValueTileWidget):
+            return
+        history = self._histories.get(entry_id)
+        if history is None or len(history) < 2:
+            tile.set_history([], "", now=self._clock())
+            return
+        runtime = self._runtimes.get(entry_id)
+        if runtime is not None and runtime.color:
+            color = runtime.color
+        elif runtime is not None and runtime.state in ("stale", "error"):
+            color = tile_state_color(runtime.state, self._theme)
+        else:
+            color = tile_state_color(runtime.state if runtime else "ok", self._theme)
+        tile.set_history(history.samples(), color, now=self._clock())
+
     # -------------------------------------------------------- config edits
 
     def _configure_entries(self, *, save: bool = True) -> None:
@@ -946,6 +989,13 @@ class DashboardTabWidget(QWidget):
         for entry_id in list(self._control_intent):
             if self.config.entry_by_id(entry_id) is None:
                 del self._control_intent[entry_id]
+        # History clears when the entry goes away OR when it stops being
+        # numeric (e.g. converted to a control tile) — re-enabling later
+        # should start fresh rather than replay old samples (FR-46).
+        for entry_id in list(self._histories):
+            entry = self.config.entry_by_id(entry_id)
+            if entry is None or not entry.is_numeric():
+                del self._histories[entry_id]
         self.scheduler.configure(schedulable)
         self._refresh_session_topology()
         self.grid.set_config(self.config)
@@ -1018,6 +1068,7 @@ class DashboardTabWidget(QWidget):
         normalize_layout(self.config.entries, self.config.columns)
         self._runtimes.pop(entry.id, None)
         self._latest_numbers.pop(entry.id, None)
+        self._histories.pop(entry.id, None)
         self._configure_entries()
 
     def remove_entry(self, entry_id: str) -> None:

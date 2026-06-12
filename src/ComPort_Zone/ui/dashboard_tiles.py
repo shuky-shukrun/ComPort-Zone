@@ -28,8 +28,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..dashboard_history import Sample
 from ..dashboard_models import MAX_TILE_SPAN, DashboardEntry
 from ..themes import ThemePalette
+from .dashboard_sparkline import SparklineWidget
 from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM
 
 DASHBOARD_TILE_MIME_TYPE = "application/x-comport-zone-dashboard-tile"
@@ -108,6 +110,11 @@ class TileFrame(QFrame):
     spanRequested = Signal(str, int, int)
     pollNowRequested = Signal(str)
     activateRequested = Signal(str)  # emitted by control tiles only (FR-59)
+
+    def apply_theme_palette(self, theme: ThemePalette) -> None:
+        """Override on tile kinds that paint their own surfaces (sparkline)."""
+        # Default tile chrome takes its colors from QSS via tileState; no
+        # per-instance palette needed unless a subclass paints raw pixels.
 
     def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -256,7 +263,10 @@ class TileFrame(QFrame):
 
 
 class ValueTileWidget(TileFrame):
-    """Label + latest parsed value (+unit) + timestamp (FR-31)."""
+    """Label + latest parsed value (+unit) + timestamp + sparkline (FR-31,
+    FR-46/FR-47). The sparkline appears only when the entry produces
+    numeric values and the user keeps it on; the tab calls
+    :meth:`set_history` on every successful poll/derived update."""
 
     def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
         super().__init__(entry, parent)
@@ -264,7 +274,32 @@ class ValueTileWidget(TileFrame):
         self.value_label.setObjectName("tileValue")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.value_label.setWordWrap(True)
+        self.sparkline = SparklineWidget(self)
         self.body_layout.addWidget(self.value_label, 1)
+        self.body_layout.addWidget(self.sparkline)
+        self._sparkline_visible = self._wants_sparkline(entry)
+        self.sparkline.setVisible(self._sparkline_visible)
+
+    @staticmethod
+    def _wants_sparkline(entry: DashboardEntry) -> bool:
+        return entry.show_sparkline and entry.is_numeric()
+
+    def update_entry(self, entry: DashboardEntry) -> None:
+        super().update_entry(entry)
+        wanted = self._wants_sparkline(entry)
+        if wanted != self._sparkline_visible:
+            self._sparkline_visible = wanted
+            self.sparkline.setVisible(wanted)
+
+    def apply_theme_palette(self, theme: ThemePalette) -> None:
+        self.sparkline.apply_theme_palette(theme)
+
+    def set_history(self, samples: list[Sample], color: str, *, now: float) -> bool:
+        """Feed the sparkline; ignored when hidden (the data stays in the
+        tab's history ring, so re-enabling repaints immediately)."""
+        if not self._sparkline_visible:
+            return False
+        return self.sparkline.set_samples(samples, color, now=now)
 
     def _render_runtime(self, runtime: TileRuntime) -> bool:
         changed = False
