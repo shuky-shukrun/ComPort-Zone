@@ -1,19 +1,17 @@
-# Dashboard View — Feature Requirements
+# Control Panel — Feature Requirements
 
 Status: Approved for implementation
-Version: 2.0
-Date: 2026-06-11
-Applies to: ComPort Zone >= 0.5.0 (v1: settings schema v5; v2 features: schema v6)
+Version: 3.0
+Date: 2026-06-13
+Applies to: ComPort Zone >= 0.5.0 (v1: settings schema v5; v2 features: schema v6; v3 features: schema v7)
 
-v2.0 adds: value history with in-tile sparklines and a chart page, CSV value
-logging, run-once-on-connect polling with a Poll Now action, per-entry session
-binding (multi-device dashboards), alerts on FAIL/ERROR, control tiles,
-derived/math tiles, and per-rule custom colors (FR-46..FR-62). v1 requirements
-are amended in place where v2 changes them; each amendment is marked.
+v3.0 turns the feature **into Control Panel**. The user-visible surface renames from "Dashboard View" to "Control Panel" everywhere a person sees it; internal symbols (`DashboardConfig`, `AppSettings.dashboards`, `dashboard_value_log.py`, `tests/test_dashboard_*`, every QSS selector starting with `#dashboard`) stay so existing user JSON, exports, and CSV logs load byte-for-byte. v3 adds two industrial write widgets — a numeric setpoint with optional readback and an enum/dropdown selector — and wraps every writing tile in a master-arm safety gate that boots disarmed at every restart. The per-panel CSV log gains a `kind` column (`poll` / `derived` / `control`) so monitoring data and control actions land in one audit file (FR-63..FR-77).
+
+v1.x requirements that talk about a "dashboard" describe the same feature the user now sees as a "control panel"; this doc keeps the old wording in places that document internal symbol names (e.g. "the bound terminal still labels poll TX with `source=\"dashboard\"`"). The interfaces, JSON keys, and class names are unchanged; only labels move.
 
 ## 1. Purpose
 
-ComPort Zone users monitor live device values (voltages, temperatures, counters, fault flags) by manually re-sending the same commands in a terminal. The Dashboard View automates this: a dashboard is a named collection of *entries*, each entry a command that is sent automatically in the background at its own interval over an existing terminal session's connection. The response is parsed and rendered in a tile whose color/indicator reflects configurable rules. Dashboards are managed as a library, opened as workspace tabs, arranged with drag-and-drop, and restored across application restarts.
+ComPort Zone users monitor live device values (voltages, temperatures, counters, fault flags) AND drive their gear (set voltages, switch modes, trip outputs) from one place. A Control Panel is a named collection of *entries*, each entry either a polled command whose response is parsed and rendered with rules, a derived/computed tile, or a writing tile (button, toggle, numeric setpoint, enum selector) that *sends* on user action. Polled traffic runs in the background over an existing terminal session's connection; writing tiles share the same connection and serialize against polls so commands never interleave on the wire. Control Panels are managed as a library, opened as workspace tabs, arranged with drag-and-drop, restored across application restarts, and gated by a master arm so the panel must be explicitly enabled before any write happens.
 
 This document is the requirements contract for the feature. The companion implementation plan defines module design; `docs/ARCHITECTURE.md` and `docs/DESIGN.md` describe where the subsystem lands.
 
@@ -21,45 +19,52 @@ This document is the requirements contract for the feature. The companion implem
 
 | Term | Meaning |
 | --- | --- |
-| Dashboard (config) | A named, persisted collection of entries plus grid settings (`DashboardConfig`). Lives in the dashboard library in settings. |
-| Dashboard tab | An open workspace tab rendering one dashboard config (third tab type, beside terminal tabs and command-file editor tabs). |
-| Entry | One polled command with its schedule, parse rule, display rules, and tile placement (`DashboardEntry`). |
-| Tile | The visual representation of one entry on the dashboard grid (value tile or LED tile). |
-| Binding | The association between a dashboard tab and one open terminal session whose connection is used for polling. *(v2)* An entry may override the dashboard binding with its own target session (FR-54). |
+| Control Panel (config) | A named, persisted collection of entries plus grid settings. Internally `DashboardConfig` (the class name stays for back-compat); lives in the panel library in settings under the `dashboards` key. *(Pre-v3 docs and code refer to this as a "dashboard".)* |
+| Control Panel tab | An open workspace tab rendering one panel config (third tab type, beside terminal tabs and command-file editor tabs). Internally `DashboardTabWidget`. |
+| Entry | One configured tile with its schedule, parse rule, display rules, write configuration, and grid placement (`DashboardEntry`). |
+| Tile | The visual representation of one entry: value, LED, control button/toggle, setpoint, or enum selector. |
+| Binding | The association between a Control Panel tab and one open terminal session whose connection is used for polling and sends. *(v2)* An entry may override the panel binding with its own target session (FR-54). |
 | Poll transaction | One send→collect→parse cycle for one entry: drain stale RX, transmit the command, accumulate RX until the parse rule matches or the timeout elapses. |
 | Pause reason | *(amended in v2)* Scheduler-level reasons are `user` and `unbound`; connection/batch conditions gate entries per target session at submit time (FR-55), so one unhealthy device pauses only its own entries. |
 | Poll mode *(v2)* | `interval` (fixed-delay periodic) or `on_connect` (fires once per target-session connect edge; FR-52). |
 | History *(v2)* | The bounded, in-memory ring of (time, numeric value) samples kept per entry while its tab is open; never persisted (FR-46). |
-| Control tile *(v2)* | A tile that sends a command on click instead of polling (FR-59). |
+| Control tile *(v2)* | A tile that sends a command on click instead of polling (FR-59). Button or toggle. |
 | Derived entry *(v2)* | An entry whose value is computed from other entries via a safe arithmetic expression instead of polling (FR-61). |
 | Alert *(v2)* | A record created when an entry's state transitions into `fail` or `error` (FR-57). |
+| Setpoint tile *(v3)* | A writing tile with a slider + numeric field that sends a templated command with the chosen value; may mirror a polled tile's value as a readback (FR-63..67). |
+| Enum tile *(v3)* | A writing tile with a dropdown of labeled options, each carrying its own send command; may highlight the option matching a polled tile's value (FR-68..71). |
+| Writing tile *(v3)* | Any tile that sends on user action: control button, control toggle, setpoint, or enum (FR-72). Read-only tiles (value, LED, derived) are not writing tiles. |
+| Master arm *(v3)* | A per-panel transient gate. While **Disarmed** (the boot state and the default after any unbind/restart), every writing tile refuses to send and renders visually inert. **Armed** unlocks sends for the session; per-tile confirmation (when configured) still applies. Esc on the focused panel disarms instantly (FR-72..75). |
+| Audit row *(v3)* | The CSV value log gains a `kind` column (`poll` / `derived` / `control`). Control sends append one row per result with the sent command + ok/error state (FR-76..77). |
 
 ## 3. Locked product decisions
 
-Decided with the product owner; v1 decisions stand except where amended:
+Decided with the product owner; v1/v2 decisions stand except where amended:
 
-1. **Bind to a terminal session.** A dashboard never owns a serial/LAN connection. It binds to an existing terminal tab's session (the same targeting concept as the command-file editor's Run button). Polling pauses while the bound session is disconnected and resumes automatically on reconnect. Poll traffic shares the session's connection but is hidden from the terminal's transcript (FR-15) — continuous polling would otherwise flood the terminal and make manual use impossible. *(v2 amendment: an entry may target a different open terminal session than the dashboard default — FR-54 — but binding to terminal sessions remains the only transport path; dashboards still never open ports.)*
-2. **Tile types.** *(v2 supersedes the v1 restriction)* Value tiles, LED/status indicators, and control tiles; numeric value tiles may show an in-tile sparkline and open a large chart page. All charting is custom-painted (QPainter) — no plotting dependency.
+1. **Bind to a terminal session.** A Control Panel never owns a serial/LAN connection. It binds to an existing terminal tab's session (the same targeting concept as the command-file editor's Run button). Polling pauses while the bound session is disconnected and resumes automatically on reconnect. Poll traffic shares the session's connection but is hidden from the terminal's transcript (FR-15) — continuous polling would otherwise flood the terminal and make manual use impossible. *(v2 amendment: an entry may target a different open terminal session than the panel default — FR-54 — but binding to terminal sessions remains the only transport path; panels still never open ports.)*
+2. **Tile types.** *(v2/v3 supersede the v1 restriction)* Value tiles, LED/status indicators, control button/toggle tiles, **numeric setpoint tiles (v3)**, and **enum selector tiles (v3)**; numeric value tiles may show an in-tile sparkline and open a large chart page. All charting is custom-painted (QPainter) — no plotting dependency.
 3. **Layout: uniform grid with drag-to-reposition and per-tile spans** (1x1, 2x1, 1x2, 2x2). Layout persistence is deterministic.
-4. **Multi-dashboard via named library + tabs.** Dashboards are named saved configurations with JSON import/export. Opening a dashboard creates a workspace tab; open tabs are restored on restart.
-5. **No new dependencies for v2.** Charts/sparklines via QPainter; alert sound via QtMultimedia (already in the PySide6 wheel) with a `QApplication.beep()` fallback.
+4. **Multi-panel via named library + tabs.** Control Panels are named saved configurations with JSON import/export. Opening a panel creates a workspace tab; open tabs are restored on restart.
+5. **No new dependencies for v3.** Setpoint widget uses `QSlider` + `QDoubleSpinBox` from PySide6 (already in the wheel); enum widget uses `QComboBox`; master arm uses `QShortcut`. Charts/sparklines via QPainter (carried from v2); alert sound via QtMultimedia (carried from v2) with a `QApplication.beep()` fallback.
+6. **Safety-first writes (v3).** Every Control Panel boots **Disarmed**. Writing tiles render visually inert and refuse to send until the user clicks Arm in the panel header. Disarm is instant via Esc on the focused panel. Master arm state is **transient** — never persisted, always Disarmed at restart and after the panel loses its binding. Per-tile confirmation (when configured) still fires after arming. Industrial-grade means belt AND suspenders.
+7. **Names: user-facing migrates, internal stays (v3).** Menus, sidebar pages, dialogs, the shipped example, and this requirements doc all say "Control Panel". The settings JSON `"dashboards"` key, the `DashboardConfig` class, the `dashboard_value_log.py` module, every QSS selector starting with `#dashboard`, and every `tests/test_dashboard_*` file keep their names — that's where v1/v2 user data back-compat lives. Pre-v3 exports load unchanged; v3 exports use the same key set.
 
 ## 4. Functional requirements
 
-### 4.1 Dashboard library (catalog)
+### 4.1 Control Panel library (catalog)
 
-- **FR-1** The app maintains a persistent library of named dashboard configs in the settings file. Create, rename, duplicate, and delete are available from a Dashboard Manager dialog and from dashboard tab menus.
-- **FR-2** Dashboard names are unique; creating or importing a duplicate name auto-suffixes (e.g. `PSU Bench (2)`), mirroring quick-command behavior.
-- **FR-3** Dashboards can be exported to and imported from JSON files (single or multiple dashboards per file, versioned payload `{"comport_zone_dashboards": 1, "dashboards": [...]}`). Import offers merge semantics: colliding ids are regenerated; name collisions are renamed (default) or replaced (explicit option).
-- **FR-4** Deleting a dashboard that is currently open closes its tab (after the same confirmation as the manager delete action).
+- **FR-1** The app maintains a persistent library of named Control Panel configs in the settings file. Create, rename, duplicate, and delete are available from a Control Panel Manager dialog and from Control Panel tab menus.
+- **FR-2** Control Panel names are unique; creating or importing a duplicate name auto-suffixes (e.g. `PSU Bench (2)`), mirroring quick-command behavior.
+- **FR-3** Control Panels can be exported to and imported from JSON files (single or multiple panels per file, versioned payload `{"comport_zone_dashboards": N, "dashboards": [...]}` — the JSON key set is unchanged for back-compat). Import offers merge semantics: colliding ids are regenerated; name collisions are renamed (default) or replaced (explicit option).
+- **FR-4** Deleting a Control Panel that is currently open closes its tab (after the same confirmation as the manager delete action).
 
 ### 4.2 Workspace integration
 
-- **FR-5** Opening a dashboard creates a dashboard tab in the active pane. Dashboard tabs coexist with terminal and editor tabs: they can be reordered, moved between split panes, closed, and listed in the command palette's tab switcher.
-- **FR-6** Opening a dashboard that is already open focuses the existing tab instead of creating a second one. One config is never editable from two tabs simultaneously.
-- **FR-7** Entry points: File → New Dashboard; File → Open Dashboard → (list of saved dashboards); Tools → Dashboards… (manager, shortcut `Ctrl+Shift+D`); the tab strip's "+" menu; the command palette (`New Dashboard`, `Dashboards…`).
-- **FR-8** A dashboard tab shows its name as the tab title, a status summary in the footer (entry count, binding, paused/warn state), and a dashboard-specific context menu on the tab (rename, bind submenu, pause/resume, edit layout, split/move, close) — not the terminal tab menu.
-- **FR-9** Edits to a dashboard (entries, layout, rename, columns) are saved to the library immediately (live-save, like quick commands). There is no dirty/unsaved state and no confirm-on-close prompt. The dashboard header carries a save indicator ("Saved HH:MM:SS") that refreshes on every persisted change, so the auto-save is visible while editing.
+- **FR-5** Opening a Control Panel creates a Control Panel tab in the active pane. Control Panel tabs coexist with terminal and editor tabs: they can be reordered, moved between split panes, closed, and listed in the command palette's tab switcher.
+- **FR-6** Opening a Control Panel that is already open focuses the existing tab instead of creating a second one. One config is never editable from two tabs simultaneously.
+- **FR-7** *(amended in v3)* Entry points: File → New Control Panel; File → Open Control Panel → (list of saved panels); Tools → Control Panels… (manager, shortcut `Ctrl+Shift+D` — the shortcut is preserved for muscle memory); the tab strip's "+" menu; the command palette (`New Control Panel`, `Control Panels…`).
+- **FR-8** A Control Panel tab shows its name as the tab title, a status summary in the footer (entry count, binding, paused/warn state, **armed/disarmed**), and a panel-specific context menu on the tab (rename, bind submenu, pause/resume, edit layout, split/move, close) — not the terminal tab menu.
+- **FR-9** Edits to a Control Panel (entries, layout, rename, columns) are saved to the library immediately (live-save, like quick commands). There is no dirty/unsaved state and no confirm-on-close prompt. The panel header carries a save indicator ("Saved HH:MM:SS") that refreshes on every persisted change, so the auto-save is visible while editing. **Master arm state is NOT persisted** (FR-72).
 
 ### 4.3 Binding and connection lifecycle
 
@@ -108,16 +113,16 @@ Decided with the product owner; v1 decisions stand except where amended:
 
 - **FR-37** The dashboard library persists in the settings file under the libraries section; open dashboard tabs persist in the workspace layout (pane, position, active state) with per-tab state: dashboard id, bound endpoint hint, bound target title, and user-pause flag.
 - **FR-38** On restart, open dashboard tabs are restored in their panes. Binding is re-established automatically only when the endpoint hint matches exactly one open terminal session; otherwise the tab restores unbound with an actionable bind menu.
-- **FR-39** *(amended in v2)* Settings schema: v1 introduced v5 (files containing dashboards declare minimum-compatible 5; files without stay ≤ 4). v2 bumps the schema to v6 with a `DASHBOARD_V2_SCHEMA_FLOOR = 6` applied only when any saved dashboard actually uses a v2 feature (poll mode ≠ interval, target override, derived source, control kind, any rule custom color, or CSV-log configuration) — an untouched v1-shaped library keeps floor 5 and remains readable by v1 builds. Dashboard JSON exports stamp payload version 2 only under the same predicate, so v1-shaped exports stay importable by v1 builds.
+- **FR-39** *(amended in v2 and v3)* Settings schema: v1 introduced v5 (files containing panels declare minimum-compatible 5; files without stay ≤ 4). v2 bumped the schema to v6 with a `DASHBOARD_V2_SCHEMA_FLOOR = 6` applied only when any saved panel actually uses a v2 feature (poll mode ≠ interval, target override, derived source, control kind, any rule custom color, or CSV-log configuration). **v3 bumps the schema to v7** with a `CONTROL_PANEL_V3_SCHEMA_FLOOR = 7` applied only when any saved panel uses a v3 feature (setpoint tile kind, enum tile kind, any non-default `SetpointSpec`, or any non-empty `EnumSpec.options`). An untouched v1-shaped library keeps floor 5; a v2-shaped library keeps floor 6; only panels that actually use v3 widgets push to floor 7. Panel JSON exports stamp payload version 1/2/3 under the matching predicate, so older builds keep importing payloads they can fully represent.
 - **FR-40** A restored dashboard tab whose config id no longer exists in the library is skipped with a footer notice (no crash, no placeholder tab).
 
 ### 4.9 Sidebar and favorites integration
 
-- **FR-41** The left drawer's activity rail gains a **Dashboards** page listing every saved dashboard (name + entry count), with inline row actions matching commands/files: open (▶), star (favorite toggle), rename (pencil), delete (✕, confirmed), plus a matching right-click menu and double-click-to-open.
-- **FR-42** The Dashboards page header offers "+" (new dashboard) and an overflow menu with Manage…, Import JSON…, and Export JSON… (the same operations as the menu bar).
-- **FR-43** Dashboards carry a `favorite` flag (persisted with the config and included in JSON export). The Favorites page shows a third collapsible **Favorite Dashboards** panel beside favorite commands and files, sharing the same resizable splitter; its rows offer the same open/star/rename/delete actions.
+- **FR-41** *(amended in v3)* The left drawer's activity rail has a **Control Panels** page listing every saved panel (name + entry count), with inline row actions matching commands/files: open (▶), star (favorite toggle), rename (pencil), delete (✕, confirmed), plus a matching right-click menu and double-click-to-open.
+- **FR-42** *(amended in v3)* The Control Panels page header offers "+" (new panel) and an overflow menu with Manage…, Import JSON…, and Export JSON… (the same operations as the menu bar).
+- **FR-43** *(amended in v3)* Control Panels carry a `favorite` flag (persisted with the config and included in JSON export). The Favorites page shows a third collapsible **Favorite Control Panels** panel beside favorite commands and files, sharing the same resizable splitter; its rows offer the same open/star/rename/delete actions.
 - **FR-44** Sidebar lists refresh immediately after any library mutation, from any surface (tab rename, manager dialog, sidebar actions, import).
-- **FR-45** The dashboard header's pause control always shows the action a click would take (pause icon while polling, play icon while paused, with matching tooltips), and all header controls give hover/pressed/checked visual feedback.
+- **FR-45** The panel header's pause control always shows the action a click would take (pause icon while polling, play icon while paused, with matching tooltips), and all header controls give hover/pressed/checked visual feedback.
 
 ### 4.10 Value history, sparklines, and chart (v2)
 
@@ -127,9 +132,9 @@ Decided with the product owner; v1 decisions stand except where amended:
 
 ### 4.11 CSV value logging (v2)
 
-- **FR-49** Each dashboard can log parsed values to a CSV file. The toggle and file path persist in the dashboard config (so unattended capture survives restarts); a header button toggles logging and prompts for a path when none is set.
-- **FR-50** Rows are `timestamp,entry_id,label,value_text,value_number,state` (ISO milliseconds timestamp, UTF-8 with BOM). The header row is written only when the file is new/empty; reopening appends. Only successful parses are logged (timeouts/send errors are not values); derived entries log like polled ones.
-- **FR-51** A write failure disables logging (config + toggle), reports via the footer status, and never interrupts polling. No rotation is performed; the path is reused until changed.
+- **FR-49** Each Control Panel can log parsed values to a CSV file. The toggle and file path persist in the panel config (so unattended capture survives restarts); a header button toggles logging and prompts for a path when none is set.
+- **FR-50** *(amended in v3 — see also FR-76)* Rows are `timestamp,dashboard,entry_id,label,kind,value_text,value_number,state` (ISO milliseconds timestamp, UTF-8 with BOM). The header row is written only when the file is new/empty; reopening appends. Polled entries write `kind="poll"`; derived entries write `kind="derived"`; control sends write `kind="control"` (FR-77). Only completed results land — timeouts and send errors during polls are not value rows; control errors DO land (with `state="error"`) so the audit trail is honest. Pre-v3 logs (no `kind` column) read back without raising — `csv.DictReader` treats missing columns as missing keys.
+- **FR-51** A write failure disables logging (config + toggle), reports via the footer status, and never interrupts polling or writes. No rotation is performed; the path is reused until changed.
 
 ### 4.12 Poll modes: run-once-on-connect and Poll Now (v2)
 
@@ -160,6 +165,33 @@ Decided with the product owner; v1 decisions stand except where amended:
 
 - **FR-62** A color rule may carry an explicit color (`#rrggbb`). When that rule matches, the custom color overrides the theme state color everywhere the verdict is rendered: value text, LED lamp and caption, sparkline stroke, and chart series. An empty color keeps the theme mapping. The entry dialog's rules table offers a color swatch (system color picker) with a clear-to-theme action; invalid color strings are dropped on load.
 
+### 4.18 Numeric setpoint widget (v3)
+
+- **FR-63** Tile kind `setpoint` is a writing tile that sends a single command derived from a user-chosen numeric value. Its `SetpointSpec` carries `min_value`, `max_value`, `step` (all floats), `decimals` (int, render precision), `unit` (display-only string, e.g. "V" / "°C"), `command_template` (string containing exactly one `{value}` placeholder, e.g. `"VOLT {value}"`), optional `watch_entry_id` (mirrors a polled tile's value as a readback line under the setpoint), and `confirm` (per-tile confirmation toggle, same semantics as control tiles).
+- **FR-64** The tile renders a `QSlider` (horizontal, integer range mapping to `min + i * step`) plus a paired `QDoubleSpinBox` (range = `min..max`, single-step = `step`, decimals = `decimals`); both bind to the same float state and update each other without infinite recurse. A Send button (▶) submits exactly one command per click. Typing a value outside `[min, max]` clamps the field to the bound and flashes the input briefly so the user sees the clamp.
+- **FR-65** The command is `command_template.replace("{value}", formatted)`, where `formatted = f"{value:.{decimals}g}"`. Validation at edit time and configure time: `min < max`; `step > 0`; `step <= max - min`; `command_template` contains exactly one `{value}`; in Hex Bytes mode the templated command with a sample value passes the existing hex-payload validator. Validation failures gate the editor dialog's OK and, for configure-time failures (e.g. a stale config), render an error tile.
+- **FR-66** When `watch_entry_id` is set, every funnel update for the watched entry pushes its `value_text` (with optional state coloring) into the setpoint tile's readback line as `→ <value> <unit if known>`. Watched id must reference a polled tile (not another writing tile); validation rejects self-watch and write-tile-watch.
+- **FR-67** Setpoint tiles never poll, never alert, keep no history, and never appear in derived expressions. They route through the same per-session FIFO dispatcher as control tiles (FR-60) so a Send never interleaves on the wire with polls or other writes.
+
+### 4.19 Enum / dropdown selector widget (v3)
+
+- **FR-68** Tile kind `enum` is a writing tile that sends one of N labeled commands chosen from a dropdown. Its `EnumSpec` carries `options: list[EnumOption]` (each option: `label`, `command`, optional `match_value`), optional `watch_entry_id`, and `confirm`. At least one option is required.
+- **FR-69** The tile renders a `QComboBox` (full width) plus a Send button (▶). The user picks an option from the dropdown; clicking Send submits exactly the chosen option's `command`. Each click is one send, even on rapid clicks (de-bounced through the pending-state mechanism shared with control toggles).
+- **FR-70** When `watch_entry_id` is set, the funnel compares the watched entry's `value_text` (trimmed, case-insensitive) against each option's `match_value`; the first match becomes the *indicated* option (rendered with a subtle pill background) regardless of the user's combo selection — the user can still send a different option. When no `match_value` matches (or no watch is set), no option is indicated.
+- **FR-71** Editor validation: at least one option; each option needs non-empty `label` AND non-empty `command`; `match_value` is optional; in Hex Bytes mode each `command` passes the hex-payload validator. Duplicate labels render but the dialog shows a warning (operators sometimes want two paths to the same outcome). Enum tiles never poll, never alert, keep no history.
+
+### 4.20 Master arm safety gate (v3)
+
+- **FR-72** Every Control Panel maintains a transient `armed` state. The default is **Disarmed** at every load: panel construction, tab restore, app launch, and after any unbind / target-session close. The state never persists to settings.
+- **FR-73** While Disarmed, every writing tile (control button, control toggle, setpoint, enum) refuses to send. Each tile renders disarmed visuals (muted slider track, muted combo border, disabled Send button with tooltip explaining the state). Click attempts on disarmed tiles produce a single clear status message ("<entry label>: panel is disarmed") — no chain of refusal messages.
+- **FR-74** Arming is explicit: the panel header carries an Arm/Disarm button (lock icon when disarmed, unlock icon when armed; accent-amber and accent-red surface colors respectively). Clicking Arm flips the state to Armed and emits an `armingChanged` signal that every writing tile observes to re-render. **Per-tile `confirm` is NOT bypassed by arming** — arming just opens the gate; per-tile confirmation still fires.
+- **FR-75** Esc on the focused Control Panel disarms instantly with a status notify. The Esc shortcut is scoped to the grid widget so it does not collide with the chart page's existing back/close behavior (chart's Esc closes the chart first; grid-level Esc only fires when the grid is the visible page). Auto-disarm also fires on: unbind from the default session, default session's terminal tab closing, `apply_imported_settings`, panel `shutdown`. Each path produces one status message naming the trigger.
+
+### 4.21 Audit CSV — kind column + control rows (v3)
+
+- **FR-76** The CSV value log adds a `kind` column at fixed position (between `label` and `value_text`) with values `"poll"`, `"derived"`, or `"control"`. The column is written for every row in v3 builds; pre-v3 logs that lack it read back without error. The complete header is `timestamp,dashboard,entry_id,label,kind,value_text,value_number,state` — see FR-50.
+- **FR-77** Control sends append exactly one row per `ControlResult` (success or send error). The row uses: `kind="control"`; `value_text` = the post-template-substitution command actually sent (e.g. `"VOLT 12.50"`); `value_number` = empty; `state` = `"ok"` on success, `"error"` on send failure. Confirmation cancellations (user picks No) do NOT log — only sends that left the queue are auditable. The hook lives in `_handle_control_result`, so all writing tiles share it.
+
 ## 5. Non-functional requirements
 
 - **NFR-1 (GUI responsiveness)** No serial/LAN I/O ever executes on the GUI thread. Dashboard sends happen exclusively on a per-session dispatcher thread. The GUI tick (drain results, health check, schedule) completes in < 1 ms typically and < 5 ms with 64 entries (smoke-tested).
@@ -175,17 +207,29 @@ Decided with the product owner; v1 decisions stand except where amended:
 - **NFR-11 (Expression safety, v2)** Derived-tile expressions are parsed to an AST and evaluated by a whitelisting interpreter — no `eval`, `exec`, or compiled code objects; node and length caps bound work; every failure surfaces as an error tile, never as an exception escaping the GUI tick.
 - **NFR-12 (v2 tick budget)** The GUI tick stays under the v1 budget with v2 load: 64 entries including derived tiles, full histories, alerts enabled, and two target sessions average < 5 ms per tick (benchmarked). Sparkline repaints are coalesced (≤ 1 per tile per result + 1 Hz window slide); the chart repaints only while visible.
 - **NFR-13 (Sound robustness, v2)** Alert sound degrades gracefully: missing QtMultimedia or a missing wav asset falls back to the system beep; sound failures never affect alert records or polling.
+- **NFR-14 (v3 tick budget)** The GUI tick stays under the v2 budget with v3 load: the v2 reference mix (64 entries incl. derived + full histories + alerts + 2 sessions) plus 6 setpoint tiles and 6 enum tiles with active watch readbacks averages < 5 ms per tick (benchmarked). Writing tiles repaint only when their state or watched value changes; the master-arm visual broadcast fires only on Arm/Disarm transitions, not per tick.
+- **NFR-15 (Master-arm robustness, v3)** Master arm state is transient. Tests assert: every panel construction starts Disarmed; every restart starts Disarmed; auto-disarm on unbind / session close / `apply_imported_settings` / `shutdown`; the `armingChanged` signal reaches every writing tile in the panel.
 
-## 6. Out of scope (v2)
+## 6. Out of scope (v3)
 
-- CLI access to dashboards.
-- Dashboards owning their own serial/LAN connection (binding to terminal sessions remains the only transport path).
+Carried forward from earlier versions and confirmed for v3:
+
+- CLI access to Control Panels.
+- Control Panels owning their own serial/LAN connection (binding to terminal sessions remains the only transport path).
 - Persisted value history (history is runtime-only; CSV logging is the durable record).
 - Chart image/data export, multi-series or multi-axis charts.
 - Alert acknowledgement workflows beyond the history panel's Clear; per-entry alert sounds or custom sound files.
 - Derived-of-derived expressions (single level is locked).
-- Gauge, slider, or free-form input control kinds (button/toggle only).
-- Scripting or conditional automation driven by dashboard values.
+- Scripting or conditional automation driven by Control Panel values.
+
+Explicitly considered for v3 and **declined for this release**:
+
+- **Interlocks** ("Tile X can only send if Tile Y's state is OK") — recognized as the next natural step but adds rule engine surface; revisit in v3.1+.
+- **Role-based access with PIN** (Viewer / Operator / Engineer) — master arm covers the safety floor without the auth complexity.
+- **Momentary / deadman button** (send ON on press, OFF on release) — useful but requires a different keyboard/touch model; revisit when there's a concrete user need.
+- **Sequence / macro tile** (one click runs a series of commands with optional waits) — overlaps with the existing command-file editor; cleaner to keep that as the sequence surface and let panels invoke command files instead, if requested.
+- **In-app control history view** beyond the CSV row — the CSV is the audit record; loading it into a panel widget can come later if asked.
+- **Multi-step undo of a sent command** — sends are not reversible at the protocol level; pretending they are would mislead operators.
 
 ## 7. Accepted limitations (shared medium)
 
@@ -196,7 +240,13 @@ The transcript filter (FR-15) has the mirrored limitation: device output that ha
 v2 additions to the accepted-limitations list:
 
 - **Multi-session summaries.** A single chip cannot fully represent three sessions' states; the aggregate text plus per-endpoint tooltip lines (FR-56) and per-tile tooltips are the contract. Gated entries simply age to stale — no synthetic per-entry "paused" state is invented.
-- **Control click vs. batch start race.** The click-time gate refuses sends while a command file runs (FR-60), but a batch started after a control request was queued can still interleave on the wire — the same tick-granular window v1 accepted for polling. Dashboard-vs-dashboard serialization remains absolute (one FIFO per session).
+- **Control click vs. batch start race.** The click-time gate refuses sends while a command file runs (FR-60), but a batch started after a control request was queued can still interleave on the wire — the same tick-granular window v1 accepted for polling. Panel-vs-panel serialization remains absolute (one FIFO per session).
+
+v3 additions to the accepted-limitations list:
+
+- **Audit-log gap on crash.** Control rows are written when the result lands (FR-77); a process crash between queue and result leaves no row for that send. The CSV captures what completed, not what was attempted. Pre-write at submit time was considered and declined — it would either require a two-row scheme (more complex) or in-place file edits (loses crash safety).
+- **Master arm covers writing tiles only.** A misconfigured *polled* entry (e.g. a poll command that has side effects on a device — `OUTP 0` masquerading as a query) is not gated by arming because the polling subsystem doesn't know it's a write. The remedy is to model side-effect commands as control tiles. The requirements doc warns against this in the editor copy.
+- **Setpoint readback latency.** The readback line mirrors the watched polled tile's most recent value — which lags behind the actual device by up to one poll interval plus the network/serial round-trip. For closed-loop setpoint adjustment the operator should rely on the device itself, not the readback line.
 
 ## 8. Acceptance criteria → test mapping
 
@@ -227,9 +277,17 @@ v2 additions to the accepted-limitations list:
 | FR-61 (expressions: safety, resolution, recompute, staleness) | `tests/test_dashboard_expr.py`, `tests/test_dashboard_tab.py` |
 | FR-62 (custom colors plumbing + rendering) | `tests/test_dashboard_parse.py`, `tests/test_dashboard_tiles.py` |
 | FR-39 v2 (schema v6 floor matrix, export version stamping) | `tests/test_models_and_storage.py`, `tests/test_dashboard_catalog.py` |
+| FR-39 v3 (schema v7 floor matrix, export version 3 stamping, sparse v1/v2 floor preservation) | `tests/test_models_and_storage.py`, `tests/test_dashboard_catalog.py`, `tests/test_dashboard_models.py` |
+| FR-63..FR-67 (setpoint model + widget + readback + send + validation) | `tests/test_dashboard_models.py`, `tests/test_dashboard_tiles.py`, `tests/test_dashboard_tab.py` |
+| FR-68..FR-71 (enum model + widget + indicator + send + validation) | `tests/test_dashboard_models.py`, `tests/test_dashboard_tiles.py`, `tests/test_dashboard_tab.py` |
+| FR-72..FR-75 (master arm gate, Esc disarm, auto-disarm matrix, visual broadcast, transience) | `tests/test_dashboard_tab.py` |
+| FR-76, FR-77 (CSV kind column, control rows, pre-v3 read-back compat) | `tests/test_dashboard_value_log.py`, `tests/test_dashboard_tab.py` |
+| FR-50 v3 (audit row format, error rows for control, no row for confirm-cancel) | `tests/test_dashboard_value_log.py`, `tests/test_dashboard_tab.py` |
 | NFR-7 (Qt-free domain incl. v2 modules) | `tests/test_core_no_pyside.py` |
 | NFR-11 (expression safety rejection matrix) | `tests/test_dashboard_expr.py` |
 | NFR-12 (v2 tick budget) | `tests/test_app_dashboards.py` |
+| NFR-14 (v3 tick budget with 6 setpoint + 6 enum + watch readbacks) | `tests/test_app_dashboards.py` |
+| NFR-15 (master arm transience: boot-disarmed, auto-disarm matrix, signal coverage) | `tests/test_dashboard_tab.py`, `tests/test_app_dashboards.py` |
 
 ## 9. References
 
@@ -238,4 +296,30 @@ v2 additions to the accepted-limitations list:
 - Correlation idiom: `BatchRunner._expect_text` (`src/ComPort_Zone/batch.py`)
 - Settings schema: `src/ComPort_Zone/models.py`, `src/ComPort_Zone/settings_service.py`
 - Logging precedents: `src/ComPort_Zone/session_log.py`, CSV writer in `src/ComPort_Zone/quick_actions.py`
-- Implementation plans: v1 (T1–T12) and v2 (V2-T1–T14), both approved.
+- Implementation plans: v1 (T1–T12), v2 (V2-T1–T14), and v3 (V3-T1–T8) — all approved.
+- v3 widget precedents: `QSlider` is first-use in this codebase; `QComboBox` is widely used (line-ending menus, theme combos, etc.); `QShortcut` precedent in command-editor search.
+
+## 10. Naming migration (v3)
+
+| Surface | v2 wording | v3 wording |
+| --- | --- | --- |
+| Tab kind | "Dashboard" | "Control Panel" |
+| Tab title | user-chosen | user-chosen (unchanged) |
+| Menu: File > New | "New Dashboard" | "New Control Panel" |
+| Menu: File > Open submenu | "Open Dashboard" | "Open Control Panel" |
+| Menu: Tools | "Dashboards…" | "Control Panels…" |
+| Keyboard shortcut | `Ctrl+Shift+D` | `Ctrl+Shift+D` (unchanged, muscle memory) |
+| Sidebar rail page | "Dashboards" | "Control Panels" |
+| Favorites panel | "Favorite Dashboards" | "Favorite Control Panels" |
+| Manager dialog title | "Dashboards" | "Control Panels" |
+| Shipped example name | "Example Dashboard" | "Example Control Panel" |
+| Requirements doc | `docs/dashboard-view-requirements.md` | `docs/control-panel-requirements.md` |
+| Settings JSON key | `"dashboards": [...]` | `"dashboards": [...]` (unchanged) |
+| Python class `DashboardConfig` | unchanged | unchanged |
+| Python class `DashboardTabWidget` | unchanged | unchanged |
+| Settings field `AppSettings.dashboards` | unchanged | unchanged |
+| Module `dashboard_value_log.py` | unchanged | unchanged |
+| Tests under `tests/test_dashboard_*.py` | unchanged | unchanged |
+| QSS selectors `#dashboardHeader`, `#dashboardBindChip`, ... | unchanged | unchanged |
+
+Pre-v3 user JSON loads byte-for-byte; pre-v3 CSV logs (no `kind` column) read back without raising; v1/v2 exports import unchanged.
