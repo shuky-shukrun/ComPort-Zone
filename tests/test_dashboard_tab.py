@@ -1153,6 +1153,16 @@ class ControlTileTests(DashboardTabTestBase):
         # Capture coordinator.notify() output for refusal assertions.
         self.coordinator._set_status = self.status_messages.append
 
+    def make_tab(self, *args, **kwargs):
+        # Control-tile tests exercise the send pipeline; the master-arm
+        # gate (v3) defaults to disarmed which would block every click.
+        # Auto-arm so each test asserts the tile's own behavior. Tests
+        # that specifically exercise the disarmed path call
+        # set_armed(False) themselves.
+        tab = super().make_tab(*args, **kwargs)
+        tab.set_armed(True)
+        return tab
+
     def test_click_sends_exactly_one_tagged_command(self) -> None:
         tab = self.make_tab(control_entry())
         tab.bind_to_session(1)
@@ -1359,6 +1369,11 @@ class SetpointTileTests(DashboardTabTestBase):
         self.status_messages: list[str] = []
         self.coordinator._set_status = self.status_messages.append
 
+    def make_tab(self, *args, **kwargs):
+        tab = super().make_tab(*args, **kwargs)
+        tab.set_armed(True)  # see ControlTileTests.make_tab
+        return tab
+
     def test_slider_and_spinbox_stay_in_sync(self) -> None:
         from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
 
@@ -1563,6 +1578,11 @@ class EnumTileTests(DashboardTabTestBase):
         self.status_messages: list[str] = []
         self.coordinator._set_status = self.status_messages.append
 
+    def make_tab(self, *args, **kwargs):
+        tab = super().make_tab(*args, **kwargs)
+        tab.set_armed(True)  # see ControlTileTests.make_tab
+        return tab
+
     def test_combo_lists_options_send_routes_selected_command(self) -> None:
         from ComPort_Zone.ui.dashboard_tiles import EnumTileWidget
 
@@ -1689,6 +1709,140 @@ class EnumTileTests(DashboardTabTestBase):
         edited.command = "MODE?"
         tab.apply_entry_edit(edited)
         self.assertIsInstance(tab.grid.tile("mode"), ValueTileWidget)
+
+
+class MasterArmTests(DashboardTabTestBase):
+    """Master-arm transient gate (v3, FR-72..FR-75 + NFR-15).
+
+    These tests deliberately use the base class's make_tab (no
+    auto-arm) so they exercise the disarmed-by-default invariant.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.status_messages: list[str] = []
+        self.coordinator._set_status = self.status_messages.append
+
+    def test_panel_boots_disarmed(self) -> None:
+        tab = self.make_tab(control_entry())
+        self.assertFalse(tab.is_armed)
+        self.assertFalse(tab.arm_button.isChecked())
+
+    def test_disarmed_click_refused_with_status(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        self.assertFalse(tab._activate_control("ctrl"))
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertTrue(any("disarmed" in t for t in self.status_messages))
+
+    def test_set_armed_emits_signal_and_lets_click_through(self) -> None:
+        seen: list[bool] = []
+        tab = self.make_tab(control_entry())
+        tab.armingChanged.connect(seen.append)
+        tab.set_armed(True)
+        self.assertEqual(seen, [True])
+        self.assertTrue(tab.is_armed)
+        # Click is now permitted.
+        tab.bind_to_session(1)
+        self.assertTrue(tab._activate_control("ctrl"))
+
+    def test_set_armed_idempotent(self) -> None:
+        seen: list[bool] = []
+        tab = self.make_tab(control_entry())
+        tab.armingChanged.connect(seen.append)
+        tab.set_armed(False)  # already disarmed
+        self.assertEqual(seen, [])
+        tab.set_armed(True)
+        tab.set_armed(True)  # idempotent
+        self.assertEqual(seen, [True])
+
+    def test_arm_button_toggle_drives_state(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.arm_button.setChecked(True)
+        self.assertTrue(tab.is_armed)
+        tab.arm_button.setChecked(False)
+        self.assertFalse(tab.is_armed)
+
+    def test_unbind_force_disarms(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.set_armed(True)
+        self.assertTrue(tab.is_armed)
+        tab.unbind(notice="closing")
+        self.assertFalse(tab.is_armed)
+        self.assertTrue(any("disarmed" in t for t in self.status_messages))
+
+    def test_session_close_force_disarms(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.set_armed(True)
+        # Pretend the terminal tab closed: the session falls out of the
+        # is_widget_open check.
+        self.open_widgets = set()
+        tab._tick()
+        self.assertFalse(tab.is_armed)
+        self.assertIsNone(tab.bound_session_id)
+
+    def test_shutdown_force_disarms(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.set_armed(True)
+        tab.shutdown()
+        self.assertFalse(tab.is_armed)
+
+    def test_writing_tiles_render_disarmed_visual(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import (
+            ControlTileWidget,
+            EnumTileWidget,
+            SetpointTileWidget,
+        )
+
+        tab = self.make_tab(control_entry(), setpoint_entry(), enum_entry())
+        for entry_id in ("ctrl", "sp", "mode"):
+            tile = tab.grid.tile(entry_id)
+            self.assertEqual(tile.property("panelArmed"), "false")
+        # All three writing-tile send buttons disabled.
+        ctrl = tab.grid.tile("ctrl")
+        sp = tab.grid.tile("sp")
+        en = tab.grid.tile("mode")
+        assert isinstance(ctrl, ControlTileWidget)
+        assert isinstance(sp, SetpointTileWidget)
+        assert isinstance(en, EnumTileWidget)
+        self.assertFalse(ctrl.button.isEnabled())
+        self.assertFalse(sp.send_button.isEnabled())
+        self.assertFalse(en.send_button.isEnabled())
+
+        tab.set_armed(True)
+        for entry_id in ("ctrl", "sp", "mode"):
+            tile = tab.grid.tile(entry_id)
+            self.assertEqual(tile.property("panelArmed"), "true")
+        # Send buttons unlock when armed (gating on enabled + not pending).
+        self.assertTrue(ctrl.button.isEnabled())
+        self.assertTrue(sp.send_button.isEnabled())
+        self.assertTrue(en.send_button.isEnabled())
+
+    def test_value_tile_unaffected_by_arming(self) -> None:
+        tab = self.make_tab(volt_entry())
+        # Non-writing tiles get the default no-op set_panel_armed and
+        # have no panelArmed property.
+        value_tile = tab.grid.tile("volts")
+        self.assertIsNone(value_tile.property("panelArmed"))
+        tab.set_armed(True)
+        self.assertIsNone(value_tile.property("panelArmed"))
+
+    def test_confirm_still_fires_when_armed(self) -> None:
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+
+        tab = self.make_tab(control_entry(confirm=True))
+        tab.bind_to_session(1)
+        tab.set_armed(True)
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+        ) as q:
+            self.assertTrue(tab._activate_control("ctrl"))
+        # Arming does not bypass the per-tile confirm prompt.
+        q.assert_called_once()
 
 
 class DashboardTabBindingTests(DashboardTabTestBase):

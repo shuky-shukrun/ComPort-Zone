@@ -733,6 +733,14 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QToolButton#dashboardHeaderButton:pressed {{ background: {press_bg}; }}
     QToolButton#dashboardHeaderButton:checked {{ background: {ghost_on_bg}; color: {accent}; }}
     QToolButton#dashboardHeaderButton:checked:hover {{ background: {press_bg}; }}
+    /* Master arm (v3, FR-74): amber accent disarmed, red accent armed.
+       The armed state is also `checked`, so the [panelArmed] selectors
+       win on the cascade by raising specificity. */
+    QToolButton#dashboardHeaderButton[panelArmed="false"] {{ color: {amber}; }}
+    QToolButton#dashboardHeaderButton[panelArmed="true"] {{
+        color: {red}; background: {err_bg};
+    }}
+    QToolButton#dashboardHeaderButton[panelArmed="true"]:hover {{ background: {press_bg}; }}
     QLabel#dashboardSaveState {{
         color: {tx_faint}; font-size: {MICRO_FS}px; font-family: {MONO}; padding: 0 4px;
     }}

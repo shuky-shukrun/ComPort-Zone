@@ -120,6 +120,10 @@ class TileFrame(QFrame):
     activateRequested = Signal(str)  # emitted by control tiles only (FR-59)
     chartRequested = Signal(str)  # emitted by value tiles only (FR-48)
 
+    def set_panel_armed(self, armed: bool) -> None:
+        """Default: tiles are unaffected by master arm. Writing-tile
+        subclasses override to render their disarmed visuals (FR-73)."""
+
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         """Override on tile kinds that paint their own surfaces (sparkline)."""
         # Default tile chrome takes its colors from QSS via tileState; no
@@ -397,6 +401,8 @@ class ControlTileWidget(TileFrame):
         super().__init__(entry, parent)
         self._is_on = False
         self._pending = False
+        self._panel_armed = False
+        self.setProperty("panelArmed", "false")
         self.button = QPushButton("", self)
         self.button.setObjectName("tileControlButton")
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -442,6 +448,13 @@ class ControlTileWidget(TileFrame):
         self.button.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, enabled)
         self._refresh_button()
 
+    def set_panel_armed(self, armed: bool) -> None:
+        if self._panel_armed != armed:
+            self._panel_armed = armed
+            self.setProperty("panelArmed", "true" if armed else "false")
+            _repolish(self)
+            self._refresh_button()
+
     def _refresh_button(self) -> None:
         control = self._entry.control
         if self._pending:
@@ -452,7 +465,16 @@ class ControlTileWidget(TileFrame):
             text = "Send"
         if self.button.text() != text:
             self.button.setText(text)
-        self.button.setEnabled(self._entry.enabled and not self._pending and not self.edit_mode)
+        self.button.setEnabled(
+            self._entry.enabled
+            and not self._pending
+            and not self.edit_mode
+            and self._panel_armed
+        )
+        if not self._panel_armed:
+            self.button.setToolTip("Panel is disarmed — click Arm in the header.")
+        else:
+            self.button.setToolTip("")
         state = "on" if control.mode == "toggle" and self._is_on else "off"
         if self.button.property("controlState") != state:
             self.button.setProperty("controlState", state)
@@ -475,6 +497,8 @@ class SetpointTileWidget(TileFrame):
     def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
         super().__init__(entry, parent)
         self._pending = False
+        self._panel_armed = False
+        self.setProperty("panelArmed", "false")
         self._setting_value = False  # re-entry guard for slider<->spinbox
         self._readback_text = ""
         self._readback_state = "neutral"
@@ -640,9 +664,25 @@ class SetpointTileWidget(TileFrame):
         self.slider.setValue(self._step_index_for(self._value))
         self.spin.setValue(self._value)
 
+    def set_panel_armed(self, armed: bool) -> None:
+        if self._panel_armed != armed:
+            self._panel_armed = armed
+            self.setProperty("panelArmed", "true" if armed else "false")
+            _repolish(self)
+            self._refresh_send_enabled()
+
     def _refresh_send_enabled(self) -> None:
-        enabled = self._entry.enabled and not self._pending and not self.edit_mode
+        enabled = (
+            self._entry.enabled
+            and not self._pending
+            and not self.edit_mode
+            and self._panel_armed
+        )
         self.send_button.setEnabled(enabled)
+        if not self._panel_armed:
+            self.send_button.setToolTip("Panel is disarmed — click Arm in the header.")
+        else:
+            self.send_button.setToolTip("")
         for widget in (self.slider, self.spin):
             widget.setEnabled(self._entry.enabled and not self.edit_mode)
 
@@ -682,6 +722,8 @@ class EnumTileWidget(TileFrame):
     def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
         super().__init__(entry, parent)
         self._pending = False
+        self._panel_armed = False
+        self.setProperty("panelArmed", "false")
         self._indicated_index = -1
 
         self.combo = QComboBox(self)
@@ -801,14 +843,26 @@ class EnumTileWidget(TileFrame):
             self.combo.blockSignals(False)
         self._indicated_index = -1  # caller re-applies via update_indicator
 
+    def set_panel_armed(self, armed: bool) -> None:
+        if self._panel_armed != armed:
+            self._panel_armed = armed
+            self.setProperty("panelArmed", "true" if armed else "false")
+            _repolish(self)
+            self._refresh_send_enabled()
+
     def _refresh_send_enabled(self) -> None:
         enabled = (
             self._entry.enabled
             and not self._pending
             and not self.edit_mode
             and self.combo.count() > 0
+            and self._panel_armed
         )
         self.send_button.setEnabled(enabled)
+        if not self._panel_armed:
+            self.send_button.setToolTip("Panel is disarmed — click Arm in the header.")
+        else:
+            self.send_button.setToolTip("")
         self.combo.setEnabled(self._entry.enabled and not self.edit_mode)
 
 

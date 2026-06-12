@@ -23,6 +23,7 @@ from queue import Empty, Queue
 from typing import Protocol
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -141,6 +142,10 @@ class DashboardTabWidget(QWidget):
     TICK_INTERVAL_MS = 100
 
     stateChanged = Signal()
+    # Master arm transition (v3, FR-72/74). Emitted with the new armed
+    # state on every Arm/Disarm so writing tiles can re-render their
+    # disarmed visuals without polling.
+    armingChanged = Signal(bool)
 
     def __init__(
         self,
@@ -186,6 +191,10 @@ class DashboardTabWidget(QWidget):
         # writable entry ids (setpoint readback, enum indicator). Built
         # in _configure_entries; consumed in _apply_outcome.
         self._writable_watchers: dict[str, list[str]] = {}
+        # Master arm (v3, FR-72): transient, boots disarmed every load,
+        # forced back to False on unbind / session close / shutdown /
+        # apply_imported_settings.
+        self._armed: bool = False
         # v2 sparkline history (FR-46/FR-47): one ring per numeric entry,
         # fed from _apply_outcome — never persisted (NFR-3).
         self._histories: dict[str, EntryHistory] = {}
@@ -313,6 +322,21 @@ class DashboardTabWidget(QWidget):
         self.bell_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bell_badge.hide()
 
+        # v3 master-arm gate (FR-72..FR-75). Boots disarmed; click flips
+        # the state; Esc disarms; unbind / session-close auto-disarm.
+        self.arm_button = QToolButton(header)
+        self.arm_button.setObjectName("dashboardHeaderButton")
+        self.arm_button.setCheckable(True)
+        self.arm_button.setChecked(False)
+        self.arm_button.setProperty("panelArmed", "false")
+        set_button_icon(self.arm_button, "lock", 15)
+        self.arm_button.setToolTip(
+            "Disarmed — click to arm controls.\nEsc disarms instantly."
+        )
+        self.arm_button.setFixedHeight(CONTROL_H_SM)
+        self.arm_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.arm_button.toggled.connect(self._arm_button_toggled)
+
         self.add_entry_button = QToolButton(header)
         self.add_entry_button.setObjectName("dashboardHeaderButton")
         self.add_entry_button.setText("Add Entry")
@@ -328,6 +352,7 @@ class DashboardTabWidget(QWidget):
         header_layout.addStretch(1)
         header_layout.addWidget(self.save_state_label)
         header_layout.addWidget(self.bell_button)
+        header_layout.addWidget(self.arm_button)
         header_layout.addWidget(self.pause_button)
         header_layout.addWidget(self.csv_log_button)
         header_layout.addWidget(self.edit_layout_button)
@@ -342,6 +367,15 @@ class DashboardTabWidget(QWidget):
         self.grid.tileControlActivated.connect(self._activate_control)
         self.grid.tileChartRequested.connect(self.open_chart)
         self.grid.set_config(self.config)
+
+        # Esc on the focused panel disarms (FR-75). Scoped to the grid
+        # widget so it does not collide with the chart page's own Esc
+        # handler (chart-close fires first when that page is current).
+        self._disarm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.grid)
+        self._disarm_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._disarm_shortcut.activated.connect(
+            lambda: self._force_disarm("Esc pressed")
+        )
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidget(self.grid)
@@ -445,6 +479,10 @@ class DashboardTabWidget(QWidget):
     def shutdown(self) -> None:
         """Stop the tick and release every held dispatcher (tab close, app
         close, settings re-apply). Safe to call twice (NFR-4)."""
+        # Force-disarm before tearing down — keeps the transient master
+        # arm invariant (FR-72): no panel ever closes still armed.
+        if self._armed:
+            self.set_armed(False)
         self.tick_timer.stop()
         self.chart_refresh_timer.stop()
         self.value_logger.close()
@@ -487,6 +525,10 @@ class DashboardTabWidget(QWidget):
         return True
 
     def unbind(self, notice: str = "") -> None:
+        # Losing the binding loses the ability to send — auto-disarm
+        # so the user can't queue clicks against nothing (FR-75).
+        if self._armed:
+            self._force_disarm("binding lost")
         self._bound_session_id = None
         self.scheduler.release_all_in_flight()
         self._refresh_session_topology()
@@ -898,6 +940,12 @@ class DashboardTabWidget(QWidget):
         entry = self.config.entry_by_id(entry_id)
         if entry is None or not entry.is_writable() or not entry.enabled:
             return False
+        label = entry.display_label()
+        # Master-arm gate fires FIRST so disarmed clicks get one clean
+        # refusal instead of a chain of session/connect messages (FR-73).
+        if not self._armed:
+            self.coordinator.notify(f"{label}: panel is disarmed.")
+            return False
         tile = self.grid.tile(entry_id)
         if isinstance(tile, ControlTileWidget) and tile.pending:
             return False
@@ -905,7 +953,6 @@ class DashboardTabWidget(QWidget):
             return False
         if isinstance(tile, EnumTileWidget) and tile.pending:
             return False
-        label = entry.display_label()
         session_id = self._entry_session.get(entry_id)
         gate = self._gates.get(session_id) if session_id is not None else None
         dispatcher = self._dispatchers.get(session_id) if session_id is not None else None
@@ -1023,6 +1070,66 @@ class DashboardTabWidget(QWidget):
             runtime.tooltip = f"Send failed: {result.error}"
         # Cancelled sends just clear the pending state.
         self._update_tile(result.entry_id)
+
+    # -------------------------------------------------------- master arm
+
+    @property
+    def is_armed(self) -> bool:
+        return self._armed
+
+    def set_armed(self, armed: bool) -> None:
+        """Public arm/disarm entry point. Idempotent — calling with the
+        current state is a no-op (no signal storms on repeat clicks)."""
+        if self._armed == armed:
+            self._sync_arm_button()
+            return
+        self._armed = armed
+        self._sync_arm_button()
+        self._broadcast_arming_to_tiles()
+        self.armingChanged.emit(armed)
+        self.stateChanged.emit()
+
+    def _broadcast_arming_to_tiles(self) -> None:
+        """Push current armed state into every writing tile so their
+        disarmed visuals stay in sync (FR-73 visual broadcast)."""
+        for entry in self.config.entries:
+            if entry.is_writable():
+                tile = self.grid.tile(entry.id)
+                if tile is not None:
+                    tile.set_panel_armed(self._armed)
+
+    def _arm_button_toggled(self, checked: bool) -> None:
+        """Header button → state. Goes through set_armed so the property
+        sync and signal fan-out happen in one place."""
+        self.set_armed(checked)
+
+    def _force_disarm(self, reason: str) -> None:
+        """Auto-disarm hook for unbind / session-close / shutdown /
+        apply_imported_settings. Idempotent + notify (FR-75)."""
+        if not self._armed:
+            return
+        self.set_armed(False)
+        self.coordinator.notify(f"{self.config.name}: disarmed ({reason}).")
+
+    def _sync_arm_button(self) -> None:
+        """Mirror the button visual state to ``self._armed``. Block
+        signals so calling toggle() inside set_armed doesn't recurse."""
+        armed = self._armed
+        self.arm_button.blockSignals(True)
+        self.arm_button.setChecked(armed)
+        self.arm_button.blockSignals(False)
+        set_button_icon(self.arm_button, "unlock" if armed else "lock", 15)
+        self.arm_button.setProperty("panelArmed", "true" if armed else "false")
+        # Force a QSS repolish so the new ``panelArmed`` value applies.
+        style = self.arm_button.style()
+        style.unpolish(self.arm_button)
+        style.polish(self.arm_button)
+        self.arm_button.update()
+        self.arm_button.setToolTip(
+            "Armed — controls live. Click to disarm.\nEsc disarms instantly."
+            if armed
+            else "Disarmed — click to arm controls.\nEsc disarms instantly."
+        )
 
     # ----------------------------------------------------------- chip text
 
@@ -1474,6 +1581,9 @@ class DashboardTabWidget(QWidget):
         self.scheduler.configure(schedulable)
         self._refresh_session_topology()
         self.grid.set_config(self.config)
+        # Fresh tiles must see the current arm state — broadcast on
+        # every reconfigure to cover entry add/edit/remove paths.
+        self._broadcast_arming_to_tiles()
         for entry_id in self._runtimes:
             self._update_tile(entry_id)
         self._refresh_empty_state()
