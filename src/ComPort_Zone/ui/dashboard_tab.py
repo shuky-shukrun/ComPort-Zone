@@ -87,6 +87,7 @@ from .dashboard_grid import DashboardGridWidget
 from .dashboard_tiles import (
     TILE_STATE_CAPTIONS,
     ControlTileWidget,
+    SetpointTileWidget,
     TileRuntime,
     ValueTileWidget,
     tile_state_color,
@@ -180,6 +181,10 @@ class DashboardTabWidget(QWidget):
         # ids, and the ON/OFF state each in-flight click aims for.
         self._controls_by_watch: dict[str, list[str]] = {}
         self._control_intent: dict[str, bool] = {}
+        # v3 writable tiles (FR-66): watched input id -> dependent
+        # writable entry ids (setpoint readback, enum indicator). Built
+        # in _configure_entries; consumed in _apply_outcome.
+        self._writable_watchers: dict[str, list[str]] = {}
         # v2 sparkline history (FR-46/FR-47): one ring per numeric entry,
         # fed from _apply_outcome — never persisted (NFR-3).
         self._histories: dict[str, EntryHistory] = {}
@@ -879,15 +884,23 @@ class DashboardTabWidget(QWidget):
     # ------------------------------------------------------------- controls
 
     def _activate_control(self, entry_id: str) -> bool:
-        """Click handler for control tiles (FR-59/FR-60): gate, optionally
-        confirm, then queue exactly one tagged send through the target
-        session's FIFO. Allowed while user-paused — a click is explicit
-        intent — but refused while disconnected or batch-running."""
+        """Click handler for any writing tile (FR-59/60, v3 FR-67):
+        gate on session health, optionally confirm, then queue exactly
+        one tagged send through the target session's FIFO.
+
+        Routing by tile kind:
+        - control button: ``ControlSpec.on_command``
+        - control toggle: ``on_command`` or ``off_command`` based on state
+        - setpoint: ``SetpointSpec.render_command(tile.value)``
+        - enum: ``EnumSpec.options[combo_index].command``  (v3-T4)
+        """
         entry = self.config.entry_by_id(entry_id)
-        if entry is None or not entry.is_control() or not entry.enabled:
+        if entry is None or not entry.is_writable() or not entry.enabled:
             return False
         tile = self.grid.tile(entry_id)
         if isinstance(tile, ControlTileWidget) and tile.pending:
+            return False
+        if isinstance(tile, SetpointTileWidget) and tile.pending:
             return False
         label = entry.display_label()
         session_id = self._entry_session.get(entry_id)
@@ -904,12 +917,24 @@ class DashboardTabWidget(QWidget):
                 f"{label}: a command file is running on the target terminal."
             )
             return False
-        control = entry.control
-        turn_on = True
-        if control.mode == "toggle":
-            turn_on = not self._control_is_on(entry)
-        command = control.on_command if turn_on else control.off_command
-        if control.confirm and not self._confirm_control(label, command):
+        intent: bool | None = None
+        confirm = False
+        if entry.is_control():
+            control = entry.control
+            turn_on = True
+            if control.mode == "toggle":
+                turn_on = not self._control_is_on(entry)
+            command = control.on_command if turn_on else control.off_command
+            confirm = control.confirm
+            intent = turn_on
+        elif entry.is_setpoint():
+            if not isinstance(tile, SetpointTileWidget):
+                return False
+            command = tile.rendered_command()
+            confirm = entry.setpoint.confirm
+        else:
+            return False  # enum routing lands in v3-T4
+        if confirm and not self._confirm_control(label, command):
             return False
         request = ControlRequest(
             dashboard_id=self.config.id,
@@ -922,8 +947,11 @@ class DashboardTabWidget(QWidget):
         if not dispatcher.submit_control(request):
             self.coordinator.notify(f"{label}: could not queue the command.")
             return False
-        self._control_intent[entry_id] = turn_on
+        if intent is not None:
+            self._control_intent[entry_id] = intent
         if isinstance(tile, ControlTileWidget):
+            tile.set_pending(True)
+        elif isinstance(tile, SetpointTileWidget):
             tile.set_pending(True)
         return True
 
@@ -951,6 +979,8 @@ class DashboardTabWidget(QWidget):
         entry = self.config.entry_by_id(result.entry_id)
         tile = self.grid.tile(result.entry_id)
         if isinstance(tile, ControlTileWidget):
+            tile.set_pending(False)
+        elif isinstance(tile, SetpointTileWidget):
             tile.set_pending(False)
         intent = self._control_intent.pop(result.entry_id, None)
         if entry is None:
@@ -1214,6 +1244,10 @@ class DashboardTabWidget(QWidget):
             history.append(self._clock(), float(outcome.value_number))
         self._update_tile(entry.id)
         self._refresh_sparkline(entry.id)
+        # v3: setpoint readback + enum indicator mirror the funneled
+        # entry's value into any writing tile that watches it (FR-66/70).
+        if entry.id in self._writable_watchers:
+            self._refresh_writable_readbacks(entry.id, runtime)
         # CSV logging tails the same funnel so derived rows show up too
         # (FR-49). Errors/timeouts are filtered inside _log_outcome.
         self._log_outcome(entry, outcome)
@@ -1328,6 +1362,19 @@ class DashboardTabWidget(QWidget):
             color = tile_state_color(runtime.state if runtime else "ok", self._theme)
         tile.set_history(history.samples(), color, now=self._clock())
 
+    def _refresh_writable_readbacks(
+        self, input_entry_id: str, runtime: TileRuntime
+    ) -> None:
+        """Push the watched entry's latest verdict into every writing
+        tile that watches it (FR-66/70). Setpoint tiles update their
+        readback line; enum tiles update their indicated row (v3-T4)."""
+        color = runtime.color or tile_state_color(runtime.state, self._theme)
+        for watcher_id in self._writable_watchers.get(input_entry_id, ()):
+            tile = self.grid.tile(watcher_id)
+            if isinstance(tile, SetpointTileWidget):
+                tile.set_readback(runtime.value_text, runtime.state, color)
+            # Enum indicator wiring lands with v3-T4.
+
     # -------------------------------------------------------- config edits
 
     def _configure_entries(self, *, save: bool = True) -> None:
@@ -1354,10 +1401,22 @@ class DashboardTabWidget(QWidget):
                 runtime.tooltip = f"Invalid parse rule: {exc}"
         self._configure_derived_entries()
         self._controls_by_watch = {}
+        self._writable_watchers = {}
         for entry in self.config.entries:
             if entry.is_control() and entry.control.watch_entry_id:
                 self._controls_by_watch.setdefault(
                     entry.control.watch_entry_id, []
+                ).append(entry.id)
+            # v3 writable tiles can also watch a polled tile (setpoint
+            # readback, enum indicator). Collected here so the funnel
+            # fan-out is a single dict lookup (FR-66, FR-70).
+            if entry.is_setpoint() and entry.setpoint.watch_entry_id:
+                self._writable_watchers.setdefault(
+                    entry.setpoint.watch_entry_id, []
+                ).append(entry.id)
+            elif entry.is_enum() and entry.enum_spec.watch_entry_id:
+                self._writable_watchers.setdefault(
+                    entry.enum_spec.watch_entry_id, []
                 ).append(entry.id)
         for entry_id in list(self._runtimes):
             if self.config.entry_by_id(entry_id) is None:

@@ -1321,6 +1321,214 @@ class ControlTileTests(DashboardTabTestBase):
         self.assertIsInstance(tab.grid.tile("ctrl"), ValueTileWidget)
 
 
+def setpoint_entry(
+    *,
+    min_value: float = 0.0,
+    max_value: float = 30.0,
+    step: float = 0.1,
+    decimals: int = 2,
+    unit: str = "V",
+    template: str = "VOLT {value}",
+    watch_entry_id: str = "",
+    confirm: bool = False,
+) -> DashboardEntry:
+    from ComPort_Zone.dashboard_models import SetpointSpec
+
+    return DashboardEntry(
+        id="sp",
+        label="Voltage",
+        tile=TilePlacement(col=0, row=2, kind="setpoint"),
+        setpoint=SetpointSpec(
+            min_value=min_value,
+            max_value=max_value,
+            step=step,
+            decimals=decimals,
+            unit=unit,
+            command_template=template,
+            watch_entry_id=watch_entry_id,
+            confirm=confirm,
+        ),
+    )
+
+
+class SetpointTileTests(DashboardTabTestBase):
+    """Setpoint widget end-to-end (v3, FR-63..FR-67)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.status_messages: list[str] = []
+        self.coordinator._set_status = self.status_messages.append
+
+    def test_slider_and_spinbox_stay_in_sync(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry())
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        # Dragging the slider updates the spinbox.
+        tile.slider.setValue(50)  # step index 50 -> 5.0 V
+        self.assertAlmostEqual(tile.value, 5.0, places=4)
+        self.assertAlmostEqual(tile.spin.value(), 5.0, places=4)
+        # Typing in the spinbox updates the slider.
+        tile.spin.setValue(12.5)
+        self.assertAlmostEqual(tile.value, 12.5, places=4)
+        self.assertEqual(tile.slider.value(), 125)
+
+    def test_spinbox_clamps_out_of_range(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry(min_value=0.0, max_value=10.0))
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        # QDoubleSpinBox clamps on setValue, so the typed-out-of-range
+        # path still lands on the bound.
+        tile.spin.setValue(99.0)
+        self.assertEqual(tile.value, 10.0)
+        tile.spin.setValue(-5.0)
+        self.assertEqual(tile.value, 0.0)
+
+    def test_send_submits_one_templated_command(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        tile.spin.setValue(12.5)
+        self.assertTrue(tab._activate_control("sp"))
+        self.assertTrue(tile.pending)
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+        self.assertEqual(
+            self.session.transport.sent_text,
+            [("VOLT 12.50", None)],
+        )
+        self.assertEqual(self.session.transport.sent_sources, ["dashboard"])
+        # Result clears the pending flag.
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        self.assertFalse(tile.pending)
+
+    def test_send_blocked_when_disconnected(self) -> None:
+        tab = self.make_tab(setpoint_entry())
+        tab.bind_to_session(1)
+        self.session.transport.disconnect()
+        tab._tick()
+        self.assertFalse(tab._activate_control("sp"))
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertTrue(any("not connected" in t for t in self.status_messages))
+
+    def test_send_blocked_during_batch(self) -> None:
+        tab = self.make_tab(setpoint_entry())
+        tab.bind_to_session(1)
+        self.session.batch_running = True
+        tab._tick()
+        self.assertFalse(tab._activate_control("sp"))
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertTrue(any("command file" in t for t in self.status_messages))
+
+    def test_setpoint_button_click_routes_through_send_button(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        tile.spin.setValue(3.5)
+        tile.send_button.click()
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+        self.assertEqual(self.session.transport.sent_text, [("VOLT 3.50", None)])
+
+    def test_confirm_no_blocks_send(self) -> None:
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QMessageBox
+
+        tab = self.make_tab(setpoint_entry(confirm=True))
+        tab.bind_to_session(1)
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ) as question:
+            self.assertFalse(tab._activate_control("sp"))
+        question.assert_called_once()
+        self.assertEqual(self.session.transport.sent_text, [])
+
+    def test_readback_follows_watched_entry(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        # The setpoint watches the polled volt entry's value.
+        polled = volt_entry()
+        polled.id = "vmeas"
+        polled.label = "Measured"
+        sp = setpoint_entry(watch_entry_id="vmeas")
+        tab = self.make_tab(polled, sp)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.34\r\n")
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        self.assertFalse(tile.readback_label.isHidden())
+        self.assertIn("12.34", tile.readback_label.text())
+        self.assertIn("V", tile.readback_label.text())
+
+    def test_send_error_marks_tile_error(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry())
+        tab.bind_to_session(1)
+
+        def explode(text, line_ending_override=None, *, source: str = ""):
+            raise RuntimeError("device offline")
+
+        self.session.transport.send_text = explode  # type: ignore[method-assign]
+        self.assertTrue(tab._activate_control("sp"))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        self.assertFalse(tile.pending)
+        self.assertEqual(tile.property("tileState"), "error")
+        self.assertIn("device offline", tile.toolTip())
+
+    def test_setpoint_never_scheduled(self) -> None:
+        tab = self.make_tab(setpoint_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(60_000)
+        tab._tick()
+        tab._tick()
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertFalse(tab.poll_now("sp"))
+
+    def test_edit_mode_makes_widgets_inert_but_draggable(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry())
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        tab.grid.set_edit_mode(True)
+        self.assertFalse(tile.send_button.isEnabled())
+        for widget in (tile.slider, tile.spin, tile.send_button):
+            self.assertTrue(
+                widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            )
+        tab.grid.set_edit_mode(False)
+        self.assertTrue(tile.send_button.isEnabled())
+        for widget in (tile.slider, tile.spin, tile.send_button):
+            self.assertFalse(
+                widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            )
+
+    def test_setpoint_kind_change_recreates_tile(self) -> None:
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        tab = self.make_tab(setpoint_entry())
+        self.assertIsInstance(tab.grid.tile("sp"), SetpointTileWidget)
+        edited = setpoint_entry()
+        edited.tile.kind = "value"
+        edited.command = "MEAS?"
+        edited.parse.value_type = "number"
+        tab.apply_entry_edit(edited)
+        self.assertIsInstance(tab.grid.tile("sp"), ValueTileWidget)
+
+
 class DashboardTabBindingTests(DashboardTabTestBase):
     def test_unbound_by_default(self) -> None:
         tab = self.make_tab(volt_entry())
@@ -1699,6 +1907,79 @@ class DashboardEntryDialogTests(unittest.TestCase):
         self.assertIn("Command must not be empty", dialog.error_label.text())
 
         dialog.on_command_input.setText("OUTP ON")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 1)
+        dialog.deleteLater()
+
+    def test_setpoint_kind_shows_setpoint_shape(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+        from ComPort_Zone.ui.dashboard_tiles import SetpointTileWidget
+
+        entry = DashboardEntry(
+            label="Voltage",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(command_template="VOLT {value}"),
+        )
+        dialog = DashboardEntryDialog(entry, context=self.control_context())
+        self.assertEqual(dialog.tile_kind_combo.currentData(), "setpoint")
+        self.assertFalse(dialog.setpoint_box.isHidden())
+        # Other writing groups stay hidden.
+        self.assertTrue(dialog.control_box.isHidden())
+        # Source row + response/rules tab hidden because writing tile.
+        self.assertFalse(dialog._is_row_visible(dialog.source_combo))
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.RESPONSE_TAB))
+        # The preview tile is the real SetpointTileWidget.
+        self.assertIsInstance(dialog.preview_tile, SetpointTileWidget)
+        self.assertEqual(dialog.enabled_check.text(), "Enable this setpoint")
+        dialog.deleteLater()
+
+    def test_setpoint_values_round_trip(self) -> None:
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        entry = DashboardEntry(
+            label="Voltage",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(
+                min_value=0.0,
+                max_value=24.0,
+                step=0.5,
+                decimals=1,
+                unit="V",
+                command_template="VOLT {value}",
+                watch_entry_id="vmeas",
+                confirm=True,
+            ),
+        )
+        context = self.control_context()  # carries the candidate
+        dialog = DashboardEntryDialog(entry, context=context)
+        result = dialog.values()
+        self.assertTrue(result.is_setpoint())
+        self.assertEqual(result.setpoint.command_template, "VOLT {value}")
+        self.assertEqual(result.setpoint.max_value, 24.0)
+        self.assertEqual(result.setpoint.step, 0.5)
+        self.assertEqual(result.setpoint.decimals, 1)
+        self.assertEqual(result.setpoint.unit, "V")
+        # No control spec leaked.
+        self.assertEqual(result.control, ControlSpec())
+        # Polling fields cleared.
+        self.assertEqual(result.command, "")
+        self.assertEqual(result.rules, [])
+        dialog.deleteLater()
+
+    def test_setpoint_validation_blocks_bad_template(self) -> None:
+        dialog = DashboardEntryDialog(context=self.control_context())
+        index = dialog.tile_kind_combo.findData("setpoint")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        # Empty template — OK gated.
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 0)
+        self.assertIn("Command template", dialog.error_label.text())
+        # Missing placeholder.
+        dialog.setpoint_template_input.setText("VOLT")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 0)
+        # Fix and re-validate.
+        dialog.setpoint_template_input.setText("VOLT {value}")
         dialog._accept_if_valid()
         self.assertEqual(dialog.result(), 1)
         dialog.deleteLater()

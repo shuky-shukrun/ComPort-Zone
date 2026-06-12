@@ -19,17 +19,24 @@ from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
 from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPushButton,
+    QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 from ..dashboard_history import Sample
-from ..dashboard_models import MAX_TILE_SPAN, DashboardEntry
+from ..dashboard_models import (
+    MAX_TILE_SPAN,
+    DashboardEntry,
+    format_setpoint_value,
+)
 from ..themes import ThemePalette
 from .dashboard_sparkline import SparklineWidget
 from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM
@@ -451,10 +458,220 @@ class ControlTileWidget(TileFrame):
             _repolish(self.button)
 
 
+class SetpointTileWidget(TileFrame):
+    """Numeric setpoint with slider + typeable field + optional readback
+    (v3, FR-63..FR-67).
+
+    The slider drives an integer step index; the spinbox carries the
+    actual float value. Both bind to ``_value`` and update each other
+    through ``_setting_value`` to short-circuit any infinite recurse.
+    Send (▶) stages the value on the tab and emits
+    ``activateRequested`` — same funnel control tiles use, so the
+    master-arm gate, the per-tile confirm, and the per-session FIFO
+    dispatcher all fire for free.
+    """
+
+    def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
+        super().__init__(entry, parent)
+        self._pending = False
+        self._setting_value = False  # re-entry guard for slider<->spinbox
+        self._readback_text = ""
+        self._readback_state = "neutral"
+        self._readback_color = ""
+
+        spec = entry.setpoint
+        self._value: float = spec.clamp(spec.min_value)
+
+        self.slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.slider.setObjectName("tileSetpointSlider")
+        self.slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self.spin = QDoubleSpinBox(self)
+        self.spin.setObjectName("tileSetpointSpin")
+        self.spin.setKeyboardTracking(False)
+        self.spin.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self.send_button = QPushButton("▶", self)
+        self.send_button.setObjectName("tileSetpointSend")
+        self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.send_button.setFixedWidth(36)
+        self.send_button.clicked.connect(
+            lambda: self.activateRequested.emit(self.entry_id)
+        )
+
+        self.readback_label = QLabel("", self)
+        self.readback_label.setObjectName("tileSetpointReadback")
+        self.readback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.readback_label.setWordWrap(False)
+        self.readback_label.setVisible(False)
+
+        slider_row = QHBoxLayout()
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.setSpacing(SPACE_SM)
+        slider_row.addWidget(self.slider, 1)
+
+        spin_row = QHBoxLayout()
+        spin_row.setContentsMargins(0, 0, 0, 0)
+        spin_row.setSpacing(SPACE_SM)
+        spin_row.addWidget(self.spin, 1)
+        spin_row.addWidget(self.send_button)
+
+        self.body_layout.addLayout(slider_row)
+        self.body_layout.addLayout(spin_row)
+        self.body_layout.addWidget(self.readback_label)
+
+        self.slider.valueChanged.connect(self._slider_changed)
+        self.spin.valueChanged.connect(self._spin_changed)
+        self._apply_spec(spec)
+
+    # ------------------------------------------------------------- public
+
+    def update_entry(self, entry: DashboardEntry) -> None:
+        super().update_entry(entry)
+        self._apply_spec(entry.setpoint)
+        self._refresh_send_enabled()
+
+    def _render_runtime(self, runtime: TileRuntime) -> bool:
+        return False  # state border / tooltip / timestamp come from TileFrame
+
+    @property
+    def value(self) -> float:
+        """Float setpoint currently shown (slider + spinbox)."""
+        return self._value
+
+    @property
+    def pending(self) -> bool:
+        return self._pending
+
+    def set_pending(self, pending: bool) -> None:
+        if self._pending != pending:
+            self._pending = pending
+            self._refresh_send_enabled()
+            if pending and self.send_button.text() != "…":
+                self.send_button.setText("…")
+            elif not pending and self.send_button.text() == "…":
+                self.send_button.setText("▶")
+
+    def set_value(self, value: float) -> None:
+        """External setter (used by the dialog preview + arm-change paths)."""
+        clamped = self._entry.setpoint.clamp(value)
+        if clamped != self._value:
+            self._value = clamped
+            self._sync_widgets()
+
+    def set_readback(self, value_text: str, state: str, color: str) -> None:
+        """Push the watched entry's latest value into the readback line."""
+        self._readback_text = value_text
+        self._readback_state = state
+        self._readback_color = color
+        self._refresh_readback()
+
+    def clear_readback(self) -> None:
+        self._readback_text = ""
+        self._refresh_readback()
+
+    def set_edit_mode(self, enabled: bool) -> None:
+        super().set_edit_mode(enabled)
+        # Mouse-transparent so drag-to-place still works.
+        for widget in (self.slider, self.spin, self.send_button):
+            widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, enabled)
+        self._refresh_send_enabled()
+
+    # ----------------------------------------------------------- internals
+
+    def _apply_spec(self, spec) -> None:
+        """Reconfigure slider/spinbox to match a (possibly edited) spec."""
+        # Compute step count carefully — guard against degenerate specs.
+        span = max(spec.max_value - spec.min_value, spec.step)
+        steps = max(1, round(span / spec.step))
+        self._setting_value = True
+        try:
+            self.slider.setRange(0, steps)
+            self.spin.setRange(spec.min_value, spec.max_value)
+            self.spin.setSingleStep(spec.step)
+            self.spin.setDecimals(spec.decimals)
+            self.spin.setSuffix(f" {spec.unit}" if spec.unit else "")
+            self._value = spec.clamp(self._value)
+            self._sync_widgets()
+            self.readback_label.setVisible(bool(spec.watch_entry_id))
+            if not spec.watch_entry_id:
+                self.clear_readback()
+        finally:
+            self._setting_value = False
+        self._refresh_send_enabled()
+
+    def _slider_changed(self, step_index: int) -> None:
+        if self._setting_value:
+            return
+        spec = self._entry.setpoint
+        value = spec.clamp(spec.min_value + step_index * spec.step)
+        self._value = value
+        # Push to spinbox without re-entering this slot.
+        self._setting_value = True
+        try:
+            self.spin.setValue(value)
+        finally:
+            self._setting_value = False
+
+    def _spin_changed(self, value: float) -> None:
+        if self._setting_value:
+            return
+        spec = self._entry.setpoint
+        clamped = spec.clamp(value)
+        self._value = clamped
+        self._setting_value = True
+        try:
+            if clamped != value:
+                # User typed out of range — clamp visually too.
+                self.spin.setValue(clamped)
+            self.slider.setValue(self._step_index_for(clamped))
+        finally:
+            self._setting_value = False
+
+    def _step_index_for(self, value: float) -> int:
+        spec = self._entry.setpoint
+        if spec.step <= 0:
+            return 0
+        return max(0, min(self.slider.maximum(), round((value - spec.min_value) / spec.step)))
+
+    def _sync_widgets(self) -> None:
+        self.slider.setValue(self._step_index_for(self._value))
+        self.spin.setValue(self._value)
+
+    def _refresh_send_enabled(self) -> None:
+        enabled = self._entry.enabled and not self._pending and not self.edit_mode
+        self.send_button.setEnabled(enabled)
+        for widget in (self.slider, self.spin):
+            widget.setEnabled(self._entry.enabled and not self.edit_mode)
+
+    def _refresh_readback(self) -> None:
+        spec = self._entry.setpoint
+        if not spec.watch_entry_id:
+            self.readback_label.setVisible(False)
+            return
+        unit = f" {spec.unit}" if spec.unit else ""
+        if self._readback_text:
+            text = f"→ {self._readback_text}{unit} measured"
+        else:
+            text = f"→ — {unit.strip()} measured".rstrip()
+        self.readback_label.setText(text)
+        self.readback_label.setVisible(True)
+        # Borrow the state property surface so QSS picks the right color.
+        _set_state_property(self.readback_label, self._readback_state)
+        _apply_custom_style(self.readback_label, "color: {color};", self._readback_color)
+
+    def rendered_command(self) -> str:
+        """The exact wire string a Send right now would produce. Used by
+        the tab when staging the pending value AND by tests."""
+        return self._entry.setpoint.render_command(self._value)
+
+
 TILE_CLASSES: dict[str, type[TileFrame]] = {
     "value": ValueTileWidget,
     "led": LedTileWidget,
     "control": ControlTileWidget,
+    "setpoint": SetpointTileWidget,
 }
 
 

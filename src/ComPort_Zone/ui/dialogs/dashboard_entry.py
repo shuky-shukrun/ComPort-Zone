@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -44,10 +45,14 @@ from ...dashboard_models import (
     MIN_POLL_INTERVAL_MS,
     MIN_POLL_TIMEOUT_MS,
     RULE_STATES,
+    SETPOINT_MAX_DECIMALS,
+    SETPOINT_MIN_DECIMALS,
     ColorRule,
     ControlSpec,
     DashboardEntry,
+    EnumSpec,
     ParseRule,
+    SetpointSpec,
 )
 from ...dashboard_parse import CompiledParseRule, evaluate_rules, format_tile_value, parse_response
 from ...models import LINE_ENDINGS, utc_now_iso
@@ -68,6 +73,8 @@ TILE_KIND_LABELS = (
     ("value", "Value tile"),
     ("led", "LED indicator"),
     ("control", "Control button"),
+    ("setpoint", "Numeric setpoint"),
+    ("enum", "Enum / dropdown"),
 )
 POLL_MODE_LABELS = (("interval", "Every interval"), ("on_connect", "Once on connect"))
 SOURCE_LABELS = (("poll", "Polled command"), ("derived", "Computed from other tiles"))
@@ -249,6 +256,57 @@ class DashboardEntryDialog(QDialog):
         control_form.addRow("", self.confirm_check)
         self._control_form = control_form
 
+        # --- setpoint (v3, FR-63..FR-67) ---------------------------------
+        spec_initial = original.setpoint
+        self.setpoint_min_spin = QDoubleSpinBox(self)
+        self.setpoint_min_spin.setRange(-1e9, 1e9)
+        self.setpoint_min_spin.setDecimals(SETPOINT_MAX_DECIMALS)
+        self.setpoint_min_spin.setValue(spec_initial.min_value)
+        self.setpoint_max_spin = QDoubleSpinBox(self)
+        self.setpoint_max_spin.setRange(-1e9, 1e9)
+        self.setpoint_max_spin.setDecimals(SETPOINT_MAX_DECIMALS)
+        self.setpoint_max_spin.setValue(spec_initial.max_value)
+        self.setpoint_step_spin = QDoubleSpinBox(self)
+        self.setpoint_step_spin.setRange(1e-6, 1e9)
+        self.setpoint_step_spin.setDecimals(SETPOINT_MAX_DECIMALS)
+        self.setpoint_step_spin.setValue(spec_initial.step)
+        self.setpoint_decimals_spin = QSpinBox(self)
+        self.setpoint_decimals_spin.setRange(SETPOINT_MIN_DECIMALS, SETPOINT_MAX_DECIMALS)
+        self.setpoint_decimals_spin.setValue(spec_initial.decimals)
+        self.setpoint_unit_input = QLineEdit(spec_initial.unit, self)
+        self.setpoint_unit_input.setPlaceholderText("V, °C, rpm…")
+        self.setpoint_template_input = QLineEdit(spec_initial.command_template, self)
+        self.setpoint_template_input.setPlaceholderText("VOLT {value} — {value} is required")
+        self.setpoint_watch_combo = ChevronComboBox(self)
+        self.setpoint_watch_combo.addItem("None — no readback", "")
+        stored_setpoint_watch = spec_initial.watch_entry_id
+        setpoint_watch_listed = False
+        for watch_id, watch_label in self._context.watch_candidates:
+            self.setpoint_watch_combo.addItem(watch_label, watch_id)
+            if watch_id == stored_setpoint_watch:
+                setpoint_watch_listed = True
+        if stored_setpoint_watch and not setpoint_watch_listed:
+            self.setpoint_watch_combo.addItem(
+                f"{stored_setpoint_watch} (missing)", stored_setpoint_watch
+            )
+        self._select_data(self.setpoint_watch_combo, stored_setpoint_watch)
+        self.setpoint_confirm_check = QCheckBox(
+            "Ask for confirmation before sending", self
+        )
+        self.setpoint_confirm_check.setChecked(spec_initial.confirm)
+
+        self.setpoint_box = QGroupBox("Setpoint", self)
+        setpoint_form = QFormLayout(self.setpoint_box)
+        setpoint_form.addRow("Minimum", self.setpoint_min_spin)
+        setpoint_form.addRow("Maximum", self.setpoint_max_spin)
+        setpoint_form.addRow("Step", self.setpoint_step_spin)
+        setpoint_form.addRow("Decimals", self.setpoint_decimals_spin)
+        setpoint_form.addRow("Unit", self.setpoint_unit_input)
+        setpoint_form.addRow("Command", self.setpoint_template_input)
+        setpoint_form.addRow("Readback from", self.setpoint_watch_combo)
+        setpoint_form.addRow("", self.setpoint_confirm_check)
+        self._setpoint_form = setpoint_form
+
         # --- parse rule ---------------------------------------------------
         self.parse_kind_combo = ChevronComboBox(self)
         for kind, label in PARSE_KIND_LABELS:
@@ -343,6 +401,7 @@ class DashboardEntryDialog(QDialog):
         general_layout.setContentsMargins(SPACE_MD, SPACE_MD, SPACE_MD, SPACE_MD)
         general_layout.addLayout(general_form)
         general_layout.addWidget(self.control_box)
+        general_layout.addWidget(self.setpoint_box)
         general_layout.addStretch(1)
 
         polling_form = QFormLayout()
@@ -427,6 +486,16 @@ class DashboardEntryDialog(QDialog):
         self.enabled_check.toggled.connect(self._refresh_preview)
         self.control_mode_combo.currentIndexChanged.connect(self._refresh_preview)
         self.rules_table.cellChanged.connect(lambda *_: self._refresh_preview())
+        # v3 setpoint fields all feed the preview tile.
+        for spin in (
+            self.setpoint_min_spin,
+            self.setpoint_max_spin,
+            self.setpoint_step_spin,
+            self.setpoint_decimals_spin,
+        ):
+            spin.valueChanged.connect(lambda *_: self._refresh_preview())
+        self.setpoint_unit_input.textChanged.connect(self._refresh_preview)
+        self.setpoint_template_input.textChanged.connect(self._refresh_preview)
         self._preview_ready = True
         self._refresh_schedule_enablement()
         self._refresh_control_enablement()
@@ -456,10 +525,16 @@ class DashboardEntryDialog(QDialog):
         self.stale_spin.setEnabled(is_interval)
 
     def _current_shape(self) -> str:
-        """Which of the three entry shapes the dialog is editing: a control
-        tile (kind wins), a derived entry, or a polled command."""
-        if self.tile_kind_combo.currentData() == "control":
+        """Which of the five entry shapes the dialog is editing: control
+        button/toggle, setpoint, enum (all kind-wins), a derived entry,
+        or a polled command (default)."""
+        kind = self.tile_kind_combo.currentData()
+        if kind == "control":
             return "control"
+        if kind == "setpoint":
+            return "setpoint"
+        if kind == "enum":
+            return "enum"
         if self.source_combo.currentData() == "derived":
             return "derived"
         return "poll"
@@ -481,22 +556,30 @@ class DashboardEntryDialog(QDialog):
         is_poll = shape == "poll"
         is_derived = shape == "derived"
         is_control = shape == "control"
-        self._set_row_visible(self.source_combo, not is_control)
+        is_setpoint = shape == "setpoint"
+        is_enum = shape == "enum"
+        is_writable = is_control or is_setpoint or is_enum
+        self._set_row_visible(self.source_combo, not is_writable)
         self._set_row_visible(self.expression_container, is_derived)
         for field_widget in self._schedule_fields:
             self._set_row_visible(field_widget, is_poll)
         for field_widget in self._send_fields:
             self._set_row_visible(field_widget, not is_derived)
         self._parse_box.setVisible(is_poll)
-        self._rules_box.setVisible(not is_control)
+        self._rules_box.setVisible(not is_writable)
         self.control_box.setVisible(is_control)
+        self.setpoint_box.setVisible(is_setpoint)
         # Pages with nothing left to offer disappear entirely.
         self.tabs.setTabVisible(self.POLLING_TAB, not is_derived)
-        self.tabs.setTabVisible(self.RESPONSE_TAB, not is_control)
+        self.tabs.setTabVisible(self.RESPONSE_TAB, not is_writable)
         if not self.tabs.isTabVisible(self.tabs.currentIndex()):
             self.tabs.setCurrentIndex(self.GENERAL_TAB)
         if is_control:
             caption = "Enable this control"
+        elif is_setpoint:
+            caption = "Enable this setpoint"
+        elif is_enum:
+            caption = "Enable this selector"
         elif is_derived:
             caption = "Update this tile"
         else:
@@ -772,9 +855,12 @@ class DashboardEntryDialog(QDialog):
         shape = self._current_shape()
         is_derived = shape == "derived"
         is_control = shape == "control"
+        is_setpoint = shape == "setpoint"
+        is_enum = shape == "enum"
+        is_writable = is_control or is_setpoint or is_enum
         # Fields the current shape does not use are cleared: that keeps
         # the serialized form sparse and display_label() sensible
-        # (FR-59/FR-61); a control's commands live in its ControlSpec.
+        # (FR-59/FR-61/FR-63); each writing kind carries its own spec.
         if is_control:
             control_mode = str(self.control_mode_combo.currentData() or "button")
             is_toggle = control_mode == "toggle"
@@ -787,11 +873,24 @@ class DashboardEntryDialog(QDialog):
             )
         else:
             control = ControlSpec()
+        if is_setpoint:
+            setpoint = SetpointSpec(
+                min_value=float(self.setpoint_min_spin.value()),
+                max_value=float(self.setpoint_max_spin.value()),
+                step=float(self.setpoint_step_spin.value()),
+                decimals=int(self.setpoint_decimals_spin.value()),
+                unit=self.setpoint_unit_input.text().strip(),
+                command_template=self.setpoint_template_input.text().strip(),
+                watch_entry_id=str(self.setpoint_watch_combo.currentData() or ""),
+                confirm=self.setpoint_confirm_check.isChecked(),
+            )
+        else:
+            setpoint = SetpointSpec()
         return DashboardEntry(
             id=original.id,
             label=self.label_input.text().strip(),
             unit=self.unit_input.text().strip(),
-            command="" if (is_derived or is_control) else self.command_input.text().strip(),
+            command="" if (is_derived or is_writable) else self.command_input.text().strip(),
             send_mode=self.mode_combo.currentText(),
             line_ending_override=str(self.line_ending_combo.currentData() or ""),
             interval_ms=self.interval_spin.value(),
@@ -799,11 +898,11 @@ class DashboardEntryDialog(QDialog):
             stale_after_ms=self.stale_spin.value(),
             parse=self._parse_rule_from_fields(),
             tile=tile,
-            rules=[] if is_control else self._rules_from_table(),
+            rules=[] if is_writable else self._rules_from_table(),
             enabled=self.enabled_check.isChecked(),
             poll_mode=(
                 "interval"
-                if is_derived or is_control
+                if is_derived or is_writable
                 else str(self.poll_mode_combo.currentData() or "interval")
             ),
             target_endpoint="" if is_derived else str(self.target_combo.currentData() or ""),
@@ -812,6 +911,8 @@ class DashboardEntryDialog(QDialog):
             show_sparkline=original.show_sparkline,
             alerts_enabled=original.alerts_enabled,
             control=control,
+            setpoint=setpoint,
+            enum_spec=original.enum_spec,  # v3-T4 will fill the enum branch
             created_at=original.created_at or utc_now_iso(),
             updated_at=utc_now_iso(),
         )
