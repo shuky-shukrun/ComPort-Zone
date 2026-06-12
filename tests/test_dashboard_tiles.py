@@ -8,10 +8,16 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from ComPort_Zone.dashboard_models import DashboardConfig, DashboardEntry, TilePlacement
+from ComPort_Zone.dashboard_models import (
+    ControlSpec,
+    DashboardConfig,
+    DashboardEntry,
+    TilePlacement,
+)
 from ComPort_Zone.themes import THEMES
 from ComPort_Zone.ui.dashboard_grid import GRID_GUTTER, DashboardGridWidget
 from ComPort_Zone.ui.dashboard_tiles import (
+    ControlTileWidget,
     LedTileWidget,
     TileRuntime,
     ValueTileWidget,
@@ -55,10 +61,13 @@ class TileWidgetTests(unittest.TestCase):
     def test_factory_picks_widget_kind(self) -> None:
         value_tile = create_tile(make_entry("a", kind="value"))
         led_tile = create_tile(make_entry("b", kind="led"))
+        control_tile = create_tile(make_entry("c", kind="control"))
         self.assertIsInstance(value_tile, ValueTileWidget)
         self.assertIsInstance(led_tile, LedTileWidget)
+        self.assertIsInstance(control_tile, ControlTileWidget)
         value_tile.deleteLater()
         led_tile.deleteLater()
+        control_tile.deleteLater()
 
     def test_value_tile_renders_runtime(self) -> None:
         tile = ValueTileWidget(make_entry("a"))
@@ -110,6 +119,31 @@ class TileWidgetTests(unittest.TestCase):
         enabled_entry = make_entry("a")
         tile.update_entry(enabled_entry)
         self.assertEqual(tile.property("entryEnabled"), "true")
+        tile.deleteLater()
+
+    def test_value_tile_custom_color_set_and_cleared(self) -> None:
+        # FR-62: a rule's custom color overrides the theme state color via
+        # a scoped inline style, and clears back to the QSS cascade.
+        tile = ValueTileWidget(make_entry("a"))
+        colored = TileRuntime(entry_id="a", value_text="5 V", state="ok", color="#12ab34")
+        self.assertTrue(tile.update_runtime(colored))
+        self.assertIn("#12ab34", tile.value_label.styleSheet())
+
+        plain = TileRuntime(entry_id="a", value_text="5 V", state="ok")
+        self.assertTrue(tile.update_runtime(plain))
+        self.assertEqual(tile.value_label.styleSheet(), "")
+        tile.deleteLater()
+
+    def test_led_tile_custom_color_set_and_cleared(self) -> None:
+        tile = LedTileWidget(make_entry("a", kind="led"))
+        colored = TileRuntime(entry_id="a", state="warn", color="#ab1234")
+        tile.update_runtime(colored)
+        self.assertIn("#ab1234", tile.lamp.styleSheet())
+        self.assertIn("#ab1234", tile.caption_label.styleSheet())
+
+        tile.update_runtime(TileRuntime(entry_id="a", state="warn"))
+        self.assertEqual(tile.lamp.styleSheet(), "")
+        self.assertEqual(tile.caption_label.styleSheet(), "")
         tile.deleteLater()
 
 

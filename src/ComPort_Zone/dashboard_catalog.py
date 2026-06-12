@@ -16,10 +16,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .dashboard_models import DashboardConfig
+from .dashboard_models import DashboardConfig, dashboard_uses_v2_features
 
 DASHBOARD_EXPORT_KEY = "comport_zone_dashboards"
-DASHBOARD_EXPORT_VERSION = 1
+DASHBOARD_EXPORT_VERSION = 2
+# Payloads are stamped with the lowest version that can represent them, so
+# v1 builds keep importing exports of v1-shaped dashboards (FR-39).
+DASHBOARD_EXPORT_V1 = 1
 
 
 class DashboardCatalog:
@@ -123,8 +126,13 @@ class DashboardImportResult:
 
 def export_dashboards_payload(configs: list[DashboardConfig]) -> dict[str, Any]:
     """Versioned JSON-serializable payload for one or more dashboards."""
+    version = (
+        DASHBOARD_EXPORT_VERSION
+        if any(dashboard_uses_v2_features(config) for config in configs)
+        else DASHBOARD_EXPORT_V1
+    )
     return {
-        DASHBOARD_EXPORT_KEY: DASHBOARD_EXPORT_VERSION,
+        DASHBOARD_EXPORT_KEY: version,
         "dashboards": [config.to_dict() for config in configs],
     }
 

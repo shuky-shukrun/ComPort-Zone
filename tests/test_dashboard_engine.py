@@ -13,6 +13,8 @@ from ComPort_Zone.dashboard_engine import (
     POLL_OK,
     POLL_SEND_ERROR,
     POLL_TIMEOUT,
+    ControlRequest,
+    ControlResult,
     DashboardPollScheduler,
     PollRequest,
     PollResult,
@@ -206,6 +208,86 @@ class SchedulerTests(unittest.TestCase):
         self.scheduler.complete("ghost")
         self.scheduler.skip("ghost")
 
+    def test_on_connect_never_time_due(self) -> None:
+        entry = make_entry("a")
+        entry.poll_mode = "on_connect"
+        self.scheduler.configure([entry])
+        self.clock.advance_ms(3_600_000)
+        self.assertEqual(due_ids(self.scheduler), [])
+
+    def test_trigger_now_arms_on_connect_entry_once(self) -> None:
+        entry = make_entry("a")
+        entry.poll_mode = "on_connect"
+        self.scheduler.configure([entry])
+        self.assertTrue(self.scheduler.trigger_now("a"))
+        self.assertEqual(due_ids(self.scheduler), ["a"])
+        # Completion re-arms to "never": no follow-up poll.
+        self.scheduler.complete("a")
+        self.clock.advance_ms(3_600_000)
+        self.assertEqual(due_ids(self.scheduler), [])
+
+    def test_trigger_now_respects_in_flight_and_disabled(self) -> None:
+        entry = make_entry("a")
+        self.scheduler.configure([entry])
+        self.scheduler.collect_due()  # in flight
+        self.assertFalse(self.scheduler.trigger_now("a"))
+        disabled = make_entry("b", enabled=False)
+        self.scheduler.configure([disabled])
+        self.assertFalse(self.scheduler.trigger_now("b"))
+        self.assertFalse(self.scheduler.trigger_now("ghost"))
+
+    def test_trigger_now_on_interval_entry_polls_immediately_then_fixed_delay(self) -> None:
+        self.scheduler.configure([make_entry("a", interval_ms=1000)])
+        self.scheduler.collect_due()
+        self.scheduler.complete("a")  # next due in 1 s
+        self.assertTrue(self.scheduler.trigger_now("a"))
+        self.assertEqual(due_ids(self.scheduler), ["a"])
+        self.scheduler.complete("a")
+        self.clock.advance_ms(999)
+        self.assertEqual(due_ids(self.scheduler), [])
+        self.clock.advance_ms(1)
+        self.assertEqual(due_ids(self.scheduler), ["a"])
+
+    def test_trigger_now_delay_staggers(self) -> None:
+        first = make_entry("a")
+        second = make_entry("b")
+        first.poll_mode = "on_connect"
+        second.poll_mode = "on_connect"
+        self.scheduler.configure([first, second])
+        self.scheduler.trigger_now("a", delay_s=0.0)
+        self.scheduler.trigger_now("b", delay_s=0.025)
+        self.assertEqual(due_ids(self.scheduler), ["a"])
+        self.clock.advance_ms(25)
+        self.assertEqual(due_ids(self.scheduler), ["b"])
+
+    def test_restagger_subset_spaces_only_given_ids(self) -> None:
+        self.scheduler.configure([make_entry("a"), make_entry("b"), make_entry("c")])
+        self.scheduler.set_paused("user", True)
+        self.clock.advance_ms(60_000)
+        # Manually restagger only a and c (e.g. one session's entries).
+        self.scheduler.set_paused("user", False)
+        # All were restaggered on resume; force them overdue again:
+        self.clock.advance_ms(60_000)
+        self.scheduler.restagger(["a", "c"])
+        due = due_ids(self.scheduler)
+        # b stayed overdue (due immediately); a is due now; c is +25ms.
+        self.assertIn("a", due)
+        self.assertIn("b", due)
+        self.assertNotIn("c", due)
+        self.clock.advance_ms(25)
+        self.assertEqual(due_ids(self.scheduler), ["c"])
+
+    def test_configure_poll_mode_change_resets_slot(self) -> None:
+        entry = make_entry("a", interval_ms=1000)
+        self.scheduler.configure([entry])
+        self.scheduler.collect_due()
+        self.scheduler.complete("a")
+        switched = make_entry("a", interval_ms=1000)
+        switched.poll_mode = "on_connect"
+        self.scheduler.configure([switched])
+        self.clock.advance_ms(3_600_000)
+        self.assertEqual(due_ids(self.scheduler), [])
+
 
 class ExplodingTransport(FakeSerialTransport):
     def send_text(
@@ -393,6 +475,61 @@ class DispatcherTransactionTests(unittest.TestCase):
         self.assertLessEqual(len(result.raw_window), MAX_RX_WINDOW_CHARS)
 
 
+def make_control_request(
+    entry_id: str = "ctl",
+    command: str = "OUTP ON",
+    results: Queue | None = None,
+    dashboard_id: str = "dash",
+    send_mode: str = "Text",
+) -> ControlRequest:
+    return ControlRequest(
+        dashboard_id=dashboard_id,
+        entry_id=entry_id,
+        command=command,
+        send_mode=send_mode,
+        result_queue=results if results is not None else Queue(),
+    )
+
+
+class ControlExecutionTests(unittest.TestCase):
+    """Threadless tests driving _execute_control synchronously."""
+
+    def setUp(self) -> None:
+        self.fake = FakeSerialTransport()
+        self.fake.connect(object())
+        self.dispatcher = SessionPollDispatcher(transport=self.fake)
+
+    def test_control_send_ok(self) -> None:
+        result = self.dispatcher._execute_control(make_control_request())
+        self.assertEqual(result.status, POLL_OK)
+        self.assertEqual(self.fake.sent_text, [("OUTP ON", None)])
+        self.assertEqual(self.fake.sent_sources, [DASHBOARD_TX_SOURCE])
+
+    def test_control_hex_send(self) -> None:
+        request = make_control_request(command="AB CD", send_mode="Hex Bytes")
+        result = self.dispatcher._execute_control(request)
+        self.assertEqual(result.status, POLL_OK)
+        self.assertEqual(self.fake.sent_bytes, [b"\xab\xcd"])
+
+    def test_control_send_error(self) -> None:
+        exploding = ExplodingTransport()
+        exploding.connect(object())
+        dispatcher = SessionPollDispatcher(transport=exploding)
+        result = dispatcher._execute_control(make_control_request())
+        self.assertEqual(result.status, POLL_SEND_ERROR)
+        self.assertIn("port gone", result.error)
+
+    def test_control_opens_and_closes_journal_window(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        before = datetime.now(timezone.utc).astimezone()
+        self.dispatcher._execute_control(make_control_request())
+        journal = self.dispatcher.traffic_journal
+        self.assertTrue(journal.covers(before + timedelta(milliseconds=1)))
+        far = datetime.now(timezone.utc).astimezone() + timedelta(seconds=60)
+        self.assertFalse(journal.covers(far))
+
+
 class DispatcherThreadTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fake = FakeSerialTransport()
@@ -466,6 +603,52 @@ class DispatcherThreadTests(unittest.TestCase):
         self.fake.queue_response(b"5\r\n")
         self.assertTrue(self.dispatcher.submit(make_request(make_entry("a"), results)))
         self.assertEqual(results.get(timeout=1.0).status, POLL_OK)
+
+    def test_polls_and_controls_share_one_fifo(self) -> None:
+        self.dispatcher.start()
+        results: Queue = Queue()
+        self.fake.queue_response(b"1\r\n")
+        self.assertTrue(self.dispatcher.submit(make_request(make_entry("a", command="POLL1"), results)))
+        self.assertTrue(self.dispatcher.submit_control(make_control_request(command="CTL", results=results)))
+        self.fake.queue_response(b"2\r\n")
+        self.assertTrue(self.dispatcher.submit(make_request(make_entry("b", command="POLL2"), results)))
+        received = [results.get(timeout=1.0) for _ in range(3)]
+        self.assertEqual(
+            [type(result).__name__ for result in received],
+            ["PollResult", "ControlResult", "PollResult"],
+        )
+        self.assertEqual(
+            self.fake.sent_text,
+            [("POLL1", None), ("CTL", None), ("POLL2", None)],
+        )
+
+    def test_cancelled_control_is_answered_with_control_result(self) -> None:
+        self.dispatcher.start()
+        results: Queue = Queue()
+        blocker = make_request(make_entry("slow", timeout_ms=200), results, dashboard_id="keep")
+        control = make_control_request(results=results, dashboard_id="drop")
+        self.assertTrue(self.dispatcher.submit(blocker))
+        self.assertTrue(self.dispatcher.submit_control(control))
+        self.dispatcher.cancel_dashboard("drop")
+        received = [results.get(timeout=1.0) for _ in range(2)]
+        control_results = [r for r in received if isinstance(r, ControlResult)]
+        self.assertEqual(len(control_results), 1)
+        self.assertEqual(control_results[0].status, POLL_CANCELLED)
+        # The cancelled control never reached the wire.
+        self.assertEqual(self.fake.sent_text, [("READ:slow?", None)])
+
+    def test_stop_flushes_queued_control_as_cancelled(self) -> None:
+        self.dispatcher.start()
+        results: Queue = Queue()
+        blocker = make_request(make_entry("slow", timeout_ms=2000), results)
+        control = make_control_request(results=results)
+        self.assertTrue(self.dispatcher.submit(blocker))
+        self.assertTrue(self.dispatcher.submit_control(control))
+        self.dispatcher.stop(timeout=1.5)
+        received = [results.get(timeout=1.0) for _ in range(2)]
+        statuses = {result.status for result in received}
+        self.assertEqual(statuses, {POLL_CANCELLED})
+        self.assertTrue(any(isinstance(result, ControlResult) for result in received))
 
 
 if __name__ == "__main__":

@@ -44,10 +44,12 @@ class ParseOutcome:
 
 @dataclass(frozen=True, slots=True)
 class RuleVerdict:
-    """Semantic state a tile should render, plus optional label override."""
+    """Semantic state a tile should render, plus optional label override
+    and custom color (FR-62; empty means the theme's state color)."""
 
     state: str
     label: str = ""
+    color: str = ""
 
 
 class CompiledParseRule:
@@ -148,7 +150,7 @@ def evaluate_rules(rules: Sequence[ColorRule], outcome: ParseOutcome) -> RuleVer
         return RuleVerdict("error")
     for rule in rules:
         if _rule_matches(rule, outcome):
-            return RuleVerdict(rule.state, rule.label)
+            return RuleVerdict(rule.state, rule.label, rule.color)
     return RuleVerdict("neutral")
 
 

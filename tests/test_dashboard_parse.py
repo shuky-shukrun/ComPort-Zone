@@ -176,6 +176,19 @@ class RuleEvaluationTests(unittest.TestCase):
         verdict = evaluate_rules(rules, ParseOutcome(True, "1", None))
         self.assertEqual(verdict.label, "TRIPPED")
 
+    def test_custom_color_carried(self) -> None:
+        rules = [ColorRule(op="eq_text", operand="1", state="ok", color="#12ab34")]
+        verdict = evaluate_rules(rules, ParseOutcome(True, "1", None))
+        self.assertEqual(verdict.color, "#12ab34")
+        # No color on the rule (and non-rule verdicts) -> empty -> theme color.
+        self.assertEqual(
+            evaluate_rules([ColorRule(op="eq_text", operand="1")], ParseOutcome(True, "1", None)).color,
+            "",
+        )
+        self.assertEqual(evaluate_rules([], ParseOutcome(False)).color, "")
+        error_outcome = ParseOutcome(True, "ERR", None, error="Not a number: 'ERR'")
+        self.assertEqual(evaluate_rules(rules, error_outcome).color, "")
+
     def test_empty_rules_neutral(self) -> None:
         self.assertEqual(evaluate_rules([], ParseOutcome(True, "x", None)).state, "neutral")
 

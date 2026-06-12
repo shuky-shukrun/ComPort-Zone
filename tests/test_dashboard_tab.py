@@ -7,12 +7,15 @@ import threading
 import time
 import unittest
 from collections.abc import Callable
+from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ComPort_Zone.dashboard_engine import DISPATCHER_THREAD_NAME
 from ComPort_Zone.dashboard_models import (
     ColorRule,
+    ControlSpec,
     DashboardConfig,
     DashboardEntry,
     DashboardTabState,
@@ -22,6 +25,7 @@ from ComPort_Zone.dashboard_models import (
 from ComPort_Zone.themes import THEMES
 from ComPort_Zone.ui.dashboard_tab import DashboardTabWidget
 from ComPort_Zone.ui.dashboard_targets import DashboardRunCoordinator
+from ComPort_Zone.ui.dashboard_tiles import ControlTileWidget, ValueTileWidget
 from ComPort_Zone.ui.dialogs.dashboard_entry import DashboardEntryDialog
 
 from tests.fakes.fake_terminal_session import FakeTerminalSession
@@ -175,6 +179,9 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         self.assertEqual(tab.bind_chip.property("state"), "polling")
 
     def test_disconnect_pauses_and_blocks_sends(self) -> None:
+        # v2: disconnect gates the session's entries at submit time
+        # (FR-55) — no sends happen, the chip reads paused, the entries
+        # simply stay due (no scheduler-level "connection" reason).
         tab = self.make_tab(volt_entry())
         tab.bind_to_session(1)
         self.clock.advance_ms(50)
@@ -183,9 +190,9 @@ class DashboardTabPollingTests(DashboardTabTestBase):
 
         self.session.transport.disconnect()
         tab._tick()
-        self.assertEqual(tab.scheduler.paused_reasons, frozenset({"connection"}))
         self.assertEqual(tab.bind_chip.text(), "Paused — disconnected")
         self.assertEqual(tab.bind_chip.property("state"), "paused")
+        self.assertNotIn("connection", tab.scheduler.paused_reasons)
 
         self.clock.advance_ms(10_000)
         tab._tick()
@@ -197,12 +204,12 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         tab.bind_to_session(1)
         self.session.transport.disconnect()
         tab._tick()
-        self.assertIn("connection", tab.scheduler.paused_reasons)
+        self.assertEqual(tab.bind_chip.property("state"), "paused")
 
         self.session.transport.connect(object())
         self.clock.advance_ms(5000)
         self.run_poll_round(tab, b"12.5\r\n")
-        self.assertEqual(tab.scheduler.paused_reasons, frozenset())
+        self.assertEqual(tab.bind_chip.property("state"), "polling")
         value_tile = tab.grid.tile("volts")
         assert value_tile is not None
         self.assertEqual(value_tile.value_label.text(), "12.5 V")
@@ -212,11 +219,15 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         tab.bind_to_session(1)
         self.session.batch_running = True
         tab._tick()
-        self.assertIn("batch", tab.scheduler.paused_reasons)
         self.assertEqual(tab.bind_chip.text(), "Paused — command file running")
-        self.session.batch_running = False
+        self.clock.advance_ms(10_000)
         tab._tick()
-        self.assertEqual(tab.scheduler.paused_reasons, frozenset())
+        self.assertEqual(self.session.transport.sent_text, [])
+
+        self.session.batch_running = False
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.assertEqual(tab.bind_chip.property("state"), "polling")
+        self.assertEqual(len(self.session.transport.sent_text), 1)
 
     def test_user_pause_persists_into_tab_state(self) -> None:
         tab = self.make_tab(volt_entry())
@@ -305,6 +316,529 @@ class DashboardTabPollingTests(DashboardTabTestBase):
         assert value_tile is not None
         self.assertEqual(value_tile.property("tileState"), "error")
         self.assertIn("port vanished", value_tile.toolTip())
+
+    def test_custom_rule_color_applies_and_clears_on_staleness(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="warn", color="#12ab34")]
+        tab = self.make_tab(entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"14.0\r\n")  # matches the colored rule
+        value_tile = tab.grid.tile("volts")
+        assert value_tile is not None
+        self.assertIn("#12ab34", value_tile.value_label.styleSheet())
+
+        # Aging to stale drops the custom color with the verdict (FR-62).
+        tab.set_polling_enabled(False)
+        self.clock.advance_ms(entry.effective_stale_after_ms() + 1000)
+        for _ in range(10):
+            tab._tick()
+        self.assertEqual(value_tile.property("tileState"), "stale")
+        self.assertEqual(value_tile.value_label.styleSheet(), "")
+
+
+class MultiSessionBindingTests(DashboardTabTestBase):
+    """v2 per-entry session binding (FR-54..FR-56) and poll modes."""
+
+    def add_session(self, session_id: int, endpoint: str) -> FakeTerminalSession:
+        session = FakeTerminalSession(session_id, endpoint=endpoint)
+        self.sessions.append(session)
+        return session
+
+    @staticmethod
+    def override_entry(endpoint: str) -> "DashboardEntry":
+        entry = trip_entry()
+        entry.target_endpoint = endpoint
+        return entry
+
+    def test_override_entry_polls_its_own_session(self) -> None:
+        second = self.add_session(2, "COM9")
+        tab = self.make_tab(volt_entry(), self.override_entry("COM9"))
+        tab.bind_to_session(1)
+        self.assertEqual(self.coordinator.dispatcher_count(), 2)
+
+        self.clock.advance_ms(50)
+        self.session.transport.queue_response(b"12.0\r\n")
+        second.transport.queue_response(b"0\r\n")
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 2))
+        tab._tick()
+
+        self.assertEqual(self.session.transport.sent_text, [("MEAS:VOLT?", None)])
+        self.assertEqual(second.transport.sent_text, [("TRIP?", None)])
+
+    def test_one_sessions_disconnect_gates_only_its_entries(self) -> None:
+        second = self.add_session(2, "COM9")
+        tab = self.make_tab(volt_entry(), self.override_entry("COM9"))
+        tab.bind_to_session(1)
+        second.transport.disconnect()
+        self.clock.advance_ms(50)
+
+        self.session.transport.queue_response(b"12.0\r\n")
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 1))
+        tab._tick()
+
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+        self.assertEqual(second.transport.sent_text, [])
+        self.assertIn("Polling COM7", tab.bind_chip.text())
+        self.assertIn("COM9 — disconnected", tab.bind_chip.toolTip())
+
+    def test_batch_on_one_session_gates_only_it(self) -> None:
+        second = self.add_session(2, "COM9")
+        tab = self.make_tab(volt_entry(), self.override_entry("COM9"))
+        tab.bind_to_session(1)
+        second.batch_running = True
+        self.clock.advance_ms(50)
+
+        self.session.transport.queue_response(b"12.0\r\n")
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 1))
+        tab._tick()
+
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+        self.assertEqual(second.transport.sent_text, [])
+        self.assertIn("COM9 — command file running", tab.bind_chip.toolTip())
+
+    def test_unresolved_override_never_submits(self) -> None:
+        tab = self.make_tab(volt_entry(), self.override_entry("COM99"))
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.session.transport.queue_response(b"12.0\r\n")
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 1))
+        tab._tick()
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+        self.assertIn("COM99 — no matching terminal tab", tab.bind_chip.toolTip())
+        self.assertEqual(self.coordinator.dispatcher_count(), 1)
+
+    def test_dispatcher_released_when_override_edited_away(self) -> None:
+        self.add_session(2, "COM9")
+        tab = self.make_tab(volt_entry(), self.override_entry("COM9"))
+        tab.bind_to_session(1)
+        self.assertEqual(self.coordinator.dispatcher_count(), 2)
+
+        edited = self.override_entry("")
+        tab.apply_entry_edit(edited)
+        self.assertEqual(self.coordinator.dispatcher_count(), 1)
+
+    def test_shutdown_releases_all_sessions(self) -> None:
+        self.add_session(2, "COM9")
+        tab = self.make_tab(volt_entry(), self.override_entry("COM9"))
+        tab.bind_to_session(1)
+        self.assertEqual(self.coordinator.dispatcher_count(), 2)
+        tab.shutdown()
+        self.assertEqual(self.coordinator.dispatcher_count(), 0)
+
+    def test_on_connect_fires_once_per_connect_edge(self) -> None:
+        entry = volt_entry()
+        entry.poll_mode = "on_connect"
+        tab = self.make_tab(entry)
+        self.session.transport.queue_response(b"12.0\r\n")
+        tab.bind_to_session(1)  # bind-when-connected counts as an edge
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 1))
+        tab._tick()
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+
+        # No periodic follow-up, ever.
+        self.clock.advance_ms(3_600_000)
+        tab._tick()
+        tab._tick()
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+
+        # Reconnect fires it exactly once more.
+        self.session.transport.disconnect()
+        tab._tick()
+        self.session.transport.connect(object())
+        self.session.transport.queue_response(b"12.5\r\n")
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 1))
+        tab._tick()
+        self.assertEqual(len(self.session.transport.sent_text), 2)
+
+    def test_poll_now_fires_interval_entry_immediately(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.0\r\n")
+        # Not due again (interval 1000 ms)...
+        tab._tick()
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+        # ...but Poll Now arms an immediate one-shot (FR-53).
+        self.assertTrue(tab.poll_now("volts"))
+        self.run_poll_round(tab, b"12.1\r\n")
+        self.assertEqual(len(self.session.transport.sent_text), 2)
+
+    def test_poll_now_rejects_unknown_and_unpollable(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.assertFalse(tab.poll_now("ghost"))
+
+
+def amps_entry(interval_ms: int = 1000) -> DashboardEntry:
+    return DashboardEntry(
+        id="amps",
+        label="Amps",
+        unit="A",
+        command="MEAS:CURR?",
+        interval_ms=interval_ms,
+        timeout_ms=500,
+        parse=ParseRule(kind="line", value_type="number"),
+        tile=TilePlacement(col=1, row=0, kind="value"),
+    )
+
+
+def power_entry(expression: str = "{Volts} * {Amps}") -> DashboardEntry:
+    return DashboardEntry(
+        id="power",
+        label="Power",
+        unit="W",
+        source="derived",
+        expression=expression,
+        tile=TilePlacement(col=2, row=0, kind="value"),
+    )
+
+
+class DerivedTileTests(DashboardTabTestBase):
+    """Derived/math tiles computed from sibling poll results (FR-61)."""
+
+    def test_derived_updates_on_either_input(self) -> None:
+        tab = self.make_tab(volt_entry(), amps_entry(interval_ms=2000), power_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.value_label.text(), "24 W")
+        self.assertEqual(power_tile.toolTip(), "= {Volts} * {Amps}")
+
+        # Only Volts is due next round; Power recomputes with the cached
+        # Amps value — either input refreshes the derived tile.
+        self.clock.advance_ms(1000)
+        self.run_poll_round(tab, b"10.0\r\n")
+        self.assertEqual(power_tile.value_label.text(), "20 W")
+
+        # The expression itself is never sent to a device.
+        self.assertEqual(
+            [text for text, _ in self.session.transport.sent_text],
+            ["MEAS:VOLT?", "MEAS:CURR?", "MEAS:VOLT?"],
+        )
+
+    def test_rules_apply_to_computed_value(self) -> None:
+        entry = power_entry()
+        entry.rules = [ColorRule(op="gt", operand="21", state="warn", label="HIGH")]
+        tab = self.make_tab(volt_entry(), amps_entry(), entry)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.property("tileState"), "warn")
+
+    def test_missing_inputs_render_neutral_waiting(self) -> None:
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry())
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.property("tileState"), "neutral")
+        self.assertEqual(power_tile.value_label.text(), "—")
+        self.assertIn("Waiting for: Volts, Amps", power_tile.toolTip())
+
+    def test_partial_input_keeps_waiting_for_the_rest(self) -> None:
+        idle_amps = amps_entry()
+        idle_amps.enabled = False  # never polls -> Power keeps waiting
+        tab = self.make_tab(volt_entry(), idle_amps, power_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.property("tileState"), "neutral")
+        self.assertIn("Waiting for: Amps", power_tile.toolTip())
+
+    def test_stale_input_makes_derived_stale(self) -> None:
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.value_label.text(), "24 W")
+
+        tab.set_polling_enabled(False)  # inputs now silently age
+        self.clock.advance_ms(volt_entry().effective_stale_after_ms() + 1000)
+        for _ in range(10):
+            tab._tick()
+        volt_tile = tab.grid.tile("volts")
+        assert volt_tile is not None
+        self.assertEqual(volt_tile.property("tileState"), "stale")
+        self.assertEqual(power_tile.property("tileState"), "stale")
+        # The last computed value stays readable while stale (FR-32).
+        self.assertEqual(power_tile.value_label.text(), "24 W")
+
+    def test_disabling_an_input_makes_derived_stale(self) -> None:
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+
+        tab.set_entry_enabled("amps", False)
+        for _ in range(10):  # staleness sweeps run every few ticks
+            tab._tick()
+        self.assertEqual(power_tile.property("tileState"), "stale")
+
+    def test_evaluation_error_renders_error_tile(self) -> None:
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry("{Volts} / {Amps}"))
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.property("tileState"), "error")
+        self.assertIn("Division by zero", power_tile.toolTip())
+
+    def test_unknown_reference_renders_error_tile(self) -> None:
+        tab = self.make_tab(volt_entry(), power_entry("{Ghost} + 1"))
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.property("tileState"), "error")
+        self.assertIn("Unknown reference {Ghost}", power_tile.toolTip())
+
+    def test_rename_rewrites_sibling_expressions(self) -> None:
+        tab = self.make_tab(volt_entry(), amps_entry(), power_entry())
+        tab.bind_to_session(1)
+        renamed = volt_entry()
+        renamed.label = "Rail A"
+        tab.apply_entry_edit(renamed)
+
+        power = tab.config.entry_by_id("power")
+        assert power is not None
+        self.assertEqual(power.expression, "{Rail A} * {Amps}")
+
+        # The rewritten expression still computes.
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"12.0\r\n", b"2.0\r\n")
+        power_tile = tab.grid.tile("power")
+        assert power_tile is not None
+        self.assertEqual(power_tile.value_label.text(), "24 W")
+
+    def test_derived_entry_has_no_poll_now(self) -> None:
+        tab = self.make_tab(volt_entry(), power_entry())
+        tab.bind_to_session(1)
+        self.assertFalse(tab.poll_now("power"))
+
+
+def control_entry(
+    mode: str = "button",
+    *,
+    confirm: bool = False,
+    watch_entry_id: str = "",
+) -> DashboardEntry:
+    return DashboardEntry(
+        id="ctrl",
+        label="Output",
+        control=ControlSpec(
+            mode=mode,
+            on_command="OUTP ON",
+            off_command="OUTP OFF" if mode == "toggle" else "",
+            confirm=confirm,
+            watch_entry_id=watch_entry_id,
+        ),
+        tile=TilePlacement(col=0, row=1, kind="control"),
+    )
+
+
+def outp_state_entry() -> DashboardEntry:
+    """Polled output state whose verdict is "ok" when the device says 1."""
+    return DashboardEntry(
+        id="outp",
+        label="Output state",
+        command="OUTP?",
+        interval_ms=1000,
+        timeout_ms=500,
+        parse=ParseRule(kind="line", value_type="number"),
+        rules=[ColorRule(op="eq_num", operand="1", state="ok", label="ON")],
+        tile=TilePlacement(col=1, row=1, kind="led"),
+    )
+
+
+class ControlTileTests(DashboardTabTestBase):
+    """Control tiles: gated, optionally confirmed sends (FR-59/FR-60)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.status_messages: list[str] = []
+        # Capture coordinator.notify() output for refusal assertions.
+        self.coordinator._set_status = self.status_messages.append
+
+    def test_click_sends_exactly_one_tagged_command(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(tile.pending)
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+        self.assertEqual(self.session.transport.sent_text, [("OUTP ON", None)])
+        self.assertEqual(self.session.transport.sent_sources, ["dashboard"])
+
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        self.assertFalse(tile.pending)
+        self.assertEqual(tile.toolTip(), "Command sent.")
+
+    def test_button_click_routes_through_grid_signal(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+        tile.button.click()
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+        self.assertEqual(self.session.transport.sent_text, [("OUTP ON", None)])
+
+    def test_confirm_default_no_sends_nothing(self) -> None:
+        tab = self.make_tab(control_entry(confirm=True))
+        tab.bind_to_session(1)
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ) as question:
+            self.assertFalse(tab._activate_control("ctrl"))
+        question.assert_called_once()
+        # The fourth positional argument is the default button: No (FR-59).
+        self.assertEqual(
+            question.call_args.args[4], QMessageBox.StandardButton.No
+        )
+        self.assertEqual(self.session.transport.sent_text, [])
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+
+    def test_toggle_sends_off_when_watch_verdict_ok(self) -> None:
+        tab = self.make_tab(outp_state_entry(), control_entry("toggle", watch_entry_id="outp"))
+        tab.bind_to_session(1)
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"1\r\n")  # watch verdict -> ok -> tile ON
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+        self.assertTrue(tile.is_on)
+        self.assertEqual(tile.button.text(), "ON")
+
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 2))
+        self.assertEqual(self.session.transport.sent_text[-1], ("OUTP OFF", None))
+
+    def test_unwatched_toggle_flips_optimistically(self) -> None:
+        tab = self.make_tab(control_entry("toggle"))
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+        self.assertFalse(tile.is_on)
+
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        self.assertTrue(tile.is_on)
+        self.assertEqual(self.session.transport.sent_text, [("OUTP ON", None)])
+
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        self.assertFalse(tile.is_on)
+        self.assertEqual(self.session.transport.sent_text[-1], ("OUTP OFF", None))
+
+    def test_batch_run_blocks_click_with_status(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        self.session.batch_running = True
+        tab._tick()  # refresh the gate snapshot
+        self.assertFalse(tab._activate_control("ctrl"))
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertTrue(any("command file" in text for text in self.status_messages))
+
+    def test_disconnect_blocks_click_with_status(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        self.session.transport.disconnect()
+        tab._tick()
+        self.assertFalse(tab._activate_control("ctrl"))
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertTrue(any("not connected" in text for text in self.status_messages))
+
+    def test_user_pause_does_not_block_click(self) -> None:
+        # A click is explicit intent — only disconnect/batch gate it.
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.set_polling_enabled(False)
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
+
+    def test_disabled_control_refuses_click(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tab.set_entry_enabled("ctrl", False)
+        self.assertFalse(tab._activate_control("ctrl"))
+        self.assertEqual(self.session.transport.sent_text, [])
+
+    def test_edit_mode_makes_button_inert_but_draggable(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+        self.assertTrue(tile.button.isEnabled())
+
+        tab.grid.set_edit_mode(True)
+        self.assertFalse(tile.button.isEnabled())
+        # Press events must pass through to the tile so dragging works.
+        self.assertTrue(
+            tile.button.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        )
+        tab.grid.set_edit_mode(False)
+        self.assertTrue(tile.button.isEnabled())
+        self.assertFalse(
+            tile.button.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        )
+
+    def test_controls_are_never_scheduled(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(60_000)
+        tab._tick()
+        tab._tick()
+        self.assertEqual(self.session.transport.sent_text, [])
+        self.assertFalse(tab.poll_now("ctrl"))
+
+    def test_send_error_marks_error_state(self) -> None:
+        tab = self.make_tab(control_entry())
+        tab.bind_to_session(1)
+
+        def explode(text: str, line_ending_override=None, *, source: str = "") -> None:
+            raise RuntimeError("port vanished")
+
+        self.session.transport.send_text = explode  # type: ignore[method-assign]
+        self.assertTrue(tab._activate_control("ctrl"))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+        self.assertFalse(tile.pending)
+        self.assertEqual(tile.property("tileState"), "error")
+        self.assertIn("port vanished", tile.toolTip())
+
+    def test_kind_change_recreates_tile_class(self) -> None:
+        tab = self.make_tab(control_entry())
+        self.assertIsInstance(tab.grid.tile("ctrl"), ControlTileWidget)
+        edited = control_entry()
+        edited.tile.kind = "value"
+        edited.command = "OUTP?"  # value tiles need a polled command
+        edited.control = ControlSpec()
+        tab.apply_entry_edit(edited)
+        self.assertIsInstance(tab.grid.tile("ctrl"), ValueTileWidget)
 
 
 class DashboardTabBindingTests(DashboardTabTestBase):
@@ -503,6 +1037,288 @@ class DashboardEntryDialogTests(unittest.TestCase):
         dialog._accept_if_valid()
         self.assertEqual(dialog.result(), 0)
         self.assertIn("even", dialog.error_label.text())
+        dialog.deleteLater()
+
+    def test_target_combo_lists_sessions_and_stale_override(self) -> None:
+        from ComPort_Zone.ui.dialogs.dashboard_entry import EntryDialogContext
+
+        entry = volt_entry()
+        entry.target_endpoint = "COM77"  # not among the open terminals
+        context = EntryDialogContext(
+            bind_targets=[("COM7", "Terminal 1 · Serial", True), ("COM9", "Terminal 2 · Serial", False)]
+        )
+        dialog = DashboardEntryDialog(entry, context=context)
+        labels = [dialog.target_combo.itemText(i) for i in range(dialog.target_combo.count())]
+        self.assertEqual(labels[0], "Dashboard binding (default)")
+        self.assertIn("Terminal 1 · Serial", labels)
+        self.assertIn("Terminal 2 · Serial (disconnected)", labels)
+        self.assertIn("COM77 (not open)", labels)
+        # The stored override is preselected, and values() keeps it.
+        self.assertEqual(dialog.target_combo.currentData(), "COM77")
+        self.assertEqual(dialog.values().target_endpoint, "COM77")
+        dialog.deleteLater()
+
+    def test_poll_mode_round_trip_and_interval_enablement(self) -> None:
+        entry = volt_entry()
+        entry.poll_mode = "on_connect"
+        dialog = DashboardEntryDialog(entry)
+        self.assertEqual(dialog.poll_mode_combo.currentData(), "on_connect")
+        self.assertFalse(dialog.interval_spin.isEnabled())
+        self.assertEqual(dialog.values().poll_mode, "on_connect")
+        index = dialog.poll_mode_combo.findData("interval")
+        dialog.poll_mode_combo.setCurrentIndex(index)
+        self.assertTrue(dialog.interval_spin.isEnabled())
+        dialog.deleteLater()
+
+    @staticmethod
+    def derived_context() -> "EntryDialogContext":
+        from ComPort_Zone.ui.dialogs.dashboard_entry import EntryDialogContext
+
+        return EntryDialogContext(
+            expression_resolver={"volts": ["volts"], "amps": ["amps"]},
+            expression_sources={"volts": "poll", "amps": "poll"},
+            reference_labels=["Volts", "Amps"],
+        )
+
+    def test_source_switch_to_derived_hides_poll_rows(self) -> None:
+        dialog = DashboardEntryDialog(volt_entry(), context=self.derived_context())
+        self.assertTrue(dialog._is_row_visible(dialog.command_input))
+        self.assertFalse(dialog._is_row_visible(dialog.expression_container))
+        self.assertTrue(dialog.tabs.isTabVisible(dialog.POLLING_TAB))
+
+        index = dialog.source_combo.findData("derived")
+        dialog.source_combo.setCurrentIndex(index)
+        self.assertFalse(dialog._is_row_visible(dialog.command_input))
+        self.assertFalse(dialog._is_row_visible(dialog.interval_spin))
+        self.assertFalse(dialog._is_row_visible(dialog.target_combo))
+        self.assertTrue(dialog._is_row_visible(dialog.expression_container))
+        self.assertTrue(dialog._parse_box.isHidden())
+        # A derived entry has no polling page at all.
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.POLLING_TAB))
+        self.assertTrue(dialog.tabs.isTabVisible(dialog.RESPONSE_TAB))
+        self.assertEqual(dialog.enabled_check.text(), "Update this tile")
+        dialog.deleteLater()
+
+    def test_values_for_derived_clear_poll_fields(self) -> None:
+        entry = volt_entry()
+        entry.target_endpoint = "COM9"
+        entry.poll_mode = "on_connect"
+        dialog = DashboardEntryDialog(entry, context=self.derived_context())
+        index = dialog.source_combo.findData("derived")
+        dialog.source_combo.setCurrentIndex(index)
+        dialog.expression_input.setText("{Amps} * 2")
+
+        result = dialog.values()
+        self.assertEqual(result.source, "derived")
+        self.assertEqual(result.expression, "{Amps} * 2")
+        self.assertEqual(result.command, "")
+        self.assertEqual(result.target_endpoint, "")
+        self.assertEqual(result.poll_mode, "interval")
+
+        # Switching back restores the (still typed-in) poll fields and
+        # drops the expression.
+        index = dialog.source_combo.findData("poll")
+        dialog.source_combo.setCurrentIndex(index)
+        result = dialog.values()
+        self.assertEqual(result.source, "poll")
+        self.assertEqual(result.command, "MEAS:VOLT?")
+        self.assertEqual(result.expression, "")
+        dialog.deleteLater()
+
+    def test_derived_round_trip(self) -> None:
+        entry = DashboardEntry(
+            id="power", label="Power", source="derived", expression="{Volts} * {Amps}"
+        )
+        dialog = DashboardEntryDialog(entry, context=self.derived_context())
+        self.assertEqual(dialog.source_combo.currentData(), "derived")
+        self.assertEqual(dialog.expression_input.text(), "{Volts} * {Amps}")
+        result = dialog.values()
+        self.assertEqual(result.id, "power")
+        self.assertEqual(result.source, "derived")
+        self.assertEqual(result.expression, "{Volts} * {Amps}")
+        dialog.deleteLater()
+
+    def test_expression_errors_block_accept(self) -> None:
+        entry = DashboardEntry(label="Power", source="derived", expression="")
+        dialog = DashboardEntryDialog(entry, context=self.derived_context())
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 0)
+        self.assertIn("Expression must not be empty", dialog.error_label.text())
+
+        dialog.expression_input.setText("{Ghost} + 1")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 0)
+        self.assertIn("Unknown reference {Ghost}", dialog.error_label.text())
+
+        dialog.expression_input.setText("{Volts} * {Amps}")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 1)
+        dialog.deleteLater()
+
+    def test_expression_hint_validates_live(self) -> None:
+        entry = DashboardEntry(label="Power", source="derived", expression="")
+        dialog = DashboardEntryDialog(entry, context=self.derived_context())
+        self.assertIn("Available: {Volts}, {Amps}", dialog.expression_hint.text())
+
+        dialog.expression_input.setText("{Ghost} + 1")
+        self.assertIn("Unknown reference {Ghost}", dialog.expression_hint.text())
+
+        dialog.expression_input.setText("{Volts} * {Amps}")
+        self.assertIn("Valid — uses 2 input tile(s)", dialog.expression_hint.text())
+        dialog.deleteLater()
+
+    @staticmethod
+    def control_context() -> "EntryDialogContext":
+        from ComPort_Zone.ui.dialogs.dashboard_entry import EntryDialogContext
+
+        return EntryDialogContext(watch_candidates=[("outp", "Output state")])
+
+    def test_control_kind_shows_control_shape(self) -> None:
+        entry = control_entry("toggle", confirm=True, watch_entry_id="outp")
+        dialog = DashboardEntryDialog(entry, context=self.control_context())
+        self.assertEqual(dialog.tile_kind_combo.currentData(), "control")
+        self.assertFalse(dialog.control_box.isHidden())
+        self.assertFalse(dialog._is_row_visible(dialog.command_input))
+        self.assertFalse(dialog._is_row_visible(dialog.source_combo))
+        self.assertFalse(dialog._is_row_visible(dialog.interval_spin))
+        self.assertTrue(dialog._is_row_visible(dialog.mode_combo))
+        self.assertTrue(dialog._is_row_visible(dialog.target_combo))
+        self.assertTrue(dialog._parse_box.isHidden())
+        self.assertTrue(dialog._rules_box.isHidden())
+        # No response page for controls; sending details stay on Polling.
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.RESPONSE_TAB))
+        self.assertTrue(dialog.tabs.isTabVisible(dialog.POLLING_TAB))
+        self.assertEqual(dialog.enabled_check.text(), "Enable this control")
+        self.assertEqual(dialog.control_mode_combo.currentData(), "toggle")
+        self.assertEqual(dialog.watch_combo.currentData(), "outp")
+        self.assertTrue(dialog.confirm_check.isChecked())
+        dialog.deleteLater()
+
+    def test_control_values_round_trip(self) -> None:
+        entry = control_entry("toggle", confirm=True, watch_entry_id="outp")
+        dialog = DashboardEntryDialog(entry, context=self.control_context())
+        result = dialog.values()
+        self.assertTrue(result.is_control())
+        self.assertEqual(result.control.mode, "toggle")
+        self.assertEqual(result.control.on_command, "OUTP ON")
+        self.assertEqual(result.control.off_command, "OUTP OFF")
+        self.assertTrue(result.control.confirm)
+        self.assertEqual(result.control.watch_entry_id, "outp")
+        self.assertEqual(result.command, "")
+        self.assertEqual(result.rules, [])
+        self.assertEqual(result.source, "poll")
+        dialog.deleteLater()
+
+    def test_control_validation_blocks_empty_command(self) -> None:
+        dialog = DashboardEntryDialog(context=self.control_context())
+        index = dialog.tile_kind_combo.findData("control")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        self.assertFalse(dialog.control_box.isHidden())
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 0)
+        self.assertIn("Command must not be empty", dialog.error_label.text())
+
+        dialog.on_command_input.setText("OUTP ON")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 1)
+        dialog.deleteLater()
+
+    def test_button_mode_drops_off_command_and_watch(self) -> None:
+        entry = control_entry("toggle", watch_entry_id="outp")
+        dialog = DashboardEntryDialog(entry, context=self.control_context())
+        # Toggle-only rows hide when the mode flips to button…
+        index = dialog.control_mode_combo.findData("button")
+        dialog.control_mode_combo.setCurrentIndex(index)
+        self.assertFalse(dialog._control_form.isRowVisible(dialog.off_command_input))
+        self.assertFalse(dialog._control_form.isRowVisible(dialog.watch_combo))
+        # …and values() drops what the user can no longer see.
+        result = dialog.values()
+        self.assertEqual(result.control.mode, "button")
+        self.assertEqual(result.control.off_command, "")
+        self.assertEqual(result.control.watch_entry_id, "")
+        dialog.deleteLater()
+
+    def test_preview_tile_follows_kind_and_sample(self) -> None:
+        dialog = DashboardEntryDialog(volt_entry())
+        assert dialog.preview_tile is not None
+        self.assertIsInstance(dialog.preview_tile, ValueTileWidget)
+        self.assertEqual(dialog.preview_tile.value_label.text(), "—")
+
+        dialog.sample_input.setPlainText("13.5\r\n")
+        self.assertEqual(dialog.preview_tile.value_label.text(), "13.5 V")
+        self.assertEqual(dialog.preview_tile.property("tileState"), "warn")
+
+        index = dialog.tile_kind_combo.findData("led")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        from ComPort_Zone.ui.dashboard_tiles import LedTileWidget
+
+        self.assertIsInstance(dialog.preview_tile, LedTileWidget)
+
+        index = dialog.tile_kind_combo.findData("control")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        self.assertIsInstance(dialog.preview_tile, ControlTileWidget)
+        dialog.deleteLater()
+
+    def test_preview_reflects_label_and_span(self) -> None:
+        dialog = DashboardEntryDialog(volt_entry())
+        assert dialog.preview_tile is not None
+        self.assertEqual(dialog.preview_tile.title_label.text(), "Volts")
+        dialog.label_input.setText("Rail A")
+        self.assertEqual(dialog.preview_tile.title_label.text(), "Rail A")
+
+        # setFixedSize applies to the size constraints; geometry only
+        # follows once the (unshown) dialog runs a layout pass.
+        narrow = dialog.preview_tile.minimumWidth()
+        dialog._select_data(dialog.span_combo, (2, 1))
+        self.assertEqual(dialog.span_combo.currentData(), (2, 1))
+        self.assertGreater(dialog.preview_tile.minimumWidth(), narrow)
+        dialog.deleteLater()
+
+    def test_wide_tile_span_preselected_in_dialog(self) -> None:
+        # Regression: Qt's findData compares Python tuples by identity, so
+        # editing a wide tile used to silently show (and save) 1×1.
+        entry = volt_entry()
+        entry.tile.span_w = 2
+        dialog = DashboardEntryDialog(entry)
+        self.assertEqual(dialog.span_combo.currentData(), (2, 1))
+        result = dialog.values()
+        self.assertEqual((result.tile.span_w, result.tile.span_h), (2, 1))
+        dialog.deleteLater()
+
+    def test_preview_cancel_leaves_original_placement_untouched(self) -> None:
+        entry = volt_entry()  # tile kind "value", span 1×1
+        dialog = DashboardEntryDialog(entry)
+        index = dialog.tile_kind_combo.findData("led")
+        dialog.tile_kind_combo.setCurrentIndex(index)  # preview refreshes via values()
+        dialog._select_data(dialog.span_combo, (2, 2))
+        # The dialog was not accepted: the entry must be unchanged.
+        self.assertEqual(entry.tile.kind, "value")
+        self.assertEqual((entry.tile.span_w, entry.tile.span_h), (1, 1))
+        dialog.deleteLater()
+
+    def test_rule_color_round_trip_and_preview(self) -> None:
+        entry = volt_entry()
+        entry.rules = [ColorRule(op="gt", operand="13.0", state="warn", color="#12ab34")]
+        dialog = DashboardEntryDialog(entry)
+        # Round-trip through the table's swatch column (FR-62).
+        button = dialog.rules_table.cellWidget(0, 4)
+        self.assertEqual(button.property("ruleColor"), "#12ab34")
+        self.assertEqual(dialog.values().rules[0].color, "#12ab34")
+        # Matching sample -> the custom color reaches the preview tile.
+        dialog.sample_input.setPlainText("14.0\r\n")
+        assert isinstance(dialog.preview_tile, ValueTileWidget)
+        self.assertIn("#12ab34", dialog.preview_tile.value_label.styleSheet())
+        # Resetting the swatch clears it everywhere.
+        dialog._set_rule_color(button, "")
+        self.assertEqual(dialog.values().rules[0].color, "")
+        self.assertEqual(dialog.preview_tile.value_label.styleSheet(), "")
+        dialog.deleteLater()
+
+    def test_dialog_stays_compact(self) -> None:
+        # The pre-tabs layout grew past screen height (OK off-screen).
+        # Tabs + preview must fit a 1366x768 work area (~730 px).
+        dialog = DashboardEntryDialog(volt_entry())
+        self.assertLess(dialog.sizeHint().height(), 740)
         dialog.deleteLater()
 
 

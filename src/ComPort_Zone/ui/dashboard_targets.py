@@ -101,6 +101,10 @@ class DashboardRunCoordinator:
         self._target_icon_color = target_icon_color
         self._slots: dict[int, _DispatcherSlot] = {}
 
+    def notify(self, text: str) -> None:
+        """Surface a one-line message in the workspace status bar."""
+        self._set_status(text)
+
     # ------------------------------------------------------------- targets
 
     def bind_targets(self) -> list[DashboardBindTarget]:

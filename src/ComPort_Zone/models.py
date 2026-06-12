@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .dashboard_models import DashboardConfig, DashboardTabState, default_dashboards
+from .dashboard_models import (
+    DashboardConfig,
+    DashboardTabState,
+    dashboard_uses_v2_features,
+    default_dashboards,
+)
 
 LINE_ENDINGS = {
     "None": "",
@@ -34,13 +39,16 @@ EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
 # Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
 EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
 EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
-SETTINGS_SCHEMA_VERSION = 5
+SETTINGS_SCHEMA_VERSION = 6
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 # Feature floors: a saved payload declares the highest floor of any
 # feature it actually contains, so files without LAN/dashboard content
 # stay readable by older builds (FR-39 in dashboard-view-requirements).
 LAN_SCHEMA_FLOOR = 4
 DASHBOARD_SCHEMA_FLOOR = 5
+# Dashboard v2 capabilities (poll modes, per-entry targets, derived/control
+# entries, rule colors, CSV logging) — a v1-shaped library keeps floor 5.
+DASHBOARD_V2_SCHEMA_FLOOR = 6
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
@@ -539,6 +547,8 @@ class AppSettings:
             floors.append(LAN_SCHEMA_FLOOR)
         if self._uses_dashboards():
             floors.append(DASHBOARD_SCHEMA_FLOOR)
+        if any(dashboard_uses_v2_features(config) for config in self.dashboards):
+            floors.append(DASHBOARD_V2_SCHEMA_FLOOR)
         return max(floors)
 
     def to_dict(self) -> dict[str, Any]:

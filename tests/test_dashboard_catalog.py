@@ -92,9 +92,19 @@ class TransferPayloadTests(unittest.TestCase):
     def test_export_import_round_trip(self) -> None:
         configs = [make_config("PSU"), make_config("Scope")]
         payload = export_dashboards_payload(configs)
-        self.assertEqual(payload[DASHBOARD_EXPORT_KEY], DASHBOARD_EXPORT_VERSION)
+        # v1-shaped dashboards export as payload version 1 so v1 builds can
+        # still import them (FR-39).
+        self.assertEqual(payload[DASHBOARD_EXPORT_KEY], 1)
         restored = import_dashboards_payload(json.loads(json.dumps(payload)))
         self.assertEqual([config.to_dict() for config in restored], [config.to_dict() for config in configs])
+
+    def test_export_stamps_version_2_for_v2_features(self) -> None:
+        config = make_config("PSU")
+        config.entries[0].poll_mode = "on_connect"
+        payload = export_dashboards_payload([config])
+        self.assertEqual(payload[DASHBOARD_EXPORT_KEY], DASHBOARD_EXPORT_VERSION)
+        restored = import_dashboards_payload(json.loads(json.dumps(payload)))
+        self.assertEqual(restored[0].entries[0].poll_mode, "on_connect")
 
     def test_import_rejects_non_object(self) -> None:
         with self.assertRaises(ValueError):

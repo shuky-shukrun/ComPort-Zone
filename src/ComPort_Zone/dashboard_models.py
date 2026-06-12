@@ -26,11 +26,17 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-TILE_KINDS = ("value", "led")
+TILE_KINDS = ("value", "led", "control")
 # Semantic states a tile can render. "ok"/"warn"/"fail" come from color
 # rules, "neutral" is the no-rule-matched default, "stale" means no recent
 # successful poll, "error" covers send/parse failures.
 TILE_STATES = ("ok", "warn", "fail", "neutral", "stale", "error")
+# How an entry gets its value onto the wire/screen (v2):
+POLL_MODES = ("interval", "on_connect")
+ENTRY_SOURCES = ("poll", "derived")
+CONTROL_MODES = ("button", "toggle")
+MAX_EXPRESSION_LENGTH = 256
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 RULE_STATES = ("ok", "warn", "fail")
 COLOR_RULE_OPS = (
     "lt",
@@ -182,6 +188,8 @@ class ColorRule:
     Numeric operators compare against ``operand`` (and ``operand2`` for
     inclusive "between"); textual operators compare the value text.
     ``label`` optionally overrides the displayed state text (e.g. "FAULT").
+    ``color`` (v2) optionally overrides the theme state color (``#rrggbb``)
+    everywhere this rule's verdict renders (FR-62).
     """
 
     op: str = "eq_text"
@@ -189,26 +197,37 @@ class ColorRule:
     operand2: str = ""
     state: str = "ok"
     label: str = ""
+    color: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "op": self.op,
             "operand": self.operand,
             "operand2": self.operand2,
             "state": self.state,
             "label": self.label,
         }
+        # v2 fields serialize sparsely (FR-18): a v1-shaped rule keeps its
+        # exact v1 payload, which keeps v1 builds importing it and the
+        # schema-floor predicate honest.
+        if self.color:
+            payload["color"] = self.color
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ColorRule":
         if not data:
             return cls()
+        color = str(data.get("color", ""))
+        if not _HEX_COLOR.match(color):
+            color = ""
         return cls(
             op=_choice(data.get("op"), COLOR_RULE_OPS, "eq_text"),
             operand=str(data.get("operand", "")),
             operand2=str(data.get("operand2", "")),
             state=_choice(data.get("state"), RULE_STATES, "ok"),
             label=str(data.get("label", "")),
+            color=color,
         )
 
     def validation_errors(self) -> list[str]:
@@ -234,6 +253,66 @@ def _is_number(text: str) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+@dataclass(slots=True)
+class ControlSpec:
+    """Configuration of a control tile (v2, FR-59).
+
+    ``button`` sends ``on_command`` per click; ``toggle`` alternates between
+    ``on_command``/``off_command``, with the visual state following
+    ``watch_entry_id``'s verdict ("ok" renders ON) when set.
+    """
+
+    mode: str = "button"
+    on_command: str = ""
+    off_command: str = ""
+    confirm: bool = False
+    watch_entry_id: str = ""
+
+    def is_default(self) -> bool:
+        return self == ControlSpec()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.mode != "button":
+            payload["mode"] = self.mode
+        if self.on_command:
+            payload["on_command"] = self.on_command
+        if self.off_command:
+            payload["off_command"] = self.off_command
+        if self.confirm:
+            payload["confirm"] = True
+        if self.watch_entry_id:
+            payload["watch_entry_id"] = self.watch_entry_id
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ControlSpec":
+        if not data:
+            return cls()
+        return cls(
+            mode=_choice(data.get("mode"), CONTROL_MODES, "button"),
+            on_command=str(data.get("on_command", "")),
+            off_command=str(data.get("off_command", "")),
+            confirm=bool(data.get("confirm", False)),
+            watch_entry_id=str(data.get("watch_entry_id", "")),
+        )
+
+    def validation_errors(self, send_mode: str) -> list[str]:
+        errors: list[str] = []
+        if not self.on_command.strip():
+            noun = "Command" if self.mode == "button" else "ON command"
+            errors.append(f"{noun} must not be empty.")
+        if self.mode == "toggle" and not self.off_command.strip():
+            errors.append("OFF command must not be empty for a toggle.")
+        if send_mode == "Hex Bytes":
+            for name, command in (("Command", self.on_command), ("OFF command", self.off_command)):
+                if command.strip():
+                    hex_error = hex_payload_error(command)
+                    if hex_error:
+                        errors.append(f"{name}: {hex_error}")
+        return errors
 
 
 @dataclass(slots=True)
@@ -270,7 +349,12 @@ class TilePlacement:
 
 @dataclass(slots=True)
 class DashboardEntry:
-    """One polled command and everything about how it is shown."""
+    """One dashboard entry and everything about how it is shown.
+
+    v1 entries are polled commands. v2 adds poll modes (FR-52), per-entry
+    target sessions (FR-54), derived/computed entries (FR-61), and control
+    tiles (FR-59) — all via additive, sparsely-serialized fields.
+    """
 
     id: str = field(default_factory=lambda: uuid4().hex)
     label: str = ""
@@ -285,11 +369,34 @@ class DashboardEntry:
     tile: TilePlacement = field(default_factory=TilePlacement)
     rules: list[ColorRule] = field(default_factory=list)
     enabled: bool = True
+    # --- v2 fields (sparse in to_dict) ---------------------------------
+    poll_mode: str = "interval"
+    target_endpoint: str = ""
+    source: str = "poll"
+    expression: str = ""
+    show_sparkline: bool = True
+    alerts_enabled: bool = True
+    control: ControlSpec = field(default_factory=ControlSpec)
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
     def display_label(self) -> str:
-        return self.label or self.command
+        return self.label or self.command or self.expression
+
+    def is_control(self) -> bool:
+        return self.tile.kind == "control"
+
+    def is_derived(self) -> bool:
+        return self.source == "derived"
+
+    def is_polled(self) -> bool:
+        return not self.is_control() and not self.is_derived()
+
+    def is_numeric(self) -> bool:
+        """Whether this entry produces numeric values (history/sparkline/chart)."""
+        if self.is_control():
+            return False
+        return self.is_derived() or self.parse.value_type == "number"
 
     def effective_stale_after_ms(self) -> int:
         """Staleness threshold; 0 means automatic (FR-32)."""
@@ -298,7 +405,7 @@ class DashboardEntry:
         return max(3 * self.interval_ms, self.interval_ms + self.timeout_ms + 1000)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "id": self.id,
             "label": self.label,
             "unit": self.unit,
@@ -315,6 +422,23 @@ class DashboardEntry:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        # v2 fields: written only when non-default (FR-18 sparse contract).
+        if self.poll_mode != "interval":
+            payload["poll_mode"] = self.poll_mode
+        if self.target_endpoint:
+            payload["target_endpoint"] = self.target_endpoint
+        if self.source != "poll":
+            payload["source"] = self.source
+        if self.expression:
+            payload["expression"] = self.expression
+        if not self.show_sparkline:
+            payload["show_sparkline"] = False
+        if not self.alerts_enabled:
+            payload["alerts_enabled"] = False
+        control_payload = self.control.to_dict()
+        if control_payload:
+            payload["control"] = control_payload
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "DashboardEntry":
@@ -323,6 +447,7 @@ class DashboardEntry:
         line_ending = str(data.get("line_ending_override", ""))
         if line_ending not in LINE_ENDING_OVERRIDE_OPTIONS:
             line_ending = ""
+        expression = str(data.get("expression", ""))[:MAX_EXPRESSION_LENGTH]
         return cls(
             id=str(data.get("id") or uuid4().hex),
             label=str(data.get("label", "")).strip(),
@@ -347,26 +472,48 @@ class DashboardEntry:
             tile=TilePlacement.from_dict(_dict_value(data.get("tile"))),
             rules=[ColorRule.from_dict(_dict_value(item)) for item in _list_value(data.get("rules"))],
             enabled=bool(data.get("enabled", True)),
+            poll_mode=_choice(data.get("poll_mode"), POLL_MODES, "interval"),
+            target_endpoint=str(data.get("target_endpoint", "")).strip(),
+            source=_choice(data.get("source"), ENTRY_SOURCES, "poll"),
+            expression=expression,
+            show_sparkline=bool(data.get("show_sparkline", True)),
+            alerts_enabled=bool(data.get("alerts_enabled", True)),
+            control=ControlSpec.from_dict(_dict_value(data.get("control"))),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
 
     def validation_errors(self) -> list[str]:
-        """Human-readable problems that should block saving this entry."""
+        """Human-readable problems that should block saving this entry.
+
+        Branches by entry kind: control entries validate their ControlSpec
+        instead of command/schedule/parse; derived entries validate the
+        expression's presence and size (reference resolution needs sibling
+        context and lives in ``dashboard_expr``).
+        """
         errors: list[str] = []
-        if not self.command.strip():
-            errors.append("Command must not be empty.")
-        elif self.send_mode == "Hex Bytes":
-            hex_error = hex_payload_error(self.command)
-            if hex_error:
-                errors.append(hex_error)
-        if self.interval_ms < MIN_POLL_INTERVAL_MS:
-            errors.append(f"Poll interval must be at least {MIN_POLL_INTERVAL_MS} ms.")
-        if not MIN_POLL_TIMEOUT_MS <= self.timeout_ms <= MAX_POLL_TIMEOUT_MS:
-            errors.append(
-                f"Timeout must be between {MIN_POLL_TIMEOUT_MS} and {MAX_POLL_TIMEOUT_MS} ms."
-            )
-        errors.extend(self.parse.validation_errors())
+        if self.is_control():
+            errors.extend(self.control.validation_errors(self.send_mode))
+            return errors
+        if self.is_derived():
+            if not self.expression.strip():
+                errors.append("Expression must not be empty.")
+            elif len(self.expression) > MAX_EXPRESSION_LENGTH:
+                errors.append(f"Expression is longer than {MAX_EXPRESSION_LENGTH} characters.")
+        else:
+            if not self.command.strip():
+                errors.append("Command must not be empty.")
+            elif self.send_mode == "Hex Bytes":
+                hex_error = hex_payload_error(self.command)
+                if hex_error:
+                    errors.append(hex_error)
+            if self.interval_ms < MIN_POLL_INTERVAL_MS:
+                errors.append(f"Poll interval must be at least {MIN_POLL_INTERVAL_MS} ms.")
+            if not MIN_POLL_TIMEOUT_MS <= self.timeout_ms <= MAX_POLL_TIMEOUT_MS:
+                errors.append(
+                    f"Timeout must be between {MIN_POLL_TIMEOUT_MS} and {MAX_POLL_TIMEOUT_MS} ms."
+                )
+            errors.extend(self.parse.validation_errors())
         for index, rule in enumerate(self.rules, start=1):
             errors.extend(f"Rule {index}: {error}" for error in rule.validation_errors())
         return errors
@@ -382,6 +529,10 @@ class DashboardConfig:
     columns: int = DEFAULT_GRID_COLUMNS
     entries: list[DashboardEntry] = field(default_factory=list)
     favorite: bool = False
+    # v2: CSV value logging persists with the dashboard so unattended
+    # capture survives restarts (FR-49). Sparse in to_dict.
+    csv_log_enabled: bool = False
+    csv_log_path: str = ""
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
@@ -395,7 +546,7 @@ class DashboardConfig:
         # Entries serialize in visual order so saved/exported files diff
         # deterministically (FR-35).
         ordered = sorted(self.entries, key=lambda entry: (entry.tile.row, entry.tile.col, entry.id))
-        return {
+        payload: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
@@ -405,6 +556,11 @@ class DashboardConfig:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.csv_log_enabled:
+            payload["csv_log_enabled"] = True
+        if self.csv_log_path:
+            payload["csv_log_path"] = self.csv_log_path
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "DashboardConfig":
@@ -425,6 +581,8 @@ class DashboardConfig:
                 for item in _list_value(data.get("entries"))
             ],
             favorite=bool(data.get("favorite", False)),
+            csv_log_enabled=bool(data.get("csv_log_enabled", False)),
+            csv_log_path=str(data.get("csv_log_path", "")),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
@@ -550,15 +708,41 @@ def grid_row_count(entries: list[DashboardEntry]) -> int:
     return max(entry.tile.row + entry.tile.span_h for entry in entries)
 
 
+def entry_uses_v2_features(entry: DashboardEntry) -> bool:
+    """Whether this entry uses any persisted v2 capability.
+
+    Shared by the settings schema floor and the export-payload version
+    stamp (FR-39): a v1-shaped entry must answer False so untouched
+    libraries stay readable by v1 builds. Deliberately excludes
+    ``show_sparkline``/``alerts_enabled`` — losing them on a downgrade
+    round-trip is cosmetic only.
+    """
+    return (
+        entry.poll_mode != "interval"
+        or bool(entry.target_endpoint)
+        or entry.source == "derived"
+        or entry.tile.kind == "control"
+        or any(rule.color for rule in entry.rules)
+    )
+
+
+def dashboard_uses_v2_features(config: DashboardConfig) -> bool:
+    return (
+        config.csv_log_enabled
+        or bool(config.csv_log_path)
+        or any(entry_uses_v2_features(entry) for entry in config.entries)
+    )
+
+
 def example_dashboard() -> DashboardConfig:
     """The SCPI starter dashboard seeded on first run (favorited so it
     shows up on the Favorites page immediately)."""
     return DashboardConfig(
         name="Example Dashboard",
         description=(
-            "Shipped example: instrument identity and firmware polled every "
-            "minute, output state polled continuously as an ON/OFF lamp. "
-            "Bind it to a connected terminal tab to start polling."
+            "Shipped example: instrument identity and firmware fetched once "
+            "on every connect, output state polled continuously as an ON/OFF "
+            "lamp. Bind it to a connected terminal tab to start polling."
         ),
         favorite=True,
         columns=4,
@@ -566,7 +750,7 @@ def example_dashboard() -> DashboardConfig:
             DashboardEntry(
                 label="Identity",
                 command="*IDN?",
-                interval_ms=60_000,
+                poll_mode="on_connect",
                 timeout_ms=1000,
                 parse=ParseRule(kind="line", value_type="text"),
                 tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="value"),
@@ -586,7 +770,7 @@ def example_dashboard() -> DashboardConfig:
             DashboardEntry(
                 label="Firmware",
                 command="SYST:FIRM?",
-                interval_ms=60_000,
+                poll_mode="on_connect",
                 timeout_ms=1000,
                 parse=ParseRule(kind="line", value_type="text"),
                 tile=TilePlacement(col=0, row=1, span_w=2, span_h=1, kind="value"),

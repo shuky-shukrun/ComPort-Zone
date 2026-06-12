@@ -784,6 +784,18 @@ def build_stylesheet(theme: ThemePalette) -> str:
         {{ color: {red}; }}
     QLabel#tileStateCaption[tileState="stale"] {{ color: {stale_ink}; }}
 
+    QPushButton#tileControlButton {{
+        background: {hover}; color: {tx};
+        border: 1px solid {bd_strong}; border-radius: {RADIUS_MD}px;
+        font-weight: 700; padding: 6px 18px; min-height: 26px;
+    }}
+    QPushButton#tileControlButton:hover {{ background: {press_bg}; border-color: {accent}; }}
+    QPushButton#tileControlButton:pressed {{ background: {press_bg}; }}
+    QPushButton#tileControlButton:disabled {{ color: {tx_faint}; background: transparent; }}
+    QPushButton#tileControlButton[controlState="on"] {{
+        background: {ok_bg}; color: {green}; border-color: {ok_bd};
+    }}
+
     QLabel#dashboardBindChip {{
         background: {elevated}; color: {tx2};
         border: 1px solid {bd}; border-radius: {RADIUS_MD}px;
@@ -800,6 +812,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QLabel#dashboardEmptyTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
     QLabel#dashboardEmptyHint {{ color: {tx2}; }}
+    QWidget#dashboardPreviewStrip {{
+        background: {bg};
+        border: 1px solid {bd_soft};
+        border-radius: {RADIUS_MD}px;
+    }}
     """)
 
     return "\n".join(parts)

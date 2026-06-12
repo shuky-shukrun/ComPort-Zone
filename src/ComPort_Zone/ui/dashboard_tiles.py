@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -66,6 +67,7 @@ class TileRuntime:
     value_text: str = "—"
     state: str = "neutral"
     state_caption: str = ""
+    color: str = ""  # custom rule color (FR-62); "" = theme state color
     timestamp_text: str = ""
     tooltip: str = ""
     last_success_at: float = 0.0
@@ -86,6 +88,17 @@ def _set_state_property(widget: QWidget, state: str) -> None:
     _repolish(widget)
 
 
+def _apply_custom_style(widget: QWidget, template: str, color: str) -> bool:
+    """Scoped inline override for a custom rule color (FR-62): set when a
+    color is active, cleared back to the QSS cascade when not. Returns
+    True when the stylesheet actually changed."""
+    sheet = template.format(color=color) if color else ""
+    if widget.styleSheet() == sheet:
+        return False
+    widget.setStyleSheet(sheet)
+    return True
+
+
 class TileFrame(QFrame):
     """Shared tile chrome: header, footer, context menu, edit-mode drag."""
 
@@ -93,6 +106,8 @@ class TileFrame(QFrame):
     removeRequested = Signal(str)
     enableToggled = Signal(str, bool)
     spanRequested = Signal(str, int, int)
+    pollNowRequested = Signal(str)
+    activateRequested = Signal(str)  # emitted by control tiles only (FR-59)
 
     def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -205,6 +220,13 @@ class TileFrame(QFrame):
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         menu = QMenu(self)
+        if self._entry.is_polled():
+            poll_now_action = menu.addAction("Poll Now")
+            poll_now_action.setEnabled(self._entry.enabled)
+            poll_now_action.triggered.connect(
+                lambda: self.pollNowRequested.emit(self.entry_id)
+            )
+            menu.addSeparator()
         edit_action = menu.addAction("Edit Entry…")
         edit_action.triggered.connect(lambda: self.editRequested.emit(self.entry_id))
         enabled_action = menu.addAction("Enabled")
@@ -252,6 +274,8 @@ class ValueTileWidget(TileFrame):
         if self.value_label.property("tileState") != runtime.state:
             _set_state_property(self.value_label, runtime.state)
             changed = True
+        if _apply_custom_style(self.value_label, "color: {color};", runtime.color):
+            changed = True
         return changed
 
 
@@ -288,11 +312,101 @@ class LedTileWidget(TileFrame):
         if self.caption_label.property("tileState") != runtime.state:
             _set_state_property(self.caption_label, runtime.state)
             changed = True
+        if _apply_custom_style(
+            self.lamp, "background: {color}; border-color: {color};", runtime.color
+        ):
+            changed = True
+        if _apply_custom_style(self.caption_label, "color: {color};", runtime.color):
+            changed = True
         return changed
+
+
+class ControlTileWidget(TileFrame):
+    """One big action button that sends on click (FR-59/FR-60).
+
+    Never polled, staled, or alerted: the tab gates and submits the send;
+    this widget only renders pending/ON-OFF state. For toggles the visual
+    follows the watch entry's verdict when one is set ("ok" renders ON),
+    otherwise it flips optimistically on a successful send.
+    """
+
+    def __init__(self, entry: DashboardEntry, parent: QWidget | None = None) -> None:
+        super().__init__(entry, parent)
+        self._is_on = False
+        self._pending = False
+        self.button = QPushButton("", self)
+        self.button.setObjectName("tileControlButton")
+        self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.button.clicked.connect(lambda: self.activateRequested.emit(self.entry_id))
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
+        row.addWidget(self.button, 2)
+        row.addStretch(1)
+        self.body_layout.addStretch(1)
+        self.body_layout.addLayout(row)
+        self.body_layout.addStretch(1)
+        self._refresh_button()
+
+    def _render_runtime(self, runtime: TileRuntime) -> bool:
+        return False  # state border/tooltip/timestamp come from TileFrame
+
+    def update_entry(self, entry: DashboardEntry) -> None:
+        super().update_entry(entry)
+        self._refresh_button()
+
+    @property
+    def is_on(self) -> bool:
+        return self._is_on
+
+    def set_on(self, is_on: bool) -> None:
+        if self._is_on != is_on:
+            self._is_on = is_on
+            self._refresh_button()
+
+    @property
+    def pending(self) -> bool:
+        return self._pending
+
+    def set_pending(self, pending: bool) -> None:
+        if self._pending != pending:
+            self._pending = pending
+            self._refresh_button()
+
+    def set_edit_mode(self, enabled: bool) -> None:
+        super().set_edit_mode(enabled)
+        # The button must not swallow press events while tiles are dragged.
+        self.button.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, enabled)
+        self._refresh_button()
+
+    def _refresh_button(self) -> None:
+        control = self._entry.control
+        if self._pending:
+            text = "…"
+        elif control.mode == "toggle":
+            text = "ON" if self._is_on else "OFF"
+        else:
+            text = "Send"
+        if self.button.text() != text:
+            self.button.setText(text)
+        self.button.setEnabled(self._entry.enabled and not self._pending and not self.edit_mode)
+        state = "on" if control.mode == "toggle" and self._is_on else "off"
+        if self.button.property("controlState") != state:
+            self.button.setProperty("controlState", state)
+            _repolish(self.button)
+
+
+TILE_CLASSES: dict[str, type[TileFrame]] = {
+    "value": ValueTileWidget,
+    "led": LedTileWidget,
+    "control": ControlTileWidget,
+}
+
+
+def tile_class_for(entry: DashboardEntry) -> type[TileFrame]:
+    return TILE_CLASSES.get(entry.tile.kind, ValueTileWidget)
 
 
 def create_tile(entry: DashboardEntry, parent: QWidget | None = None) -> TileFrame:
     """Factory keyed on the entry's tile kind."""
-    if entry.tile.kind == "led":
-        return LedTileWidget(entry, parent)
-    return ValueTileWidget(entry, parent)
+    return tile_class_for(entry)(entry, parent)

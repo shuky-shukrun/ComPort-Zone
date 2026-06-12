@@ -29,7 +29,12 @@ from ..dashboard_models import (
     set_tile_span,
 )
 from ..themes import THEMES, ThemePalette
-from .dashboard_tiles import DASHBOARD_TILE_MIME_TYPE, TileFrame, create_tile
+from .dashboard_tiles import (
+    DASHBOARD_TILE_MIME_TYPE,
+    TileFrame,
+    create_tile,
+    tile_class_for,
+)
 from .tokens import SPACE_LG
 
 GRID_GUTTER = SPACE_LG
@@ -44,6 +49,8 @@ class DashboardGridWidget(QWidget):
     tileEditRequested = Signal(str)
     tileRemoveRequested = Signal(str)
     tileEnableToggled = Signal(str, bool)
+    tilePollNowRequested = Signal(str)
+    tileControlActivated = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -70,9 +77,7 @@ class DashboardGridWidget(QWidget):
         for entry_id in list(self._tiles):
             entry = wanted.get(entry_id)
             tile = self._tiles[entry_id]
-            recreate = entry is not None and (
-                (entry.tile.kind == "led") != ("Led" in type(tile).__name__)
-            )
+            recreate = entry is not None and type(tile) is not tile_class_for(entry)
             if entry is None or recreate:
                 self._tiles.pop(entry_id).deleteLater()
         for entry in config.entries:
@@ -82,6 +87,8 @@ class DashboardGridWidget(QWidget):
                 tile.editRequested.connect(self.tileEditRequested)
                 tile.removeRequested.connect(self.tileRemoveRequested)
                 tile.enableToggled.connect(self.tileEnableToggled)
+                tile.pollNowRequested.connect(self.tilePollNowRequested)
+                tile.activateRequested.connect(self.tileControlActivated)
                 tile.spanRequested.connect(self._handle_span_request)
                 tile.set_edit_mode(self._edit_mode)
                 tile.show()

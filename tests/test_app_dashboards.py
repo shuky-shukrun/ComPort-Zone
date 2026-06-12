@@ -216,8 +216,8 @@ class DashboardAppTests(unittest.TestCase):
 
         fake.disconnect()
         dashboard._tick()
-        self.assertIn("connection", dashboard.scheduler.paused_reasons)
         self.assertEqual(dashboard.bind_chip.text(), "Paused — disconnected")
+        self.assertEqual(dashboard.bind_chip.property("state"), "paused")
 
         index = window.tabs.indexOf(session)
         self.assertTrue(window.close_session(index))
@@ -230,17 +230,19 @@ class DashboardAppTests(unittest.TestCase):
         config = make_dashboard()
         window, _path = self.launch_window(AppSettings(dashboards=[config]), "batch")
         session = window.iter_sessions()[0]
-        self.fake_out_session(session)
+        fake = self.fake_out_session(session)
         dashboard = window.open_dashboard_tab(config.id)
         self.stop_tick_timer(dashboard)
         dashboard.bind_to_session(session.session_id)
 
         session.script_snapshot = lambda: BatchRunSnapshot(is_running=True)
         dashboard._tick()
-        self.assertIn("batch", dashboard.scheduler.paused_reasons)
+        self.assertEqual(dashboard.bind_chip.text(), "Paused — command file running")
+        dashboard._tick()
+        self.assertEqual(fake.sent_text, [])  # gated: nothing reaches the wire
         session.script_snapshot = lambda: BatchRunSnapshot(is_running=False)
         dashboard._tick()
-        self.assertEqual(dashboard.scheduler.paused_reasons, frozenset())
+        self.assertEqual(dashboard.bind_chip.property("state"), "polling")
 
     def test_two_dashboards_share_one_dispatcher_with_strict_ordering(self) -> None:
         first_config = make_dashboard("First", "v1", "CMD1")
@@ -344,7 +346,9 @@ class DashboardAppTests(unittest.TestCase):
         window.save_settings()
 
         payload = json.loads(settings_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], 5)
+        self.assertEqual(payload["schema_version"], 6)
+        # The test dashboard is v1-shaped, so the library declares the v1
+        # dashboard floor, not the v2 one.
         self.assertEqual(payload["minimum_compatible_schema_version"], 5)
         self.assertEqual(len(payload["libraries"]["dashboards"]), 1)
         kinds = [

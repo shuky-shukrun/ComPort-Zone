@@ -2,11 +2,18 @@ import json
 from pathlib import Path
 import unittest
 
-from ComPort_Zone.dashboard_models import DashboardConfig, DashboardEntry, DashboardTabState
+from ComPort_Zone.dashboard_models import (
+    ColorRule,
+    DashboardConfig,
+    DashboardEntry,
+    DashboardTabState,
+    TilePlacement,
+)
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
     DASHBOARD_SCHEMA_FLOOR,
+    DASHBOARD_V2_SCHEMA_FLOOR,
     LAN_SCHEMA_FLOOR,
     LanProfile,
     MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
@@ -546,7 +553,8 @@ class DashboardSchemaTests(unittest.TestCase):
 
     def test_restored_dashboard_tab_raises_min_compat(self) -> None:
         payload = AppSettings(
-            restored_dashboards=[DashboardTabState(dashboard_id="abc")]
+            dashboards=[],  # isolate the restored-tab floor from the seeded example
+            restored_dashboards=[DashboardTabState(dashboard_id="abc")],
         ).to_dict()
         self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
 
@@ -562,8 +570,40 @@ class DashboardSchemaTests(unittest.TestCase):
                 )
             ]
         )
-        payload = AppSettings(workspace_layout=layout).to_dict()
+        payload = AppSettings(dashboards=[], workspace_layout=layout).to_dict()
         self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+
+    def test_v2_feature_raises_min_compat_to_v2_floor(self) -> None:
+        base = self.make_dashboard()  # v1-shaped -> floor 5
+        self.assertEqual(
+            AppSettings(dashboards=[base]).to_dict()["minimum_compatible_schema_version"],
+            DASHBOARD_SCHEMA_FLOOR,
+        )
+        v2_variants = {
+            "poll_mode": lambda c: setattr(c.entries[0], "poll_mode", "on_connect"),
+            "target": lambda c: setattr(c.entries[0], "target_endpoint", "COM9"),
+            "control": lambda c: setattr(c.entries[0].tile, "kind", "control"),
+            "rule color": lambda c: c.entries[0].rules.append(
+                ColorRule(op="gt", operand="1", color="#112233")
+            ),
+            "csv": lambda c: setattr(c, "csv_log_enabled", True),
+        }
+        for name, mutate in v2_variants.items():
+            with self.subTest(feature=name):
+                config = self.make_dashboard()
+                mutate(config)
+                payload = AppSettings(dashboards=[config]).to_dict()
+                self.assertEqual(
+                    payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+                )
+
+    def test_seeded_example_declares_v2_floor(self) -> None:
+        # The shipped example uses on_connect (FR-52), so a fresh install's
+        # library declares the v2 floor — accepted in the v2 plan.
+        payload = AppSettings().to_dict()
+        self.assertEqual(
+            payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+        )
 
     def test_lan_and_dashboards_take_highest_floor(self) -> None:
         settings = AppSettings(

@@ -23,6 +23,7 @@ NFR-1..NFR-5).
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -144,6 +145,34 @@ class PollResult:
 
 
 @dataclass(slots=True)
+class ControlRequest:
+    """A control-tile send (v2, FR-60): fire the command, no RX window.
+
+    Flows through the same per-session FIFO as poll requests, so control
+    sends never interleave with dashboard polls on the wire.
+    """
+
+    dashboard_id: str
+    entry_id: str
+    command: str
+    send_mode: str = "Text"
+    line_ending_override: str = ""
+    result_queue: Queue = None  # type: ignore[assignment]  # tab's shared queue
+    submitted_at: float = 0.0
+
+
+@dataclass(slots=True)
+class ControlResult:
+    """Ack for one control send (ok / send_error / cancelled)."""
+
+    dashboard_id: str
+    entry_id: str
+    status: str
+    error: str = ""
+    finished_at: float = 0.0
+
+
+@dataclass(slots=True)
 class _EntrySlot:
     entry: DashboardEntry
     next_due: float
@@ -174,21 +203,31 @@ class DashboardPollScheduler:
     def configure(self, entries: Iterable[DashboardEntry]) -> None:
         """Adopt the current entry list.
 
-        Entries whose interval is unchanged keep their due time and
-        in-flight mark; changed or new entries are (re)staggered from now.
-        Removed entries are dropped.
+        Entries whose interval and poll mode are unchanged keep their due
+        time and in-flight mark; changed or new entries are (re)staggered
+        from now. ``on_connect`` entries are never time-due — the tab arms
+        them via :meth:`trigger_now` on connect edges (FR-52). Removed
+        entries are dropped.
         """
         now = self._clock()
         slots: dict[str, _EntrySlot] = {}
         fresh = 0
         for entry in entries:
             existing = self._slots.get(entry.id)
-            if existing is not None and existing.entry.interval_ms == entry.interval_ms:
+            unchanged = (
+                existing is not None
+                and existing.entry.interval_ms == entry.interval_ms
+                and existing.entry.poll_mode == entry.poll_mode
+            )
+            if unchanged:
                 slots[entry.id] = _EntrySlot(entry, existing.next_due, existing.in_flight)
                 continue
-            next_due = now + fresh * RESUME_STAGGER_S
-            fresh += 1
             in_flight = existing.in_flight if existing is not None else False
+            if entry.poll_mode == "on_connect":
+                next_due = math.inf
+            else:
+                next_due = now + fresh * RESUME_STAGGER_S
+                fresh += 1
             slots[entry.id] = _EntrySlot(entry, next_due, in_flight)
         self._slots = slots
 
@@ -207,12 +246,30 @@ class DashboardPollScheduler:
             self._restagger_overdue()
 
     def _restagger_overdue(self) -> None:
+        self.restagger(self._slots.keys())
+
+    def restagger(self, entry_ids: Iterable[str]) -> None:
+        """Re-space the given entries' overdue polls at the resume stagger
+        so a gate opening (reconnect, batch end) never bursts (FR-55)."""
         now = self._clock()
         index = 0
-        for slot in self._slots.values():
-            if not slot.in_flight and slot.next_due < now:
+        for entry_id in entry_ids:
+            slot = self._slots.get(entry_id)
+            if slot is None or slot.in_flight:
+                continue
+            if slot.next_due < now:
                 slot.next_due = now + index * RESUME_STAGGER_S
                 index += 1
+
+    def trigger_now(self, entry_id: str, *, delay_s: float = 0.0) -> bool:
+        """Arm an immediate (or slightly delayed) poll for an entry —
+        connect-edge triggers for ``on_connect`` entries and the Poll Now
+        action for any entry (FR-52/FR-53). No-op while in flight."""
+        slot = self._slots.get(entry_id)
+        if slot is None or slot.in_flight or not slot.entry.enabled:
+            return False
+        slot.next_due = self._clock() + max(0.0, delay_s)
+        return True
 
     def collect_due(self) -> list[DashboardEntry]:
         """Entries due now, marked in-flight so they are not re-issued
@@ -229,12 +286,16 @@ class DashboardPollScheduler:
 
     def complete(self, entry_id: str) -> None:
         """A transaction finished (any status): schedule the next poll
-        ``interval`` from now (fixed delay)."""
+        ``interval`` from now (fixed delay). ``on_connect`` entries re-arm
+        to "never" until the next connect edge or Poll Now."""
         slot = self._slots.get(entry_id)
         if slot is None:
             return
         slot.in_flight = False
-        slot.next_due = self._clock() + slot.entry.interval_ms / 1000
+        if slot.entry.poll_mode == "on_connect":
+            slot.next_due = math.inf
+        else:
+            slot.next_due = self._clock() + slot.entry.interval_ms / 1000
 
     def skip(self, entry_id: str) -> None:
         """A submit failed before executing: clear in-flight without
@@ -263,7 +324,7 @@ class SessionPollDispatcher:
     def __init__(self, *, transport, clock: Clock = time.monotonic) -> None:
         self._transport = transport
         self._clock = clock
-        self._requests: Queue[PollRequest] = Queue(maxsize=REQUEST_QUEUE_LIMIT)
+        self._requests: Queue[PollRequest | ControlRequest] = Queue(maxsize=REQUEST_QUEUE_LIMIT)
         self._rx_queue: Queue[SerialEvent] | None = None
         self._thread: Thread | None = None
         self._stop_event = Event()
@@ -291,6 +352,14 @@ class SessionPollDispatcher:
     def submit(self, request: PollRequest) -> bool:
         """Queue a transaction; False when stopped or the queue is full
         (caller should ``skip`` the entry and retry next tick)."""
+        return self._enqueue(request)
+
+    def submit_control(self, request: ControlRequest) -> bool:
+        """Queue a control send (FR-60). Shares the poll FIFO, so it can
+        never interleave with this session's dashboard traffic."""
+        return self._enqueue(request)
+
+    def _enqueue(self, request: "PollRequest | ControlRequest") -> bool:
         if not self.is_running or self._stop_event.is_set():
             return False
         request.submitted_at = self._clock()
@@ -335,8 +404,18 @@ class SessionPollDispatcher:
                 return
             self._answer_cancelled(request)
 
-    def _answer_cancelled(self, request: PollRequest) -> None:
+    def _answer_cancelled(self, request: "PollRequest | ControlRequest") -> None:
         now = self._clock()
+        if isinstance(request, ControlRequest):
+            request.result_queue.put(
+                ControlResult(
+                    dashboard_id=request.dashboard_id,
+                    entry_id=request.entry_id,
+                    status=POLL_CANCELLED,
+                    finished_at=now,
+                )
+            )
+            return
         request.result_queue.put(
             PollResult(
                 dashboard_id=request.dashboard_id,
@@ -360,8 +439,45 @@ class SessionPollDispatcher:
             if self._is_cancelled(request.dashboard_id):
                 self._answer_cancelled(request)
                 continue
+            if isinstance(request, ControlRequest):
+                request.result_queue.put(self._execute_control(request))
+                continue
             result = self._execute_transaction(request, rx_queue)
             request.result_queue.put(result)
+
+    def _execute_control(self, request: ControlRequest) -> ControlResult:
+        """Fire one control command: send only, no RX collection. The
+        journal window covers the send so the device's ack/echo stays out
+        of the bound terminal's transcript (FR-60)."""
+        self.traffic_journal.open_window()
+        try:
+            try:
+                if request.send_mode == "Hex Bytes":
+                    self._transport.send_bytes(
+                        parse_hex_payload(request.command), source=DASHBOARD_TX_SOURCE
+                    )
+                else:
+                    self._transport.send_text(
+                        request.command,
+                        request.line_ending_override or None,
+                        source=DASHBOARD_TX_SOURCE,
+                    )
+            except Exception as exc:
+                return ControlResult(
+                    dashboard_id=request.dashboard_id,
+                    entry_id=request.entry_id,
+                    status=POLL_SEND_ERROR,
+                    error=str(exc),
+                    finished_at=self._clock(),
+                )
+            return ControlResult(
+                dashboard_id=request.dashboard_id,
+                entry_id=request.entry_id,
+                status=POLL_OK,
+                finished_at=self._clock(),
+            )
+        finally:
+            self.traffic_journal.close_window()
 
     @staticmethod
     def _drain(rx_queue: Queue[SerialEvent]) -> None:
