@@ -698,6 +698,129 @@ class DashboardAppTests(unittest.TestCase):
         # average per tick, with CI noise headroom).
         self.assertLess(average_ms, 5.0)
 
+    def test_tick_budget_with_control_panel_v3(self) -> None:
+        """V3 NFR: master arm + setpoint + enum readbacks add no
+        meaningful per-tick cost.
+
+        Mirrors the v2 benchmark with v3 load layered on:
+        - 60 polled numeric entries (rules + custom color, alternating
+          per-entry overrides)
+        - 6 setpoint tiles, each watching one of the polled entries
+          (readback fan-out runs through `_apply_outcome`)
+        - 6 enum tiles, each watching another polled entry (indicator
+          fan-out runs through the same funnel)
+        - panel armed so writing tiles are interactive (master-arm gate
+          still runs even when armed)
+        - sparkline rings pre-seeded, alert log populated, CSV logging
+          on
+        """
+        from ComPort_Zone.dashboard_alerts import ALERT_KIND, AlertRecord
+        from ComPort_Zone.dashboard_history import (
+            HISTORY_MAX_SAMPLES,
+            EntryHistory,
+        )
+        from ComPort_Zone.dashboard_models import (
+            EnumOption,
+            EnumSpec,
+            SetpointSpec,
+        )
+
+        polled_count = 60
+        entries: list[DashboardEntry] = []
+        for index in range(polled_count):
+            entry = volt_entry(f"e{index}", f"READ:{index}?")
+            entry.interval_ms = 3_600_000
+            entry.tile = TilePlacement(col=index % 4, row=index // 4)
+            entry.rules = [
+                ColorRule(op="gt", operand="13.0", state="warn", color="#ff9f43"),
+                ColorRule(op="between", operand="11", operand2="13", state="ok"),
+            ]
+            entries.append(entry)
+
+        # 6 setpoint tiles, each watching the polled tile of the same
+        # index — exercises `_refresh_writable_readbacks` fan-out.
+        for offset in range(6):
+            setpoint = DashboardEntry(
+                id=f"sp{offset}",
+                label=f"Setpoint {offset}",
+                tile=TilePlacement(col=offset % 4, row=20 + offset // 4, kind="setpoint"),
+                setpoint=SetpointSpec(
+                    min_value=0.0,
+                    max_value=30.0,
+                    step=0.1,
+                    decimals=2,
+                    unit="V",
+                    command_template=f"VOLT{offset} {{value}}",
+                    watch_entry_id=entries[offset].id,
+                ),
+            )
+            entries.append(setpoint)
+
+        # 6 enum tiles, each watching a different polled tile.
+        for offset in range(6):
+            enum_entry = DashboardEntry(
+                id=f"en{offset}",
+                label=f"Mode {offset}",
+                tile=TilePlacement(col=offset % 4, row=22 + offset // 4, kind="enum"),
+                enum_spec=EnumSpec(
+                    options=[
+                        EnumOption(label="OFF", command=f"M{offset} OFF", match_value="OFF"),
+                        EnumOption(label="CV", command=f"M{offset} CV", match_value="CV"),
+                        EnumOption(label="CC", command=f"M{offset} CC", match_value="CC"),
+                    ],
+                    watch_entry_id=entries[10 + offset].id,
+                ),
+            )
+            entries.append(enum_entry)
+
+        config = DashboardConfig(name="V3 Big", entries=entries)
+        window, _path = self.launch_window(AppSettings(dashboards=[config]), "budget_v3")
+        sessions = window.iter_sessions()
+        for session in sessions:
+            self.fake_out_session(session)
+        dashboard = window.open_dashboard_tab(config.id)
+        self.stop_tick_timer(dashboard)
+        dashboard.bind_to_session(sessions[0].session_id)
+        # Arm the panel so writing tiles drive the live `panelArmed` path.
+        dashboard.set_armed(True)
+
+        now = dashboard._clock()
+        for entry in entries:
+            if not entry.is_numeric():
+                continue
+            history = EntryHistory()
+            for index in range(HISTORY_MAX_SAMPLES):
+                history.append(now - HISTORY_MAX_SAMPLES + index, 12.0 + (index % 5) * 0.3)
+            dashboard._histories[entry.id] = history
+        for index in range(50):
+            dashboard.alerts.append(
+                AlertRecord(
+                    timestamp="14:00:00",
+                    entry_id=f"e{index}",
+                    entry_label=f"E{index}",
+                    old_state="ok",
+                    new_state="fail",
+                    value_text="14.0",
+                    kind=ALERT_KIND,
+                )
+            )
+
+        log_path = Path(__file__).with_name("_tmp_dash_budget_v3.csv")
+        log_path.unlink(missing_ok=True)
+        self.addCleanup(log_path.unlink, missing_ok=True)
+        self.addCleanup(dashboard.value_logger.close)
+        dashboard.config.csv_log_path = str(log_path)
+        dashboard.csv_log_button.setChecked(True)
+
+        dashboard._tick()
+        started = perf_counter()
+        rounds = 100
+        for _ in range(rounds):
+            dashboard._tick()
+        average_ms = (perf_counter() - started) * 1000 / rounds
+        # NFR-12 still holds with v3 writing tiles + master arm overhead.
+        self.assertLess(average_ms, 5.0)
+
     def test_restore_with_per_entry_override_endpoint(self) -> None:
         """Persisted v2 override endpoints resolve at restart (FR-54)."""
         bench = volt_entry()
@@ -817,6 +940,145 @@ class DashboardAppTests(unittest.TestCase):
         self.assertEqual(entries["output"].control.watch_entry_id, "volts")
         self.assertTrue(entries["output"].control.confirm)
         self.assertEqual(round_tripped.csv_log_path, "/tmp/never-written.csv")
+
+    def test_v3_export_round_trips_through_settings(self) -> None:
+        """A control panel with setpoint + enum + control entries
+        survives a save/reload via the real SettingsService, and master
+        arm never persists (FR-43 + v3 fields, FR-72..74)."""
+        from ComPort_Zone.dashboard_models import (
+            ControlSpec,
+            EnumOption,
+            EnumSpec,
+            SetpointSpec,
+        )
+
+        polled = volt_entry()
+        polled.id = "volts"
+        polled.label = "Volts"
+        mode_tile = DashboardEntry(
+            id="mode",
+            label="Mode",
+            command="SOUR:FUNC:MODE?",
+            interval_ms=500,
+            timeout_ms=250,
+            parse=ParseRule(kind="line", value_type="text"),
+            tile=TilePlacement(col=1, row=0, kind="value"),
+        )
+        setpoint = DashboardEntry(
+            id="vset",
+            label="Output voltage",
+            tile=TilePlacement(col=2, row=0, kind="setpoint"),
+            setpoint=SetpointSpec(
+                min_value=0.0,
+                max_value=30.0,
+                step=0.1,
+                decimals=2,
+                unit="V",
+                command_template="VOLT {value}",
+                watch_entry_id="volts",
+                confirm=True,
+            ),
+        )
+        regulation = DashboardEntry(
+            id="reg",
+            label="Regulation",
+            tile=TilePlacement(col=3, row=0, kind="enum"),
+            enum_spec=EnumSpec(
+                options=[
+                    EnumOption(label="OFF", command="OUTP OFF", match_value="OFF"),
+                    EnumOption(label="CV", command="MODE CV", match_value="CV"),
+                    EnumOption(label="CC", command="MODE CC", match_value="CC"),
+                ],
+                watch_entry_id="mode",
+                confirm=False,
+            ),
+        )
+        toggle = DashboardEntry(
+            id="output",
+            label="Output",
+            tile=TilePlacement(col=0, row=1, kind="control"),
+            control=ControlSpec(
+                mode="toggle",
+                on_command="OUTP ON",
+                off_command="OUTP OFF",
+                watch_entry_id="volts",
+            ),
+        )
+        config = DashboardConfig(
+            name="V3 Bench", entries=[polled, mode_tile, setpoint, regulation, toggle]
+        )
+
+        settings_path = Path(__file__).with_name("_tmp_settings_dash_v3_roundtrip.json")
+        settings_path.unlink(missing_ok=True)
+        self.addCleanup(settings_path.unlink, missing_ok=True)
+        service = SettingsService(SettingsStore(settings_path))
+        self.assertTrue(service.save(AppSettings(dashboards=[config])))
+        with settings_path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        # v3 features push the floor to 7; schema_version stamps the
+        # latest the build supports.
+        self.assertEqual(payload.get("minimum_compatible_schema_version"), 7)
+        self.assertEqual(payload["schema_version"], 7)
+
+        restored = service.load()
+        entries = {entry.id: entry for entry in restored.dashboards[0].entries}
+        self.assertEqual(entries["vset"].tile.kind, "setpoint")
+        self.assertEqual(entries["vset"].setpoint.command_template, "VOLT {value}")
+        self.assertEqual(entries["vset"].setpoint.max_value, 30.0)
+        self.assertEqual(entries["vset"].setpoint.watch_entry_id, "volts")
+        self.assertTrue(entries["vset"].setpoint.confirm)
+        self.assertEqual(entries["reg"].tile.kind, "enum")
+        self.assertEqual(
+            [opt.label for opt in entries["reg"].enum_spec.options],
+            ["OFF", "CV", "CC"],
+        )
+        self.assertEqual(entries["reg"].enum_spec.watch_entry_id, "mode")
+        self.assertEqual(entries["output"].tile.kind, "control")
+        self.assertEqual(entries["output"].control.mode, "toggle")
+
+    def test_master_arm_resets_on_restart(self) -> None:
+        """Master arm is transient: a panel armed in one session boots
+        disarmed in the next, and the saved settings carry no `armed`
+        key (FR-74)."""
+        from ComPort_Zone.dashboard_models import SetpointSpec
+
+        polled = volt_entry()
+        polled.id = "volts"
+        polled.label = "Volts"
+        setpoint = DashboardEntry(
+            id="vset",
+            label="Setpoint",
+            tile=TilePlacement(col=1, row=0, kind="setpoint"),
+            setpoint=SetpointSpec(
+                min_value=0.0,
+                max_value=30.0,
+                step=0.1,
+                command_template="VOLT {value}",
+            ),
+        )
+        config = DashboardConfig(name="Arming", entries=[polled, setpoint])
+
+        window, settings_path = self.launch_window(
+            AppSettings(dashboards=[config]), "arming1"
+        )
+        dashboard = window.open_dashboard_tab(config.id)
+        self.stop_tick_timer(dashboard)
+        self.assertFalse(dashboard.is_armed)
+        dashboard.set_armed(True)
+        self.assertTrue(dashboard.is_armed)
+        # Persist the live state and confirm "armed" never leaks into
+        # the on-disk JSON anywhere.
+        window.save_settings()
+        with settings_path.open(encoding="utf-8") as handle:
+            payload_str = handle.read()
+        self.assertNotIn('"armed"', payload_str)
+
+        # New launch from the same settings: panel boots disarmed.
+        restored = SettingsService(SettingsStore(settings_path)).load()
+        window2, _ = self.launch_window(restored, "arming2")
+        dashboard2 = window2.open_dashboard_tab(config.id)
+        self.stop_tick_timer(dashboard2)
+        self.assertFalse(dashboard2.is_armed)
 
 
 if __name__ == "__main__":
