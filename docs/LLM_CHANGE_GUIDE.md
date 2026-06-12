@@ -59,7 +59,13 @@ git diff --check
 | Dashboard polling engine                      | `src/ComPort_Zone/dashboard_engine.py`                                                                                             | `tests/test_dashboard_engine`                                 |
 | Dashboard library/import/export               | `src/ComPort_Zone/dashboard_catalog.py`                                                                                            | `tests/test_dashboard_catalog`                                |
 | Dashboard binding + dispatcher lifecycle      | `src/ComPort_Zone/ui/dashboard_targets.py`                                                                                         | `tests/test_dashboard_targets`                                |
-| Dashboard tab UI (tick loop, tiles, grid)     | `src/ComPort_Zone/ui/dashboard_tab.py`, `src/ComPort_Zone/ui/dashboard_tiles.py`, `src/ComPort_Zone/ui/dashboard_grid.py`          | `tests/test_dashboard_tab`, `tests/test_dashboard_tiles`      |
+| Dashboard expressions (derived tiles)         | `src/ComPort_Zone/dashboard_expr.py`                                                                                               | `tests/test_dashboard_expr`                                   |
+| Dashboard history + paint math (sparkline/chart) | `src/ComPort_Zone/dashboard_history.py`                                                                                         | `tests/test_dashboard_history`                                |
+| Dashboard alerts (transition + bounded log)   | `src/ComPort_Zone/dashboard_alerts.py`                                                                                             | `tests/test_dashboard_alerts`, `tests/test_dashboard_alert_ui`|
+| Dashboard CSV value logging                   | `src/ComPort_Zone/dashboard_value_log.py`                                                                                          | `tests/test_dashboard_value_log`                              |
+| Dashboard tab UI (tick loop, tiles, grid)     | `src/ComPort_Zone/ui/dashboard_tab.py`, `src/ComPort_Zone/ui/dashboard_tiles.py`, `src/ComPort_Zone/ui/dashboard_grid.py`, `src/ComPort_Zone/ui/dashboard_sparkline.py` | `tests/test_dashboard_tab`, `tests/test_dashboard_tiles`, `tests/test_dashboard_sparkline` |
+| Dashboard chart page                          | `src/ComPort_Zone/ui/dashboard_chart.py`                                                                                           | `tests/test_dashboard_chart`                                  |
+| Dashboard alert UI + sound                    | `src/ComPort_Zone/ui/dashboard_alert_panel.py`, `src/ComPort_Zone/ui/alert_sound.py`                                               | `tests/test_dashboard_alert_ui`                               |
 | Dashboard dialogs (entry editor, manager)     | `src/ComPort_Zone/ui/dialogs/dashboard_entry.py`, `src/ComPort_Zone/ui/dialogs/dashboard_manager.py`                               | `tests/test_dashboard_tab`, `tests/test_dashboard_manager`    |
 
 ## Do Not Break These Seams
@@ -209,6 +215,32 @@ git diff --check
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest tests/test_dashboard_models tests/test_dashboard_tiles -q
+```
+
+### Add A Dashboard v2 Feature That Reacts To A Poll Result
+
+Every successful parse — poll OR derived recompute — flows through the
+shared `DashboardTabWidget._apply_outcome` funnel exactly once. The
+sparkline history append, CSV row write, alert edge detection, and
+derived dependent fan-out all attach there, so adding a new
+poll-driven side effect should usually go in the same place.
+
+1. Add a new Qt-free domain module under `src/ComPort_Zone/` for the
+   core logic (mirror `dashboard_history.py` / `dashboard_value_log.py`).
+2. Re-export it through `src/ComPort_Zone/core/dashboard.py` (the
+   `tests/test_core_no_pyside.py` test enforces "no PySide" on every
+   re-exported submodule).
+3. Hook the side effect into `_apply_outcome`. Capture `prev_state`
+   BEFORE the runtime is overwritten if your code depends on it
+   (alerts do — same pattern as `_check_alert_transition`).
+4. If the feature uses the bell-style "open a floating panel" pattern,
+   anchor it over `self.stack` exactly like `AlertHistoryPanel` does;
+   remember `QWidget.isVisible()` is False headless — use
+   `isHidden()` for toggle checks so the unit tests can drive it.
+5. Run the funnel tests + your new module's tests:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_tab tests/test_app_dashboards -q
 ```
 
 ### Fix Command Editor Search Or Replace

@@ -472,7 +472,12 @@ $PyInstallerArgs = @(
     "--add-data", $AddDataVersion,
     "--add-data", $AddDataAssets,
     "--hidden-import", "serial.tools.list_ports_windows",
-    "--hidden-import", "serial.tools.list_ports_common"
+    "--hidden-import", "serial.tools.list_ports_common",
+    # ui/alert_sound.py imports QtMultimedia lazily inside a try/except so
+    # PyInstaller's static scan can miss it (and silently fall back to
+    # QApplication.beep in the shipped exe). Pin it as a hidden import
+    # so dashboard alert sounds work after packaging.
+    "--hidden-import", "PySide6.QtMultimedia"
 ) + $IconArgs + @($EntryPoint)
 Invoke-Checked $VenvPython $PyInstallerArgs
 

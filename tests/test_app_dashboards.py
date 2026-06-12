@@ -573,6 +573,246 @@ class DashboardAppTests(unittest.TestCase):
         # bound is loose (5 ms) to absorb shared-runner noise.
         self.assertLess(average_ms, 5.0)
 
+    def test_tick_budget_with_v2_features(self) -> None:
+        """NFR-12: tick stays under budget when v2 load is layered on top.
+
+        Mirrors the v1 benchmark with a heavier mix:
+        - 60 polled numeric entries (each with rules + a custom color)
+        - 4 derived entries that depend on a subset of them
+        - 1 second session bound via per-entry overrides
+        - full sparkline history rings pre-seeded so paint/dedup cost
+          is realistic
+        - active AlertLog with prior records
+        - CSV logging enabled with rows actively appending
+        """
+        from ComPort_Zone.dashboard_alerts import ALERT_KIND, AlertRecord
+        from ComPort_Zone.dashboard_history import HISTORY_MAX_SAMPLES, EntryHistory
+
+        polled_count = 60
+        entries: list[DashboardEntry] = []
+        for index in range(polled_count):
+            entry = volt_entry(f"e{index}", f"READ:{index}?")
+            entry.interval_ms = 3_600_000
+            entry.tile = TilePlacement(col=index % 4, row=index // 4)
+            entry.rules = [
+                ColorRule(op="gt", operand="13.0", state="warn", color="#ff9f43"),
+                ColorRule(op="between", operand="11", operand2="13", state="ok"),
+            ]
+            if index % 2 == 0:
+                # Alternate halves target a second terminal session, so
+                # _refresh_session_topology has real work each tick.
+                entry.target_endpoint = "COM99"
+            entries.append(entry)
+
+        # Derived entries reference earlier polled siblings by label.
+        derived_specs = [
+            ("d0", "{Volts} * 2", 60),
+            ("d1", "{Volts} + 3", 61),
+            ("d2", "max({Volts}, 5)", 62),
+            ("d3", "abs({Volts} - 12)", 63),
+        ]
+        # Make sure the first entry's label is a known reference target.
+        entries[0].label = "Volts"
+        for derived_id, expression, row_index in derived_specs:
+            derived = DashboardEntry(
+                id=derived_id,
+                label=derived_id.upper(),
+                unit="W",
+                source="derived",
+                expression=expression,
+                tile=TilePlacement(col=row_index % 4, row=row_index // 4 + 1),
+            )
+            entries.append(derived)
+
+        config = DashboardConfig(name="V2 Big", entries=entries)
+        # Persisted layout: two terminals (COM7 + COM99) so override
+        # bindings have real targets to resolve.
+        layout = WorkspaceLayoutState(
+            panes=[
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(
+                            kind="terminal",
+                            terminal=TerminalSessionState(title="A", serial=SerialProfile(port="COM7")),
+                        ),
+                        WorkspaceTabState(
+                            kind="terminal",
+                            terminal=TerminalSessionState(title="B", serial=SerialProfile(port="COM99")),
+                        ),
+                    ]
+                )
+            ]
+        )
+        window, _path = self.launch_window(
+            AppSettings(dashboards=[config], workspace_layout=layout), "budget_v2"
+        )
+        sessions = window.iter_sessions()
+        for session in sessions:
+            self.fake_out_session(session)
+        dashboard = window.open_dashboard_tab(config.id)
+        self.stop_tick_timer(dashboard)
+        dashboard.bind_to_session(sessions[0].session_id)
+
+        # Pre-seed history (sparkline + chart math runs every sweep) and
+        # a populated alert log so unseen_count / panel paths have load.
+        now = dashboard._clock()
+        for entry in entries:
+            if not entry.is_numeric():
+                continue
+            history = EntryHistory()
+            for index in range(HISTORY_MAX_SAMPLES):
+                history.append(now - HISTORY_MAX_SAMPLES + index, 12.0 + (index % 5) * 0.3)
+            dashboard._histories[entry.id] = history
+        for index in range(50):
+            dashboard.alerts.append(
+                AlertRecord(
+                    timestamp="14:00:00",
+                    entry_id=f"e{index}",
+                    entry_label=f"E{index}",
+                    old_state="ok",
+                    new_state="fail",
+                    value_text="14.0",
+                    kind=ALERT_KIND,
+                )
+            )
+
+        # Enable CSV logging so each successful outcome writes a row.
+        log_path = Path(__file__).with_name("_tmp_dash_budget_v2.csv")
+        log_path.unlink(missing_ok=True)
+        # Close the logger BEFORE unlinking — Windows holds the handle.
+        self.addCleanup(log_path.unlink, missing_ok=True)
+        self.addCleanup(dashboard.value_logger.close)
+        dashboard.config.csv_log_path = str(log_path)
+        dashboard.csv_log_button.setChecked(True)
+
+        dashboard._tick()  # absorb first-tick lazy work
+        started = perf_counter()
+        rounds = 100
+        for _ in range(rounds):
+            dashboard._tick()
+        average_ms = (perf_counter() - started) * 1000 / rounds
+        # NFR-12: v2 load stays inside the same GUI budget v1 used (5 ms
+        # average per tick, with CI noise headroom).
+        self.assertLess(average_ms, 5.0)
+
+    def test_restore_with_per_entry_override_endpoint(self) -> None:
+        """Persisted v2 override endpoints resolve at restart (FR-54)."""
+        bench = volt_entry()
+        bench.id = "bench"
+        bench.label = "Bench V"
+        chamber = volt_entry()
+        chamber.id = "chamber"
+        chamber.label = "Chamber V"
+        chamber.target_endpoint = "COM99"  # override binding
+        config = DashboardConfig(name="Multi-device", entries=[bench, chamber])
+        layout = WorkspaceLayoutState(
+            panes=[
+                WorkspacePaneState(
+                    tabs=[
+                        WorkspaceTabState(
+                            kind="terminal",
+                            terminal=TerminalSessionState(
+                                title="Bench", serial=SerialProfile(port="COM7")
+                            ),
+                        ),
+                        WorkspaceTabState(
+                            kind="terminal",
+                            terminal=TerminalSessionState(
+                                title="Chamber", serial=SerialProfile(port="COM99")
+                            ),
+                        ),
+                        WorkspaceTabState(
+                            kind="dashboard",
+                            dashboard=DashboardTabState(
+                                dashboard_id=config.id,
+                                target_endpoint="COM7",
+                            ),
+                        ),
+                    ],
+                    active_tab=2,
+                )
+            ]
+        )
+        settings = AppSettings(dashboards=[config], workspace_layout=layout)
+        window, _path = self.launch_window(settings, "restore_v2_override")
+
+        dashboards = window.iter_dashboards()
+        self.assertEqual(len(dashboards), 1)
+        dashboard = dashboards[0]
+        self.stop_tick_timer(dashboard)
+        sessions = window.iter_sessions()
+        bench_session = next(s for s in sessions if s.connection_endpoint() == "COM7")
+        chamber_session = next(s for s in sessions if s.connection_endpoint() == "COM99")
+        self.assertEqual(dashboard.bound_session_id, bench_session.session_id)
+        # Both sessions appear in the entry topology: default + override.
+        self.assertEqual(
+            sorted(dashboard._entry_session.values()),
+            sorted([bench_session.session_id, chamber_session.session_id]),
+        )
+        # Coordinator now holds two dispatcher refcounts (one per target).
+        self.assertEqual(window.dashboard_runs.dispatcher_count(), 2)
+
+    def test_v2_export_round_trips_through_settings(self) -> None:
+        """A dashboard with derived + control + custom color survives a
+        save/reload via the real SettingsService (FR-43 + v2 fields)."""
+        from ComPort_Zone.dashboard_models import ControlSpec
+
+        polled = volt_entry()
+        polled.id = "volts"
+        polled.label = "Volts"
+        polled.rules = [
+            ColorRule(op="gt", operand="13.0", state="warn", color="#ff9f43"),
+        ]
+        derived = DashboardEntry(
+            id="power",
+            label="Power",
+            unit="W",
+            source="derived",
+            expression="{Volts} * 2",
+            tile=TilePlacement(col=1, row=0),
+        )
+        control = DashboardEntry(
+            id="output",
+            label="Output",
+            tile=TilePlacement(col=2, row=0, kind="control"),
+            control=ControlSpec(
+                mode="toggle",
+                on_command="OUTP ON",
+                off_command="OUTP OFF",
+                confirm=True,
+                watch_entry_id="volts",
+            ),
+        )
+        config = DashboardConfig(name="V2 Bench", entries=[polled, derived, control])
+        config.csv_log_enabled = False
+        config.csv_log_path = "/tmp/never-written.csv"
+
+        settings_path = Path(__file__).with_name("_tmp_settings_dash_v2_roundtrip.json")
+        settings_path.unlink(missing_ok=True)
+        self.addCleanup(settings_path.unlink, missing_ok=True)
+        service = SettingsService(SettingsStore(settings_path))
+        original = AppSettings(dashboards=[config])
+        self.assertTrue(service.save(original))
+        # Sanity: payload declared the v2 schema floor (6).
+        with settings_path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertGreaterEqual(payload.get("minimum_compatible_schema_version", 0), 6)
+        self.assertEqual(payload["schema_version"], 6)
+
+        restored = service.load()
+        # Every v2 field round-trips intact.
+        configs = {item.name: item for item in restored.dashboards}
+        round_tripped = configs["V2 Bench"]
+        entries = {entry.id: entry for entry in round_tripped.entries}
+        self.assertEqual(entries["volts"].rules[0].color, "#ff9f43")
+        self.assertEqual(entries["power"].source, "derived")
+        self.assertEqual(entries["power"].expression, "{Volts} * 2")
+        self.assertEqual(entries["output"].tile.kind, "control")
+        self.assertEqual(entries["output"].control.mode, "toggle")
+        self.assertEqual(entries["output"].control.watch_entry_id, "volts")
+        self.assertTrue(entries["output"].control.confirm)
+        self.assertEqual(round_tripped.csv_log_path, "/tmp/never-written.csv")
+
 
 if __name__ == "__main__":
     unittest.main()
