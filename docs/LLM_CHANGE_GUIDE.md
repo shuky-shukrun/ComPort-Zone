@@ -55,18 +55,18 @@ git diff --check
 | Settings schema/import/export                 | `src/ComPort_Zone/settings_service.py`, `src/ComPort_Zone/storage.py`, `src/ComPort_Zone/models.py`                                | `tests/test_models_and_storage`                               |
 | Workspace settings save/restore               | `src/ComPort_Zone/workspace_state.py`, `src/ComPort_Zone/workspace_settings_controller.py`                                         | matching workspace tests                                      |
 | Dialog UI                                     | `src/ComPort_Zone/ui/dialogs/*`                                                                                                    | `tests/test_dialogs`                                          |
-| Control Panel domain (models, parse, rules)   | `src/ComPort_Zone/dashboard_models.py`, `src/ComPort_Zone/dashboard_parse.py`                                                      | `tests/test_dashboard_models`, `tests/test_dashboard_parse`   |
-| Control Panel polling engine                  | `src/ComPort_Zone/dashboard_engine.py`                                                                                             | `tests/test_dashboard_engine`                                 |
-| Control Panel library/import/export           | `src/ComPort_Zone/dashboard_catalog.py`                                                                                            | `tests/test_dashboard_catalog`                                |
-| Control Panel binding + dispatcher lifecycle  | `src/ComPort_Zone/ui/dashboard_targets.py`                                                                                         | `tests/test_dashboard_targets`                                |
-| Control Panel expressions (derived tiles)     | `src/ComPort_Zone/dashboard_expr.py`                                                                                               | `tests/test_dashboard_expr`                                   |
-| Control Panel history + paint math (sparkline/chart) | `src/ComPort_Zone/dashboard_history.py`                                                                                         | `tests/test_dashboard_history`                                |
-| Control Panel alerts (transition + bounded log) | `src/ComPort_Zone/dashboard_alerts.py`                                                                                             | `tests/test_dashboard_alerts`, `tests/test_dashboard_alert_ui`|
-| Control Panel CSV value logging (kind column) | `src/ComPort_Zone/dashboard_value_log.py`                                                                                          | `tests/test_dashboard_value_log`                              |
-| Control Panel tab UI (tick loop, tiles, grid) | `src/ComPort_Zone/ui/dashboard_tab.py`, `src/ComPort_Zone/ui/dashboard_tiles.py`, `src/ComPort_Zone/ui/dashboard_grid.py`, `src/ComPort_Zone/ui/dashboard_sparkline.py` | `tests/test_dashboard_tab`, `tests/test_dashboard_tiles`, `tests/test_dashboard_sparkline` |
-| Control Panel chart page                      | `src/ComPort_Zone/ui/dashboard_chart.py`                                                                                           | `tests/test_dashboard_chart`                                  |
-| Control Panel alert UI + sound                | `src/ComPort_Zone/ui/dashboard_alert_panel.py`, `src/ComPort_Zone/ui/alert_sound.py`                                               | `tests/test_dashboard_alert_ui`                               |
-| Control Panel dialogs (entry editor, manager) | `src/ComPort_Zone/ui/dialogs/dashboard_entry.py`, `src/ComPort_Zone/ui/dialogs/dashboard_manager.py`                               | `tests/test_dashboard_tab`, `tests/test_dashboard_manager`    |
+| Control Panel domain (models, parse, rules)   | `src/ComPort_Zone/control_panel_models.py`, `src/ComPort_Zone/control_panel_parse.py`                                                      | `tests/test_control_panel_models`, `tests/test_control_panel_parse`   |
+| Control Panel polling engine                  | `src/ComPort_Zone/control_panel_engine.py`                                                                                             | `tests/test_control_panel_engine`                                 |
+| Control Panel library/import/export           | `src/ComPort_Zone/control_panel_catalog.py`                                                                                            | `tests/test_control_panel_catalog`                                |
+| Control Panel binding + dispatcher lifecycle  | `src/ComPort_Zone/ui/control_panel_targets.py`                                                                                         | `tests/test_control_panel_targets`                                |
+| Control Panel expressions (derived tiles)     | `src/ComPort_Zone/control_panel_expr.py`                                                                                               | `tests/test_control_panel_expr`                                   |
+| Control Panel history + paint math (sparkline/chart) | `src/ComPort_Zone/control_panel_history.py`                                                                                         | `tests/test_control_panel_history`                                |
+| Control Panel alerts (transition + bounded log) | `src/ComPort_Zone/control_panel_alerts.py`                                                                                             | `tests/test_control_panel_alerts`, `tests/test_control_panel_alert_ui`|
+| Control Panel CSV value logging (kind column) | `src/ComPort_Zone/control_panel_value_log.py`                                                                                          | `tests/test_control_panel_value_log`                              |
+| Control Panel tab UI (tick loop, tiles, grid) | `src/ComPort_Zone/ui/control_panel_tab.py`, `src/ComPort_Zone/ui/control_panel_tiles.py`, `src/ComPort_Zone/ui/control_panel_grid.py`, `src/ComPort_Zone/ui/control_panel_sparkline.py` | `tests/test_control_panel_tab`, `tests/test_control_panel_tiles`, `tests/test_control_panel_sparkline` |
+| Control Panel chart page                      | `src/ComPort_Zone/ui/control_panel_chart.py`                                                                                           | `tests/test_control_panel_chart`                                  |
+| Control Panel alert UI + sound                | `src/ComPort_Zone/ui/control_panel_alert_panel.py`, `src/ComPort_Zone/ui/alert_sound.py`                                               | `tests/test_control_panel_alert_ui`                               |
+| Control Panel dialogs (entry editor, manager) | `src/ComPort_Zone/ui/dialogs/control_panel_entry.py`, `src/ComPort_Zone/ui/dialogs/control_panel_manager.py`                               | `tests/test_control_panel_tab`, `tests/test_control_panel_manager`    |
 
 ## Do Not Break These Seams
 
@@ -196,25 +196,25 @@ git diff --check
 
 ### Fix Control Panel Polling
 
-1. *When* an entry polls (due times, pause reasons, fixed-delay reschedule): edit `DashboardPollScheduler` in `src/ComPort_Zone/dashboard_engine.py` — pure logic, test with the injected `FakeClock`.
+1. *When* an entry polls (due times, pause reasons, fixed-delay reschedule): edit `ControlPanelPollScheduler` in `src/ComPort_Zone/control_panel_engine.py` — pure logic, test with the injected `FakeClock`.
 2. *How* a poll executes on the wire (drain → send → collect window → parse/timeout): edit `SessionPollDispatcher._execute_transaction` in the same module.
-3. Value extraction or color rules: edit `src/ComPort_Zone/dashboard_parse.py`.
-4. Pause-reason detection (disconnect/batch/tab-closed) and chip text: edit `DashboardTabWidget._tick`/`_check_session_health` in `src/ComPort_Zone/ui/dashboard_tab.py`; session health comes from `DashboardRunCoordinator.session_health`.
+3. Value extraction or color rules: edit `src/ComPort_Zone/control_panel_parse.py`.
+4. Pause-reason detection (disconnect/batch/tab-closed) and chip text: edit `ControlPanelTabWidget._tick`/`_check_session_health` in `src/ComPort_Zone/ui/control_panel_tab.py`; session health comes from `ControlPanelRunCoordinator.session_health`.
 5. Run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_engine tests/test_dashboard_parse tests/test_dashboard_tab tests/test_app_dashboards -q
+.\.venv\Scripts\python.exe -m unittest tests/test_control_panel_engine tests/test_control_panel_parse tests/test_control_panel_tab tests/test_app_control_panels -q
 ```
 
 ### Fix Control Panel Layout Or Tiles
 
-1. Grid math (placement, spans, overlap repair): edit the Qt-free helpers in `src/ComPort_Zone/dashboard_models.py` (`normalize_layout`/`place_tile`/`set_tile_span`).
-2. Tile rendering/states: edit `src/ComPort_Zone/ui/dashboard_tiles.py` (+ QSS in `ui/stylesheet.py`).
-3. Geometry/drag-drop: edit `src/ComPort_Zone/ui/dashboard_grid.py`.
+1. Grid math (placement, spans, overlap repair): edit the Qt-free helpers in `src/ComPort_Zone/control_panel_models.py` (`normalize_layout`/`place_tile`/`set_tile_span`).
+2. Tile rendering/states: edit `src/ComPort_Zone/ui/control_panel_tiles.py` (+ QSS in `ui/stylesheet.py`).
+3. Geometry/drag-drop: edit `src/ComPort_Zone/ui/control_panel_grid.py`.
 4. Run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_models tests/test_dashboard_tiles -q
+.\.venv\Scripts\python.exe -m unittest tests/test_control_panel_models tests/test_control_panel_tiles -q
 ```
 
 ### Add Another Control Widget Kind (v3 recipe)
@@ -224,43 +224,43 @@ The v3 `setpoint` and `enum` tile kinds plug into the existing
 follows the same five-step recipe:
 
 1. Add a `Spec` dataclass alongside `ControlSpec`/`SetpointSpec` in
-   `src/ComPort_Zone/dashboard_models.py` with sparse `to_dict`/`from_dict`
+   `src/ComPort_Zone/control_panel_models.py` with sparse `to_dict`/`from_dict`
    and a branched `validation_errors(send_mode)`. Add a predicate
-   `is_<kind>()` on `DashboardEntry` and add `<kind>` to `TILE_KINDS`.
+   `is_<kind>()` on `ControlPanelEntry` and add `<kind>` to `TILE_KINDS`.
    If the new kind is a write surface, make `is_writable()` return True
    for it — that hooks it under the master-arm umbrella gate
    automatically.
 2. If the new kind needs a schema floor, bump `SETTINGS_SCHEMA_VERSION`
    and add the predicate to `entry_uses_v3_features` (or define a new
    floor predicate); sparse serialization keeps v1/v2 configs untouched.
-3. Add a `TileFrame` subclass in `src/ComPort_Zone/ui/dashboard_tiles.py`
+3. Add a `TileFrame` subclass in `src/ComPort_Zone/ui/control_panel_tiles.py`
    that emits `activateRequested(entry_id)` after staging a pending
    value on the tab via `tab.stage_pending_value(entry_id, ...)`.
    Register it in `TILE_CLASSES[<kind>]`. Override `set_panel_armed` to
    re-render visually inert when disarmed (`panelArmed` QSS property).
-4. Extend `DashboardTabWidget._activate_control` to read the pending
+4. Extend `ControlPanelTabWidget._activate_control` to read the pending
    value and format the command for the new kind. The master-arm gate,
    per-tile confirm, session/connect/batch checks, dispatcher submit,
    `_handle_control_result`, and the `kind="control"` CSV audit row all
    come for free from the funnel.
-5. Add a shape branch in `src/ComPort_Zone/ui/dialogs/dashboard_entry.py`
+5. Add a shape branch in `src/ComPort_Zone/ui/dialogs/control_panel_entry.py`
    for the new kind's edit form. Run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_models tests/test_dashboard_tab tests/test_dashboard_tiles -q
+.\.venv\Scripts\python.exe -m unittest tests/test_control_panel_models tests/test_control_panel_tab tests/test_control_panel_tiles -q
 ```
 
 ### Add A Control Panel v2 Feature That Reacts To A Poll Result
 
 Every successful parse — poll OR derived recompute — flows through the
-shared `DashboardTabWidget._apply_outcome` funnel exactly once. The
+shared `ControlPanelTabWidget._apply_outcome` funnel exactly once. The
 sparkline history append, CSV row write, alert edge detection, and
 derived dependent fan-out all attach there, so adding a new
 poll-driven side effect should usually go in the same place.
 
 1. Add a new Qt-free domain module under `src/ComPort_Zone/` for the
-   core logic (mirror `dashboard_history.py` / `dashboard_value_log.py`).
-2. Re-export it through `src/ComPort_Zone/core/dashboard.py` (the
+   core logic (mirror `control_panel_history.py` / `control_panel_value_log.py`).
+2. Re-export it through `src/ComPort_Zone/core/control_panel.py` (the
    `tests/test_core_no_pyside.py` test enforces "no PySide" on every
    re-exported submodule).
 3. Hook the side effect into `_apply_outcome`. Capture `prev_state`
@@ -273,7 +273,7 @@ poll-driven side effect should usually go in the same place.
 5. Run the funnel tests + your new module's tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests/test_dashboard_tab tests/test_app_dashboards -q
+.\.venv\Scripts\python.exe -m unittest tests/test_control_panel_tab tests/test_app_control_panels -q
 ```
 
 ### Fix Command Editor Search Or Replace
@@ -397,10 +397,10 @@ Run focused tests:
 - App settings JSON import/export intentionally excludes quick actions.
 - `SettingsStore` should remain file I/O only. Schema/payload rules belong to `SettingsService`.
 - Controllers should make behavior decisions. Widgets should apply UI changes.
-- Control Panel TX goes only through `SessionPollDispatcher` (one per bound session, refcounted by `DashboardRunCoordinator`). Never send from the control-panel GUI tick directly — that breaks per-session serialization and puts serial I/O on the GUI thread.
-- Control Panel tile colors come only from `ThemePalette` via the `tileState` QSS property (mapping in `ui/dashboard_tiles.tile_state_color`); no hex literals in tile widgets (enforced by `tests/test_dashboard_tiles`).
-- The Control Panel domain modules (`dashboard_models/parse/engine/catalog`) must stay Qt-free; they are re-exported via `core/dashboard.py` and `tests/test_core_no_pyside` enforces it. The internal `dashboard*` module/symbol names are intentional — they preserve byte-for-byte v1/v2 user-settings compatibility after the v3 rename.
-- Control Panel configs live-save: every mutation writes to `AppSettings.dashboards` (JSON key kept for back-compat) and calls `save_settings()`. There is no dirty state and no confirm-on-close for control-panel tabs.
+- Control Panel TX goes only through `SessionPollDispatcher` (one per bound session, refcounted by `ControlPanelRunCoordinator`). Never send from the control-panel GUI tick directly — that breaks per-session serialization and puts serial I/O on the GUI thread.
+- Control Panel tile colors come only from `ThemePalette` via the `tileState` QSS property (mapping in `ui/control_panel_tiles.tile_state_color`); no hex literals in tile widgets (enforced by `tests/test_control_panel_tiles`).
+- The Control Panel domain modules (`control_panel_models/parse/engine/catalog`) must stay Qt-free; they are re-exported via `core/control_panel.py` and `tests/test_core_no_pyside` enforces it. The internal `control_panel*` module/symbol names are intentional — they preserve byte-for-byte v1/v2 user-settings compatibility after the v3 rename.
+- Control Panel configs live-save: every mutation writes to `AppSettings.control_panels` (JSON key kept for back-compat) and calls `save_settings()`. There is no dirty state and no confirm-on-close for control-panel tabs.
 - Master-arm state is **transient**: it boots False, is never serialized, and force-disarms on unbind/session-close/settings-reload/shutdown. Every writing-tile path (control/setpoint/enum) must gate on `tab._armed` ahead of session/connect checks — adding a new writing kind that bypasses the gate is a regression.
 
 ## Known Pitfalls

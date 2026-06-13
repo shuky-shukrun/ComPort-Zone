@@ -115,8 +115,8 @@ Rules:
 | Quick action domain | `quick_actions.py` | Quick command/file CSV, filtering, sorting, reorder, lookup, duplicate rules. |
 | Quick action workflows | `quick_action_controller.py` | Add/edit/delete/import/export/reorder UI workflow around `QuickActionLibrary`. |
 | Quick action UI | `quick_actions_panel.py`, `quick_actions_sidebar.py` | Shared sidebar/panel used by terminal and editor. |
-| Dashboard domain | `dashboard_models.py`, `dashboard_parse.py`, `dashboard_engine.py`, `dashboard_catalog.py` | Qt-free dashboard configs + grid math, response parsing and color rules, poll scheduler + per-session dispatcher, named-dashboard library and JSON transfer. |
-| Dashboard UI | `ui/dashboard_tab.py`, `ui/dashboard_tiles.py`, `ui/dashboard_grid.py`, `ui/dashboard_targets.py`, `ui/dialogs/dashboard_entry.py`, `ui/dialogs/dashboard_manager.py` | Dashboard workspace tab (tick loop, binding chip, empty states), value/LED tiles, drag grid with spans, binding coordinator with refcounted dispatchers, entry editor + library manager dialogs. |
+| ControlPanel domain | `control_panel_models.py`, `control_panel_parse.py`, `control_panel_engine.py`, `control_panel_catalog.py` | Qt-free control_panel configs + grid math, response parsing and color rules, poll scheduler + per-session dispatcher, named-control_panel library and JSON transfer. |
+| ControlPanel UI | `ui/control_panel_tab.py`, `ui/control_panel_tiles.py`, `ui/control_panel_grid.py`, `ui/control_panel_targets.py`, `ui/dialogs/control_panel_entry.py`, `ui/dialogs/control_panel_manager.py` | ControlPanel workspace tab (tick loop, binding chip, empty states), value/LED tiles, drag grid with spans, binding coordinator with refcounted dispatchers, entry editor + library manager dialogs. |
 | Settings | `settings_service.py`, `storage.py`, `workspace_state.py`, `workspace_settings_controller.py` | App settings schema, JSON I/O, workspace capture/restore, save/apply coordination. |
 | App settings UI | `app_settings_controller.py`, `ui/dialogs/app_settings_transfer.py` | App settings import/export dialogs and busy workflow. |
 | Version checks | `version_check.py`, `ui/dialogs/version_update.py`, `ui/main_window.py` | GitHub release comparison, asynchronous latest-release requests, and the update-available dialog. |
@@ -365,14 +365,14 @@ Quick-action rules:
 - Drawer collapsed state, selected Quick Commands/Quick Files page, and drawer width are app-level settings applied across terminal tabs and embedded command-file editor tabs.
 - App settings JSON import/export excludes quick actions. Quick actions use CSV import/export.
 
-## Flow: Dashboard Polling
+## Flow: ControlPanel Polling
 
 ```mermaid
 flowchart TD
-    Tab["DashboardTabWidget (GUI tick, 100 ms)"] --> Scheduler["DashboardPollScheduler (pure: due times, pause reasons)"]
+    Tab["ControlPanelTabWidget (GUI tick, 100 ms)"] --> Scheduler["ControlPanelPollScheduler (pure: due times, pause reasons)"]
     Scheduler -->|"collect_due()"| Tab
     Tab -->|"PollRequest"| Dispatcher["SessionPollDispatcher (1 thread per bound session, FIFO)"]
-    Coordinator["DashboardRunCoordinator (refcounted dispatchers, session health)"] --> Dispatcher
+    Coordinator["ControlPanelRunCoordinator (refcounted dispatchers, session health)"] --> Dispatcher
     Dispatcher -->|"send_text / send_bytes"| Transport["TransportAdapter of the bound terminal"]
     Transport -->|"subscribe_events() queue"| Dispatcher
     Dispatcher -->|"PollResult"| Results["tab result queue"]
@@ -389,14 +389,14 @@ Pause reasons form a set — polling runs only when it is empty:
 | `batch` | Per-tick `script_snapshot().is_running` — a command-file run on the same session suspends polling. |
 | `user` | The tab's pause toggle; the only reason that persists across restarts. |
 
-Dashboard rules:
+ControlPanel rules:
 
-- A dashboard never owns a connection (it binds to an open terminal tab, even a disconnected one) and never sends from the GUI thread — all TX goes through the session's dispatcher, which serializes transactions FIFO across every dashboard bound to that session.
-- Poll traffic stays out of the bound terminal's transcript: dashboard TX events carry `source="dashboard"`, and the dispatcher's `PollTrafficJournal` (attached to the terminal by the coordinator on bind) marks the wall-clock windows whose RX the terminal skips rendering. The session log and subscriber queues see everything unchanged.
+- A control_panel never owns a connection (it binds to an open terminal tab, even a disconnected one) and never sends from the GUI thread — all TX goes through the session's dispatcher, which serializes transactions FIFO across every control_panel bound to that session.
+- Poll traffic stays out of the bound terminal's transcript: control_panel TX events carry `source="control_panel"`, and the dispatcher's `PollTrafficJournal` (attached to the terminal by the coordinator on bind) marks the wall-clock windows whose RX the terminal skips rendering. The session log and subscriber queues see everything unchanged.
 - One transaction: drain stale RX → send → accumulate the post-send RX window (tail-capped at 4 KB) → first parse-rule match wins, or the entry's timeout reports a stale tile. Fixed-delay rescheduling: the next poll is `interval` after completion, so slow devices degrade the rate instead of building a backlog.
-- Configs are a settings library (`AppSettings.dashboards`, schema v5 with feature floors) and live-save on every mutation; opening an already-open dashboard focuses the existing tab.
-- Restore recreates dashboard tabs with the workspace and rebinds only on a unique endpoint match; otherwise the tab stays visibly unbound with a one-click bind menu.
-- Requirements contract: `docs/dashboard-view-requirements.md`.
+- Configs are a settings library (`AppSettings.control_panels`, schema v5 with feature floors) and live-save on every mutation; opening an already-open control_panel focuses the existing tab.
+- Restore recreates control_panel tabs with the workspace and rebinds only on a unique endpoint match; otherwise the tab stays visibly unbound with a one-click bind menu.
+- Requirements contract: `docs/control_panel-view-requirements.md`.
 
 ## Flow: Settings Save, Import, Export
 

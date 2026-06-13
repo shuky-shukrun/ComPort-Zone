@@ -56,7 +56,7 @@ class PreferencesDialog(QDialog):
         tabs.addTab(self._build_terminal_tab(settings), "Terminal")
         tabs.addTab(self._build_connection_tab(settings), "Connection")
         tabs.addTab(self._build_logging_tab(settings), "Logging")
-        tabs.addTab(self._build_dashboards_tab(settings), "Control Panels")
+        tabs.addTab(self._build_control_panels_tab(settings), "Control Panels")
         tabs.addTab(self._build_updates_tab(settings), "Updates")
         tabs.addTab(self._build_data_reset_tab(settings), "Data & Reset")
 
@@ -193,7 +193,7 @@ class PreferencesDialog(QDialog):
 
         return widget
 
-    def _build_dashboards_tab(self, settings) -> QWidget:
+    def _build_control_panels_tab(self, settings) -> QWidget:
         widget = QWidget(self)
         layout = QVBoxLayout(widget)
         layout.addWidget(QLabel(
@@ -202,22 +202,22 @@ class PreferencesDialog(QDialog):
             widget,
         ))
         layout.itemAt(layout.count() - 1).widget().setWordWrap(True)
-        self.dashboard_alerts_checkbox = QCheckBox("Show control panel alerts", widget)
-        self.dashboard_alerts_checkbox.setChecked(settings.dashboard_alerts_enabled)
-        self.dashboard_alerts_checkbox.setToolTip(
+        self.control_panel_alerts_checkbox = QCheckBox("Show control panel alerts", widget)
+        self.control_panel_alerts_checkbox.setChecked(settings.control_panel_alerts_enabled)
+        self.control_panel_alerts_checkbox.setToolTip(
             "Master switch — when off, no badge, taskbar flash, or sound fires."
         )
-        layout.addWidget(self.dashboard_alerts_checkbox)
-        self.dashboard_alert_sound_checkbox = QCheckBox(
+        layout.addWidget(self.control_panel_alerts_checkbox)
+        self.control_panel_alert_sound_checkbox = QCheckBox(
             "Play a sound when a tile alerts", widget
         )
-        self.dashboard_alert_sound_checkbox.setChecked(settings.dashboard_alert_sound)
-        layout.addWidget(self.dashboard_alert_sound_checkbox)
-        self.dashboard_alerts_checkbox.toggled.connect(
-            self.dashboard_alert_sound_checkbox.setEnabled
+        self.control_panel_alert_sound_checkbox.setChecked(settings.control_panel_alert_sound)
+        layout.addWidget(self.control_panel_alert_sound_checkbox)
+        self.control_panel_alerts_checkbox.toggled.connect(
+            self.control_panel_alert_sound_checkbox.setEnabled
         )
-        self.dashboard_alert_sound_checkbox.setEnabled(
-            self.dashboard_alerts_checkbox.isChecked()
+        self.control_panel_alert_sound_checkbox.setEnabled(
+            self.control_panel_alerts_checkbox.isChecked()
         )
         layout.addStretch(1)
         return widget
@@ -322,5 +322,5 @@ class PreferencesDialog(QDialog):
         settings.log_path = self.log_path_input.text().strip()
         settings.check_for_updates_on_launch = self.check_updates_checkbox.isChecked()
         settings.clear_history_on_exit = self.clear_history_checkbox.isChecked()
-        settings.dashboard_alerts_enabled = self.dashboard_alerts_checkbox.isChecked()
-        settings.dashboard_alert_sound = self.dashboard_alert_sound_checkbox.isChecked()
+        settings.control_panel_alerts_enabled = self.control_panel_alerts_checkbox.isChecked()
+        settings.control_panel_alert_sound = self.control_panel_alert_sound_checkbox.isChecked()

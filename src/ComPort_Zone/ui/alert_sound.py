@@ -1,4 +1,4 @@
-"""Cross-platform "ding" for dashboard alerts (FR-58).
+"""Cross-platform "ding" for control_panel alerts (FR-58).
 
 Loads ``assets/alert.wav`` through :class:`QSoundEffect` if QtMultimedia
 is available in the wheel (it is, on the desktop builds we ship), falls

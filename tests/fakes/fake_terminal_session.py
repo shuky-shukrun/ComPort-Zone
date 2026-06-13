@@ -1,7 +1,7 @@
-"""Stub terminal session for dashboard coordinator/tab tests.
+"""Stub terminal session for control_panel coordinator/tab tests.
 
 Implements the ``TerminalSessionLike`` surface that
-:class:`ComPort_Zone.ui.dashboard_targets.DashboardRunCoordinator` consumes,
+:class:`ComPort_Zone.ui.control_panel_targets.ControlPanelRunCoordinator` consumes,
 backed by a :class:`FakeSerialTransport` so dispatcher I/O is in-memory.
 """
 
@@ -24,7 +24,7 @@ class FakeTerminalSession:
         self.batch_running = False
         # Mirrors TerminalSessionWidget's journal hook; records every attach
         # so tests can assert the coordinator wired/cleared it.
-        self.dashboard_traffic_journal = None
+        self.control_panel_traffic_journal = None
         self.journal_attachments: list[object] = []
 
     def connection_endpoint(self) -> str:
@@ -36,6 +36,6 @@ class FakeTerminalSession:
     def script_snapshot(self) -> BatchRunSnapshot:
         return BatchRunSnapshot(is_running=self.batch_running)
 
-    def attach_dashboard_traffic_journal(self, journal) -> None:
-        self.dashboard_traffic_journal = journal
+    def attach_control_panel_traffic_journal(self, journal) -> None:
+        self.control_panel_traffic_journal = journal
         self.journal_attachments.append(journal)

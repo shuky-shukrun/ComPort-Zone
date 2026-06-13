@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .dashboard_models import (
-    DashboardConfig,
-    DashboardTabState,
-    dashboard_uses_v2_features,
-    dashboard_uses_v3_features,
-    default_dashboards,
+from .control_panel_models import (
+    ControlPanelConfig,
+    ControlPanelTabState,
+    control_panel_uses_v2_features,
+    control_panel_uses_v3_features,
+    default_control_panels,
 )
 
 LINE_ENDINGS = {
@@ -47,10 +47,10 @@ MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 # content stay readable by older builds (FR-39 in
 # docs/control-panel-requirements.md).
 LAN_SCHEMA_FLOOR = 4
-DASHBOARD_SCHEMA_FLOOR = 5
-# Dashboard v2 capabilities (poll modes, per-entry targets, derived/control
+CONTROL_PANEL_SCHEMA_FLOOR = 5
+# ControlPanel v2 capabilities (poll modes, per-entry targets, derived/control
 # entries, rule colors, CSV logging) — a v1-shaped library keeps floor 5.
-DASHBOARD_V2_SCHEMA_FLOOR = 6
+CONTROL_PANEL_V2_SCHEMA_FLOOR = 6
 # Control Panel v3 capabilities (setpoint tiles, enum/dropdown tiles) — a
 # v1/v2-shaped library keeps its prior floor; only a panel that actually
 # uses a v3 widget pushes the floor to 7 (FR-39 v3).
@@ -352,14 +352,14 @@ class WorkspaceTabState:
     kind: str = "terminal"
     terminal: TerminalSessionState | None = None
     command_file: CommandFileTabState | None = None
-    dashboard: DashboardTabState | None = None
+    control_panel: ControlPanelTabState | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"kind": self.kind}
         if self.kind == "command_file":
             payload["command_file"] = (self.command_file or CommandFileTabState()).to_dict()
-        elif self.kind == "dashboard":
-            payload["dashboard"] = (self.dashboard or DashboardTabState()).to_dict()
+        elif self.kind == "control_panel":
+            payload["control_panel"] = (self.control_panel or ControlPanelTabState()).to_dict()
         else:
             payload["terminal"] = (self.terminal or TerminalSessionState()).to_dict()
         return payload
@@ -374,10 +374,10 @@ class WorkspaceTabState:
                 kind="command_file",
                 command_file=CommandFileTabState.from_dict(_dict_value(data.get("command_file"))),
             )
-        if kind == "dashboard":
+        if kind == "control_panel":
             return cls(
-                kind="dashboard",
-                dashboard=DashboardTabState.from_dict(_dict_value(data.get("dashboard"))),
+                kind="control_panel",
+                control_panel=ControlPanelTabState.from_dict(_dict_value(data.get("control_panel"))),
             )
         return cls(
             kind="terminal",
@@ -506,8 +506,8 @@ class AppSettings:
     favorites_splitter_sizes: list[int] = field(default_factory=list)
     restored_tabs: list[TerminalSessionState] = field(default_factory=list)
     restored_command_files: list[CommandFileTabState] = field(default_factory=list)
-    restored_dashboards: list[DashboardTabState] = field(default_factory=list)
-    dashboards: list[DashboardConfig] = field(default_factory=default_dashboards)
+    restored_control_panels: list[ControlPanelTabState] = field(default_factory=list)
+    control_panels: list[ControlPanelConfig] = field(default_factory=default_control_panels)
     workspace_layout: WorkspaceLayoutState = field(default_factory=WorkspaceLayoutState)
     theme: str = "ComPort Zone Dark"
     timestamps_enabled: bool = True
@@ -522,11 +522,11 @@ class AppSettings:
     drawer_page_index: int = 0
     check_for_updates_on_launch: bool = True
     clear_history_on_exit: bool = False
-    # Dashboard alerts (FR-58). Master enable defaults on so the feature
+    # ControlPanel alerts (FR-58). Master enable defaults on so the feature
     # is discoverable; sound defaults off so the app stays quiet without
     # an explicit opt-in. Per-entry alerts_enabled gates contribution.
-    dashboard_alerts_enabled: bool = True
-    dashboard_alert_sound: bool = False
+    control_panel_alerts_enabled: bool = True
+    control_panel_alert_sound: bool = False
     log_path: str = ""
     last_script_path: str = ""
     recent_files: list[str] = field(default_factory=list)
@@ -543,11 +543,11 @@ class AppSettings:
             return True
         return any(session.transport_kind == "lan" for session in self.restored_tabs)
 
-    def _uses_dashboards(self) -> bool:
-        if self.dashboards or self.restored_dashboards:
+    def _uses_control_panels(self) -> bool:
+        if self.control_panels or self.restored_control_panels:
             return True
         return any(
-            tab.kind == "dashboard"
+            tab.kind == "control_panel"
             for pane in self.workspace_layout.panes
             for tab in pane.tabs
         )
@@ -556,11 +556,11 @@ class AppSettings:
         floors = [MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION]
         if self._uses_lan_transport():
             floors.append(LAN_SCHEMA_FLOOR)
-        if self._uses_dashboards():
-            floors.append(DASHBOARD_SCHEMA_FLOOR)
-        if any(dashboard_uses_v2_features(config) for config in self.dashboards):
-            floors.append(DASHBOARD_V2_SCHEMA_FLOOR)
-        if any(dashboard_uses_v3_features(config) for config in self.dashboards):
+        if self._uses_control_panels():
+            floors.append(CONTROL_PANEL_SCHEMA_FLOOR)
+        if any(control_panel_uses_v2_features(config) for config in self.control_panels):
+            floors.append(CONTROL_PANEL_V2_SCHEMA_FLOOR)
+        if any(control_panel_uses_v3_features(config) for config in self.control_panels):
             floors.append(CONTROL_PANEL_V3_SCHEMA_FLOOR)
         return max(floors)
 
@@ -600,9 +600,9 @@ class AppSettings:
                     "check_on_launch": self.check_for_updates_on_launch,
                 },
                 "clear_history_on_exit": self.clear_history_on_exit,
-                "dashboard_alerts": {
-                    "enabled": self.dashboard_alerts_enabled,
-                    "sound": self.dashboard_alert_sound,
+                "control_panel_alerts": {
+                    "enabled": self.control_panel_alerts_enabled,
+                    "sound": self.control_panel_alert_sound,
                 },
                 "paths": {
                     "log": self.log_path,
@@ -627,7 +627,7 @@ class AppSettings:
                 "favorite_file_order": list(self.favorite_file_order),
                 "favorite_command_sort_mode": self.favorite_command_sort_mode,
                 "favorite_file_sort_mode": self.favorite_file_sort_mode,
-                "dashboards": [dashboard.to_dict() for dashboard in self.dashboards],
+                "control_panels": [control_panel.to_dict() for control_panel in self.control_panels],
             },
             "workspace": {
                 "terminal_tabs": [session.to_dict() for session in self.restored_tabs],
@@ -635,9 +635,9 @@ class AppSettings:
                     command_file.to_dict()
                     for command_file in self.restored_command_files
                 ],
-                "dashboard_tabs": [
-                    dashboard_tab.to_dict()
-                    for dashboard_tab in self.restored_dashboards
+                "control_panel_tabs": [
+                    control_panel_tab.to_dict()
+                    for control_panel_tab in self.restored_control_panels
                 ],
                 "layout": self.workspace_layout.to_dict(),
             },
@@ -662,7 +662,7 @@ class AppSettings:
         drawer = _dict_value(app.get("drawer"))
         favorites_layout = _dict_value(app.get("favorites_layout"))
         updates = _dict_value(app.get("updates"))
-        dashboard_alerts = _dict_value(app.get("dashboard_alerts"))
+        control_panel_alerts = _dict_value(app.get("control_panel_alerts"))
         paths = _dict_value(app.get("paths"))
         window = _dict_value(app.get("window"))
         history = _dict_value(data.get("history"))
@@ -749,19 +749,19 @@ class AppSettings:
                 CommandFileTabState.from_dict(item)
                 for item in _list_value(workspace.get("command_file_tabs"))
             ],
-            restored_dashboards=[
-                DashboardTabState.from_dict(_dict_value(item))
-                for item in _list_value(workspace.get("dashboard_tabs"))
+            restored_control_panels=[
+                ControlPanelTabState.from_dict(_dict_value(item))
+                for item in _list_value(workspace.get("control_panel_tabs"))
             ],
             # Mirror the quick-commands seeding: a missing key (first run or
-            # a pre-dashboard settings file) gets the shipped example; a
+            # a pre-control_panel settings file) gets the shipped example; a
             # present-but-empty list stays empty (the user deleted it).
-            dashboards=[
-                DashboardConfig.from_dict(_dict_value(item))
+            control_panels=[
+                ControlPanelConfig.from_dict(_dict_value(item))
                 for item in (
-                    _list_value(libraries.get("dashboards"))
-                    if "dashboards" in libraries
-                    else [config.to_dict() for config in default_dashboards()]
+                    _list_value(libraries.get("control_panels"))
+                    if "control_panels" in libraries
+                    else [config.to_dict() for config in default_control_panels()]
                 )
             ],
             workspace_layout=WorkspaceLayoutState.from_dict(_dict_value(workspace.get("layout"))),
@@ -778,8 +778,8 @@ class AppSettings:
             drawer_page_index=max(0, min(int(drawer.get("page_index", 0)), 4)),
             check_for_updates_on_launch=bool(updates.get("check_on_launch", True)),
             clear_history_on_exit=bool(app.get("clear_history_on_exit", False)),
-            dashboard_alerts_enabled=bool(dashboard_alerts.get("enabled", True)),
-            dashboard_alert_sound=bool(dashboard_alerts.get("sound", False)),
+            control_panel_alerts_enabled=bool(control_panel_alerts.get("enabled", True)),
+            control_panel_alert_sound=bool(control_panel_alerts.get("sound", False)),
             log_path=str(paths.get("log", "")),
             last_script_path=str(paths.get("last_script", "")),
             recent_files=[

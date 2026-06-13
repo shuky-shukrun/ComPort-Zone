@@ -36,7 +36,7 @@ class SerialEvent:
     kind: str
     message: str
     raw: bytes = b""
-    # Origin of a TX event ("" = user/batch, "dashboard" = background poll) —
+    # Origin of a TX event ("" = user/batch, "control_panel" = background poll) —
     # lets the terminal hide background-poll traffic from its transcript.
     source: str = ""
     timestamp: datetime = field(

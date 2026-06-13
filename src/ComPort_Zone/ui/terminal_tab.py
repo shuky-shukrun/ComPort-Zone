@@ -134,10 +134,10 @@ class TerminalSessionWidget(QWidget):
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
         self._suppressed_tx_echoes: list[str] = []
-        # Poll-traffic journal of the dashboard bound to this session (None
-        # when no dashboard is bound). Background-poll TX/RX is kept out of
+        # Poll-traffic journal of the control_panel bound to this session (None
+        # when no control_panel is bound). Background-poll TX/RX is kept out of
         # the transcript so polling never floods the terminal.
-        self._dashboard_traffic_journal = None
+        self._control_panel_traffic_journal = None
         # Stored transcript entries so timestamp/hex toggles re-render all history.
         self._transcript: list[tuple] = []
         self._replaying = False
@@ -1761,24 +1761,24 @@ class TerminalSessionWidget(QWidget):
                 update_footer=decision.connection_update_footer,
             )
 
-    def attach_dashboard_traffic_journal(self, journal) -> None:
-        """Called by the dashboard run coordinator when a dashboard binds to
+    def attach_control_panel_traffic_journal(self, journal) -> None:
+        """Called by the control_panel run coordinator when a control_panel binds to
         (or unbinds from) this session; ``None`` detaches."""
-        self._dashboard_traffic_journal = journal
+        self._control_panel_traffic_journal = journal
 
-    def _is_dashboard_traffic(self, event: SerialEvent) -> bool:
+    def _is_control_panel_traffic(self, event: SerialEvent) -> bool:
         if event.kind == "tx":
-            return getattr(event, "source", "") == "dashboard"
+            return getattr(event, "source", "") == "control_panel"
         if event.kind == "rx":
-            journal = self._dashboard_traffic_journal
+            journal = self._control_panel_traffic_journal
             return journal is not None and journal.covers(event.timestamp)
         return False
 
     def _render_event(self, event: SerialEvent) -> None:
-        # Background dashboard polls stay out of the transcript — they would
+        # Background control_panel polls stay out of the transcript — they would
         # otherwise flood it and bury manual interaction. The traffic still
         # reaches the session log and every event subscriber unchanged.
-        if self._is_dashboard_traffic(event):
+        if self._is_control_panel_traffic(event):
             return
         self._emit_plan(self.controller.render_plan(event, self.host.settings.receive_display_mode))
         self._store_transcript(("event", event))

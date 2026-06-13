@@ -67,7 +67,7 @@ class QuickActionsSidebarTests(unittest.TestCase):
         )
         try:
             # Rail modes: Favorites, Quick Send, Quick Files (no History or
-            # Dashboards unless opted in — the editor drawer stays lean).
+            # ControlPanels unless opted in — the editor drawer stays lean).
             self.assertEqual(sidebar.pages.count(), 3)
             self.assertEqual(sidebar.quick_sort_combo.count(), 3)
             self.assertEqual(sidebar.quick_file_sort_combo.count(), 3)
@@ -334,7 +334,7 @@ class QuickActionsSidebarTests(unittest.TestCase):
         )
         try:
             # The two favourites panels live in one vertical splitter
-            # (resizable); the shared drawer adds a third for dashboards.
+            # (resizable); the shared drawer adds a third for control_panels.
             self.assertIsNotNone(sidebar.favorites_splitter)
             self.assertEqual(sidebar.favorites_splitter.count(), 2)
             # Both favourites panels are collapsible (carry a header chevron).

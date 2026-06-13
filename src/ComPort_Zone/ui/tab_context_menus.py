@@ -32,8 +32,8 @@ class TabContextMenuBuilder:
         if index < 0:
             host._add_context_command_action(menu, "file.new_tab")
             host._add_context_command_action(menu, "command_file.new")
-            host._add_context_command_action(menu, "dashboard.new")
-            host._add_context_command_action(menu, "dashboard.manage")
+            host._add_context_command_action(menu, "control_panel.new")
+            host._add_context_command_action(menu, "control_panel.manage")
             return menu
 
         session = host.session_at(index)
@@ -41,36 +41,36 @@ class TabContextMenuBuilder:
         if editor:
             self._build_editor_menu(menu, index, editor)
             return menu
-        dashboard = host.dashboard_at(index)
-        if dashboard:
-            self._build_dashboard_menu(menu, index, dashboard)
+        control_panel = host.control_panel_at(index)
+        if control_panel:
+            self._build_control_panel_menu(menu, index, control_panel)
             return menu
 
         self._build_terminal_menu(menu, index, session)
         return menu
 
-    def _build_dashboard_menu(self, menu: QMenu, index: int, dashboard: Any) -> None:
+    def _build_control_panel_menu(self, menu: QMenu, index: int, control_panel: Any) -> None:
         host = self.host
-        menu.setTitle(dashboard.tab_title())
-        host._add_context_command_action(menu, "dashboard.new")
+        menu.setTitle(control_panel.tab_title())
+        host._add_context_command_action(menu, "control_panel.new")
         host._add_context_action(
             menu,
             "Rename Control Panel",
-            lambda tab_index=index: host.rename_dashboard(tab_index),
+            lambda tab_index=index: host.rename_control_panel(tab_index),
             icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
         )
         bind_menu = menu.addMenu("Bind to Terminal")
         bind_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ComputerIcon))
         bind_menu.aboutToShow.connect(
-            lambda menu=bind_menu, target=dashboard: host.dashboard_runs.populate_bind_menu(
+            lambda menu=bind_menu, target=control_panel: host.control_panel_runs.populate_bind_menu(
                 menu, target.bind_to_session
             )
         )
-        polling_enabled = "user" not in dashboard.scheduler.paused_reasons
+        polling_enabled = "user" not in control_panel.scheduler.paused_reasons
         host._add_context_action(
             menu,
             "Pause Polling" if polling_enabled else "Resume Polling",
-            lambda target=dashboard, enabled=polling_enabled: target.set_polling_enabled(
+            lambda target=control_panel, enabled=polling_enabled: target.set_polling_enabled(
                 not enabled
             ),
             icon=QStyle.StandardPixmap.SP_MediaPause
@@ -80,17 +80,17 @@ class TabContextMenuBuilder:
         host._add_context_action(
             menu,
             "Add Entry...",
-            dashboard.add_entry_via_dialog,
+            control_panel.add_entry_via_dialog,
             icon=QStyle.StandardPixmap.SP_FileDialogNewFolder,
         )
         edit_layout_action = host._add_context_action(
             menu,
             "Edit Layout",
-            lambda target=dashboard: target.edit_layout_button.toggle(),
+            lambda target=control_panel: target.edit_layout_button.toggle(),
         )
         edit_layout_action.setCheckable(True)
-        edit_layout_action.setChecked(dashboard.edit_layout_button.isChecked())
-        host._add_context_command_action(menu, "dashboard.manage")
+        edit_layout_action.setChecked(control_panel.edit_layout_button.isChecked())
+        host._add_context_command_action(menu, "control_panel.manage")
         menu.addSeparator()
         self._add_split_actions(menu, index)
         menu.addSeparator()

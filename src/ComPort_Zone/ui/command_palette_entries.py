@@ -30,7 +30,7 @@ class CommandFilePaletteTab(Protocol):
     def status_summary(self) -> str: ...
 
 
-class DashboardPaletteTab(Protocol):
+class ControlPanelPaletteTab(Protocol):
     def tab_title(self) -> str: ...
 
     def status_summary(self) -> str: ...
@@ -43,19 +43,19 @@ def workspace_tab_palette_entries(
     command_file_editor_at: Callable[[int], CommandFilePaletteTab | None],
     tab_text: Callable[[int], str],
     activate_tab: Callable[[int], None],
-    dashboard_at: Callable[[int], DashboardPaletteTab | None] = lambda _index: None,
+    control_panel_at: Callable[[int], ControlPanelPaletteTab | None] = lambda _index: None,
 ) -> list[CommandPaletteEntry]:
     entries: list[CommandPaletteEntry] = []
     for index in range(tab_count):
         session = session_at(index)
         editor = command_file_editor_at(index)
-        dashboard = dashboard_at(index)
+        control_panel = control_panel_at(index)
         if session:
             title = session.tab_title
         elif editor:
             title = editor.tab_title()
-        elif dashboard:
-            title = dashboard.tab_title()
+        elif control_panel:
+            title = control_panel.tab_title()
         else:
             title = tab_text(index)
         if session:
@@ -67,10 +67,10 @@ def workspace_tab_palette_entries(
             subtitle = session.connection_status_text()
             icon = QStyle.StandardPixmap.SP_ComputerIcon
             keywords = f"switch tab terminal session {index + 1} {title} {endpoint} {session.title}"
-        elif dashboard:
-            subtitle = dashboard.status_summary()
+        elif control_panel:
+            subtitle = control_panel.status_summary()
             icon = QStyle.StandardPixmap.SP_FileDialogListView
-            keywords = f"switch tab dashboard tiles poll {index + 1} {title}"
+            keywords = f"switch tab control_panel tiles poll {index + 1} {title}"
         elif editor:
             subtitle = editor.status_summary()
             icon = QStyle.StandardPixmap.SP_FileIcon

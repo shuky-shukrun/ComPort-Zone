@@ -1565,8 +1565,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Export CSV…", overflow_actions)
             # The legacy 8-button grid is gone; primary actions are inline now.
             self.assertEqual(drawer_action_rows(quick_page), [])
-            # The per-tab terminal drawer stays dashboard-free (the visible
-            # shared drawer carries the Dashboards page).
+            # The per-tab terminal drawer stays control_panel-free (the visible
+            # shared drawer carries the ControlPanels page).
             self.assertEqual(session.drawer_pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in session.drawer.rail_buttons],
