@@ -1426,6 +1426,7 @@ class ControlPanelTabWidget(QWidget):
         runtime.last_success_at = self._clock()
         runtime.consecutive_timeouts = 0
         runtime.value_text = format_tile_value(outcome, entry.unit)
+        runtime.value_number = outcome.value_number
         verdict = evaluate_rules(entry.rules, outcome)
         runtime.state = verdict.state
         runtime.state_caption = verdict.label or TILE_STATE_CAPTIONS.get(verdict.state, "")

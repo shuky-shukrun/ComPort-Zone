@@ -38,6 +38,9 @@ from PySide6.QtWidgets import (
 
 from ...control_panel_expr import ExpressionError, compile_expression
 from ...control_panel_models import (
+    BIT_POSITION_MAX,
+    BIT_POSITION_MIN,
+    BITS_STATES,
     COLOR_RULE_OPS,
     CONTROL_PANEL_SEND_MODES,
     MAX_POLL_INTERVAL_MS,
@@ -47,6 +50,8 @@ from ...control_panel_models import (
     RULE_STATES,
     SETPOINT_MAX_DECIMALS,
     SETPOINT_MIN_DECIMALS,
+    BitDefinition,
+    BitsSpec,
     ColorRule,
     ControlSpec,
     ControlPanelEntry,
@@ -75,6 +80,7 @@ TILE_KIND_LABELS = (
     ("control", "Control button"),
     ("setpoint", "Numeric setpoint"),
     ("enum", "Enum / dropdown"),
+    ("bits", "Bits / register"),
 )
 POLL_MODE_LABELS = (("interval", "Every interval"), ("on_connect", "Once on connect"))
 SOURCE_LABELS = (("poll", "Polled command"), ("derived", "Computed from other tiles"))
@@ -362,6 +368,51 @@ class ControlPanelEntryDialog(QDialog):
         enum_extras_form.addRow("", self.enum_confirm_check)
         enum_layout.addLayout(enum_extras_form)
 
+        # --- bits / register (v3): one row per labeled bit -----------------
+        self.bits_table = QTableWidget(0, 4, self)
+        self.bits_table.setHorizontalHeaderLabels(
+            ["Bit", "Label", "State", "Description"]
+        )
+        self.bits_table.horizontalHeader().setStretchLastSection(True)
+        self.bits_table.verticalHeader().setVisible(False)
+        self.bits_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.bits_table.setFixedHeight(180)
+        self.bits_table.setColumnWidth(0, 48)
+        self.bits_table.setColumnWidth(1, 140)
+        self.bits_table.setColumnWidth(2, 80)
+        for bit_def in original.bits_spec.bits:
+            self._append_bit_row(bit_def)
+
+        bits_add = QPushButton("Add", self)
+        bits_add.clicked.connect(self._append_default_bit_row)
+        bits_remove = QPushButton("Remove", self)
+        bits_remove.clicked.connect(self._remove_bit_row)
+        bits_up = QPushButton("Up", self)
+        bits_up.clicked.connect(lambda: self._move_bit_row(-1))
+        bits_down = QPushButton("Down", self)
+        bits_down.clicked.connect(lambda: self._move_bit_row(1))
+        bits_buttons = QHBoxLayout()
+        bits_buttons.addWidget(bits_add)
+        bits_buttons.addWidget(bits_remove)
+        bits_buttons.addStretch(1)
+        bits_buttons.addWidget(bits_up)
+        bits_buttons.addWidget(bits_down)
+
+        bits_hint = QLabel(
+            "Each row is one indicator lamp. The polled value is parsed as "
+            "a number and tested against each bit — multiple bits can be "
+            "active at once. Bit 0 is the least-significant bit.",
+            self,
+        )
+        bits_hint.setWordWrap(True)
+        bits_hint.setObjectName("dialogHint")
+
+        self.bits_box = QGroupBox("Bits", self)
+        bits_layout = QVBoxLayout(self.bits_box)
+        bits_layout.addWidget(self.bits_table)
+        bits_layout.addLayout(bits_buttons)
+        bits_layout.addWidget(bits_hint)
+
         # --- parse rule ---------------------------------------------------
         self.parse_kind_combo = ChevronComboBox(self)
         for kind, label in PARSE_KIND_LABELS:
@@ -458,6 +509,7 @@ class ControlPanelEntryDialog(QDialog):
         general_layout.addWidget(self.control_box)
         general_layout.addWidget(self.setpoint_box)
         general_layout.addWidget(self.enum_box)
+        general_layout.addWidget(self.bits_box)
         general_layout.addStretch(1)
 
         polling_form = QFormLayout()
@@ -554,6 +606,7 @@ class ControlPanelEntryDialog(QDialog):
         self.setpoint_template_input.textChanged.connect(self._refresh_preview)
         # v3 enum table feeds the preview.
         self.enum_table.cellChanged.connect(lambda *_: self._refresh_preview())
+        self.bits_table.cellChanged.connect(lambda *_: self._refresh_preview())
         self._preview_ready = True
         self._refresh_schedule_enablement()
         self._refresh_control_enablement()
@@ -583,9 +636,9 @@ class ControlPanelEntryDialog(QDialog):
         self.stale_spin.setEnabled(is_interval)
 
     def _current_shape(self) -> str:
-        """Which of the five entry shapes the dialog is editing: control
-        button/toggle, setpoint, enum (all kind-wins), a derived entry,
-        or a polled command (default)."""
+        """Which of the six entry shapes the dialog is editing: control
+        button/toggle, setpoint, enum, bits/register (all kind-wins),
+        a derived entry, or a polled command (default)."""
         kind = self.tile_kind_combo.currentData()
         if kind == "control":
             return "control"
@@ -593,6 +646,8 @@ class ControlPanelEntryDialog(QDialog):
             return "setpoint"
         if kind == "enum":
             return "enum"
+        if kind == "bits":
+            return "bits"
         if self.source_combo.currentData() == "derived":
             return "derived"
         return "poll"
@@ -616,19 +671,28 @@ class ControlPanelEntryDialog(QDialog):
         is_control = shape == "control"
         is_setpoint = shape == "setpoint"
         is_enum = shape == "enum"
+        is_bits = shape == "bits"
         is_writable = is_control or is_setpoint or is_enum
-        self._set_row_visible(self.source_combo, not is_writable)
+        # Bits tiles are polled (they read a register) — keep the poll-side
+        # form rows visible, but expose the bits table on the General tab
+        # instead of the color-rules section (which doesn't apply).
+        is_poll_or_bits = is_poll or is_bits
+        self._set_row_visible(self.source_combo, not is_writable and not is_bits)
         self._set_row_visible(self.expression_container, is_derived)
         for field_widget in self._schedule_fields:
-            self._set_row_visible(field_widget, is_poll)
+            self._set_row_visible(field_widget, is_poll_or_bits)
         for field_widget in self._send_fields:
             self._set_row_visible(field_widget, not is_derived)
-        self._parse_box.setVisible(is_poll)
-        self._rules_box.setVisible(not is_writable)
+        self._parse_box.setVisible(is_poll_or_bits)
+        self._rules_box.setVisible(not is_writable and not is_bits)
         self.control_box.setVisible(is_control)
         self.setpoint_box.setVisible(is_setpoint)
         self.enum_box.setVisible(is_enum)
-        # Pages with nothing left to offer disappear entirely.
+        self.bits_box.setVisible(is_bits)
+        # Pages with nothing left to offer disappear entirely. Bits
+        # entries are polled, so both polling/response tabs stay open
+        # (only the color-rules section inside Response is hidden,
+        # because each bit carries its own state).
         self.tabs.setTabVisible(self.POLLING_TAB, not is_derived)
         self.tabs.setTabVisible(self.RESPONSE_TAB, not is_writable)
         if not self.tabs.isTabVisible(self.tabs.currentIndex()):
@@ -639,6 +703,8 @@ class ControlPanelEntryDialog(QDialog):
             caption = "Enable this setpoint"
         elif is_enum:
             caption = "Enable this selector"
+        elif is_bits:
+            caption = "Poll this register"
         elif is_derived:
             caption = "Update this tile"
         else:
@@ -876,6 +942,88 @@ class ControlPanelEntryDialog(QDialog):
             )
         return options
 
+    # ----------------------------------------------------------- bits table
+
+    def _append_default_bit_row(self) -> None:
+        # Pick the next unused bit position so users don't have to retype
+        # the column over and over when defining a register.
+        used = {self._bit_row_position(row) for row in range(self.bits_table.rowCount())}
+        used.discard(-1)
+        next_bit = 0
+        while next_bit <= BIT_POSITION_MAX and next_bit in used:
+            next_bit += 1
+        if next_bit > BIT_POSITION_MAX:
+            next_bit = BIT_POSITION_MAX
+        self._append_bit_row(BitDefinition(bit=next_bit, label="", state="warn"))
+
+    def _append_bit_row(self, bit_def: BitDefinition) -> None:
+        row = self.bits_table.rowCount()
+        self.bits_table.insertRow(row)
+        bit_spin = QSpinBox(self.bits_table)
+        bit_spin.setRange(BIT_POSITION_MIN, BIT_POSITION_MAX)
+        bit_spin.setValue(bit_def.bit)
+        bit_spin.valueChanged.connect(lambda *_: self._refresh_preview())
+        self.bits_table.setCellWidget(row, 0, bit_spin)
+        self.bits_table.setItem(row, 1, QTableWidgetItem(bit_def.label))
+        state_combo = ChevronComboBox(self.bits_table)
+        for state in BITS_STATES:
+            state_combo.addItem(state.upper(), state)
+        target_index = max(state_combo.findData(bit_def.state), 0)
+        state_combo.setCurrentIndex(target_index)
+        state_combo.currentIndexChanged.connect(lambda *_: self._refresh_preview())
+        self.bits_table.setCellWidget(row, 2, state_combo)
+        self.bits_table.setItem(row, 3, QTableWidgetItem(bit_def.description))
+
+    def _remove_bit_row(self) -> None:
+        row = self.bits_table.currentRow()
+        if row >= 0:
+            self.bits_table.removeRow(row)
+            self._refresh_preview()
+
+    def _move_bit_row(self, delta: int) -> None:
+        row = self.bits_table.currentRow()
+        target = row + delta
+        if row < 0 or not 0 <= target < self.bits_table.rowCount():
+            return
+        bits = self._bits_from_table()
+        bits[row], bits[target] = bits[target], bits[row]
+        self.bits_table.setRowCount(0)
+        for bit_def in bits:
+            self._append_bit_row(bit_def)
+        self.bits_table.selectRow(target)
+        self._refresh_preview()
+
+    def _bit_row_position(self, row: int) -> int:
+        spin = self.bits_table.cellWidget(row, 0)
+        if isinstance(spin, QSpinBox):
+            return spin.value()
+        return -1
+
+    def _bit_row_state(self, row: int) -> str:
+        combo = self.bits_table.cellWidget(row, 2)
+        if isinstance(combo, ChevronComboBox):
+            data = combo.currentData()
+            if isinstance(data, str):
+                return data
+        return "warn"
+
+    def _bits_from_table(self) -> list[BitDefinition]:
+        bits: list[BitDefinition] = []
+        for row in range(self.bits_table.rowCount()):
+            label_item = self.bits_table.item(row, 1)
+            description_item = self.bits_table.item(row, 3)
+            bits.append(
+                BitDefinition(
+                    bit=self._bit_row_position(row),
+                    label=label_item.text().strip() if label_item else "",
+                    state=self._bit_row_state(row),
+                    description=description_item.text().strip()
+                    if description_item
+                    else "",
+                )
+            )
+        return bits
+
     # -------------------------------------------------------------- tester
 
     def _parse_rule_from_fields(self) -> ParseRule:
@@ -996,11 +1144,20 @@ class ControlPanelEntryDialog(QDialog):
             )
         else:
             enum_spec = EnumSpec()
+        is_bits = shape == "bits"
+        if is_bits:
+            bits_spec = BitsSpec(bits=self._bits_from_table())
+        else:
+            bits_spec = BitsSpec()
         return ControlPanelEntry(
             id=original.id,
             label=self.label_input.text().strip(),
             unit=self.unit_input.text().strip(),
-            command="" if (is_derived or is_writable) else self.command_input.text().strip(),
+            command=(
+                ""
+                if (is_derived or is_writable)
+                else self.command_input.text().strip()
+            ),
             send_mode=self.mode_combo.currentText(),
             line_ending_override=str(self.line_ending_combo.currentData() or ""),
             interval_ms=self.interval_spin.value(),
@@ -1008,7 +1165,7 @@ class ControlPanelEntryDialog(QDialog):
             stale_after_ms=self.stale_spin.value(),
             parse=self._parse_rule_from_fields(),
             tile=tile,
-            rules=[] if is_writable else self._rules_from_table(),
+            rules=[] if (is_writable or is_bits) else self._rules_from_table(),
             enabled=self.enabled_check.isChecked(),
             poll_mode=(
                 "interval"
@@ -1023,6 +1180,7 @@ class ControlPanelEntryDialog(QDialog):
             control=control,
             setpoint=setpoint,
             enum_spec=enum_spec,
+            bits_spec=bits_spec,
             created_at=original.created_at or utc_now_iso(),
             updated_at=utc_now_iso(),
         )

@@ -5,6 +5,10 @@ from __future__ import annotations
 import unittest
 
 from ComPort_Zone.control_panel_models import (
+    BIT_POSITION_MAX,
+    BIT_POSITION_MIN,
+    BitDefinition,
+    BitsSpec,
     ColorRule,
     ControlSpec,
     ControlPanelConfig,
@@ -15,8 +19,10 @@ from ComPort_Zone.control_panel_models import (
     ParseRule,
     TilePlacement,
     control_panel_uses_v2_features,
+    control_panel_uses_v3_features,
     default_control_panels,
     entry_uses_v2_features,
+    entry_uses_v3_features,
     example_control_panel,
     grid_row_count,
     hex_payload_error,
@@ -672,6 +678,136 @@ class V3EntryFieldTests(unittest.TestCase):
             ),
         )
         self.assertEqual(good_enum.validation_errors(), [])
+
+
+class BitsSpecTests(unittest.TestCase):
+    """Status / fault register tile spec (v3, multi-bit indicator)."""
+
+    @staticmethod
+    def bits_entry(*bits: BitDefinition) -> ControlPanelEntry:
+        return ControlPanelEntry(
+            label="Status",
+            command="STAT:OPER:COND?",
+            parse=ParseRule(kind="line", value_type="number"),
+            tile=TilePlacement(col=0, row=0, kind="bits"),
+            bits_spec=BitsSpec(bits=list(bits)),
+        )
+
+    def test_default_spec_is_empty(self) -> None:
+        spec = BitsSpec()
+        self.assertEqual(spec.bits, [])
+        self.assertTrue(spec.is_default())
+        self.assertEqual(spec.to_dict(), {})
+
+    def test_round_trip_preserves_order(self) -> None:
+        spec = BitsSpec(
+            bits=[
+                BitDefinition(bit=0, label="OVER VOLT", state="fail"),
+                BitDefinition(bit=3, label="OVER TEMP", state="warn"),
+                BitDefinition(bit=7, label="REG", state="ok", description="Regulated"),
+            ]
+        )
+        restored = BitsSpec.from_dict(spec.to_dict())
+        self.assertEqual(len(restored.bits), 3)
+        self.assertEqual(
+            [(b.bit, b.label, b.state, b.description) for b in restored.bits],
+            [
+                (0, "OVER VOLT", "fail", ""),
+                (3, "OVER TEMP", "warn", ""),
+                (7, "REG", "ok", "Regulated"),
+            ],
+        )
+
+    def test_active_bits_multiselect(self) -> None:
+        spec = BitsSpec(
+            bits=[
+                BitDefinition(bit=0, label="A"),
+                BitDefinition(bit=2, label="C"),
+                BitDefinition(bit=5, label="F"),
+            ]
+        )
+        # Bits 0 + 5 set = 1 + 32 = 33
+        active = spec.active_bits(33)
+        self.assertEqual([b.bit for b in active], [0, 5])
+        # All three at once.
+        self.assertEqual([b.bit for b in spec.active_bits(0b100101)], [0, 2, 5])
+        # Nothing set.
+        self.assertEqual(spec.active_bits(0), [])
+        # Bits without a definition do not register.
+        self.assertEqual([b.bit for b in spec.active_bits(0xFF)], [0, 2, 5])
+
+    def test_active_bits_handles_high_positions(self) -> None:
+        spec = BitsSpec(bits=[BitDefinition(bit=BIT_POSITION_MAX, label="HIGH")])
+        self.assertEqual(spec.active_bits(1 << BIT_POSITION_MAX)[0].bit, BIT_POSITION_MAX)
+        self.assertEqual(spec.active_bits(0), [])
+
+    def test_clamp_keeps_bit_in_range(self) -> None:
+        too_high = BitDefinition.from_dict({"bit": 999, "label": "X"})
+        too_low = BitDefinition.from_dict({"bit": -5, "label": "Y"})
+        self.assertEqual(too_high.bit, BIT_POSITION_MAX)
+        self.assertEqual(too_low.bit, BIT_POSITION_MIN)
+
+    def test_validation_errors_flags_missing_label(self) -> None:
+        spec = BitsSpec(bits=[BitDefinition(bit=0)])
+        self.assertIn(
+            "Bit 1: label must not be empty.", spec.validation_errors()
+        )
+
+    def test_validation_errors_flags_duplicate_bit(self) -> None:
+        spec = BitsSpec(
+            bits=[
+                BitDefinition(bit=2, label="A"),
+                BitDefinition(bit=2, label="B"),
+            ]
+        )
+        errors = spec.validation_errors()
+        self.assertTrue(any("defined more than once" in e for e in errors))
+
+    def test_validation_errors_requires_at_least_one_bit(self) -> None:
+        spec = BitsSpec()
+        self.assertEqual(spec.validation_errors(), [
+            "Bits tile needs at least one bit definition."
+        ])
+
+    def test_entry_is_bits_and_not_writable_or_numeric(self) -> None:
+        entry = self.bits_entry(BitDefinition(bit=0, label="A"))
+        self.assertTrue(entry.is_bits())
+        # Bits tiles still read a register, so master arm doesn't gate.
+        self.assertFalse(entry.is_writable())
+        # Sparkline/chart math is meaningless for a register, so the
+        # numeric history pipeline ignores them.
+        self.assertFalse(entry.is_numeric())
+        # They're polled like value tiles.
+        self.assertTrue(entry.is_polled())
+
+    def test_bits_kind_pushes_v3_floor(self) -> None:
+        entry = self.bits_entry(BitDefinition(bit=0, label="A"))
+        self.assertTrue(entry_uses_v3_features(entry))
+        config = ControlPanelConfig(entries=[entry])
+        self.assertTrue(control_panel_uses_v3_features(config))
+
+    def test_round_trip_through_config(self) -> None:
+        entry = self.bits_entry(
+            BitDefinition(bit=1, label="A"),
+            BitDefinition(bit=3, label="B", state="fail"),
+        )
+        original = ControlPanelConfig(entries=[entry])
+        restored = ControlPanelConfig.from_dict(original.to_dict())
+        bits = restored.entries[0].bits_spec.bits
+        self.assertEqual([(b.bit, b.label, b.state) for b in bits],
+                         [(1, "A", "warn"), (3, "B", "fail")])
+
+    def test_validation_includes_polled_checks_for_bits(self) -> None:
+        # A bits entry with no command must still trip the polled
+        # validation path so the user sees the missing-command error.
+        entry = ControlPanelEntry(
+            label="Status",
+            command="",
+            tile=TilePlacement(col=0, row=0, kind="bits"),
+            bits_spec=BitsSpec(bits=[BitDefinition(bit=0, label="A")]),
+        )
+        errors = entry.validation_errors()
+        self.assertTrue(any("Command must not be empty" in e for e in errors))
 
 
 class ExampleControlPanelTests(unittest.TestCase):

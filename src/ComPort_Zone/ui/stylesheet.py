@@ -791,6 +791,19 @@ def build_stylesheet(theme: ThemePalette) -> str:
         {{ color: {red}; }}
     QLabel#tileStateCaption[tileState="stale"] {{ color: {stale_ink}; }}
 
+    QLabel#tileBitsLamp {{
+        border-radius: 6px;
+        background: {stale_ink};
+        border: 1px solid {bd_strong};
+    }}
+    QLabel#tileBitsLamp[tileState="ok"] {{ background: {green}; border-color: {ok_bd}; }}
+    QLabel#tileBitsLamp[tileState="warn"] {{ background: {amber}; border-color: {mix_hex(amber, bg, 0.5)}; }}
+    QLabel#tileBitsLamp[tileState="fail"] {{ background: {red}; border-color: {danger_bd}; }}
+    QLabel#tileBitsLamp[tileState="neutral"] {{ background: {stale_ink}; border-color: {bd_strong}; }}
+    QLabel#tileBitsLabel {{ color: {tx2}; font-weight: 500; }}
+    QLabel#tileBitsLabel[bitActive="true"] {{ color: {tx}; font-weight: 700; }}
+    QLabel#tileBitsEmpty {{ color: {tx_faint}; font-style: italic; }}
+
     QPushButton#tileControlButton {{
         background: {hover}; color: {tx};
         border: 1px solid {bd_strong}; border-radius: {RADIUS_MD}px;

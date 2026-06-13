@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
 from ..control_panel_history import Sample
 from ..control_panel_models import (
     MAX_TILE_SPAN,
+    BitDefinition,
+    BitsSpec,
     ControlPanelEntry,
     format_setpoint_value,
 )
@@ -95,6 +98,10 @@ class TileRuntime:
 
     entry_id: str
     value_text: str = "—"
+    # Numeric component of the latest parse, when ``value_type=number``.
+    # Carried alongside ``value_text`` so widgets that need the raw int
+    # (bits/register tiles) don't have to re-parse the formatted string.
+    value_number: float | None = None
     state: str = "neutral"
     state_caption: str = ""
     color: str = ""  # custom rule color (FR-62); "" = theme state color
@@ -911,12 +918,189 @@ class EnumTileWidget(TileFrame):
         self.combo.setEnabled(self._entry.enabled and not self.edit_mode)
 
 
+BITS_LAMP_SIZE = 12
+BITS_GRID_COLUMNS = 2
+BITS_LABEL_FONT_RATIO = 0.07
+BITS_LABEL_FONT_MIN_PX = 10
+BITS_LABEL_FONT_MAX_PX = 16
+
+
+class BitsTileWidget(TileFrame):
+    """Status / fault register tile.
+
+    Each ``BitDefinition`` becomes a small lamp + label. The latest
+    polled numeric value is coerced to int; any bit set in that int
+    lights its lamp in its configured state color. Multiple bits can be
+    active at once (typical for SCPI status registers like
+    ``STAT:OPER:COND?`` or ``STAT:QUES:COND?``). Bits with no
+    definition are simply not shown."""
+
+    def __init__(self, entry: ControlPanelEntry, parent: QWidget | None = None) -> None:
+        super().__init__(entry, parent)
+        self._spec = BitsSpec(bits=list(entry.bits_spec.bits))
+        self._last_raw: int | None = None
+        self._cell_width = 0.0
+
+        self._bits_host = QWidget(self)
+        self._bits_grid = QGridLayout(self._bits_host)
+        self._bits_grid.setContentsMargins(0, 0, 0, 0)
+        self._bits_grid.setHorizontalSpacing(SPACE_LG)
+        self._bits_grid.setVerticalSpacing(SPACE_SM)
+
+        self._empty_label = QLabel("No bits configured", self)
+        self._empty_label.setObjectName("tileBitsEmpty")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setVisible(False)
+
+        self.body_layout.addWidget(self._bits_host, 1)
+        self.body_layout.addWidget(self._empty_label, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # bit position -> (lamp, label)
+        self._indicators: dict[int, tuple[QLabel, QLabel]] = {}
+        self._rebuild_indicators()
+
+    # ---------------------------------------------------------- lifecycle
+
+    def update_entry(self, entry: ControlPanelEntry) -> None:
+        super().update_entry(entry)
+        new_spec = BitsSpec(bits=list(entry.bits_spec.bits))
+        if [(b.bit, b.label, b.state) for b in new_spec.bits] != [
+            (b.bit, b.label, b.state) for b in self._spec.bits
+        ]:
+            self._spec = new_spec
+            self._rebuild_indicators()
+            if self._last_raw is not None:
+                self._refresh_lamps(self._last_raw)
+
+    def _rebuild_indicators(self) -> None:
+        # Tear down old indicators.
+        while self._bits_grid.count():
+            item = self._bits_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._indicators.clear()
+
+        bits = self._spec.bits
+        if not bits:
+            self._bits_host.setVisible(False)
+            self._empty_label.setVisible(True)
+            return
+        self._bits_host.setVisible(True)
+        self._empty_label.setVisible(False)
+
+        for index, bit in enumerate(bits):
+            lamp = QLabel("", self._bits_host)
+            lamp.setObjectName("tileBitsLamp")
+            lamp.setFixedSize(BITS_LAMP_SIZE, BITS_LAMP_SIZE)
+            _set_state_property(lamp, "neutral")
+
+            label = QLabel(bit.label or f"Bit {bit.bit}", self._bits_host)
+            label.setObjectName("tileBitsLabel")
+            label.setToolTip(bit.description or f"Bit {bit.bit}")
+            label.setWordWrap(False)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+            )
+
+            row, col = divmod(index, BITS_GRID_COLUMNS)
+            cell = QHBoxLayout()
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(SPACE_SM)
+            cell.addWidget(lamp)
+            cell.addWidget(label, 1)
+            wrapper = QWidget(self._bits_host)
+            wrapper.setLayout(cell)
+            self._bits_grid.addWidget(wrapper, row, col)
+            self._indicators[bit.bit] = (lamp, label)
+
+        # Push the grid to the top so empty rows stay at the bottom.
+        rows = (len(bits) + BITS_GRID_COLUMNS - 1) // BITS_GRID_COLUMNS
+        self._bits_grid.setRowStretch(rows, 1)
+
+        if self._cell_width > 0:
+            self._apply_label_font(self._cell_width)
+
+    # ----------------------------------------------------------- rendering
+
+    @staticmethod
+    def _coerce_int(runtime_value_number: float | None, value_text: str) -> int | None:
+        """Best-effort: prefer the parsed float (rounded to int). Fall back
+        to ``int(value_text, 0)`` so SCPI replies like ``0xFF`` or ``0b101``
+        still light the right bits when the parse rule keeps them as text."""
+        if runtime_value_number is not None:
+            try:
+                return int(runtime_value_number)
+            except (TypeError, ValueError, OverflowError):
+                return None
+        if not value_text:
+            return None
+        try:
+            return int(value_text.strip(), 0)
+        except (TypeError, ValueError):
+            return None
+
+    def _refresh_lamps(self, raw: int) -> None:
+        active = {bit.bit for bit in self._spec.active_bits(raw)}
+        for bit in self._spec.bits:
+            lamp, label = self._indicators.get(bit.bit, (None, None))
+            if lamp is None or label is None:
+                continue
+            target_state = bit.state if bit.bit in active else "neutral"
+            if lamp.property("tileState") != target_state:
+                _set_state_property(lamp, target_state)
+            label.setProperty("bitActive", "true" if bit.bit in active else "false")
+            _repolish(label)
+
+    def _render_runtime(self, runtime: "TileRuntime") -> bool:
+        raw = self._coerce_int(runtime.value_number, runtime.value_text)
+        changed = False
+        if raw is None:
+            # Unknown reading: clear all lamps.
+            for bit in self._spec.bits:
+                lamp = self._indicators.get(bit.bit, (None, None))[0]
+                if lamp is None:
+                    continue
+                if lamp.property("tileState") != "neutral":
+                    _set_state_property(lamp, "neutral")
+                    changed = True
+            self._last_raw = None
+            return changed
+        if raw != self._last_raw:
+            self._refresh_lamps(raw)
+            self._last_raw = raw
+            changed = True
+        return changed
+
+    # ----------------------------------------------------- responsive font
+
+    def apply_cell_width(self, cell_w: float) -> None:
+        self._cell_width = cell_w
+        self._apply_label_font(cell_w)
+
+    def _apply_label_font(self, cell_w: float) -> None:
+        px = _scale_font_px(
+            cell_w,
+            BITS_LABEL_FONT_RATIO,
+            BITS_LABEL_FONT_MIN_PX,
+            BITS_LABEL_FONT_MAX_PX,
+        )
+        for _lamp, label in self._indicators.values():
+            font = label.font()
+            if font.pixelSize() != px:
+                font.setPixelSize(px)
+                label.setFont(font)
+
+
 TILE_CLASSES: dict[str, type[TileFrame]] = {
     "value": ValueTileWidget,
     "led": LedTileWidget,
     "control": ControlTileWidget,
     "setpoint": SetpointTileWidget,
     "enum": EnumTileWidget,
+    "bits": BitsTileWidget,
 }
 
 

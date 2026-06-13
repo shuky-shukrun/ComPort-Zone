@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-TILE_KINDS = ("value", "led", "control", "setpoint", "enum")
+TILE_KINDS = ("value", "led", "control", "setpoint", "enum", "bits")
 # Semantic states a tile can render. "ok"/"warn"/"fail" come from color
 # rules, "neutral" is the no-rule-matched default, "stale" means no recent
 # successful poll, "error" covers send/parse failures.
@@ -533,6 +533,116 @@ class EnumSpec:
         return errors
 
 
+# Status / fault register tiles. Measurement instruments commonly expose
+# fault and status flags as bits in an integer register (SCPI's
+# *STB?/STAT:OPER:COND?/STAT:QUES:COND?). Bit definitions describe which
+# bits get a labeled indicator on the tile; the active set is computed
+# at render time from the latest polled integer value (multiple bits can
+# be active simultaneously).
+BIT_POSITION_MIN = 0
+BIT_POSITION_MAX = 31
+BITS_STATES = ("ok", "warn", "fail", "neutral")
+
+
+@dataclass(slots=True)
+class BitDefinition:
+    """One labeled indicator on a register/bits tile."""
+
+    bit: int = 0
+    label: str = ""
+    state: str = "warn"
+    description: str = ""
+
+    def is_default(self) -> bool:
+        return self == BitDefinition()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        # Always emit the bit position so a value of 0 round-trips
+        # explicitly (the default-value gate would otherwise drop it).
+        payload["bit"] = self.bit
+        if self.label:
+            payload["label"] = self.label
+        if self.state and self.state != "warn":
+            payload["state"] = self.state
+        if self.description:
+            payload["description"] = self.description
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "BitDefinition":
+        if not data:
+            return cls()
+        return cls(
+            bit=_clamp_int(
+                data.get("bit", 0), BIT_POSITION_MIN, BIT_POSITION_MAX, 0
+            ),
+            label=str(data.get("label", "")),
+            state=_choice(data.get("state"), BITS_STATES, "warn"),
+            description=str(data.get("description", "")),
+        )
+
+
+@dataclass(slots=True)
+class BitsSpec:
+    """Configuration of a bits/register status tile (v3).
+
+    Each :class:`BitDefinition` becomes a small labeled indicator on the
+    tile. Any number of bits can be active at once. The tile is read-only
+    (not writable) and is fed by the same numeric parse pipeline as a
+    value tile: the parsed number is coerced to int and tested for each
+    defined bit position.
+    """
+
+    bits: list[BitDefinition] = field(default_factory=list)
+
+    def is_default(self) -> bool:
+        return not self.bits
+
+    def active_bits(self, value: int) -> list[BitDefinition]:
+        """Subset of defined bits that are set in ``value``. Preserves
+        the configured order so the tile renders deterministically."""
+        return [b for b in self.bits if (int(value) >> b.bit) & 1]
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.bits:
+            payload["bits"] = [bit.to_dict() for bit in self.bits]
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "BitsSpec":
+        if not data:
+            return cls()
+        return cls(
+            bits=[
+                BitDefinition.from_dict(_dict_value(item))
+                for item in _list_value(data.get("bits"))
+            ],
+        )
+
+    def validation_errors(self) -> list[str]:
+        errors: list[str] = []
+        if not self.bits:
+            errors.append("Bits tile needs at least one bit definition.")
+            return errors
+        seen: set[int] = set()
+        for index, bit in enumerate(self.bits, start=1):
+            if not bit.label.strip():
+                errors.append(f"Bit {index}: label must not be empty.")
+            if not BIT_POSITION_MIN <= bit.bit <= BIT_POSITION_MAX:
+                errors.append(
+                    f"Bit {index}: position must be in "
+                    f"{BIT_POSITION_MIN}..{BIT_POSITION_MAX}."
+                )
+            if bit.bit in seen:
+                errors.append(f"Bit position {bit.bit} is defined more than once.")
+            seen.add(bit.bit)
+            if bit.state not in BITS_STATES:
+                errors.append(f"Bit {index}: invalid state {bit.state!r}.")
+        return errors
+
+
 @dataclass(slots=True)
 class TilePlacement:
     """Grid position and footprint of an entry's tile."""
@@ -598,6 +708,7 @@ class ControlPanelEntry:
     # --- v3 fields (sparse in to_dict) ---------------------------------
     setpoint: SetpointSpec = field(default_factory=SetpointSpec)
     enum_spec: EnumSpec = field(default_factory=EnumSpec)
+    bits_spec: BitsSpec = field(default_factory=BitsSpec)
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
@@ -612,6 +723,9 @@ class ControlPanelEntry:
 
     def is_enum(self) -> bool:
         return self.tile.kind == "enum"
+
+    def is_bits(self) -> bool:
+        return self.tile.kind == "bits"
 
     def is_writable(self) -> bool:
         """Whether this entry sends on user action (button/toggle/setpoint/enum).
@@ -630,7 +744,7 @@ class ControlPanelEntry:
 
     def is_numeric(self) -> bool:
         """Whether this entry produces numeric values (history/sparkline/chart)."""
-        if self.is_writable():
+        if self.is_writable() or self.is_bits():
             return False
         return self.is_derived() or self.parse.value_type == "number"
 
@@ -681,6 +795,9 @@ class ControlPanelEntry:
         enum_payload = self.enum_spec.to_dict()
         if enum_payload:
             payload["enum_spec"] = enum_payload
+        bits_payload = self.bits_spec.to_dict()
+        if bits_payload:
+            payload["bits_spec"] = bits_payload
         return payload
 
     @classmethod
@@ -724,6 +841,7 @@ class ControlPanelEntry:
             control=ControlSpec.from_dict(_dict_value(data.get("control"))),
             setpoint=SetpointSpec.from_dict(_dict_value(data.get("setpoint"))),
             enum_spec=EnumSpec.from_dict(_dict_value(data.get("enum_spec"))),
+            bits_spec=BitsSpec.from_dict(_dict_value(data.get("bits_spec"))),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
@@ -747,6 +865,11 @@ class ControlPanelEntry:
         if self.is_enum():
             errors.extend(self.enum_spec.validation_errors(self.send_mode))
             return errors
+        if self.is_bits():
+            errors.extend(self.bits_spec.validation_errors())
+            # Bits tiles also need a polled command — fall through to
+            # the polled-entry validation below so the command/schedule
+            # checks fire too.
         if self.is_derived():
             if not self.expression.strip():
                 errors.append("Expression must not be empty.")
@@ -1013,8 +1136,10 @@ def entry_uses_v3_features(entry: ControlPanelEntry) -> bool:
     return (
         entry.tile.kind == "setpoint"
         or entry.tile.kind == "enum"
+        or entry.tile.kind == "bits"
         or not entry.setpoint.is_default()
         or not entry.enum_spec.is_default()
+        or not entry.bits_spec.is_default()
     )
 
 

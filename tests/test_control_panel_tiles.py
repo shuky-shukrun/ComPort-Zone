@@ -9,15 +9,19 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
 from ComPort_Zone.control_panel_models import (
+    BitDefinition,
+    BitsSpec,
     ControlSpec,
     ControlPanelConfig,
     ControlPanelEntry,
+    ParseRule,
     TilePlacement,
 )
 from ComPort_Zone.themes import THEMES
 from ComPort_Zone.ui.control_panel_grid import GRID_GUTTER, ControlPanelGridWidget
 from ComPort_Zone.ui.control_panel_sparkline import SparklineWidget
 from ComPort_Zone.ui.control_panel_tiles import (
+    BitsTileWidget,
     ControlTileWidget,
     LedTileWidget,
     TileRuntime,
@@ -275,6 +279,123 @@ class TileWidgetTests(unittest.TestCase):
         tile.update_runtime(TileRuntime(entry_id="a", state="warn"))
         self.assertEqual(tile.lamp.styleSheet(), "")
         self.assertEqual(tile.caption_label.styleSheet(), "")
+        tile.deleteLater()
+
+
+class BitsTileTests(unittest.TestCase):
+    """Status / fault register tile widget — every defined bit gets a
+    lamp + label; lamps light up for the bits set in the latest value."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def make_bits_entry(*bits: BitDefinition, entry_id: str = "stat") -> ControlPanelEntry:
+        return ControlPanelEntry(
+            id=entry_id,
+            label="Status",
+            command="STAT:OPER:COND?",
+            parse=ParseRule(kind="line", value_type="number"),
+            tile=TilePlacement(col=0, row=0, kind="bits"),
+            bits_spec=BitsSpec(bits=list(bits)),
+        )
+
+    def test_factory_picks_bits_widget(self) -> None:
+        entry = self.make_bits_entry(BitDefinition(bit=0, label="A"))
+        tile = create_tile(entry)
+        self.assertIsInstance(tile, BitsTileWidget)
+        tile.deleteLater()
+
+    def test_indicator_built_per_bit(self) -> None:
+        entry = self.make_bits_entry(
+            BitDefinition(bit=0, label="A"),
+            BitDefinition(bit=3, label="B"),
+            BitDefinition(bit=7, label="C"),
+        )
+        tile = BitsTileWidget(entry)
+        self.assertEqual(set(tile._indicators), {0, 3, 7})
+        tile.deleteLater()
+
+    def test_lamp_lights_only_for_active_bits(self) -> None:
+        entry = self.make_bits_entry(
+            BitDefinition(bit=0, label="A", state="fail"),
+            BitDefinition(bit=2, label="C", state="warn"),
+            BitDefinition(bit=5, label="F", state="ok"),
+        )
+        tile = BitsTileWidget(entry)
+        # Value 33 = 0b100001 sets bits 0 and 5; bit 2 stays neutral.
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="33", value_number=33.0)
+        )
+        self.assertEqual(tile._indicators[0][0].property("tileState"), "fail")
+        self.assertEqual(tile._indicators[2][0].property("tileState"), "neutral")
+        self.assertEqual(tile._indicators[5][0].property("tileState"), "ok")
+        tile.deleteLater()
+
+    def test_multiple_bits_can_be_active_simultaneously(self) -> None:
+        entry = self.make_bits_entry(
+            BitDefinition(bit=0, label="A", state="fail"),
+            BitDefinition(bit=1, label="B", state="warn"),
+            BitDefinition(bit=2, label="C", state="ok"),
+        )
+        tile = BitsTileWidget(entry)
+        # 0b111 = all three bits set at once.
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="7", value_number=7.0)
+        )
+        self.assertEqual(tile._indicators[0][0].property("tileState"), "fail")
+        self.assertEqual(tile._indicators[1][0].property("tileState"), "warn")
+        self.assertEqual(tile._indicators[2][0].property("tileState"), "ok")
+        tile.deleteLater()
+
+    def test_value_text_hex_fallback_when_no_number(self) -> None:
+        entry = self.make_bits_entry(
+            BitDefinition(bit=0, label="A", state="fail"),
+            BitDefinition(bit=7, label="B", state="warn"),
+        )
+        tile = BitsTileWidget(entry)
+        # Instrument returned a hex literal as text; the widget falls
+        # back to int(text, 0) and lights the right bits.
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="0x81", value_number=None)
+        )
+        self.assertEqual(tile._indicators[0][0].property("tileState"), "fail")
+        self.assertEqual(tile._indicators[7][0].property("tileState"), "warn")
+        tile.deleteLater()
+
+    def test_update_entry_rebuilds_indicators_when_spec_changes(self) -> None:
+        entry = self.make_bits_entry(BitDefinition(bit=0, label="A"))
+        tile = BitsTileWidget(entry)
+        new_entry = self.make_bits_entry(
+            BitDefinition(bit=1, label="X"),
+            BitDefinition(bit=4, label="Y"),
+        )
+        tile.update_entry(new_entry)
+        self.assertEqual(set(tile._indicators), {1, 4})
+        tile.deleteLater()
+
+    def test_clears_lamps_on_unparseable_value(self) -> None:
+        entry = self.make_bits_entry(BitDefinition(bit=0, label="A", state="fail"))
+        tile = BitsTileWidget(entry)
+        # Prime an active bit, then deliver an invalid update.
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="1", value_number=1.0)
+        )
+        self.assertEqual(tile._indicators[0][0].property("tileState"), "fail")
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="N/A", value_number=None)
+        )
+        self.assertEqual(tile._indicators[0][0].property("tileState"), "neutral")
+        tile.deleteLater()
+
+    def test_empty_spec_shows_placeholder(self) -> None:
+        entry = self.make_bits_entry()
+        tile = BitsTileWidget(entry)
+        self.assertEqual(tile._indicators, {})
+        self.assertTrue(tile._empty_label.isVisibleTo(tile) or
+                        tile._empty_label.isVisible() or
+                        not tile._empty_label.isHidden())
         tile.deleteLater()
 
 
