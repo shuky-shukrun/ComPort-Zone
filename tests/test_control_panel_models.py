@@ -215,8 +215,13 @@ class ControlPanelConfigTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in payload["entries"]], ["first", "late"])
 
     def test_columns_clamped(self) -> None:
-        self.assertEqual(ControlPanelConfig.from_dict({"columns": 99}).columns, 6)
-        self.assertEqual(ControlPanelConfig.from_dict({"columns": 1}).columns, 2)
+        self.assertEqual(ControlPanelConfig.from_dict({"columns": 99}).columns, 12)
+        self.assertEqual(ControlPanelConfig.from_dict({"columns": 0}).columns, 1)
+
+    def test_rows_clamped(self) -> None:
+        self.assertEqual(ControlPanelConfig.from_dict({"rows": 999}).rows, 24)
+        self.assertEqual(ControlPanelConfig.from_dict({"rows": 0}).rows, 1)
+        self.assertEqual(ControlPanelConfig.from_dict({}).rows, 5)
 
     def test_blank_name_falls_back(self) -> None:
         self.assertEqual(ControlPanelConfig.from_dict({"name": "   "}).name, "ControlPanel")

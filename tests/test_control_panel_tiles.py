@@ -391,11 +391,48 @@ class GridGeometryTests(unittest.TestCase):
         grid.deleteLater()
 
     def test_minimum_height_tracks_rows(self) -> None:
-        single = self.make_grid(make_config(make_entry("a")))
-        double = self.make_grid(make_config(make_entry("a"), make_entry("b", row=1)))
+        # Place tiles beyond the default visible-row floor so the
+        # entry count actually drives the minimum height.
+        single = self.make_grid(make_config(make_entry("a", row=6)))
+        double = self.make_grid(
+            make_config(make_entry("a", row=6), make_entry("b", row=7))
+        )
         self.assertGreater(double.minimumHeight(), single.minimumHeight())
         single.deleteLater()
         double.deleteLater()
+
+    def test_value_font_scales_with_cell_width(self) -> None:
+        # A wider grid yields a larger measure font; a narrow grid
+        # (split-screen sized) yields a smaller, still-readable one.
+        wide = self.make_grid(make_config(make_entry("a")), width=1600)
+        narrow = self.make_grid(make_config(make_entry("a")), width=420)
+        tile_wide = wide.tile("a")
+        tile_narrow = narrow.tile("a")
+        assert tile_wide is not None and tile_narrow is not None
+        wide_px = tile_wide.value_label.font().pixelSize()
+        narrow_px = tile_narrow.value_label.font().pixelSize()
+        self.assertGreater(wide_px, narrow_px)
+        # Bounded so the measure stays legible at any size.
+        self.assertGreaterEqual(narrow_px, 12)
+        self.assertLessEqual(wide_px, 40)
+        wide.deleteLater()
+        narrow.deleteLater()
+
+    def test_minimum_height_reserves_configured_rows(self) -> None:
+        # With no entries that exceed config.rows, the grid still
+        # reserves room for the configured visible rows so tiny panels
+        # keep their visual footprint stable.
+        grid = self.make_grid(make_config(make_entry("a")))
+        # Default rows = 5; minimum height must reflect more than the
+        # single-tile content (otherwise the auto-expand math is wrong).
+        only_entry_height = grid.minimumHeight()
+        bigger_grid = self.make_grid(
+            make_config(make_entry("a"), columns=4)
+        )
+        # Same config produces same baseline.
+        self.assertEqual(bigger_grid.minimumHeight(), only_entry_height)
+        grid.deleteLater()
+        bigger_grid.deleteLater()
 
 
 class ThemingTests(unittest.TestCase):

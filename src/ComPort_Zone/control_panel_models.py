@@ -70,9 +70,12 @@ MAX_POLL_TIMEOUT_MS = 30_000
 DEFAULT_POLL_INTERVAL_MS = 1000
 DEFAULT_POLL_TIMEOUT_MS = 500
 
-GRID_COLUMNS_MIN = 2
-GRID_COLUMNS_MAX = 6
+GRID_COLUMNS_MIN = 1
+GRID_COLUMNS_MAX = 12
 DEFAULT_GRID_COLUMNS = 4
+GRID_ROWS_MIN = 1
+GRID_ROWS_MAX = 24
+DEFAULT_GRID_ROWS = 5
 MAX_TILE_SPAN = 2
 
 
@@ -776,6 +779,7 @@ class ControlPanelConfig:
     name: str = "ControlPanel"
     description: str = ""
     columns: int = DEFAULT_GRID_COLUMNS
+    rows: int = DEFAULT_GRID_ROWS
     entries: list[ControlPanelEntry] = field(default_factory=list)
     favorite: bool = False
     # v2: CSV value logging persists with the control_panel so unattended
@@ -800,6 +804,7 @@ class ControlPanelConfig:
             "name": self.name,
             "description": self.description,
             "columns": self.columns,
+            "rows": self.rows,
             "entries": [entry.to_dict() for entry in ordered],
             "favorite": self.favorite,
             "created_at": self.created_at,
@@ -824,6 +829,12 @@ class ControlPanelConfig:
                 GRID_COLUMNS_MIN,
                 GRID_COLUMNS_MAX,
                 DEFAULT_GRID_COLUMNS,
+            ),
+            rows=_clamp_int(
+                data.get("rows", DEFAULT_GRID_ROWS),
+                GRID_ROWS_MIN,
+                GRID_ROWS_MAX,
+                DEFAULT_GRID_ROWS,
             ),
             entries=[
                 ControlPanelEntry.from_dict(_dict_value(item))
@@ -955,6 +966,12 @@ def grid_row_count(entries: list[ControlPanelEntry]) -> int:
     if not entries:
         return 0
     return max(entry.tile.row + entry.tile.span_h for entry in entries)
+
+
+def visible_row_count(config: "ControlPanelConfig") -> int:
+    """Rows the grid should reserve room for: at least ``config.rows`` (the
+    user-configured minimum) but expands automatically when tiles overflow."""
+    return max(int(config.rows), grid_row_count(config.entries))
 
 
 def entry_uses_v2_features(entry: ControlPanelEntry) -> bool:

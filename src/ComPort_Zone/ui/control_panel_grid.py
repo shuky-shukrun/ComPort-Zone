@@ -24,9 +24,9 @@ from PySide6.QtWidgets import QWidget
 
 from ..control_panel_models import (
     ControlPanelConfig,
-    grid_row_count,
     place_tile,
     set_tile_span,
+    visible_row_count,
 )
 from ..themes import THEMES, ThemePalette
 from .control_panel_tiles import (
@@ -148,6 +148,7 @@ class ControlPanelGridWidget(QWidget):
             width = round(placement.span_w * cell_w + (placement.span_w - 1) * GRID_GUTTER)
             height = placement.span_h * row_h + (placement.span_h - 1) * GRID_GUTTER
             tile.setGeometry(x, y, width, height)
+            tile.apply_cell_width(cell_w)
         self.setMinimumHeight(self._content_height())
         self.updateGeometry()
 
@@ -155,7 +156,7 @@ class ControlPanelGridWidget(QWidget):
         if self._config is None:
             return GRID_GUTTER * 2
         _cell_w, row_h, _columns = self._cell_metrics()
-        rows = grid_row_count(self._config.entries)
+        rows = visible_row_count(self._config)
         return GRID_GUTTER + rows * (row_h + GRID_GUTTER)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)

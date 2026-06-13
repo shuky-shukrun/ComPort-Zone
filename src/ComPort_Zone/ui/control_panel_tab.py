@@ -27,15 +27,18 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
     QMessageBox,
     QScrollArea,
+    QSpinBox,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from ..control_panel_alerts import (
@@ -72,6 +75,10 @@ from ..control_panel_value_log import (
     ControlPanelValueLogger,
 )
 from ..control_panel_models import (
+    GRID_COLUMNS_MAX,
+    GRID_COLUMNS_MIN,
+    GRID_ROWS_MAX,
+    GRID_ROWS_MIN,
     ControlPanelConfig,
     ControlPanelEntry,
     ControlPanelTabState,
@@ -307,6 +314,24 @@ class ControlPanelTabWidget(QWidget):
         self.edit_layout_button.setFixedHeight(CONTROL_H_SM)
         self.edit_layout_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        # Grid-size popup: 2 spinboxes for columns × rows; live-updates
+        # the config + relays out the grid; auto-saves like the rest of
+        # the panel.
+        self.grid_size_button = QToolButton(header)
+        self.grid_size_button.setObjectName("controlPanelHeaderButton")
+        self.grid_size_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.grid_size_button.setToolTip(
+            "Grid size — columns × visible rows.\n"
+            "More tiles than rows auto-expand the grid (scrolls)."
+        )
+        self.grid_size_button.setFixedHeight(CONTROL_H_SM)
+        self.grid_size_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.grid_size_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.grid_size_button.setMenu(self._build_grid_size_menu())
+        self._refresh_grid_size_label()
+
         self.csv_log_button = QToolButton(header)
         self.csv_log_button.setObjectName("controlPanelHeaderButton")
         self.csv_log_button.setCheckable(True)
@@ -364,6 +389,7 @@ class ControlPanelTabWidget(QWidget):
         header_layout.addWidget(self.arm_button)
         header_layout.addWidget(self.pause_button)
         header_layout.addWidget(self.csv_log_button)
+        header_layout.addWidget(self.grid_size_button)
         header_layout.addWidget(self.edit_layout_button)
         header_layout.addWidget(self.add_entry_button)
 
@@ -1739,6 +1765,62 @@ class ControlPanelTabWidget(QWidget):
 
     def _edit_mode_toggled(self, checked: bool) -> None:
         self.grid.set_edit_mode(checked)
+
+    # ---------------------------------------------------------- grid sizing
+
+    def _build_grid_size_menu(self) -> QMenu:
+        menu = QMenu(self)
+        container = QWidget(menu)
+        form = QFormLayout(container)
+        form.setContentsMargins(SPACE_LG, SPACE_MD, SPACE_LG, SPACE_MD)
+        form.setSpacing(SPACE_MD)
+
+        self.grid_columns_spin = QSpinBox(container)
+        self.grid_columns_spin.setRange(GRID_COLUMNS_MIN, GRID_COLUMNS_MAX)
+        self.grid_columns_spin.setValue(self.config.columns)
+        self.grid_columns_spin.valueChanged.connect(self._columns_changed)
+        form.addRow("Columns", self.grid_columns_spin)
+
+        self.grid_rows_spin = QSpinBox(container)
+        self.grid_rows_spin.setRange(GRID_ROWS_MIN, GRID_ROWS_MAX)
+        self.grid_rows_spin.setValue(self.config.rows)
+        self.grid_rows_spin.valueChanged.connect(self._rows_changed)
+        form.addRow("Rows", self.grid_rows_spin)
+
+        hint = QLabel(
+            "Adding tiles beyond the configured rows expands the grid.",
+            container,
+        )
+        hint.setWordWrap(True)
+        hint.setObjectName("dialogHint")
+        form.addRow(hint)
+
+        action = QWidgetAction(menu)
+        action.setDefaultWidget(container)
+        menu.addAction(action)
+        return menu
+
+    def _refresh_grid_size_label(self) -> None:
+        self.grid_size_button.setText(
+            f"{self.config.columns} × {self.config.rows}"
+        )
+
+    def _columns_changed(self, value: int) -> None:
+        if value == self.config.columns:
+            return
+        self.config.columns = value
+        normalize_layout(self.config.entries, self.config.columns)
+        self.grid.set_config(self.config)
+        self._refresh_grid_size_label()
+        self._layout_changed()
+
+    def _rows_changed(self, value: int) -> None:
+        if value == self.config.rows:
+            return
+        self.config.rows = value
+        self.grid.relayout()
+        self._refresh_grid_size_label()
+        self._layout_changed()
 
     # -------------------------------------------------------------- dialogs
 

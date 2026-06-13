@@ -57,6 +57,26 @@ TILE_STATE_CAPTIONS = {
 
 SPAN_CHOICES = ((1, 1), (2, 1), (1, 2), (2, 2))
 
+# Responsive font sizing: the measure (tileValue) and the LED caption
+# (tileStateCaption) scale with the grid's per-cell width so the panel
+# stays readable on split-screen / narrow layouts as well as fullscreen.
+# Ratios are tuned so the legacy default cell width (~180px) reproduces
+# the previous fixed sizes (21px / 15px).
+VALUE_FONT_RATIO = 0.12
+VALUE_FONT_MIN_PX = 12
+VALUE_FONT_MAX_PX = 40
+
+LED_CAPTION_FONT_RATIO = 0.085
+LED_CAPTION_FONT_MIN_PX = 11
+LED_CAPTION_FONT_MAX_PX = 24
+
+
+def _scale_font_px(cell_w: float, ratio: float, lo: int, hi: int) -> int:
+    """Map a cell width to a bounded font pixel size."""
+    if cell_w <= 0:
+        return lo
+    return max(lo, min(hi, round(cell_w * ratio)))
+
 
 def tile_state_color(state: str, theme: ThemePalette) -> str:
     """Single source of the semantic state → theme color mapping."""
@@ -128,6 +148,10 @@ class TileFrame(QFrame):
         """Override on tile kinds that paint their own surfaces (sparkline)."""
         # Default tile chrome takes its colors from QSS via tileState; no
         # per-instance palette needed unless a subclass paints raw pixels.
+
+    def apply_cell_width(self, cell_w: float) -> None:
+        """Hook for responsive font sizing — subclasses that own measure
+        labels override to scale them with the grid's cell width."""
 
     def __init__(self, entry: ControlPanelEntry, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -313,6 +337,15 @@ class ValueTileWidget(TileFrame):
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self.sparkline.apply_theme_palette(theme)
 
+    def apply_cell_width(self, cell_w: float) -> None:
+        px = _scale_font_px(
+            cell_w, VALUE_FONT_RATIO, VALUE_FONT_MIN_PX, VALUE_FONT_MAX_PX
+        )
+        font = self.value_label.font()
+        if font.pixelSize() != px:
+            font.setPixelSize(px)
+            self.value_label.setFont(font)
+
     def set_history(self, samples: list[Sample], color: str, *, now: float) -> bool:
         """Feed the sparkline; ignored when hidden (the data stays in the
         tab's history ring, so re-enabling repaints immediately)."""
@@ -366,6 +399,18 @@ class LedTileWidget(TileFrame):
         self.body_layout.addStretch(1)
         self.body_layout.addLayout(row)
         self.body_layout.addStretch(1)
+
+    def apply_cell_width(self, cell_w: float) -> None:
+        px = _scale_font_px(
+            cell_w,
+            LED_CAPTION_FONT_RATIO,
+            LED_CAPTION_FONT_MIN_PX,
+            LED_CAPTION_FONT_MAX_PX,
+        )
+        font = self.caption_label.font()
+        if font.pixelSize() != px:
+            font.setPixelSize(px)
+            self.caption_label.setFont(font)
 
     def _render_runtime(self, runtime: TileRuntime) -> bool:
         changed = False

@@ -768,7 +768,6 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLabel#tileValue {{
         color: {tx};
         font-family: {MONO};
-        font-size: 21px;
         font-weight: 600;
     }}
     QLabel#tileValue[tileState="ok"] {{ color: {green}; }}
@@ -785,7 +784,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLabel#tileLamp[tileState="warn"] {{ background: {amber}; border-color: {mix_hex(amber, bg, 0.5)}; }}
     QLabel#tileLamp[tileState="fail"], QLabel#tileLamp[tileState="error"]
         {{ background: {red}; border-color: {danger_bd}; }}
-    QLabel#tileStateCaption {{ color: {tx}; font-weight: 700; font-size: 15px; }}
+    QLabel#tileStateCaption {{ color: {tx}; font-weight: 700; }}
     QLabel#tileStateCaption[tileState="ok"] {{ color: {green}; }}
     QLabel#tileStateCaption[tileState="warn"] {{ color: {amber}; }}
     QLabel#tileStateCaption[tileState="fail"], QLabel#tileStateCaption[tileState="error"]

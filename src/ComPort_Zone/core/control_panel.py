@@ -5,9 +5,12 @@ from ..control_panel_models import (
     CONTROL_MODES,
     CONTROL_PANEL_SEND_MODES,
     DEFAULT_GRID_COLUMNS,
+    DEFAULT_GRID_ROWS,
     ENTRY_SOURCES,
     GRID_COLUMNS_MAX,
     GRID_COLUMNS_MIN,
+    GRID_ROWS_MAX,
+    GRID_ROWS_MIN,
     LINE_ENDING_OVERRIDE_OPTIONS,
     MAX_EXPRESSION_LENGTH,
     MAX_POLL_INTERVAL_MS,
@@ -44,6 +47,7 @@ from ..control_panel_models import (
     normalize_layout,
     place_tile,
     set_tile_span,
+    visible_row_count,
 )
 from ..control_panel_parse import (
     MAX_RX_WINDOW_CHARS,
@@ -178,8 +182,11 @@ __all__ = [
     "COLOR_RULE_OPS",
     "CONTROL_PANEL_SEND_MODES",
     "DEFAULT_GRID_COLUMNS",
+    "DEFAULT_GRID_ROWS",
     "GRID_COLUMNS_MAX",
     "GRID_COLUMNS_MIN",
+    "GRID_ROWS_MAX",
+    "GRID_ROWS_MIN",
     "LINE_ENDING_OVERRIDE_OPTIONS",
     "MAX_POLL_INTERVAL_MS",
     "MAX_POLL_TIMEOUT_MS",
@@ -218,4 +225,5 @@ __all__ = [
     "normalize_layout",
     "place_tile",
     "set_tile_span",
+    "visible_row_count",
 ]
