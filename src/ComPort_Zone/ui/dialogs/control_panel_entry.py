@@ -93,9 +93,15 @@ _RULE_COLUMNS = ("Operator", "Value", "Value 2", "State", "Color", "Label")
 
 CONTROL_PANEL_DEFAULT_TARGET = ""  # combo data for "use the control_panel binding"
 
-# Preview tile footprint: one grid cell at typical control_panel proportions.
+# Preview tile footprint. PREVIEW_CELL_W / PREVIEW_CELL_H are the
+# per-grid-cell pixel dimensions at typical control-panel proportions,
+# and PREVIEW_MAX_{W,H} cap the full preview strip so big tiles
+# (e.g. 5×5) don't overflow the dialog — the preview is scaled
+# uniformly to fit while preserving its aspect ratio.
 PREVIEW_CELL_W = 190
 PREVIEW_CELL_H = 96
+PREVIEW_MAX_W = 560
+PREVIEW_MAX_H = 220
 
 
 @dataclass(slots=True)
@@ -742,9 +748,17 @@ class ControlPanelEntryDialog(QDialog):
             self.preview_tile = tile
         else:
             self.preview_tile.update_entry(entry)
-        width = PREVIEW_CELL_W * entry.tile.span_w + SPACE_LG * (entry.tile.span_w - 1)
-        height = PREVIEW_CELL_H + (28 if entry.tile.span_h > 1 else 0)
-        self.preview_tile.setFixedSize(width, height)
+        gap = SPACE_LG
+        natural_w = PREVIEW_CELL_W * entry.tile.span_w + gap * (entry.tile.span_w - 1)
+        natural_h = PREVIEW_CELL_H * entry.tile.span_h + gap * (entry.tile.span_h - 1)
+        # Uniform scale so the aspect ratio matches what the tile will
+        # take on the real grid (so e.g. 1×5 reads as tall as 5×1 is
+        # wide), capped to the preview strip's footprint.
+        scale = min(1.0, PREVIEW_MAX_W / natural_w, PREVIEW_MAX_H / natural_h)
+        self.preview_tile.setFixedSize(round(natural_w * scale), round(natural_h * scale))
+        # Match the responsive-font behaviour of the real grid: measure
+        # labels scale with the per-cell width.
+        self.preview_tile.apply_cell_width(PREVIEW_CELL_W * scale)
         self.preview_tile.update_runtime(self._preview_runtime(entry))
 
     def _preview_runtime(self, entry: ControlPanelEntry) -> TileRuntime:

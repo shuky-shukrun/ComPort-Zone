@@ -2076,6 +2076,63 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         self.assertEqual(result.rules[0].op, "gt")
         dialog.deleteLater()
 
+    def test_preview_aspect_ratio_tracks_span(self) -> None:
+        # The preview tile should be roughly square for 1×1, taller for
+        # tall tiles, wider for wide tiles, and uniformly scaled for
+        # large spans so the dialog can fit them.
+        entry = volt_entry()
+        dialog = ControlPanelEntryDialog(entry)
+        sizes: dict[tuple[int, int], tuple[int, int]] = {}
+        for span_w, span_h in [(1, 1), (1, 5), (5, 1), (3, 3), (5, 5)]:
+            # QComboBox.findData() compares wrapped Python tuples by
+            # identity, so dialogs select by data via a manual scan.
+            target = (span_w, span_h)
+            matched = False
+            for idx in range(dialog.span_combo.count()):
+                if dialog.span_combo.itemData(idx) == target:
+                    dialog.span_combo.setCurrentIndex(idx)
+                    matched = True
+                    break
+            self.assertTrue(matched, f"span {span_w}×{span_h} not offered")
+            assert dialog.preview_tile is not None
+            sizes[(span_w, span_h)] = (
+                dialog.preview_tile.width(),
+                dialog.preview_tile.height(),
+            )
+        w11, h11 = sizes[(1, 1)]
+        w15, h15 = sizes[(1, 5)]
+        w51, h51 = sizes[(5, 1)]
+        w33, h33 = sizes[(3, 3)]
+        w55, h55 = sizes[(5, 5)]
+        # Tall tile must be visibly taller than 1×1; wide must be wider.
+        self.assertGreater(h15, h11)
+        self.assertGreater(w51, w11)
+        # 1×5 reads as a tall column; 5×1 reads as a wide row.
+        self.assertGreater(h15, w15)
+        self.assertGreater(w51, h51)
+        # Square spans (3×3, 5×5) preserve the per-cell aspect ratio
+        # (matching what a real cell looks like) — both must therefore
+        # share the same width/height ratio as 1×1, within rounding.
+        ratio_11 = w11 / h11
+        self.assertAlmostEqual(w33 / h33, ratio_11, delta=0.15)
+        self.assertAlmostEqual(w55 / h55, ratio_11, delta=0.15)
+        # Neither dimension exceeds the configured preview cap, so the
+        # tile always fits in the dialog header strip.
+        from ComPort_Zone.ui.dialogs.control_panel_entry import (
+            PREVIEW_MAX_H,
+            PREVIEW_MAX_W,
+        )
+
+        for (sw, sh), (w, h) in sizes.items():
+            with self.subTest(span=f"{sw}x{sh}"):
+                self.assertLessEqual(w, PREVIEW_MAX_W)
+                self.assertLessEqual(h, PREVIEW_MAX_H)
+        # 3×3 must be at least as big as 1×1 along both axes (a 1×1
+        # tile only fills one cell while 3×3 fills nine).
+        self.assertGreaterEqual(w33, w11)
+        self.assertGreaterEqual(h33, h11)
+        dialog.deleteLater()
+
     def test_ok_gated_on_validation(self) -> None:
         dialog = ControlPanelEntryDialog()
         dialog.command_input.setText("")
