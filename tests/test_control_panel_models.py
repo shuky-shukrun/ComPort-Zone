@@ -122,7 +122,7 @@ class TilePlacementTests(unittest.TestCase):
         self.assertEqual(TilePlacement.from_dict(tile.to_dict()), tile)
 
     def test_span_clamped_on_load(self) -> None:
-        tile = TilePlacement.from_dict({"span_w": 3, "span_h": 9})
+        tile = TilePlacement.from_dict({"span_w": 7, "span_h": 9})
         self.assertEqual(tile.span_w, MAX_TILE_SPAN)
         self.assertEqual(tile.span_h, MAX_TILE_SPAN)
 
@@ -976,9 +976,25 @@ class LayoutMathTests(unittest.TestCase):
         self.assertEqual(spots["b"][:2], (1, 1))
 
     def test_set_tile_span_clamps(self) -> None:
+        # span_w is clamped by min(MAX_TILE_SPAN, columns), span_h by
+        # MAX_TILE_SPAN alone. With a 4-column grid that means span_w
+        # caps at 4 (the column count) and span_h caps at MAX_TILE_SPAN.
         entries = [make_entry("a")]
-        set_tile_span(entries, 4, "a", 9, 9)
-        self.assertEqual((entries[0].tile.span_w, entries[0].tile.span_h), (2, 2))
+        set_tile_span(entries, 4, "a", 99, 99)
+        self.assertEqual(
+            (entries[0].tile.span_w, entries[0].tile.span_h),
+            (4, MAX_TILE_SPAN),
+        )
+
+    def test_set_tile_span_uses_full_max_when_grid_is_wide_enough(self) -> None:
+        # With a grid wider than MAX_TILE_SPAN the user can grow tiles
+        # all the way to MAX_TILE_SPAN × MAX_TILE_SPAN.
+        entries = [make_entry("a")]
+        set_tile_span(entries, 8, "a", 99, 99)
+        self.assertEqual(
+            (entries[0].tile.span_w, entries[0].tile.span_h),
+            (MAX_TILE_SPAN, MAX_TILE_SPAN),
+        )
 
     def test_set_tile_span_unknown_id(self) -> None:
         self.assertFalse(set_tile_span([], 4, "ghost", 1, 1))

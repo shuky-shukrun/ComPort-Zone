@@ -58,7 +58,9 @@ TILE_STATE_CAPTIONS = {
     "error": "ERROR",
 }
 
-SPAN_CHOICES = ((1, 1), (2, 1), (1, 2), (2, 2))
+SPAN_CHOICES = tuple(
+    (w, h) for h in range(1, 6) for w in range(1, 6)
+)  # 1×1 through 5×5
 
 # Responsive font sizing: the measure (tileValue) and the LED caption
 # (tileStateCaption) scale with the grid's per-cell width so the panel
@@ -294,9 +296,15 @@ class TileFrame(QFrame):
         )
         size_menu = menu.addMenu("Size")
         tile = self._entry.tile
+        last_h: int | None = None
         for span_w, span_h in SPAN_CHOICES:
             if span_w > MAX_TILE_SPAN or span_h > MAX_TILE_SPAN:
                 continue
+            # SPAN_CHOICES is grouped by height — a separator between
+            # groups breaks the 25-item list into scannable rows.
+            if last_h is not None and span_h != last_h:
+                size_menu.addSeparator()
+            last_h = span_h
             action = size_menu.addAction(f"{span_w}×{span_h}")
             action.setCheckable(True)
             action.setChecked((tile.span_w, tile.span_h) == (span_w, span_h))
