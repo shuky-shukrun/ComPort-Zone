@@ -1,0 +1,57 @@
+{
+  "comport_zone_control_panels": 3,
+  "control_panels": [
+    {
+      "id": "starter-panel",
+      "name": "My instrument",
+      "description": "Starter template: identity (run-once), one live measurement, one output toggle. Replace the commands with your instrument's syntax and adjust the setpoint ranges.",
+      "columns": 4,
+      "rows": 4,
+      "favorite": true,
+      "entries": [
+        {
+          "id": "ident",
+          "label": "Identity",
+          "command": "*IDN?",
+          "poll_mode": "on_connect",
+          "timeout_ms": 1500,
+          "parse": {"kind": "line", "value_type": "text"},
+          "tile": {"col": 0, "row": 0, "span_w": 4, "span_h": 1, "kind": "value"}
+        },
+        {
+          "id": "v-meas",
+          "label": "Voltage",
+          "unit": "V",
+          "command": "MEAS:VOLT?",
+          "interval_ms": 300,
+          "parse": {"kind": "line", "value_type": "number"},
+          "tile": {"col": 0, "row": 1, "span_w": 2, "span_h": 2, "kind": "value"}
+        },
+        {
+          "id": "v-set",
+          "label": "Set voltage",
+          "tile": {"col": 2, "row": 1, "span_w": 2, "span_h": 1, "kind": "setpoint"},
+          "setpoint": {
+            "min_value": 0.0,
+            "max_value": 30.0,
+            "step": 0.01,
+            "decimals": 2,
+            "unit": "V",
+            "command_template": "VOLT {value}",
+            "watch_entry_id": "v-meas"
+          }
+        },
+        {
+          "id": "output",
+          "label": "Output",
+          "tile": {"col": 2, "row": 2, "span_w": 2, "span_h": 1, "kind": "control"},
+          "control": {
+            "mode": "toggle",
+            "on_command": "OUTP ON",
+            "off_command": "OUTP OFF"
+          }
+        }
+      ]
+    }
+  ]
+}

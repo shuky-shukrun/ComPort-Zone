@@ -1,0 +1,20 @@
+{
+  "skill_name": "comport-zone-control-panel",
+  "evals": [
+    {
+      "id": 1,
+      "name": "rigol-dp832-bench-psu",
+      "prompt": "Create a ComPort Zone control panel JSON for a Rigol DP832 triple-output bench supply. I only care about channel 1 for now. Commands: '*IDN?' for identity, ':MEAS:VOLT? CH1' for live voltage, ':MEAS:CURR? CH1' for current, ':MEAS:POWE? CH1' for power, ':SOUR1:VOLT <v>' to set voltage (0..30 V, 1 mV step), ':SOUR1:CURR <i>' to set current limit (0..3 A, 1 mA step), ':OUTP CH1,ON' / ':OUTP CH1,OFF' for output, ':OUTP? CH1' returns 'ON' or 'OFF'."
+    },
+    {
+      "id": 2,
+      "name": "keysight-34461a-dmm-statreg",
+      "prompt": "Keysight 34461A DMM panel: identity on connect, live READ?, and a bits tile decoding STAT:QUES:COND? — bit 0 Voltage out-of-range (fail), bit 1 Current out-of-range (fail), bit 4 Temperature (warn), bit 8 Calibration error (fail), bit 9 Self-test failed (fail)."
+    },
+    {
+      "id": 3,
+      "name": "fix-broken-panel-import",
+      "prompt": "Fix a broken control-panel file: old 'comport_zone_dashboards: 2' wrapper, columns 99, duplicate id 'v', setpoint tile span_w=9, command_template missing {value}, inverted min/max, watch_entry_id pointing nowhere, toggle without off_command."
+    }
+  ]
+}

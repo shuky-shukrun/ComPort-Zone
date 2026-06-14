@@ -1,0 +1,216 @@
+{
+  "comport_zone_control_panels": 3,
+  "control_panels": [
+    {
+      "id": "tdk-genplus-basic",
+      "name": "TDK GEN+ (basic)",
+      "description": "Basic operator panel for TDK-Lambda GENESYS+ programmable DC power supplies. Live V/I/P, output toggle, setpoints, OVP/UVL, regulation mode, foldback, fault & status registers. Adjust per-model max/min on the V/I/OVP/UVL setpoints before driving real hardware. Bit positions follow the GEN+ SCPI manual (STAT:QUES:COND? and STAT:OPER:COND?).",
+      "columns": 6,
+      "rows": 8,
+      "favorite": true,
+      "entries": [
+        {
+          "id": "ident",
+          "label": "Identity",
+          "command": "*IDN?",
+          "poll_mode": "on_connect",
+          "timeout_ms": 1500,
+          "parse": {"kind": "line", "value_type": "text"},
+          "tile": {"col": 0, "row": 0, "span_w": 4, "span_h": 1, "kind": "value"}
+        },
+        {
+          "id": "mode",
+          "label": "Mode",
+          "command": "OUTP:MODE?",
+          "interval_ms": 500,
+          "timeout_ms": 500,
+          "parse": {"kind": "line", "value_type": "text"},
+          "rules": [
+            {"op": "contains", "operand": "CV",   "state": "ok",   "label": "CV"},
+            {"op": "contains", "operand": "CC",   "state": "warn", "label": "CC"},
+            {"op": "contains", "operand": "VLIM", "state": "warn", "label": "VLIM"},
+            {"op": "contains", "operand": "OFF",  "state": "fail", "label": "OFF"}
+          ],
+          "tile": {"col": 4, "row": 0, "span_w": 2, "span_h": 1, "kind": "led"}
+        },
+        {
+          "id": "v-meas",
+          "label": "Voltage",
+          "unit": "V",
+          "command": "MEAS:VOLT?",
+          "interval_ms": 300,
+          "timeout_ms": 500,
+          "parse": {"kind": "line", "value_type": "number"},
+          "tile": {"col": 0, "row": 1, "span_w": 2, "span_h": 2, "kind": "value"},
+          "show_sparkline": true
+        },
+        {
+          "id": "i-meas",
+          "label": "Current",
+          "unit": "A",
+          "command": "MEAS:CURR?",
+          "interval_ms": 300,
+          "timeout_ms": 500,
+          "parse": {"kind": "line", "value_type": "number"},
+          "tile": {"col": 2, "row": 1, "span_w": 2, "span_h": 2, "kind": "value"},
+          "show_sparkline": true
+        },
+        {
+          "id": "p-meas",
+          "label": "Power",
+          "unit": "W",
+          "command": "MEAS:POW?",
+          "interval_ms": 500,
+          "timeout_ms": 500,
+          "parse": {"kind": "line", "value_type": "number"},
+          "tile": {"col": 4, "row": 1, "span_w": 2, "span_h": 2, "kind": "value"},
+          "show_sparkline": true
+        },
+        {
+          "id": "v-set",
+          "label": "Output voltage",
+          "tile": {"col": 0, "row": 3, "span_w": 3, "span_h": 1, "kind": "setpoint"},
+          "setpoint": {
+            "min_value": 0.0,
+            "max_value": 60.0,
+            "step": 0.01,
+            "decimals": 2,
+            "unit": "V",
+            "command_template": "VOLT {value}",
+            "watch_entry_id": "v-meas",
+            "confirm": false
+          }
+        },
+        {
+          "id": "i-set",
+          "label": "Current limit",
+          "tile": {"col": 3, "row": 3, "span_w": 3, "span_h": 1, "kind": "setpoint"},
+          "setpoint": {
+            "min_value": 0.0,
+            "max_value": 50.0,
+            "step": 0.01,
+            "decimals": 2,
+            "unit": "A",
+            "command_template": "CURR {value}",
+            "watch_entry_id": "i-meas",
+            "confirm": false
+          }
+        },
+        {
+          "id": "ovp-set",
+          "label": "Over-voltage protection",
+          "tile": {"col": 0, "row": 4, "span_w": 3, "span_h": 1, "kind": "setpoint"},
+          "setpoint": {
+            "min_value": 0.5,
+            "max_value": 66.0,
+            "step": 0.1,
+            "decimals": 2,
+            "unit": "V",
+            "command_template": "VOLT:PROT:LEV {value}",
+            "confirm": true
+          }
+        },
+        {
+          "id": "uvl-set",
+          "label": "Under-voltage limit",
+          "tile": {"col": 3, "row": 4, "span_w": 3, "span_h": 1, "kind": "setpoint"},
+          "setpoint": {
+            "min_value": 0.0,
+            "max_value": 60.0,
+            "step": 0.1,
+            "decimals": 2,
+            "unit": "V",
+            "command_template": "VOLT:PROT:LOW:LEV {value}",
+            "confirm": true
+          }
+        },
+        {
+          "id": "output-toggle",
+          "label": "Output",
+          "tile": {"col": 0, "row": 5, "span_w": 3, "span_h": 1, "kind": "control"},
+          "control": {
+            "mode": "toggle",
+            "on_command": "OUTP ON",
+            "off_command": "OUTP OFF",
+            "watch_entry_id": "mode",
+            "confirm": false
+          }
+        },
+        {
+          "id": "foldback",
+          "label": "Foldback",
+          "tile": {"col": 3, "row": 5, "span_w": 2, "span_h": 1, "kind": "enum"},
+          "enum_spec": {
+            "options": [
+              {"label": "OFF", "command": "OUTP:PROT:FOLD OFF", "match_value": "OFF"},
+              {"label": "CC",  "command": "OUTP:PROT:FOLD CC",  "match_value": "CC"},
+              {"label": "CV",  "command": "OUTP:PROT:FOLD CV",  "match_value": "CV"}
+            ],
+            "confirm": false
+          }
+        },
+        {
+          "id": "clear-faults",
+          "label": "Clear faults",
+          "tile": {"col": 5, "row": 5, "span_w": 1, "span_h": 1, "kind": "control"},
+          "control": {
+            "mode": "button",
+            "on_command": "OUTP:PROT:CLE",
+            "confirm": true
+          }
+        },
+        {
+          "id": "questionable",
+          "label": "Faults — STAT:QUES:COND?",
+          "command": "STAT:QUES:COND?",
+          "interval_ms": 500,
+          "timeout_ms": 500,
+          "parse": {"kind": "line", "value_type": "number"},
+          "tile": {"col": 0, "row": 6, "span_w": 3, "span_h": 2, "kind": "bits"},
+          "bits_spec": {
+            "bits": [
+              {"bit": 1,  "label": "AC fail",       "state": "fail", "description": "AC input voltage out of spec"},
+              {"bit": 2,  "label": "Over-temp",     "state": "fail", "description": "Internal over-temperature shutdown"},
+              {"bit": 3,  "label": "Foldback",      "state": "warn", "description": "Foldback protection triggered"},
+              {"bit": 4,  "label": "Over-voltage",  "state": "fail", "description": "OVP triggered (latched)"},
+              {"bit": 5,  "label": "Shut off",      "state": "warn", "description": "Rear-panel SO (shut-off) input asserted"},
+              {"bit": 6,  "label": "Output OFF",    "state": "warn", "description": "Output disabled"},
+              {"bit": 7,  "label": "Interlock",     "state": "fail", "description": "Interlock (ILC) input fault"},
+              {"bit": 8,  "label": "ENA input",     "state": "warn", "description": "Rear-panel ENA input asserted"},
+              {"bit": 9,  "label": "Under-voltage", "state": "fail", "description": "UVP triggered (latched)"},
+              {"bit": 11, "label": "General err",   "state": "fail", "description": "General communication / programming error"},
+              {"bit": 14, "label": "Power OFF",     "state": "warn", "description": "Front-panel power switch off"},
+              {"bit": 15, "label": "Watchdog",      "state": "fail", "description": "Communication watchdog timeout"}
+            ]
+          }
+        },
+        {
+          "id": "operation",
+          "label": "Status — STAT:OPER:COND?",
+          "command": "STAT:OPER:COND?",
+          "interval_ms": 500,
+          "timeout_ms": 500,
+          "parse": {"kind": "line", "value_type": "number"},
+          "tile": {"col": 3, "row": 6, "span_w": 3, "span_h": 2, "kind": "bits"},
+          "bits_spec": {
+            "bits": [
+              {"bit": 2,  "label": "CV mode",        "state": "ok",   "description": "Operating in constant-voltage mode"},
+              {"bit": 3,  "label": "CC mode",        "state": "warn", "description": "Operating in constant-current mode (at current limit)"},
+              {"bit": 4,  "label": "No fault",       "state": "ok",   "description": "No latched protection fault"},
+              {"bit": 5,  "label": "Trigger wait",   "state": "neutral", "description": "Waiting for a trigger"},
+              {"bit": 6,  "label": "Auto-start",     "state": "ok",   "description": "Auto-start enabled"},
+              {"bit": 7,  "label": "Local",          "state": "neutral", "description": "Front panel in local control"},
+              {"bit": 8,  "label": "Interlock OK",   "state": "ok",   "description": "Interlock loop closed"},
+              {"bit": 9,  "label": "Enabled",        "state": "ok",   "description": "Enable input asserted"},
+              {"bit": 10, "label": "Foldback en.",   "state": "neutral", "description": "Foldback protection enabled"},
+              {"bit": 11, "label": "Ext V ref",      "state": "neutral", "description": "External voltage reference selected"},
+              {"bit": 12, "label": "Ext I ref",      "state": "neutral", "description": "External current reference selected"},
+              {"bit": 13, "label": "Const power en", "state": "neutral", "description": "Constant-power mode enabled"},
+              {"bit": 15, "label": "Const power",    "state": "ok",   "description": "Operating in constant-power mode"}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
