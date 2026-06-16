@@ -573,6 +573,112 @@ class SimulatorTcpTests(unittest.TestCase):
         finally:
             client.disconnect()
 
+    def test_terminal_sees_all_its_replies_during_panel_polling(self) -> None:
+        """Regression for the user-reported "terminal stops receiving its
+        replies" symptom: with the control panel actively polling, every
+        manual terminal send must still produce a visible RX in the bound
+        terminal's transcript. The bug was that the journal's 350 ms
+        grace tail past each closed panel window swallowed terminal
+        replies arriving milliseconds after the panel released the wire."""
+        import threading
+        from queue import Empty, Queue
+
+        from ComPort_Zone.control_panel_engine import (
+            PollRequest,
+            SessionPollDispatcher,
+        )
+        from ComPort_Zone.control_panel_models import (
+            ControlPanelEntry,
+            ParseRule,
+            TilePlacement,
+        )
+        from ComPort_Zone.control_panel_parse import CompiledParseRule
+        from ComPort_Zone.transports import LanTransportAdapter
+
+        client, _rx_reader = self._connected_client()
+        try:
+            time.sleep(0.05)
+            dispatcher = SessionPollDispatcher(transport=LanTransportAdapter(client))
+            disp_rx = client.subscribe_events()
+            journal = dispatcher.traffic_journal
+
+            # Mix of a working entry (responds instantly) and a bogus one
+            # that times out — exercises both the success-drain AND the
+            # timeout-drain paths inside hold_wire.
+            good = ControlPanelEntry(
+                id="v", label="V", command="MEAS:VOLT?", timeout_ms=200,
+                parse=ParseRule(kind="line", value_type="number"),
+                tile=TilePlacement(kind="value"),
+            )
+            bad = ControlPanelEntry(
+                id="x", label="X", command="UNKNOWN?", timeout_ms=200,
+                parse=ParseRule(kind="line", value_type="number"),
+                tile=TilePlacement(kind="value"),
+            )
+            good_compiled = CompiledParseRule.compile(good.parse)
+            bad_compiled = CompiledParseRule.compile(bad.parse)
+            rq: Queue = Queue()
+
+            # Mimic terminal_tab.py's RX filter (journal.covers gates display).
+            terminal_rx = client.subscribe_events()
+            visible_replies: list[str] = []
+            terminal_stop = threading.Event()
+
+            def terminal_reader() -> None:
+                while not terminal_stop.is_set():
+                    try:
+                        ev = terminal_rx.get(timeout=0.05)
+                    except Empty:
+                        continue
+                    if ev.kind != "rx":
+                        continue
+                    if not journal.covers(ev.timestamp):
+                        visible_replies.append(ev.message.strip())
+
+            reader = threading.Thread(target=terminal_reader, daemon=True)
+            reader.start()
+
+            panel_stop = threading.Event()
+
+            def panel_loop() -> None:
+                i = 0
+                while not panel_stop.is_set():
+                    entry, compiled = (good, good_compiled) if i % 2 == 0 else (bad, bad_compiled)
+                    req = PollRequest(
+                        control_panel_id="cp",
+                        entry=entry,
+                        compiled=compiled,
+                        result_queue=rq,
+                    )
+                    dispatcher._execute_transaction(req, disp_rx)
+                    i += 1
+
+            panel = threading.Thread(target=panel_loop, daemon=True)
+            panel.start()
+
+            # The user's repro: ~25 manual terminal sends interleaved with
+            # the panel's continuous polling.
+            n_terminal_sends = 25
+            for _ in range(n_terminal_sends):
+                client.send_text("*IDN?", source="")
+                time.sleep(0.05)
+
+            time.sleep(0.3)  # let last replies drain
+            panel_stop.set(); panel.join(timeout=2.0)
+            terminal_stop.set(); reader.join(timeout=2.0)
+
+            # Every terminal *IDN? must produce a visible "TDK-LAMBDA..."
+            # line in the terminal — none may be hidden by the journal.
+            idn_replies = [r for r in visible_replies if "TDK-LAMBDA" in r]
+            self.assertGreaterEqual(
+                len(idn_replies), n_terminal_sends,
+                f"Only {len(idn_replies)}/{n_terminal_sends} terminal "
+                f"replies reached the transcript — journal is over-hiding. "
+                f"visible_replies={visible_replies[:10]}",
+            )
+        finally:
+            client.disconnect()
+
 
 # ----------------------------------------------------------------------
 # Layer 3b: raw socket smoke for framing edge cases

@@ -69,6 +69,21 @@ RX_POLL_CHUNK_S = 0.05
 # Idle wait on the request queue; doubles as the cadence for discarding
 # unsolicited RX so the subscriber queue stays bounded between polls.
 IDLE_DRAIN_TIMEOUT_S = 0.1
+# When a poll transaction times out, the device may still produce its
+# delayed reply moments later. We're still holding the wire lock here,
+# so we briefly absorb anything that arrives before releasing — otherwise
+# those late bytes interleave with the NEXT sender's reply on the wire,
+# polluting the bound terminal or the next tile. 50 ms covers slow LAN
+# devices comfortably while not delaying the next scheduled poll
+# noticeably.
+POST_TIMEOUT_DRAIN_S = 0.050
+# Even on parse success, the device may still push trailing CR/LF or
+# echo fragments after we've consumed enough bytes to satisfy our
+# parse rule. Held under the wire lock so those fragments can't leak
+# into the next sender's transcript. Kept much shorter than the
+# timeout drain — successful transactions are the common case and
+# 10 ms is enough to absorb typical TCP-fragment latency.
+POST_SUCCESS_DRAIN_S = 0.010
 
 DISPATCHER_THREAD_NAME = "control_panel-dispatch"
 
@@ -90,7 +105,16 @@ class PollTrafficJournal:
     writes, the GUI thread reads.
     """
 
-    GRACE_S = 0.35
+    # Grace tail past close_window(). Pre-wire-lock this was 350 ms to
+    # absorb device-reply fragments that arrived after the dispatcher
+    # gave up on its parse. With the wire lock serializing senders AND
+    # the dispatcher draining residual bytes inside the held region
+    # before release, no late fragment can outlive close_window() — so
+    # grace is 0. Any positive value hides the bound terminal's OWN
+    # replies on fast (localhost / LAN) links: the terminal acquires
+    # the wire the instant we release it, the device replies within
+    # 1-5 ms, and that timestamp lands inside the grace tail.
+    GRACE_S = 0.000
     _KEEP_CLOSED = 16
 
     def __init__(self) -> None:
@@ -630,6 +654,24 @@ class SessionPollDispatcher:
             except Empty:
                 return
 
+    def _drain_residual(self, rx_queue: Queue[SerialEvent], duration_s: float) -> None:
+        """Block for ``duration_s`` while continuously draining ``rx_queue``.
+
+        Used at the end of a timed-out transaction (still holding the wire
+        lock) so a late device reply lands in our drain rather than in the
+        next sender's window. We're idle here by design — the wire is ours
+        and the device is the only other party that could produce bytes."""
+        deadline = self._clock() + duration_s
+        while True:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                self._drain(rx_queue)
+                return
+            try:
+                rx_queue.get(timeout=remaining)
+            except Empty:
+                return
+
     def _execute_transaction(
         self, request: PollRequest | ReadbackRequest, rx_queue: Queue[SerialEvent]
     ) -> PollResult:
@@ -698,6 +740,10 @@ class SessionPollDispatcher:
                         )
                     remaining = deadline - self._clock()
                     if remaining <= 0:
+                        # Drain residual bytes inside the held wire so a
+                        # late device reply can't bleed into the next
+                        # sender's RX window or transcript.
+                        self._drain_residual(rx_queue, POST_TIMEOUT_DRAIN_S)
                         return PollResult(
                             control_panel_id=request.control_panel_id,
                             entry_id=entry.id,
@@ -724,6 +770,14 @@ class SessionPollDispatcher:
                     window = append_to_window(window, event.message)
                     outcome = parse_response(request.compiled, window)
                     if outcome is not None:
+                        # Brief residual drain even on success: the device
+                        # may still push trailing CR/LF or echo fragments
+                        # right after our parse matched. If those land
+                        # after we release the wire, the bound terminal
+                        # treats them as stray RX between the user's own
+                        # send and its reply. 10 ms covers TCP fragment
+                        # latency without noticeably slowing polling.
+                        self._drain_residual(rx_queue, POST_SUCCESS_DRAIN_S)
                         return PollResult(
                             control_panel_id=request.control_panel_id,
                             entry_id=entry.id,

@@ -341,15 +341,20 @@ class PollTrafficJournalTests(unittest.TestCase):
         journal.open_window()
         self.assertTrue(journal.covers(self._now()))
 
-    def test_closed_window_keeps_grace_tail(self) -> None:
-        from datetime import timedelta
+    def test_closed_window_stops_covering_after_close(self) -> None:
+        # The journal used to keep a 350 ms grace tail past close_window
+        # to hide late device-reply fragments. With the wire lock now
+        # serializing senders AND the dispatcher draining residual bytes
+        # inside the held region before release, no late fragment can
+        # outlive close_window(). Grace is 0 (any positive grace would
+        # also hide the bound terminal's own replies on fast links).
+        import time
 
         journal = PollTrafficJournal()
         journal.open_window()
         journal.close_window()
-        self.assertTrue(journal.covers(self._now()))  # inside the grace tail
-        late = self._now() + timedelta(seconds=PollTrafficJournal.GRACE_S + 1)
-        self.assertFalse(journal.covers(late))
+        time.sleep(0.001)
+        self.assertFalse(journal.covers(self._now()))
 
     def test_timestamp_before_window_not_covered(self) -> None:
         from datetime import timedelta
@@ -614,7 +619,12 @@ class ControlExecutionTests(unittest.TestCase):
         before = datetime.now(timezone.utc).astimezone()
         self.dispatcher._execute_control(make_control_request())
         journal = self.dispatcher.traffic_journal
-        self.assertTrue(journal.covers(before + timedelta(milliseconds=1)))
+        self.assertEqual(len(journal._windows), 1)
+        start, end = journal._windows[0]
+        self.assertIsNotNone(start)
+        self.assertIsNotNone(end)
+        self.assertGreaterEqual(start, before)
+        self.assertGreaterEqual(end, start)
         far = datetime.now(timezone.utc).astimezone() + timedelta(seconds=60)
         self.assertFalse(journal.covers(far))
 
