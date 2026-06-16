@@ -1213,6 +1213,10 @@ class ControlTileTests(ControlPanelTabTestBase):
         self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 1))
 
     def test_toggle_sends_off_when_watch_verdict_ok(self) -> None:
+        # Follow-mode toggle: the watched OUTP? poll drives the visual
+        # state; clicking the toggle while the device says "on" should
+        # send the OFF command and *not* queue a redundant readback
+        # (the OUTP? cycle keeps running on its own).
         tab = self.make_tab(outp_state_entry(), control_entry("toggle", watch_entry_id="outp"))
         tab.bind_to_session(1)
         self.clock.advance_ms(80)
@@ -1223,11 +1227,19 @@ class ControlTileTests(ControlPanelTabTestBase):
         self.assertEqual(tile.button.text(), "ON")
 
         self.assertTrue(tab._activate_control("ctrl"))
-        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 4))
-        self.assertEqual(
-            self.session.transport.sent_text[-2:],
-            [("OUTP OFF", None), ("OUTP?", None)],
-        )
+        # We expect exactly: the existing OUTP? polls + one OUTP OFF.
+        # Crucially the click must NOT queue another OUTP? right behind
+        # the write — follow-mode is pure fan-out so the device only
+        # sees the toggle send, plus whatever regular polls already
+        # had on the wire.
+        self.assertTrue(wait_for(lambda: ("OUTP OFF", None) in self.session.transport.sent_text))
+        # Count OUTP? sends issued during the click — should be zero
+        # net-new (any future OUTP? comes from the regular poll cycle,
+        # not the toggle).
+        before = list(self.session.transport.sent_text)
+        # Drain any pending result without further ticks.
+        tab._drain_results()
+        self.assertEqual(self.session.transport.sent_text, before)
 
     def test_unwatched_toggle_flips_optimistically(self) -> None:
         tab = self.make_tab(control_entry("toggle"))
@@ -1632,6 +1644,10 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.assertAlmostEqual(tile.spin.value(), 11.1, places=4)
 
     def test_followed_readback_on_connect_seeds_setpoint_value(self) -> None:
+        # Follow-mode setpoint should adopt the watched tile's first
+        # poll result for both the readback box AND the editable
+        # command field — without queueing a separate readback
+        # transaction (the polled tile is already on the wire).
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
 
         polled = volt_entry()
@@ -1643,16 +1659,17 @@ class SetpointTileTests(ControlPanelTabTestBase):
         assert isinstance(tile, SetpointTileWidget)
         self.assertAlmostEqual(tile.spin.value(), 0.0, places=4)
 
-        self.session.transport.queue_response(b"2.0\r\n")
         self.session.transport.queue_response(b"7.25\r\n")
         tab.bind_to_session(1)
         tab._tick()
-        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 2))
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
         tab._tick()
 
+        # Exactly ONE MEAS:VOLT? on the wire — the polled tile's regular
+        # poll. No redundant readback for the setpoint.
         self.assertEqual(
             self.session.transport.sent_text,
-            [("MEAS:VOLT?", None), ("MEAS:VOLT?", None)],
+            [("MEAS:VOLT?", None)],
         )
         self.assertEqual(tile.readback_field.text(), "7.25 V")
         self.assertAlmostEqual(tile.spin.value(), 7.25, places=4)
@@ -1675,6 +1692,40 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.assertFalse(tile.pending)
         self.assertEqual(tile.property("tileState"), "error")
         self.assertIn("device offline", tile.toolTip())
+
+    def test_follow_mode_does_not_double_poll(self) -> None:
+        """A setpoint following another tile must not queue an extra
+        readback transaction — that's pure fan-out, no device traffic.
+
+        The pre-refactor wiring re-polled the watched tile from the
+        setpoint, doubling device load AND extending the per-poll
+        journal window so manual terminal RX got suppressed. This
+        regression test locks down the fan-out-only behaviour.
+        """
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        polled = volt_entry()
+        polled.id = "vmeas"
+        polled.label = "Measured"
+        sp = setpoint_entry(watch_entry_id="vmeas")
+        tab = self.make_tab(polled, sp)
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+
+        self.session.transport.queue_response(b"5.50\r\n")
+        tab.bind_to_session(1)
+        tab._tick()
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        # Exactly the polled tile's poll — no second MEAS:VOLT? from a
+        # follow-mode "readback" transaction.
+        self.assertEqual(
+            self.session.transport.sent_text,
+            [("MEAS:VOLT?", None)],
+        )
+        # Fan-out still seeded the spinbox + readback box.
+        self.assertEqual(tile.readback_field.text(), "5.5 V")
+        self.assertAlmostEqual(tile.spin.value(), 5.5, places=4)
 
     def test_setpoint_never_scheduled(self) -> None:
         tab = self.make_tab(setpoint_entry())

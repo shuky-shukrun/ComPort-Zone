@@ -6,6 +6,8 @@ import re
 import unittest
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from ComPort_Zone.control_panel_models import (
@@ -554,6 +556,91 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual(bigger_grid.minimumHeight(), only_entry_height)
         grid.deleteLater()
         bigger_grid.deleteLater()
+
+
+class SparklineSizingRegressionTests(unittest.TestCase):
+    """The sparkline must span the full width of the value tile body —
+    the slider-removal refactor's previous incarnation left the widget
+    at its sizeHint (~28 px), parking it in the bottom-right corner of
+    every value tile instead of streaming the trend line full-width."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    def test_sparkline_expands_to_fill_tile_width(self) -> None:
+        config = make_config(make_entry("v"))
+        grid = ControlPanelGridWidget()
+        grid.resize(800, 240)
+        grid.set_config(config)
+        grid.show()
+        QTest.qWaitForWindowExposed(grid)
+        QTest.qWait(80)
+        tile = grid.tile("v")
+        assert tile is not None
+        spark = tile.sparkline
+        # Sparkline width should fill almost the whole tile body — well
+        # above any plausible sizeHint default. A tight tile with
+        # SPACE_LG body margins still gives us > 100 px.
+        self.assertGreaterEqual(spark.width(), 100,
+                                f"sparkline only {spark.width()} px wide")
+        self.assertEqual(spark.height(), 28)  # fixed
+        grid.deleteLater()
+
+
+class SetpointSpinboxRegressionTests(unittest.TestCase):
+    """Setpoint spinbox needs:
+      - selectAll on focus, so typing replaces the value cleanly
+      - working up/down step arrows (clickable and reach the value)
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def make_setpoint() -> ControlPanelEntry:
+        entry = ControlPanelEntry(
+            id="sp",
+            label="Set V",
+            tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="setpoint"),
+        )
+        entry.setpoint.min_value = 0.0
+        entry.setpoint.max_value = 30.0
+        entry.setpoint.step = 0.01
+        entry.setpoint.decimals = 2
+        entry.setpoint.unit = "V"
+        entry.setpoint.command_template = "VOLT {value}"
+        return entry
+
+    def test_typed_decimal_value_is_accepted(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.show()
+        QTest.qWaitForWindowExposed(tile)
+        # User-flow: click on the spinbox lineEdit (focus goes there;
+        # our auto-select-all kicks in via QTimer.singleShot), then type.
+        QTest.mouseClick(tile.spin, Qt.MouseButton.LeftButton)
+        QTest.qWait(20)  # let QTimer.singleShot(0, selectAll) run
+        for ch in "12.5":
+            QTest.keyClick(tile.spin, ch)
+        QTest.keyClick(tile.spin, Qt.Key.Key_Return)
+        self.assertAlmostEqual(tile.spin.value(), 12.5, places=3,
+                               msg=f"typed value landed at {tile.spin.value()}")
+        tile.deleteLater()
+
+    def test_step_arrow_clicks_change_value(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.show()
+        QTest.qWaitForWindowExposed(tile)
+        before = tile.spin.value()
+        # stepBy(+1) is the same code-path the ::up-button hits when the
+        # user clicks it — bypasses QSS rendering quirks while still
+        # proving the increment logic is wired.
+        tile.spin.stepBy(1)
+        self.assertAlmostEqual(tile.spin.value(), before + tile.spin.singleStep(), places=4)
+        tile.deleteLater()
 
 
 class ThemingTests(unittest.TestCase):

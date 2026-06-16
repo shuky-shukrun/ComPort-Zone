@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
+from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -541,6 +541,29 @@ class ControlTileWidget(TileFrame):
             _repolish(self.button)
 
 
+class _SelectOnFocusDoubleSpinBox(QDoubleSpinBox):
+    """``QDoubleSpinBox`` that selects its entire numeric text on focus so
+    typing replaces the current value instead of inserting at the cursor.
+
+    Why: when the spinbox already shows ``"0.00 V"`` and the user clicks
+    it, Qt parks the lineEdit cursor at the click position (typically 0).
+    Typing ``"1"`` then makes the buffer ``"10.00 V"`` — Qt's validator
+    accepts it as 10. Typing ``"2"`` makes ``"210.00 V"``, which exceeds
+    ``max``, so the keystroke is silently rejected. Net result: the user
+    types ``12.5`` and the value lands at ``10``. Selecting on focus
+    sidesteps the whole class of bugs — the user's first keystroke now
+    replaces the buffer with a clean value.
+    """
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().focusInEvent(event)
+        # Defer selectAll until after Qt's own focusInEvent has run, which
+        # otherwise clears the selection it just made.
+        line = self.lineEdit()
+        if line is not None:
+            QTimer.singleShot(0, line.selectAll)
+
+
 class SetpointTileWidget(TileFrame):
     """Numeric setpoint with a typeable command field + optional readback box
     (v3, FR-63..FR-67).
@@ -566,7 +589,7 @@ class SetpointTileWidget(TileFrame):
         spec = entry.setpoint
         self._value: float = spec.clamp(spec.min_value)
 
-        self.spin = QDoubleSpinBox(self)
+        self.spin = _SelectOnFocusDoubleSpinBox(self)
         self.spin.setObjectName("tileSetpointSpin")
         self.spin.setKeyboardTracking(False)
         self.spin.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

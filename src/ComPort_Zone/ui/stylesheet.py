@@ -819,11 +819,43 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QDoubleSpinBox#tileSetpointSpin {{
         background: {field}; color: {tx};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
-        padding: 3px 6px; min-height: 22px;
+        padding: 3px 24px 3px 6px; min-height: 24px;
         font-family: {MONO};
     }}
     QDoubleSpinBox#tileSetpointSpin:focus {{ border-color: {accent}; }}
     QDoubleSpinBox#tileSetpointSpin:disabled {{ color: {tx_faint}; }}
+    /* Custom subcontrols so the step buttons stay clickable when the
+       spinbox is themed (Qt drops native rendering once any spinbox QSS
+       lands). */
+    QDoubleSpinBox#tileSetpointSpin::up-button,
+    QDoubleSpinBox#tileSetpointSpin::down-button {{
+        subcontrol-origin: border;
+        width: 18px;
+        background: transparent;
+        border-left: 1px solid {bd_soft};
+    }}
+    QDoubleSpinBox#tileSetpointSpin::up-button {{ subcontrol-position: top right; }}
+    QDoubleSpinBox#tileSetpointSpin::down-button {{ subcontrol-position: bottom right; }}
+    QDoubleSpinBox#tileSetpointSpin::up-button:hover,
+    QDoubleSpinBox#tileSetpointSpin::down-button:hover {{ background: {hover}; }}
+    QDoubleSpinBox#tileSetpointSpin::up-button:pressed,
+    QDoubleSpinBox#tileSetpointSpin::down-button:pressed {{ background: {press_bg}; }}
+    QDoubleSpinBox#tileSetpointSpin::up-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 5px solid {tx2};
+        width: 0; height: 0;
+    }}
+    QDoubleSpinBox#tileSetpointSpin::down-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {tx2};
+        width: 0; height: 0;
+    }}
+    QDoubleSpinBox#tileSetpointSpin::up-arrow:disabled,
+    QDoubleSpinBox#tileSetpointSpin::down-arrow:disabled {{ border-color: transparent; }}
     QPushButton#tileSetpointSend {{
         background: {hover}; color: {tx};
         border: 1px solid {bd_strong}; border-radius: {RADIUS_SM}px;

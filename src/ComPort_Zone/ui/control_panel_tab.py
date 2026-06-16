@@ -196,6 +196,10 @@ class ControlPanelTabWidget(QWidget):
         self._readback_due: dict[str, float] = {}
         self._readback_in_flight: set[str] = set()
         self._setpoint_seed_readbacks: set[str] = set()
+        # Follow-mode setpoints that haven't been seeded yet because their
+        # watched tile hadn't polled when the panel bound. Drained when
+        # the watch tile's first successful poll arrives.
+        self._pending_follow_seed: set[str] = set()
         # v2 derived tiles (FR-61): compiled expressions, reverse dependency
         # map (input entry id -> derived entry ids) and the latest numeric
         # value per polled entry feeding them.
@@ -536,6 +540,7 @@ class ControlPanelTabWidget(QWidget):
         self._gates.clear()
         self._bound_session_id = None
         self._setpoint_seed_readbacks.clear()
+        self._pending_follow_seed.clear()
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme
@@ -576,6 +581,7 @@ class ControlPanelTabWidget(QWidget):
         self._bound_session_id = None
         self.scheduler.release_all_in_flight()
         self._setpoint_seed_readbacks.clear()
+        self._pending_follow_seed.clear()
         self._refresh_session_topology()
         if notice:
             self.bind_chip.setToolTip(notice)
@@ -734,8 +740,9 @@ class ControlPanelTabWidget(QWidget):
     def _readback_target_session_id(
         self, owner: ControlPanelEntry, readback: ReadbackSpec
     ) -> int | None:
-        if readback.source == "entry":
-            return self._entry_session.get(readback.watch_entry_id)
+        # Only direct-command readbacks need their own dispatcher target —
+        # follow-mode readbacks consume cached state from the watched tile
+        # and never queue a transaction.
         if readback.source == "command":
             return self._entry_session.get(owner.id)
         return None
@@ -748,27 +755,27 @@ class ControlPanelTabWidget(QWidget):
         required_session_id: int | None = None,
         seed_setpoint_value: bool = False,
     ) -> tuple[ReadbackRequest, int] | None:
+        """Build a dispatcher request for a writing tile's *own* readback.
+
+        Follow-mode (``source="entry"``) is intentionally not handled here:
+        re-polling the watched tile from the writing tile would double the
+        device load, double-feed history/alerts/CSV, and inflate the
+        traffic-journal open-time so the bound terminal stops seeing its
+        own RX. Follow-mode is wired purely as fan-out via
+        :attr:`_writable_watchers` in :meth:`_apply_outcome`.
+        """
         readback = self._readback_spec_for(owner)
-        if readback.source == "none" or not owner.enabled:
+        if readback.source != "command" or not owner.enabled:
             return None
         session_id = self._readback_target_session_id(owner, readback)
         if session_id is None:
             return None
         if required_session_id is not None and session_id != required_session_id:
             return None
-        if readback.source == "entry":
-            target_entry = self.config.entry_by_id(readback.watch_entry_id)
-            if target_entry is None or not target_entry.enabled or target_entry.is_writable():
-                return None
-            compiled = self._compiled.get(target_entry.id)
-            if compiled is None:
-                return None
-            entry_for_request = target_entry
-        else:
-            compiled = self._compiled_readbacks.get(owner.id)
-            if compiled is None:
-                return None
-            entry_for_request = self._direct_readback_entry(owner, readback)
+        compiled = self._compiled_readbacks.get(owner.id)
+        if compiled is None:
+            return None
+        entry_for_request = self._direct_readback_entry(owner, readback)
         request = ReadbackRequest(
             control_panel_id=self.config.id,
             owner_entry_id=owner.id,
@@ -786,20 +793,92 @@ class ControlPanelTabWidget(QWidget):
         if existing is None or due < existing:
             self._readback_due[owner_entry_id] = due
 
+    def _seed_follow_readback_from_cache(
+        self, entry: ControlPanelEntry, readback: ReadbackSpec
+    ) -> bool:
+        """Adopt the watched tile's already-cached runtime when binding.
+
+        Returns True when the watched tile already had a runtime — i.e.
+        the writing tile was successfully seeded. False means the caller
+        should defer seeding until the first successful watched poll
+        arrives (see ``_pending_follow_seed``).
+        """
+        watch_runtime = self._runtimes.get(readback.watch_entry_id)
+        if watch_runtime is None:
+            return False
+        self._refresh_writable_readbacks(
+            readback.watch_entry_id,
+            watch_runtime,
+            raw_value_text=watch_runtime.value_text,
+            only_owner_id=entry.id,
+        )
+        # Initial-state seeding for setpoint tiles: parse the cached value
+        # into the editable command field once. Subsequent updates leave
+        # the user's edits alone — they only mirror into the readback box.
+        if entry.is_setpoint() and watch_runtime.value_number is not None:
+            tile = self.grid.tile(entry.id)
+            if isinstance(tile, SetpointTileWidget):
+                try:
+                    tile.set_value(float(watch_runtime.value_number))
+                except (TypeError, ValueError):
+                    pass
+        return True
+
+    def _drain_pending_follow_seeds(self, input_entry_id: str) -> None:
+        """When the watched entry's first poll arrives, seed every
+        setpoint that was waiting for its initial value."""
+        if not self._pending_follow_seed:
+            return
+        watch_runtime = self._runtimes.get(input_entry_id)
+        if watch_runtime is None or watch_runtime.value_number is None:
+            return
+        for owner_id in list(self._pending_follow_seed):
+            owner = self.config.entry_by_id(owner_id)
+            if owner is None or not owner.is_setpoint():
+                self._pending_follow_seed.discard(owner_id)
+                continue
+            readback = self._readback_spec_for(owner)
+            if readback.source != "entry" or readback.watch_entry_id != input_entry_id:
+                continue
+            tile = self.grid.tile(owner_id)
+            if isinstance(tile, SetpointTileWidget):
+                try:
+                    tile.set_value(float(watch_runtime.value_number))
+                except (TypeError, ValueError):
+                    pass
+            self._pending_follow_seed.discard(owner_id)
+
     def _trigger_readbacks_on_connect(self, session_id: int, *, start_index: int = 0) -> None:
+        """Connect-time initialisation for every writing tile's readback.
+
+        ``source="command"`` tiles get a one-shot dispatcher transaction
+        (request #3 in the requirements). ``source="entry"`` tiles either
+        adopt the watched entry's already-cached runtime immediately or
+        wait passively for the next poll to fan out through
+        ``_writable_watchers`` — no extra device traffic either way.
+        """
         index = start_index
         for entry in self.config.entries:
             if not entry.enabled or not entry.is_writable():
                 continue
             readback = self._readback_spec_for(entry)
-            if readback.source == "none":
-                continue
-            if self._readback_target_session_id(entry, readback) != session_id:
-                continue
-            self._schedule_readback(entry.id, delay_s=index * 0.025)
-            if entry.is_setpoint():
-                self._setpoint_seed_readbacks.add(entry.id)
-            index += 1
+            if readback.source == "command":
+                target_id = self._readback_target_session_id(entry, readback)
+                if target_id != session_id:
+                    continue
+                self._schedule_readback(entry.id, delay_s=index * 0.025)
+                if entry.is_setpoint():
+                    self._setpoint_seed_readbacks.add(entry.id)
+                index += 1
+            elif readback.source == "entry":
+                # Seed from the cached value of the watched tile if we
+                # already have one (e.g. the panel was bound earlier and
+                # the watch tile has polled at least once). Otherwise
+                # mark the setpoint as "needs seeding"; the watched
+                # tile's first successful poll picks it up.
+                seeded = self._seed_follow_readback_from_cache(entry, readback)
+                if not seeded and entry.is_setpoint():
+                    self._pending_follow_seed.add(entry.id)
 
     def _submit_due_readbacks(self) -> None:
         if not self._dispatchers or not self._readback_due:
@@ -1264,11 +1343,16 @@ class ControlPanelTabWidget(QWidget):
                 runtime.tooltip = "Command sent."
             if (
                 entry.control.mode == "toggle"
-                and self._readback_spec_for(entry).source == "none"
                 and intent is not None
                 and isinstance(tile, ControlTileWidget)
             ):
-                tile.set_on(intent)  # optimistic flip — no watch entry (FR-59)
+                # Optimistic flip on every successful send: the visual
+                # tracks the user's intent immediately, and any
+                # configured readback may overwrite it shortly after if
+                # the device disagrees. Industrial-grade UX needs the
+                # button to *feel* responsive, not wait the full readback
+                # round-trip before changing color.
+                tile.set_on(intent)
         elif result.status == POLL_SEND_ERROR:
             runtime.state = "error"
             runtime.state_caption = TILE_STATE_CAPTIONS["error"]
@@ -1583,8 +1667,11 @@ class ControlPanelTabWidget(QWidget):
         self._check_alert_transition(entry, prev_state, runtime.state, None)
 
     def _handle_readback_result(self, result: ReadbackResult) -> None:
+        """All readback results are for direct (``source="command"``)
+        readbacks — follow-mode never queues a dispatcher transaction.
+        Re-schedule on interval, then update the writing tile's runtime
+        + readback display (or surface a failure)."""
         self._readback_in_flight.discard(result.owner_entry_id)
-        seed_setpoint = result.seed_setpoint_value
         owner = self.config.entry_by_id(result.owner_entry_id)
         if owner is not None:
             readback = self._readback_spec_for(owner)
@@ -1593,26 +1680,11 @@ class ControlPanelTabWidget(QWidget):
                     result.owner_entry_id,
                     delay_s=readback.interval_ms / 1000,
                 )
-        if result.status == POLL_CANCELLED:
-            return
-        entry = self.config.entry_by_id(result.entry_id)
-        if (
-            entry is not None
-            and owner is not None
-            and result.entry_id != result.owner_entry_id
-        ):
-            if result.status == POLL_OK and result.outcome is not None:
-                self._apply_outcome(entry, result.outcome, result.raw_window)
-                if seed_setpoint:
-                    self._seed_setpoint_from_readback(owner, result.outcome)
-            else:
-                self._apply_readback_failure(entry, result)
-            return
-        if owner is None:
+        if result.status == POLL_CANCELLED or owner is None:
             return
         if result.status == POLL_OK and result.outcome is not None:
             self._apply_direct_readback(owner, result.outcome, result.raw_window)
-            if seed_setpoint:
+            if result.seed_setpoint_value:
                 self._seed_setpoint_from_readback(owner, result.outcome)
         else:
             self._apply_readback_failure(owner, result)
@@ -1748,6 +1820,9 @@ class ControlPanelTabWidget(QWidget):
             self._refresh_writable_readbacks(
                 entry.id, runtime, raw_value_text=outcome.value_text
             )
+        # First-poll-after-connect: seed any follow-mode setpoints that
+        # were waiting on this watched tile (drains pending state).
+        self._drain_pending_follow_seeds(entry.id)
         # CSV logging tails the same funnel so derived rows show up too
         # (FR-49). Errors/timeouts are filtered inside _log_outcome.
         self._log_outcome(entry, outcome)
@@ -1818,6 +1893,13 @@ class ControlPanelTabWidget(QWidget):
                 runtime.state_caption = TILE_STATE_CAPTIONS["stale"]
                 runtime.color = ""
                 self._update_tile(entry.id)
+                # Follow-mode writing tiles also need to reflect the
+                # watched tile going stale (toggle goes gray, setpoint
+                # readback shows the last value in stale tint).
+                if entry.id in self._writable_watchers:
+                    self._refresh_writable_readbacks(
+                        entry.id, runtime, raw_value_text=runtime.value_text
+                    )
 
     def _any_input_stale(self, derived_id: str) -> bool:
         compiled = self._compiled_exprs.get(derived_id)
@@ -1839,11 +1921,6 @@ class ControlPanelTabWidget(QWidget):
         tile = self.grid.tile(entry_id)
         if runtime is not None and tile is not None:
             tile.update_runtime(runtime)
-        for control_id in self._controls_by_watch.get(entry_id, ()):
-            # Toggle visuals follow their watch entry's verdict (FR-59).
-            control_tile = self.grid.tile(control_id)
-            if isinstance(control_tile, ControlTileWidget):
-                control_tile.set_on(bool(runtime is not None and runtime.state == "ok"))
 
     def _refresh_sparkline(self, entry_id: str) -> None:
         tile = self.grid.tile(entry_id)
@@ -1867,25 +1944,38 @@ class ControlPanelTabWidget(QWidget):
         input_entry_id: str,
         runtime: TileRuntime,
         raw_value_text: str | None = None,
+        only_owner_id: str | None = None,
     ) -> None:
         """Push the watched entry's latest verdict into every writing
         tile that watches it: setpoint tiles update their readback field
-        (FR-66); enum tiles update their indicated option (FR-70).
+        (FR-66); enum tiles update their indicated option (FR-70); toggle
+        controls flip their visual ON/OFF.
 
         Setpoint readbacks show the formatted ``runtime.value_text``
         (with the polled tile's unit) — that's what ops want to see.
         Enum indicators match against the raw parsed value
         (``raw_value_text``) because option ``match_value`` is the
-        wire-level token, not the display label.
+        wire-level token, not the display label. Pass ``only_owner_id``
+        to limit the fan-out to a single writing tile (used by
+        connect-time follow-mode seeding).
         """
         color = runtime.color or tile_state_color(runtime.state, self._theme)
         match_text = raw_value_text if raw_value_text is not None else runtime.value_text
         for watcher_id in self._writable_watchers.get(input_entry_id, ()):
+            if only_owner_id is not None and watcher_id != only_owner_id:
+                continue
             tile = self.grid.tile(watcher_id)
             if isinstance(tile, SetpointTileWidget):
                 tile.set_readback(runtime.value_text, runtime.state, color)
             elif isinstance(tile, EnumTileWidget):
                 tile.update_indicator(match_text)
+            elif isinstance(tile, ControlTileWidget):
+                # Follow-mode toggles ride the watched tile's verdict so
+                # the ON/OFF visual tracks the device, not just the
+                # user's last click (FR-66 analogue for controls).
+                entry = self.config.entry_by_id(watcher_id)
+                if entry is not None and entry.control.mode == "toggle":
+                    tile.set_on(runtime.state == "ok")
 
     # -------------------------------------------------------- config edits
 
@@ -1939,10 +2029,12 @@ class ControlPanelTabWidget(QWidget):
                     readback.watch_entry_id, []
                 ).append(entry.id)
             # v3 writable tiles can also watch a polled tile (setpoint
-            # readback, enum indicator). Collected here so the funnel
-            # fan-out is a single dict lookup (FR-66, FR-70).
+            # readback, enum indicator, toggle control visual). All
+            # writable kinds funnel through the same fan-out dict so
+            # ``_refresh_writable_readbacks`` is the single update site
+            # (FR-66, FR-70).
             if (
-                (entry.is_setpoint() or entry.is_enum())
+                entry.is_writable()
                 and readback.source == "entry"
                 and readback.watch_entry_id
             ):
@@ -1967,6 +2059,7 @@ class ControlPanelTabWidget(QWidget):
                 del self._readback_due[entry_id]
         self._readback_in_flight.intersection_update(live_entry_ids)
         self._setpoint_seed_readbacks.intersection_update(live_entry_ids)
+        self._pending_follow_seed.intersection_update(live_entry_ids)
         # History clears when the entry goes away OR when it stops being
         # numeric (e.g. converted to a control tile) — re-enabling later
         # should start fresh rather than replay old samples (FR-46).

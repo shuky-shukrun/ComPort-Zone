@@ -1339,14 +1339,13 @@ def example_control_panel() -> ControlPanelConfig:
                     decimals=2,
                     unit="V",
                     command_template="VOLT {value}",
-                   confirm=False,
-               ),
+                ),
                 readback=ReadbackSpec(
                     source="command",
                     command="MEAS:VOLT?",
                     parse=ParseRule(kind="line", value_type="number"),
                 ),
-           ),
+            ),
             ControlPanelEntry(
                 label="Regulation",
                 tile=TilePlacement(col=2, row=2, span_w=2, span_h=1, kind="enum"),
@@ -1356,10 +1355,9 @@ def example_control_panel() -> ControlPanelConfig:
                         EnumOption(label="CV", command="SOUR:FUNC:MODE CV", match_value="CV"),
                         EnumOption(label="CC", command="SOUR:FUNC:MODE CC", match_value="CC"),
                     ],
-                   confirm=False,
-               ),
+                ),
                 readback=ReadbackSpec(source="entry", watch_entry_id=mode_entry_id),
-           ),
+            ),
         ],
     )
 

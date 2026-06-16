@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ..control_panel_history import Sample, downsample_minmax
 from ..themes import THEMES, ThemePalette
@@ -36,6 +36,11 @@ class SparklineWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("tileSparkline")
         self.setFixedHeight(SPARKLINE_HEIGHT)
+        # Stretch horizontally to fill the tile body — without this the
+        # default Preferred policy collapses the widget to its sizeHint
+        # (~28 px) when laid out inside a tile, leaving the strip stuck
+        # in the corner instead of spanning the bottom of the tile.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._theme: ThemePalette = THEMES["ComPort Zone Dark"]
         self._samples: list[Sample] = []
