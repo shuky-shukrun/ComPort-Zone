@@ -423,6 +423,65 @@ class DispatcherTransactionTests(unittest.TestCase):
         assert result.outcome is not None
         self.assertEqual(result.outcome.value_number, 13.2)
 
+    def test_concurrent_terminal_send_cannot_interleave(self) -> None:
+        """The user can be hammering the terminal while a panel poll
+        is in flight; the wire must NOT see two queries at once. With
+        ``hold_wire`` in place a concurrent ``send_text`` call from
+        another thread blocks until the transaction finishes — both
+        the bytes-on-the-wire order AND the per-transaction parse
+        window stay clean.
+
+        Pre-fix: the terminal send raced into ``port.write`` between
+        the dispatcher's send and its first RX read, and the
+        dispatcher's parse window then caught the device's reply to
+        the *terminal's* command (causing the user-reported "tile shows
+        another tile's value" symptom).
+
+        Deterministic shape: we drive the lock directly. While the
+        main thread holds ``hold_wire`` (simulating an in-flight
+        transaction), a worker thread's ``send_text`` must block.
+        Releasing the lock unblocks the worker.
+        """
+        import threading
+        import time as _t
+
+        worker_finished = threading.Event()
+
+        def terminal_sender() -> None:
+            self.fake.send_text("MANUAL?", source="")
+            worker_finished.set()
+
+        with self.fake.hold_wire():
+            worker = threading.Thread(target=terminal_sender, daemon=True)
+            worker.start()
+            # While we hold the wire, the worker's send_text MUST block.
+            self.assertFalse(
+                worker_finished.wait(timeout=0.15),
+                "terminal send must block while wire is held",
+            )
+            self.assertEqual(self.fake.sent_text, [],
+                             "terminal send must NOT land before lock release")
+        # On release, the worker proceeds and completes its send.
+        self.assertTrue(
+            worker_finished.wait(timeout=1.0),
+            "terminal send must unblock once wire is released",
+        )
+        self.assertEqual(self.fake.sent_text, [("MANUAL?", None)])
+
+        # End-to-end: drive a real dispatcher transaction. Even with a
+        # concurrent send_text racing, the dispatcher's parse window
+        # gets ITS OWN reply (13.2), and the wire order has both
+        # commands in some serial order — never interleaved bytes.
+        self.fake.sent_text.clear()
+        self.fake.queue_response(b"13.2\r\n")
+        result = self.dispatcher._execute_transaction(
+            make_request(make_entry("a")), self.rx_queue
+        )
+        self.assertEqual(result.status, POLL_OK)
+        assert result.outcome is not None
+        self.assertEqual(result.outcome.value_number, 13.2)
+        self.assertEqual(self.fake.sent_text, [("READ:a?", None)])
+
     def test_non_rx_events_ignored_in_window(self) -> None:
         scripted = ScriptedTransport()
         scripted.connect(object())

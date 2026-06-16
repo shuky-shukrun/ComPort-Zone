@@ -4,7 +4,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from queue import Queue
-from threading import Event, Lock, Thread, current_thread
+from contextlib import contextmanager
+from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Any
 
 import serial
@@ -48,6 +49,15 @@ class SerialClient:
     def __init__(self) -> None:
         self.events: Queue[SerialEvent] = Queue()
         self._lock = Lock()
+        # Serializes wire transactions: every send_text/send_bytes holds
+        # this for the duration of write+flush, and the control-panel
+        # dispatcher holds it for its full transaction (send + RX
+        # window) via :meth:`hold_wire`. Reentrant so a holder can call
+        # send_text inside the held region without deadlocking on its
+        # own write path. This is the SOLE serialization point — if a
+        # bug ever lets two senders skip past it, the device sees bytes
+        # interleaved mid-stream.
+        self._wire_lock = RLock()
         self._event_subscribers: list[Queue[SerialEvent]] = []
         self._serial: serial.Serial | None = None
         self._profile: SerialProfile | None = None
@@ -184,18 +194,40 @@ class SerialClient:
                 return None
 
     def _write(self, data: bytes, display_text: str, *, source: str = "") -> None:
-        with self._lock:
-            port = self._serial
-        if not port or not port.is_open:
-            raise RuntimeError("Serial port is not connected.")
-        try:
-            port.write(data)
-            port.flush()
-        except SerialException as exc:
-            self._emit("error", f"Write failed: {exc}")
-            self._handle_connection_loss(str(exc))
-            raise RuntimeError(str(exc)) from exc
-        self._emit("tx", display_text, source=source)
+        # The wire lock spans the WHOLE send so two threads (terminal +
+        # control-panel dispatcher, or two panel dispatchers from
+        # different panels) can never interleave bytes mid-stream. Held
+        # for write+flush only — if the caller wants to also exclude
+        # other senders during the device's reply, they grab
+        # :meth:`hold_wire` around the whole transaction; this same
+        # RLock means the inner _write doesn't deadlock on itself.
+        with self._wire_lock:
+            with self._lock:
+                port = self._serial
+            if not port or not port.is_open:
+                raise RuntimeError("Serial port is not connected.")
+            try:
+                port.write(data)
+                port.flush()
+            except SerialException as exc:
+                self._emit("error", f"Write failed: {exc}")
+                self._handle_connection_loss(str(exc))
+                raise RuntimeError(str(exc)) from exc
+            self._emit("tx", display_text, source=source)
+
+    @contextmanager
+    def hold_wire(self):
+        """Reserve the wire for a multi-step transaction.
+
+        While held, no other thread can ``send_text`` / ``send_bytes`` on
+        this transport — they block on the same lock. The control-panel
+        dispatcher wraps each transaction in this so an interleaving
+        terminal send can't sneak a query onto the wire mid-RX-window
+        (which used to make tile A's parse window catch tile B's reply,
+        and made terminal RX disappear into the journal). Reentrant.
+        """
+        with self._wire_lock:
+            yield
 
     def _attempt_connect(self, profile: SerialProfile, reconnect_attempt: bool) -> bool:
         flags = FLOW_CONTROL_FLAGS.get(profile.flow_control, FLOW_CONTROL_FLAGS["None"])

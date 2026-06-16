@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from queue import Empty, Full, Queue
+from contextlib import nullcontext as _nullcontext
 from threading import Event, Lock, Thread
 
 from .batch import parse_hex_payload
@@ -510,55 +511,64 @@ class SessionPollDispatcher:
     ) -> ControlResult:
         """Fire one control command: send only, no RX collection. The
         journal window covers the send so the device's ack/echo stays out
-        of the bound terminal's transcript (FR-60)."""
-        self.traffic_journal.open_window()
-        try:
-            if request.send_mode == "Hex Bytes":
-                self._transport.send_bytes(
-                    parse_hex_payload(request.command), source=CONTROL_PANEL_TX_SOURCE
+        of the bound terminal's transcript (FR-60).
+
+        When an inline readback is attached we hold the wire across BOTH
+        the send and the readback's RX window — otherwise a terminal
+        send could land between our write and the readback's query,
+        either polluting the readback's parse window or pushing the
+        write farther down the wire than the user expects."""
+        hold_wire = getattr(self._transport, "hold_wire", None)
+        wire_ctx = hold_wire() if hold_wire is not None else _nullcontext()
+        with wire_ctx:
+            self.traffic_journal.open_window()
+            try:
+                if request.send_mode == "Hex Bytes":
+                    self._transport.send_bytes(
+                        parse_hex_payload(request.command), source=CONTROL_PANEL_TX_SOURCE
+                    )
+                else:
+                    self._transport.send_text(
+                        request.command,
+                        request.line_ending_override or None,
+                        source=CONTROL_PANEL_TX_SOURCE,
+                    )
+            except Exception as exc:
+                return ControlResult(
+                    control_panel_id=request.control_panel_id,
+                    entry_id=request.entry_id,
+                    status=POLL_SEND_ERROR,
+                    error=str(exc),
+                    finished_at=self._clock(),
                 )
-            else:
-                self._transport.send_text(
-                    request.command,
-                    request.line_ending_override or None,
-                    source=CONTROL_PANEL_TX_SOURCE,
-                )
-        except Exception as exc:
-            return ControlResult(
+            finally:
+                self.traffic_journal.close_window()
+            result = ControlResult(
                 control_panel_id=request.control_panel_id,
                 entry_id=request.entry_id,
-                status=POLL_SEND_ERROR,
-                error=str(exc),
+                status=POLL_OK,
                 finished_at=self._clock(),
             )
-        finally:
-            self.traffic_journal.close_window()
-        result = ControlResult(
-            control_panel_id=request.control_panel_id,
-            entry_id=request.entry_id,
-            status=POLL_OK,
-            finished_at=self._clock(),
-        )
-        readback = request.readback
-        if readback is not None and rx_queue is not None:
-            if self._wait_delay(readback.delay_ms):
-                request.result_queue.put(
-                    self._execute_readback(readback, rx_queue, already_delayed=True)
-                )
-            else:
-                now = self._clock()
-                request.result_queue.put(
-                    ReadbackResult(
-                        control_panel_id=readback.control_panel_id,
-                        owner_entry_id=readback.owner_entry_id,
-                        entry_id=readback.entry.id,
-                        status=POLL_CANCELLED,
-                        seed_setpoint_value=readback.seed_setpoint_value,
-                        started_at=now,
-                        finished_at=now,
+            readback = request.readback
+            if readback is not None and rx_queue is not None:
+                if self._wait_delay(readback.delay_ms):
+                    request.result_queue.put(
+                        self._execute_readback(readback, rx_queue, already_delayed=True)
                     )
-                )
-        return result
+                else:
+                    now = self._clock()
+                    request.result_queue.put(
+                        ReadbackResult(
+                            control_panel_id=readback.control_panel_id,
+                            owner_entry_id=readback.owner_entry_id,
+                            entry_id=readback.entry.id,
+                            status=POLL_CANCELLED,
+                            seed_setpoint_value=readback.seed_setpoint_value,
+                            started_at=now,
+                            finished_at=now,
+                        )
+                    )
+            return result
 
     def _wait_delay(self, delay_ms: int) -> bool:
         """Sleep for a readback delay, waking early if the worker stops."""
@@ -617,72 +627,86 @@ class SessionPollDispatcher:
     ) -> PollResult:
         """One poll: discard stale RX, send, collect RX until the parse
         rule decides or the entry timeout elapses. Factored out of the
-        thread loop so tests can drive it synchronously."""
+        thread loop so tests can drive it synchronously.
+
+        The whole transaction (send + RX window) runs under
+        ``transport.hold_wire()`` so a manual terminal send can't
+        sneak a second query onto the wire while we're waiting for our
+        reply — that race used to make one tile's parse window catch
+        another tile's response. Inside the held region we re-drain the
+        rx_queue so any RX that arrived during the brief lock-wait (a
+        late reply to the previous transaction, or to a terminal send
+        that won the race for the lock just before us) doesn't bleed
+        into our parse window.
+        """
         entry = request.entry
         started = self._clock()
         deadline = started + entry.timeout_ms / 1000
-        self._drain(rx_queue)
-        self.traffic_journal.open_window()
-        try:
+        hold_wire = getattr(self._transport, "hold_wire", None)
+        wire_ctx = hold_wire() if hold_wire is not None else _nullcontext()
+        with wire_ctx:
+            self._drain(rx_queue)
+            self.traffic_journal.open_window()
             try:
-                if entry.send_mode == "Hex Bytes":
-                    self._transport.send_bytes(
-                        parse_hex_payload(entry.command), source=CONTROL_PANEL_TX_SOURCE
-                    )
-                else:
-                    self._transport.send_text(
-                        entry.command,
-                        entry.line_ending_override or None,
-                        source=CONTROL_PANEL_TX_SOURCE,
-                    )
-            except Exception as exc:
-                now = self._clock()
-                return PollResult(
-                    control_panel_id=request.control_panel_id,
-                    entry_id=entry.id,
-                    status=POLL_SEND_ERROR,
-                    error=str(exc),
-                    started_at=started,
-                    finished_at=now,
-                )
-            window = ""
-            while True:
-                if self._stop_event.is_set():
-                    return PollResult(
-                        control_panel_id=request.control_panel_id,
-                        entry_id=entry.id,
-                        status=POLL_CANCELLED,
-                        raw_window=window,
-                        started_at=started,
-                        finished_at=self._clock(),
-                    )
-                remaining = deadline - self._clock()
-                if remaining <= 0:
-                    return PollResult(
-                        control_panel_id=request.control_panel_id,
-                        entry_id=entry.id,
-                        status=POLL_TIMEOUT,
-                        raw_window=window,
-                        started_at=started,
-                        finished_at=self._clock(),
-                    )
                 try:
-                    event = rx_queue.get(timeout=min(remaining, RX_POLL_CHUNK_S))
-                except Empty:
-                    continue
-                if event.kind != "rx":
-                    continue
-                window = append_to_window(window, event.message)
-                outcome = parse_response(request.compiled, window)
-                if outcome is not None:
+                    if entry.send_mode == "Hex Bytes":
+                        self._transport.send_bytes(
+                            parse_hex_payload(entry.command), source=CONTROL_PANEL_TX_SOURCE
+                        )
+                    else:
+                        self._transport.send_text(
+                            entry.command,
+                            entry.line_ending_override or None,
+                            source=CONTROL_PANEL_TX_SOURCE,
+                        )
+                except Exception as exc:
+                    now = self._clock()
                     return PollResult(
                         control_panel_id=request.control_panel_id,
                         entry_id=entry.id,
-                        status=POLL_OK,
-                        outcome=outcome,
-                        raw_window=window,
+                        status=POLL_SEND_ERROR,
+                        error=str(exc),
                         started_at=started,
-                        finished_at=self._clock(),
+                        finished_at=now,
                     )
-        finally:
-            self.traffic_journal.close_window()
+                window = ""
+                while True:
+                    if self._stop_event.is_set():
+                        return PollResult(
+                            control_panel_id=request.control_panel_id,
+                            entry_id=entry.id,
+                            status=POLL_CANCELLED,
+                            raw_window=window,
+                            started_at=started,
+                            finished_at=self._clock(),
+                        )
+                    remaining = deadline - self._clock()
+                    if remaining <= 0:
+                        return PollResult(
+                            control_panel_id=request.control_panel_id,
+                            entry_id=entry.id,
+                            status=POLL_TIMEOUT,
+                            raw_window=window,
+                            started_at=started,
+                            finished_at=self._clock(),
+                        )
+                    try:
+                        event = rx_queue.get(timeout=min(remaining, RX_POLL_CHUNK_S))
+                    except Empty:
+                        continue
+                    if event.kind != "rx":
+                        continue
+                    window = append_to_window(window, event.message)
+                    outcome = parse_response(request.compiled, window)
+                    if outcome is not None:
+                        return PollResult(
+                            control_panel_id=request.control_panel_id,
+                            entry_id=entry.id,
+                            status=POLL_OK,
+                            outcome=outcome,
+                            raw_window=window,
+                            started_at=started,
+                            finished_at=self._clock(),
+                        )
+            finally:
+                self.traffic_journal.close_window()
