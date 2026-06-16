@@ -245,4 +245,4 @@ The `power` tile is **derived** — no command, no poll. Whenever `Voltage` or `
 - **Polled-text + rules → LED**. If the device reports state as a string, model it as a `value` or `led` tile with `value_type: "text"` and `contains` rules. Don't try to convert the string to a number first.
 - **OVP / fault summary** as a single LED tile with one rule `gt 0 → fail` is enough for many panels; reach for `bits` when the operator needs to see *which* bit triggered.
 - **Toggles should have readback** from a polled state tile or direct state query. Without readback, the toggle becomes a "fire-and-forget" button that can lie about whether the output is on.
-- **Setpoints should use readback** from their measurement counterpart when one exists — the readback line makes commanded-vs-measured comparison instant.
+- **Setpoints should use readback** from their measurement counterpart when one exists — the readback field makes commanded-vs-measured comparison instant.

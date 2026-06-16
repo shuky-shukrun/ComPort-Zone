@@ -159,6 +159,7 @@ class ReadbackRequest:
     compiled: CompiledParseRule
     result_queue: Queue["ReadbackResult"]
     delay_ms: int = 0
+    seed_setpoint_value: bool = False
     submitted_at: float = 0.0
 
 
@@ -173,6 +174,7 @@ class ReadbackResult:
     outcome: ParseOutcome | None = None
     raw_window: str = ""
     error: str = ""
+    seed_setpoint_value: bool = False
     started_at: float = 0.0
     finished_at: float = 0.0
 
@@ -465,6 +467,7 @@ class SessionPollDispatcher:
                     owner_entry_id=request.owner_entry_id,
                     entry_id=request.entry.id,
                     status=POLL_CANCELLED,
+                    seed_setpoint_value=request.seed_setpoint_value,
                     started_at=now,
                     finished_at=now,
                 )
@@ -550,6 +553,7 @@ class SessionPollDispatcher:
                         owner_entry_id=readback.owner_entry_id,
                         entry_id=readback.entry.id,
                         status=POLL_CANCELLED,
+                        seed_setpoint_value=readback.seed_setpoint_value,
                         started_at=now,
                         finished_at=now,
                     )
@@ -582,6 +586,7 @@ class SessionPollDispatcher:
                 owner_entry_id=request.owner_entry_id,
                 entry_id=request.entry.id,
                 status=POLL_CANCELLED,
+                seed_setpoint_value=request.seed_setpoint_value,
                 started_at=now,
                 finished_at=now,
             )
@@ -594,6 +599,7 @@ class SessionPollDispatcher:
             outcome=result.outcome,
             raw_window=result.raw_window,
             error=result.error,
+            seed_setpoint_value=request.seed_setpoint_value,
             started_at=result.started_at,
             finished_at=result.finished_at,
         )

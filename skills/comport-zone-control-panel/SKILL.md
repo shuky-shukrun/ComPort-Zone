@@ -35,7 +35,7 @@ Older 0.4.x ComPort Zone builds cannot import this schema — the wrapper key wa
    - `value` — live numeric readout (V, A, W, °C). Numeric tiles automatically grow a 120 s sparkline.
    - `led` — text / number state with color rules (CV/CC/OFF, READY/BUSY).
    - `control` — button (one shot, e.g. *Clear faults*) or toggle (ON/OFF, with shared readback so visual state follows reality).
-   - `setpoint` — slider + spinbox + shared readback for a numeric write (`VOLT {value}`, etc.).
+   - `setpoint` — editable numeric field + read-only readback field for a numeric write (`VOLT {value}`, etc.).
    - `enum` — labeled dropdown where each option sends its own command; shared readback can indicate the current option.
    - `bits` — per-bit lamp + label for status / fault registers (multiple bits can be active at once).
 
@@ -113,7 +113,7 @@ The richer worked examples in `references/examples.md` cover SCPI bench instrume
 - **Sparse fields, not optional.** Most fields have defaults. Omit a field and the importer uses the default; write the default explicitly if you prefer readability. Either way it round-trips.
 - **`{value}` token** in a setpoint's `command_template` is *required exactly once* — otherwise the importer rejects the entry. Use `"VOLT {value}"`, not `"VOLT"` or `"VOLT {value} {value}"`.
 - **Readback IDs.** `readback: {"source": "entry", "watch_entry_id": "..."}` must point to another entry's `id` in the same panel. The watched entry has to be a polled tile that actually produces a verdict (use a `value` or `led` tile, with rules if needed).
-- **Direct readback.** `readback: {"source": "command", "command": "OUTP?", ...}` sends that query once on connect and after each write. Default timing is one pull after 20 ms; set `"mode": "interval"` plus `"interval_ms"` when the device should be refreshed periodically.
+- **Direct readback.** `readback: {"source": "command", "command": "OUTP?", ...}` sends that query once on connect and after each write. For setpoints, the connect-time readback seeds the editable command field without sending a set command. Default timing is one pull after 20 ms; set `"mode": "interval"` plus `"interval_ms"` when the device should be refreshed periodically.
 - **Bit positions** are 0..31 and **must not repeat** in the same `bits_spec`. State per bit is one of `ok / warn / fail / neutral`.
 - **LED text-rule order matters.** Rules evaluate top-down; the first hit wins. Put more-specific matches above more-general ones.
 - **Don't overlap tiles.** The importer normalizes overlaps deterministically by pushing later tiles down, but the result may not match what you sketched. Lay them out cleanly the first time.

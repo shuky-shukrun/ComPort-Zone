@@ -195,6 +195,7 @@ class ControlPanelTabWidget(QWidget):
         self._compiled_readbacks: dict[str, CompiledParseRule] = {}
         self._readback_due: dict[str, float] = {}
         self._readback_in_flight: set[str] = set()
+        self._setpoint_seed_readbacks: set[str] = set()
         # v2 derived tiles (FR-61): compiled expressions, reverse dependency
         # map (input entry id -> derived entry ids) and the latest numeric
         # value per polled entry feeding them.
@@ -534,6 +535,7 @@ class ControlPanelTabWidget(QWidget):
         self._dispatchers.clear()
         self._gates.clear()
         self._bound_session_id = None
+        self._setpoint_seed_readbacks.clear()
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme
@@ -573,6 +575,7 @@ class ControlPanelTabWidget(QWidget):
             self._force_disarm("binding lost")
         self._bound_session_id = None
         self.scheduler.release_all_in_flight()
+        self._setpoint_seed_readbacks.clear()
         self._refresh_session_topology()
         if notice:
             self.bind_chip.setToolTip(notice)
@@ -743,6 +746,7 @@ class ControlPanelTabWidget(QWidget):
         *,
         delay_ms: int | None = None,
         required_session_id: int | None = None,
+        seed_setpoint_value: bool = False,
     ) -> tuple[ReadbackRequest, int] | None:
         readback = self._readback_spec_for(owner)
         if readback.source == "none" or not owner.enabled:
@@ -772,6 +776,7 @@ class ControlPanelTabWidget(QWidget):
             compiled=compiled,
             result_queue=self.result_queue,
             delay_ms=readback.delay_ms if delay_ms is None else delay_ms,
+            seed_setpoint_value=seed_setpoint_value,
         )
         return request, session_id
 
@@ -792,6 +797,8 @@ class ControlPanelTabWidget(QWidget):
             if self._readback_target_session_id(entry, readback) != session_id:
                 continue
             self._schedule_readback(entry.id, delay_s=index * 0.025)
+            if entry.is_setpoint():
+                self._setpoint_seed_readbacks.add(entry.id)
             index += 1
 
     def _submit_due_readbacks(self) -> None:
@@ -804,10 +811,17 @@ class ControlPanelTabWidget(QWidget):
             owner = self.config.entry_by_id(owner_id)
             if owner is None or not owner.enabled:
                 self._readback_due.pop(owner_id, None)
+                self._setpoint_seed_readbacks.discard(owner_id)
                 continue
-            built = self._build_readback_request(owner, delay_ms=0)
+            seed_setpoint_value = owner_id in self._setpoint_seed_readbacks
+            built = self._build_readback_request(
+                owner,
+                delay_ms=0,
+                seed_setpoint_value=seed_setpoint_value,
+            )
             if built is None:
                 self._readback_due.pop(owner_id, None)
+                self._setpoint_seed_readbacks.discard(owner_id)
                 continue
             request, session_id = built
             gate = self._gates.get(session_id)
@@ -819,6 +833,8 @@ class ControlPanelTabWidget(QWidget):
             if dispatcher.submit_readback(request):
                 self._readback_in_flight.add(owner_id)
                 self._readback_due.pop(owner_id, None)
+                if seed_setpoint_value:
+                    self._setpoint_seed_readbacks.discard(owner_id)
 
     def poll_now(self, entry_id: str) -> bool:
         """Manual one-shot poll for any pollable entry (FR-53)."""
@@ -1568,6 +1584,7 @@ class ControlPanelTabWidget(QWidget):
 
     def _handle_readback_result(self, result: ReadbackResult) -> None:
         self._readback_in_flight.discard(result.owner_entry_id)
+        seed_setpoint = result.seed_setpoint_value
         owner = self.config.entry_by_id(result.owner_entry_id)
         if owner is not None:
             readback = self._readback_spec_for(owner)
@@ -1586,6 +1603,8 @@ class ControlPanelTabWidget(QWidget):
         ):
             if result.status == POLL_OK and result.outcome is not None:
                 self._apply_outcome(entry, result.outcome, result.raw_window)
+                if seed_setpoint:
+                    self._seed_setpoint_from_readback(owner, result.outcome)
             else:
                 self._apply_readback_failure(entry, result)
             return
@@ -1593,8 +1612,25 @@ class ControlPanelTabWidget(QWidget):
             return
         if result.status == POLL_OK and result.outcome is not None:
             self._apply_direct_readback(owner, result.outcome, result.raw_window)
+            if seed_setpoint:
+                self._seed_setpoint_from_readback(owner, result.outcome)
         else:
             self._apply_readback_failure(owner, result)
+
+    def _seed_setpoint_from_readback(
+        self, entry: ControlPanelEntry, outcome: ParseOutcome
+    ) -> None:
+        if not entry.is_setpoint() or outcome.error:
+            return
+        value = outcome.value_number
+        if value is None:
+            try:
+                value = float(outcome.value_text.strip())
+            except (TypeError, ValueError):
+                return
+        tile = self.grid.tile(entry.id)
+        if isinstance(tile, SetpointTileWidget):
+            tile.set_value(float(value))
 
     def _apply_readback_failure(
         self, entry: ControlPanelEntry, result: ReadbackResult
@@ -1833,7 +1869,7 @@ class ControlPanelTabWidget(QWidget):
         raw_value_text: str | None = None,
     ) -> None:
         """Push the watched entry's latest verdict into every writing
-        tile that watches it: setpoint tiles update their readback line
+        tile that watches it: setpoint tiles update their readback field
         (FR-66); enum tiles update their indicated option (FR-70).
 
         Setpoint readbacks show the formatted ``runtime.value_text``
@@ -1930,6 +1966,7 @@ class ControlPanelTabWidget(QWidget):
             if entry_id not in live_entry_ids:
                 del self._readback_due[entry_id]
         self._readback_in_flight.intersection_update(live_entry_ids)
+        self._setpoint_seed_readbacks.intersection_update(live_entry_ids)
         # History clears when the entry goes away OR when it stops being
         # numeric (e.g. converted to a control tile) — re-enabling later
         # should start fresh rather than replay old samples (FR-46).

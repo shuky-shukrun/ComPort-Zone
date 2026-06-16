@@ -38,8 +38,7 @@ CONTROL_MODES = ("button", "toggle")
 READBACK_SOURCES = ("none", "entry", "command")
 READBACK_MODES = ("once", "interval")
 MAX_EXPRESSION_LENGTH = 256
-# Setpoint hard limits — chosen so the slider's int range never overflows
-# (max steps = (max - min) / step) and the editor dialog stays usable. v3.
+# Setpoint hard limits: keep typed values precise and the editor dialog usable. v3.
 SETPOINT_MIN_DECIMALS = 0
 SETPOINT_MAX_DECIMALS = 6
 SETPOINT_MIN_STEP = 1e-6
@@ -461,12 +460,11 @@ def format_setpoint_value(value: float, decimals: int) -> str:
 class SetpointSpec:
     """Configuration of a numeric setpoint tile (v3, FR-63..FR-67).
 
-    The tile shows a slider + spinbox bound to a float value in
-    ``[min_value, max_value]`` with ``step`` granularity, and sends a
-    single command derived from ``command_template`` (one ``{value}``
-    placeholder, formatted with ``decimals`` precision). Optional
-    ``watch_entry_id`` mirrors a polled tile's latest value as a
-    readback line under the input.
+    The tile shows a spinbox bound to a float value in ``[min_value,
+    max_value]`` with ``step`` granularity, and sends a single command
+    derived from ``command_template`` (one ``{value}`` placeholder,
+    formatted with ``decimals`` precision). Optional ``watch_entry_id``
+    mirrors a polled tile's latest value in a second read-only input box.
     """
 
     min_value: float = 0.0
@@ -1286,7 +1284,7 @@ def example_control_panel() -> ControlPanelConfig:
         description=(
             "Shipped example: instrument identity and firmware fetched once "
             "on every connect, output state polled continuously as an ON/OFF "
-            "lamp, plus a setpoint slider for output voltage and an enum for "
+            "lamp, plus a setpoint field for output voltage and an enum for "
             "regulation mode. Bind it to a connected terminal tab and click "
             "Arm in the header to enable controls."
         ),

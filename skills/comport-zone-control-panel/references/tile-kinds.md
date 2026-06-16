@@ -104,9 +104,9 @@ The `readback` block can follow another entry (`source: "entry"`) or send its ow
 
 ---
 
-## `setpoint` — slider + spinbox + readback
+## `setpoint` — command field + readback field
 
-For numeric writes (output voltage, current limit, OVP threshold). The widget gives you a slider above a `QDoubleSpinBox`; both edit the same float. The send-string is a template with `{value}` filled in at submit.
+For numeric writes (output voltage, current limit, OVP threshold). The widget gives you an editable `QDoubleSpinBox` for the commanded value and, when readback is configured, a second read-only box for the followed or directly queried value. The send-string is a template with `{value}` filled in at submit.
 
 **Minimal:**
 ```json
@@ -122,7 +122,7 @@ For numeric writes (output voltage, current limit, OVP threshold). The widget gi
 }
 ```
 
-`readback` is optional — when set, the tile shows the followed or directly queried value as a readback line ("commanded vs. measured" — the killer feature for ops). The followed tile or direct query should produce a numeric value.
+`readback` is optional — when set, the tile shows the followed or directly queried value in the read-only field ("commanded vs. measured" — the killer feature for ops). On connect, the first numeric readback also seeds the editable commanded-value field without sending anything; later readbacks only refresh the read-only field. The followed tile or direct query should produce a numeric value.
 
 `{value}` is required in the template **exactly once**. If you need an instrument-specific format, hand it a different `decimals` value rather than wrapping the token.
 
@@ -202,7 +202,7 @@ Safe-AST evaluator: arithmetic + `abs / min / max / round / sqrt`. No string ops
 ## Common compound patterns
 
 - **CV/CC indicator + manual toggle**: a `led` tile polling `OUTP:MODE?` with text rules, *and* a `control` toggle whose `readback` follows that LED. Two tiles, one source of truth.
-- **Commanded vs. measured side-by-side**: a `setpoint` tile whose `readback` follows the corresponding `MEAS:VOLT?` value tile. The setpoint's readback line shows the live measurement next to your commanded value.
+- **Commanded vs. measured side-by-side**: a `setpoint` tile whose `readback` follows the corresponding `MEAS:VOLT?` value tile. The setpoint's readback field shows the live measurement next to your commanded value.
 - **Fault summary**: one `bits` tile decoding `STAT:QUES:COND?`, and a small `value` tile next to it polling `SYST:ERR?` to surface the last error string.
 - **Per-channel layout**: repeat the same 3-row block (V_meas / I_meas + V_set / I_set + ON-toggle) horizontally across columns 0–2 and 3–5 for a 2-channel supply.
 

@@ -1463,20 +1463,22 @@ class SetpointTileTests(ControlPanelTabTestBase):
         tab.set_armed(True)  # see ControlTileTests.make_tab
         return tab
 
-    def test_slider_and_spinbox_stay_in_sync(self) -> None:
+    def test_setpoint_uses_spinbox_without_slider(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
 
         tab = self.make_tab(setpoint_entry())
         tile = tab.grid.tile("sp")
         assert isinstance(tile, SetpointTileWidget)
-        # Dragging the slider updates the spinbox.
-        tile.slider.setValue(50)  # step index 50 -> 5.0 V
+        self.assertFalse(hasattr(tile, "slider"))
+        self.assertTrue(tile.readback_field.isReadOnly())
+        self.assertTrue(tile.readback_field.isHidden())
+
+        tile.set_value(5.0)
         self.assertAlmostEqual(tile.value, 5.0, places=4)
         self.assertAlmostEqual(tile.spin.value(), 5.0, places=4)
-        # Typing in the spinbox updates the slider.
+
         tile.spin.setValue(12.5)
         self.assertAlmostEqual(tile.value, 12.5, places=4)
-        self.assertEqual(tile.slider.value(), 125)
 
     def test_spinbox_clamps_out_of_range(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
@@ -1569,9 +1571,9 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.run_poll_round(tab, b"12.34\r\n")
         tile = tab.grid.tile("sp")
         assert isinstance(tile, SetpointTileWidget)
-        self.assertFalse(tile.readback_label.isHidden())
-        self.assertIn("12.34", tile.readback_label.text())
-        self.assertIn("V", tile.readback_label.text())
+        self.assertFalse(tile.readback_field.isHidden())
+        self.assertTrue(tile.readback_field.isReadOnly())
+        self.assertEqual(tile.readback_field.text(), "12.34 V")
 
     def test_direct_readback_command_runs_after_send(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
@@ -1603,7 +1605,8 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 2))
         tab._tick()
         self.assertFalse(tile.pending)
-        self.assertIn("12.6", tile.readback_label.text())
+        self.assertEqual(tile.readback_field.text(), "12.6 V")
+        self.assertAlmostEqual(tile.spin.value(), 12.5, places=4)
         self.assertEqual(tile.property("tileState"), "ok")
 
     def test_direct_readback_runs_once_on_connect(self) -> None:
@@ -1614,18 +1617,45 @@ class SetpointTileTests(ControlPanelTabTestBase):
             source="command",
             command="MEAS:VOLT?",
             delay_ms=0,
-            parse=ParseRule(kind="line", value_type="number"),
         )
         tab = self.make_tab(sp)
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        self.assertAlmostEqual(tile.spin.value(), 0.0, places=4)
         self.session.transport.queue_response(b"11.1\r\n")
         tab.bind_to_session(1)
         tab._tick()
         self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
         tab._tick()
+        self.assertEqual(self.session.transport.sent_text, [("MEAS:VOLT?", None)])
+        self.assertEqual(tile.readback_field.text(), "11.1 V")
+        self.assertAlmostEqual(tile.spin.value(), 11.1, places=4)
+
+    def test_followed_readback_on_connect_seeds_setpoint_value(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        polled = volt_entry()
+        polled.id = "vmeas"
+        polled.label = "Measured"
+        sp = setpoint_entry(watch_entry_id="vmeas")
+        tab = self.make_tab(polled, sp)
         tile = tab.grid.tile("sp")
         assert isinstance(tile, SetpointTileWidget)
-        self.assertEqual(self.session.transport.sent_text, [("MEAS:VOLT?", None)])
-        self.assertIn("11.1", tile.readback_label.text())
+        self.assertAlmostEqual(tile.spin.value(), 0.0, places=4)
+
+        self.session.transport.queue_response(b"2.0\r\n")
+        self.session.transport.queue_response(b"7.25\r\n")
+        tab.bind_to_session(1)
+        tab._tick()
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 2))
+        tab._tick()
+
+        self.assertEqual(
+            self.session.transport.sent_text,
+            [("MEAS:VOLT?", None), ("MEAS:VOLT?", None)],
+        )
+        self.assertEqual(tile.readback_field.text(), "7.25 V")
+        self.assertAlmostEqual(tile.spin.value(), 7.25, places=4)
 
     def test_send_error_marks_tile_error(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
@@ -1663,13 +1693,13 @@ class SetpointTileTests(ControlPanelTabTestBase):
         assert isinstance(tile, SetpointTileWidget)
         tab.grid.set_edit_mode(True)
         self.assertFalse(tile.send_button.isEnabled())
-        for widget in (tile.slider, tile.spin, tile.send_button):
+        for widget in (tile.spin, tile.readback_field, tile.send_button):
             self.assertTrue(
                 widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             )
         tab.grid.set_edit_mode(False)
         self.assertTrue(tile.send_button.isEnabled())
-        for widget in (tile.slider, tile.spin, tile.send_button):
+        for widget in (tile.spin, tile.readback_field, tile.send_button):
             self.assertFalse(
                 widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             )

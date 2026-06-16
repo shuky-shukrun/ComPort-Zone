@@ -816,19 +816,6 @@ def build_stylesheet(theme: ThemePalette) -> str:
         background: {ok_bg}; color: {green}; border-color: {ok_bd};
     }}
 
-    QSlider#tileSetpointSlider {{ background: transparent; }}
-    QSlider#tileSetpointSlider::groove:horizontal {{
-        height: 4px; background: {bd_soft}; border-radius: 2px;
-    }}
-    QSlider#tileSetpointSlider::sub-page:horizontal {{
-        background: {accent}; border-radius: 2px;
-    }}
-    QSlider#tileSetpointSlider::handle:horizontal {{
-        background: {accent}; border: 1px solid {bd_strong};
-        width: 14px; height: 14px; margin: -6px 0; border-radius: 7px;
-    }}
-    QSlider#tileSetpointSlider:disabled::sub-page:horizontal {{ background: {bd}; }}
-    QSlider#tileSetpointSlider:disabled::handle:horizontal {{ background: {bd}; }}
     QDoubleSpinBox#tileSetpointSpin {{
         background: {field}; color: {tx};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
@@ -845,16 +832,20 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#tileSetpointSend:hover {{ background: {press_bg}; border-color: {accent}; }}
     QPushButton#tileSetpointSend:pressed {{ background: {press_bg}; }}
     QPushButton#tileSetpointSend:disabled {{ color: {tx_faint}; background: transparent; }}
-    QLabel#tileSetpointReadback {{
-        color: {tx2}; font-family: {MONO}; font-size: {MICRO_FS}px;
-        padding: 2px 0 0 0;
+    QLineEdit#tileSetpointReadback {{
+        background: {panel}; color: {tx2};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 3px 6px; min-height: 22px;
+        font-family: {MONO};
+        font-size: {MICRO_FS}px;
     }}
-    QLabel#tileSetpointReadback[tileState="ok"] {{ color: {green}; }}
-    QLabel#tileSetpointReadback[tileState="warn"] {{ color: {amber}; }}
-    QLabel#tileSetpointReadback[tileState="fail"], QLabel#tileSetpointReadback[tileState="error"] {{
+    QLineEdit#tileSetpointReadback[tileState="ok"] {{ color: {green}; border-color: {ok_bd}; }}
+    QLineEdit#tileSetpointReadback[tileState="warn"] {{ color: {amber}; border-color: {amber}; }}
+    QLineEdit#tileSetpointReadback[tileState="fail"], QLineEdit#tileSetpointReadback[tileState="error"] {{
         color: {red};
+        border-color: {danger_bd};
     }}
-    QLabel#tileSetpointReadback[tileState="stale"] {{ color: {stale_ink}; }}
+    QLineEdit#tileSetpointReadback[tileState="stale"] {{ color: {stale_ink}; }}
 
     QComboBox#tileEnumCombo {{
         background: {field}; color: {tx};
