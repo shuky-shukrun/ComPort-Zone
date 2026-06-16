@@ -642,6 +642,79 @@ class SetpointSpinboxRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(tile.spin.value(), before + tile.spin.singleStep(), places=4)
         tile.deleteLater()
 
+    def test_finer_step_promotes_displayed_decimals(self) -> None:
+        """When step=0.001 the spinbox should keep 3 decimals even if
+        the stored ``decimals`` is 2 — otherwise the user types ``1.234``
+        and the third digit silently disappears from the wire format."""
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        entry = self.make_setpoint()
+        entry.setpoint.step = 0.001
+        entry.setpoint.decimals = 2
+        tile = SetpointTileWidget(entry)
+        self.assertEqual(tile.spin.decimals(), 3)
+        tile.spin.setValue(1.234)
+        # render_command also uses effective_decimals → wire string is
+        # the fully precise value, not a truncated "1.23".
+        self.assertEqual(entry.setpoint.render_command(1.234), "VOLT 1.234")
+        tile.deleteLater()
+
+    def test_user_higher_decimals_override_step(self) -> None:
+        """A user who explicitly picks more decimals than the step needs
+        keeps that preference — effective_decimals = max(declared,
+        step-derived)."""
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        entry = self.make_setpoint()
+        entry.setpoint.step = 0.1
+        entry.setpoint.decimals = 4
+        tile = SetpointTileWidget(entry)
+        self.assertEqual(tile.spin.decimals(), 4)
+        tile.deleteLater()
+
+    def test_enter_in_spinbox_triggers_send(self) -> None:
+        """Pressing Enter inside the setpoint spinbox sends the command
+        the same way clicking the ▶ button would, so keyboard-first
+        workflows don't need a mouse jump per write."""
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.show()
+        QTest.qWaitForWindowExposed(tile)
+        # Enable the send button by simulating armed + non-pending state.
+        tile.set_panel_armed(True)
+        self.assertTrue(tile.send_button.isEnabled())
+        emissions: list[str] = []
+        tile.activateRequested.connect(emissions.append)
+        # Focus the spinbox and press Enter.
+        tile.spin.setFocus()
+        QTest.qWait(20)  # let our deferred selectAll fire
+        QTest.keyClick(tile.spin, Qt.Key.Key_Return)
+        QTest.qWait(160)  # animateClick is async — wait for it to land
+        self.assertEqual(emissions, ["sp"],
+                         f"Enter should fire activateRequested once, got {emissions!r}")
+        tile.deleteLater()
+
+    def test_enter_does_not_send_when_send_disabled(self) -> None:
+        """Disarmed / pending state must block Enter-to-send the same
+        way it blocks the ▶ button — Enter is just another path to the
+        send button's own gate."""
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.show()
+        QTest.qWaitForWindowExposed(tile)
+        # Default state: disarmed → send button disabled.
+        self.assertFalse(tile.send_button.isEnabled())
+        emissions: list[str] = []
+        tile.activateRequested.connect(emissions.append)
+        tile.spin.setFocus()
+        QTest.qWait(20)
+        QTest.keyClick(tile.spin, Qt.Key.Key_Return)
+        QTest.qWait(120)
+        self.assertEqual(emissions, [])
+        tile.deleteLater()
+
 
 class ThemingTests(unittest.TestCase):
     @classmethod

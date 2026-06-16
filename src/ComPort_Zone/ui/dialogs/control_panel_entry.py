@@ -305,7 +305,14 @@ class ControlPanelEntryDialog(QDialog):
         self.setpoint_step_spin.setValue(spec_initial.step)
         self.setpoint_decimals_spin = QSpinBox(self)
         self.setpoint_decimals_spin.setRange(SETPOINT_MIN_DECIMALS, SETPOINT_MAX_DECIMALS)
-        self.setpoint_decimals_spin.setValue(spec_initial.decimals)
+        # Seed with whatever the spec produces in practice — covers older
+        # configs where decimals=2 but step=0.001 so the field shows the
+        # value the tile will actually render with.
+        self.setpoint_decimals_spin.setValue(spec_initial.effective_decimals())
+        # Auto-promote decimals when the user picks a finer step, so the
+        # spinbox precision keeps pace with their step choice (the model
+        # promotes silently anyway — this keeps the dialog honest).
+        self.setpoint_step_spin.valueChanged.connect(self._bump_decimals_for_step)
         self.setpoint_unit_input = QLineEdit(spec_initial.unit, self)
         self.setpoint_unit_input.setPlaceholderText("V, °C, rpm…")
         self.setpoint_template_input = QLineEdit(spec_initial.command_template, self)
@@ -773,6 +780,16 @@ class ControlPanelEntryDialog(QDialog):
         is_regex = self.parse_kind_combo.currentData() == "regex"
         self.pattern_input.setEnabled(is_regex)
         self.group_input.setEnabled(is_regex)
+
+    def _bump_decimals_for_step(self, step: float) -> None:
+        """Promote the Decimals field if the new step needs more precision."""
+        if step <= 0:
+            return
+        import math
+        needed = max(0, math.ceil(-math.log10(step)))
+        needed = min(needed, self.setpoint_decimals_spin.maximum())
+        if needed > self.setpoint_decimals_spin.value():
+            self.setpoint_decimals_spin.setValue(needed)
 
     def _refresh_schedule_enablement(self) -> None:
         # on_connect entries have no interval and never age (FR-52).

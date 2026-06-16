@@ -483,10 +483,30 @@ class SetpointSpec:
         """Snap ``value`` into [min, max] for the dialog's typed-value path."""
         return max(self.min_value, min(self.max_value, float(value)))
 
+    def effective_decimals(self) -> int:
+        """Decimal places to actually use in the spinbox / wire format.
+
+        Defaults stored ``decimals`` to what ``step`` requires so a panel
+        configured with ``step=0.001 decimals=2`` doesn't silently drop
+        the third decimal — the user clearly cares about milli-precision
+        and the spinbox should follow.
+
+        Capped at ``SETPOINT_MAX_DECIMALS`` so an absurd step like
+        ``1e-12`` doesn't blow the spinbox up.
+        """
+        if self.step <= 0:
+            return self.decimals
+        # ceil(-log10(step)): step=0.1 -> 1, 0.01 -> 2, 0.001 -> 3, …
+        # 0.05 -> 2 (because -log10(0.05) ≈ 1.30, ceil = 2).
+        import math
+        derived = max(0, math.ceil(-math.log10(self.step)))
+        return min(SETPOINT_MAX_DECIMALS, max(self.decimals, derived))
+
     def render_command(self, value: float) -> str:
         """Build the command string sent for ``value`` (no-op when no template)."""
         return self.command_template.replace(
-            SETPOINT_VALUE_PLACEHOLDER, format_setpoint_value(value, self.decimals)
+            SETPOINT_VALUE_PLACEHOLDER,
+            format_setpoint_value(value, self.effective_decimals()),
         )
 
     def to_dict(self) -> dict[str, Any]:

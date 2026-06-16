@@ -624,7 +624,23 @@ class SetpointTileWidget(TileFrame):
         self.body_layout.addLayout(input_row)
 
         self.spin.valueChanged.connect(self._spin_changed)
+        # Enter in the spinbox sends the command — the keyboard-first
+        # workflow operators expect. ``returnPressed`` fires only on
+        # Enter (not Tab-out / focus loss), so leaving the field doesn't
+        # accidentally write. The send button's own enable gating still
+        # applies, so a disarmed panel or a tile already mid-send won't
+        # double-trigger.
+        line = self.spin.lineEdit()
+        if line is not None:
+            line.returnPressed.connect(self._submit_via_enter)
         self._apply_spec(spec)
+
+    def _submit_via_enter(self) -> None:
+        # Match what clicking Send does: respect the visible gate state
+        # (armed + enabled + not pending) and route through the same
+        # activateRequested signal funnel.
+        if self.send_button.isEnabled():
+            self.send_button.animateClick()
 
     # ------------------------------------------------------------- public
 
@@ -687,7 +703,7 @@ class SetpointTileWidget(TileFrame):
         try:
             self.spin.setRange(spec.min_value, spec.max_value)
             self.spin.setSingleStep(spec.step)
-            self.spin.setDecimals(spec.decimals)
+            self.spin.setDecimals(spec.effective_decimals())
             self.spin.setSuffix(f" {spec.unit}" if spec.unit else "")
             self._value = spec.clamp(self._value)
             self._sync_widgets()
