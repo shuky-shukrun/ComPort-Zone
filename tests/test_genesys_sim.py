@@ -492,6 +492,87 @@ class SimulatorTcpTests(unittest.TestCase):
         finally:
             client.disconnect()
 
+    def test_no_cross_talk_with_concurrent_terminal_sends(self) -> None:
+        """Regression for the user-reported "tile A receives tile B's
+        reply" bug, end-to-end against the simulator.
+
+        Drives N control-panel-style transactions (MEAS:VOLT? → 0.000)
+        while a worker thread hammers terminal-style sends (*IDN? →
+        TDK-LAMBDA,...). Without the wire-lock + post-acquire-settle
+        fix the dispatcher's parse window captures the terminal's
+        reply, ending up with ``value_text="TDK-LAMBDA,..."`` and a
+        garbage tile reading.
+        """
+        import threading
+        from queue import Queue
+
+        from ComPort_Zone.control_panel_engine import (
+            PollRequest,
+            SessionPollDispatcher,
+        )
+        from ComPort_Zone.control_panel_models import (
+            ControlPanelEntry,
+            ParseRule,
+            TilePlacement,
+        )
+        from ComPort_Zone.control_panel_parse import CompiledParseRule
+        from ComPort_Zone.transports import LanTransportAdapter
+
+        client, rx = self._connected_client()
+        try:
+            time.sleep(0.05)
+            dispatcher = SessionPollDispatcher(transport=LanTransportAdapter(client))
+            disp_rx = client.subscribe_events()
+            entry = ControlPanelEntry(
+                id="v", label="V", command="MEAS:VOLT?", timeout_ms=500,
+                parse=ParseRule(kind="line", value_type="number"),
+                tile=TilePlacement(kind="value"),
+            )
+            compiled = CompiledParseRule.compile(entry.parse)
+            request_queue: Queue = Queue()
+
+            stop = threading.Event()
+            terminal_sends = [0]
+            terminal_errors = [0]
+
+            def terminal_loop() -> None:
+                while not stop.is_set():
+                    try:
+                        client.send_text("*IDN?", source="")
+                        terminal_sends[0] += 1
+                    except Exception:
+                        terminal_errors[0] += 1
+            worker = threading.Thread(target=terminal_loop, daemon=True)
+            worker.start()
+
+            n = 30
+            cross_talked = 0
+            for _ in range(n):
+                req = PollRequest(
+                    control_panel_id="cp", entry=entry, compiled=compiled,
+                    result_queue=request_queue,
+                )
+                result = dispatcher._execute_transaction(req, disp_rx)
+                # Output is OFF on a fresh sim, so MEAS:VOLT? returns 0.000.
+                # ANY other value means the dispatcher picked up the
+                # terminal's *IDN? reply (or noise) instead.
+                if not (result.outcome and result.outcome.value_number == 0.0):
+                    cross_talked += 1
+
+            stop.set()
+            worker.join(timeout=1.0)
+            self.assertEqual(
+                cross_talked, 0,
+                f"{cross_talked}/{n} transactions got the wrong reply "
+                f"(terminal_sends={terminal_sends[0]}, "
+                f"terminal_errors={terminal_errors[0]})",
+            )
+            # Sanity: the worker did fire some sends, otherwise the test
+            # wouldn't have exercised the race at all.
+            self.assertGreater(terminal_sends[0], 0)
+        finally:
+            client.disconnect()
+
 
 # ----------------------------------------------------------------------
 # Layer 3b: raw socket smoke for framing edge cases

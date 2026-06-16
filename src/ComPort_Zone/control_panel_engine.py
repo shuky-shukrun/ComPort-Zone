@@ -28,6 +28,14 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+
+def _wall_now() -> datetime:
+    """Wall-clock matching :attr:`SerialEvent.timestamp`. Used to
+    timestamp-filter RX events against the moment our own send went
+    out (stale RX from a previous sender is discarded, see
+    :meth:`SessionPollDispatcher._execute_transaction`)."""
+    return datetime.now(timezone.utc).astimezone()
 from queue import Empty, Full, Queue
 from contextlib import nullcontext as _nullcontext
 from threading import Event, Lock, Thread
@@ -648,6 +656,14 @@ class SessionPollDispatcher:
             self._drain(rx_queue)
             self.traffic_journal.open_window()
             try:
+                # Record our send's wall-clock NOW, before the
+                # transport's reader thread has any chance to push a
+                # late reply from the *previous* sender into the queue.
+                # Any RX event whose timestamp is older than this is by
+                # definition not the reply to our query, and would
+                # otherwise hit our parse window and produce the
+                # "tile A shows tile B's value" cross-talk bug.
+                send_wall_time = _wall_now()
                 try:
                     if entry.send_mode == "Hex Bytes":
                         self._transport.send_bytes(
@@ -695,6 +711,15 @@ class SessionPollDispatcher:
                     except Empty:
                         continue
                     if event.kind != "rx":
+                        continue
+                    # Skip RX that landed before our send went out — it
+                    # belongs to a previous sender's transaction
+                    # (typically the bound terminal that just sent a
+                    # query and got back a reply before our drain ran).
+                    # Without this guard the device's reply to *IDN?
+                    # gets consumed by our MEAS:VOLT? parse window,
+                    # populating the tile with the wrong value.
+                    if event.timestamp < send_wall_time:
                         continue
                     window = append_to_window(window, event.message)
                     outcome = parse_response(request.compiled, window)

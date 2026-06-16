@@ -4,8 +4,16 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from queue import Queue
+import time
 from contextlib import contextmanager
 from threading import Event, Lock, RLock, Thread, current_thread
+
+# Mirror of LanClient's POST_ACQUIRE_SETTLE_S — see lan_core.py for
+# the full rationale. Serial latency is lower than LAN's typical
+# round-trip (microseconds at high baud), but RS-232 at 9600 baud
+# still takes 1 ms per byte, so 30 ms covers a ~30-byte reply
+# comfortably. Configurable later if it bites.
+POST_ACQUIRE_SETTLE_S = 0.030
 from typing import Any
 
 import serial
@@ -225,8 +233,14 @@ class SerialClient:
         terminal send can't sneak a query onto the wire mid-RX-window
         (which used to make tile A's parse window catch tile B's reply,
         and made terminal RX disappear into the journal). Reentrant.
+
+        Settles after acquisition so any in-flight reply from the
+        previous holder's send lands in subscribers' queues before our
+        drain runs (see :data:`POST_ACQUIRE_SETTLE_S` + the same trick
+        in :class:`LanClient`).
         """
         with self._wire_lock:
+            time.sleep(POST_ACQUIRE_SETTLE_S)
             yield
 
     def _attempt_connect(self, profile: SerialProfile, reconnect_attempt: bool) -> bool:

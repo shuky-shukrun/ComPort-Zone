@@ -312,10 +312,20 @@ class ScriptedTransport(FakeSerialTransport):
         self.scripted_events: list[SerialEvent] = []
 
     def _deliver_next_response(self) -> None:
+        # Stamp the scripted events at delivery time so they look like
+        # real bytes-just-arrived-on-the-wire — the dispatcher's
+        # cross-talk-protection filter ignores anything older than its
+        # own send. Without this re-stamping, scripted events queued at
+        # test setup look like stale RX and get correctly filtered out,
+        # which would defeat the scripted-event tests themselves.
+        from dataclasses import replace
+        from datetime import datetime, timezone
         events, self.scripted_events = self.scripted_events, []
+        now = datetime.now(timezone.utc).astimezone()
         for event in events:
+            fresh = replace(event, timestamp=now)
             for subscriber in self._subscribers:
-                subscriber.put(event)
+                subscriber.put(fresh)
 
 
 class PollTrafficJournalTests(unittest.TestCase):
