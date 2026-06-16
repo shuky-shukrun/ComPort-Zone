@@ -14,7 +14,7 @@
     {
       "id": 3,
       "name": "fix-broken-panel-import",
-      "prompt": "Fix a broken control-panel file: old 'comport_zone_dashboards: 2' wrapper, columns 99, duplicate id 'v', setpoint tile span_w=9, command_template missing {value}, inverted min/max, watch_entry_id pointing nowhere, toggle without off_command."
+      "prompt": "Fix a broken control-panel file: old 'comport_zone_dashboards: 2' wrapper, columns 99, duplicate id 'v', setpoint tile span_w=9, command_template missing {value}, inverted min/max, readback watch_entry_id pointing nowhere, toggle without off_command."
     }
   ]
 }

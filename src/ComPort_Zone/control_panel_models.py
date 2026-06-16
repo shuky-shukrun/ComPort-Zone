@@ -35,6 +35,8 @@ TILE_STATES = ("ok", "warn", "fail", "neutral", "stale", "error")
 POLL_MODES = ("interval", "on_connect")
 ENTRY_SOURCES = ("poll", "derived")
 CONTROL_MODES = ("button", "toggle")
+READBACK_SOURCES = ("none", "entry", "command")
+READBACK_MODES = ("once", "interval")
 MAX_EXPRESSION_LENGTH = 256
 # Setpoint hard limits — chosen so the slider's int range never overflows
 # (max steps = (max - min) / step) and the editor dialog stays usable. v3.
@@ -69,6 +71,12 @@ MIN_POLL_TIMEOUT_MS = 50
 MAX_POLL_TIMEOUT_MS = 30_000
 DEFAULT_POLL_INTERVAL_MS = 1000
 DEFAULT_POLL_TIMEOUT_MS = 500
+MIN_READBACK_DELAY_MS = 0
+MAX_READBACK_DELAY_MS = 60_000
+DEFAULT_READBACK_DELAY_MS = 20
+MIN_READBACK_INTERVAL_MS = 20
+MAX_READBACK_INTERVAL_MS = MAX_POLL_INTERVAL_MS
+DEFAULT_READBACK_INTERVAL_MS = 1000
 
 GRID_COLUMNS_MIN = 1
 GRID_COLUMNS_MAX = 12
@@ -262,6 +270,118 @@ def _is_number(text: str) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+@dataclass(slots=True)
+class ReadbackSpec:
+    """How a writing tile refreshes its actual device value.
+
+    source="entry" follows another tile's existing poll definition.
+    source="command" gives the writing tile its own readback command,
+    parse rule, and optional color rules. mode="once" pulls once after
+    a write; mode="interval" keeps refreshing after the initial pull.
+    """
+
+    source: str = "none"
+    watch_entry_id: str = ""
+    command: str = ""
+    mode: str = "once"
+    delay_ms: int = DEFAULT_READBACK_DELAY_MS
+    interval_ms: int = DEFAULT_READBACK_INTERVAL_MS
+    timeout_ms: int = DEFAULT_POLL_TIMEOUT_MS
+    parse: ParseRule = field(default_factory=ParseRule)
+    rules: list[ColorRule] = field(default_factory=list)
+
+    def is_default(self) -> bool:
+        return (
+            self.source == "none"
+            and not self.watch_entry_id
+            and not self.command
+            and self.mode == "once"
+            and self.delay_ms == DEFAULT_READBACK_DELAY_MS
+            and self.interval_ms == DEFAULT_READBACK_INTERVAL_MS
+            and self.timeout_ms == DEFAULT_POLL_TIMEOUT_MS
+            and self.parse == ParseRule()
+            and not self.rules
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.is_default():
+            return {}
+        payload: dict[str, Any] = {}
+        if self.source != "none":
+            payload["source"] = self.source
+        if self.watch_entry_id:
+            payload["watch_entry_id"] = self.watch_entry_id
+        if self.command:
+            payload["command"] = self.command
+        if self.mode != "once":
+            payload["mode"] = self.mode
+        if self.delay_ms != DEFAULT_READBACK_DELAY_MS:
+            payload["delay_ms"] = self.delay_ms
+        if self.interval_ms != DEFAULT_READBACK_INTERVAL_MS:
+            payload["interval_ms"] = self.interval_ms
+        if self.timeout_ms != DEFAULT_POLL_TIMEOUT_MS:
+            payload["timeout_ms"] = self.timeout_ms
+        if self.parse != ParseRule():
+            payload["parse"] = self.parse.to_dict()
+        if self.rules:
+            payload["rules"] = [rule.to_dict() for rule in self.rules]
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ReadbackSpec":
+        if not data:
+            return cls()
+        return cls(
+            source=_choice(data.get("source"), READBACK_SOURCES, "none"),
+            watch_entry_id=str(data.get("watch_entry_id", "")).strip(),
+            command=str(data.get("command", "")),
+            mode=_choice(data.get("mode"), READBACK_MODES, "once"),
+            delay_ms=_clamp_int(
+                data.get("delay_ms", DEFAULT_READBACK_DELAY_MS),
+                MIN_READBACK_DELAY_MS,
+                MAX_READBACK_DELAY_MS,
+                DEFAULT_READBACK_DELAY_MS,
+            ),
+            interval_ms=_clamp_int(
+                data.get("interval_ms", DEFAULT_READBACK_INTERVAL_MS),
+                MIN_READBACK_INTERVAL_MS,
+                MAX_READBACK_INTERVAL_MS,
+                DEFAULT_READBACK_INTERVAL_MS,
+            ),
+            timeout_ms=_clamp_int(
+                data.get("timeout_ms", DEFAULT_POLL_TIMEOUT_MS),
+                MIN_POLL_TIMEOUT_MS,
+                MAX_POLL_TIMEOUT_MS,
+                DEFAULT_POLL_TIMEOUT_MS,
+            ),
+            parse=ParseRule.from_dict(_dict_value(data.get("parse"))),
+            rules=[
+                ColorRule.from_dict(_dict_value(item))
+                for item in _list_value(data.get("rules"))
+            ],
+        )
+
+    def validation_errors(self, send_mode: str) -> list[str]:
+        errors: list[str] = []
+        if self.source == "none":
+            return errors
+        if self.source == "entry":
+            if not self.watch_entry_id.strip():
+                errors.append("Readback source tile must be selected.")
+            return errors
+        if not self.command.strip():
+            errors.append("Readback command must not be empty.")
+        elif send_mode == "Hex Bytes":
+            hex_error = hex_payload_error(self.command)
+            if hex_error:
+                errors.append(f"Readback command: {hex_error}")
+        errors.extend(self.parse.validation_errors())
+        for index, rule in enumerate(self.rules, start=1):
+            for error in rule.validation_errors():
+                errors.append(f"Readback rule {index}: {error}")
+        return errors
 
 
 @dataclass(slots=True)
@@ -709,6 +829,7 @@ class ControlPanelEntry:
     setpoint: SetpointSpec = field(default_factory=SetpointSpec)
     enum_spec: EnumSpec = field(default_factory=EnumSpec)
     bits_spec: BitsSpec = field(default_factory=BitsSpec)
+    readback: ReadbackSpec = field(default_factory=ReadbackSpec)
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
@@ -798,6 +919,9 @@ class ControlPanelEntry:
         bits_payload = self.bits_spec.to_dict()
         if bits_payload:
             payload["bits_spec"] = bits_payload
+        readback_payload = self.readback.to_dict()
+        if readback_payload:
+            payload["readback"] = readback_payload
         return payload
 
     @classmethod
@@ -842,6 +966,7 @@ class ControlPanelEntry:
             setpoint=SetpointSpec.from_dict(_dict_value(data.get("setpoint"))),
             enum_spec=EnumSpec.from_dict(_dict_value(data.get("enum_spec"))),
             bits_spec=BitsSpec.from_dict(_dict_value(data.get("bits_spec"))),
+            readback=ReadbackSpec.from_dict(_dict_value(data.get("readback"))),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
@@ -858,12 +983,15 @@ class ControlPanelEntry:
         errors: list[str] = []
         if self.is_control():
             errors.extend(self.control.validation_errors(self.send_mode))
+            errors.extend(self.readback.validation_errors(self.send_mode))
             return errors
         if self.is_setpoint():
             errors.extend(self.setpoint.validation_errors(self.send_mode))
+            errors.extend(self.readback.validation_errors(self.send_mode))
             return errors
         if self.is_enum():
             errors.extend(self.enum_spec.validation_errors(self.send_mode))
+            errors.extend(self.readback.validation_errors(self.send_mode))
             return errors
         if self.is_bits():
             errors.extend(self.bits_spec.validation_errors())
@@ -1140,6 +1268,7 @@ def entry_uses_v3_features(entry: ControlPanelEntry) -> bool:
         or not entry.setpoint.is_default()
         or not entry.enum_spec.is_default()
         or not entry.bits_spec.is_default()
+        or not entry.readback.is_default()
     )
 
 
@@ -1212,10 +1341,14 @@ def example_control_panel() -> ControlPanelConfig:
                     decimals=2,
                     unit="V",
                     command_template="VOLT {value}",
-                    watch_entry_id=output_entry_id,
-                    confirm=False,
+                   confirm=False,
+               ),
+                readback=ReadbackSpec(
+                    source="command",
+                    command="MEAS:VOLT?",
+                    parse=ParseRule(kind="line", value_type="number"),
                 ),
-            ),
+           ),
             ControlPanelEntry(
                 label="Regulation",
                 tile=TilePlacement(col=2, row=2, span_w=2, span_h=1, kind="enum"),
@@ -1225,10 +1358,10 @@ def example_control_panel() -> ControlPanelConfig:
                         EnumOption(label="CV", command="SOUR:FUNC:MODE CV", match_value="CV"),
                         EnumOption(label="CC", command="SOUR:FUNC:MODE CC", match_value="CC"),
                     ],
-                    watch_entry_id=mode_entry_id,
-                    confirm=False,
-                ),
-            ),
+                   confirm=False,
+               ),
+                readback=ReadbackSpec(source="entry", watch_entry_id=mode_entry_id),
+           ),
         ],
     )
 

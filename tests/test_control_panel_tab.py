@@ -21,6 +21,7 @@ from ComPort_Zone.control_panel_models import (
     ControlPanelEntry,
     ControlPanelTabState,
     ParseRule,
+    ReadbackSpec,
     TilePlacement,
 )
 from ComPort_Zone.themes import THEMES
@@ -1222,8 +1223,11 @@ class ControlTileTests(ControlPanelTabTestBase):
         self.assertEqual(tile.button.text(), "ON")
 
         self.assertTrue(tab._activate_control("ctrl"))
-        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 2))
-        self.assertEqual(self.session.transport.sent_text[-1], ("OUTP OFF", None))
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 4))
+        self.assertEqual(
+            self.session.transport.sent_text[-2:],
+            [("OUTP OFF", None), ("OUTP?", None)],
+        )
 
     def test_unwatched_toggle_flips_optimistically(self) -> None:
         tab = self.make_tab(control_entry("toggle"))
@@ -1568,6 +1572,60 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.assertFalse(tile.readback_label.isHidden())
         self.assertIn("12.34", tile.readback_label.text())
         self.assertIn("V", tile.readback_label.text())
+
+    def test_direct_readback_command_runs_after_send(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        sp = setpoint_entry()
+        sp.readback = ReadbackSpec(
+            source="command",
+            command="MEAS:VOLT?",
+            delay_ms=0,
+            parse=ParseRule(kind="line", value_type="number"),
+            rules=[ColorRule(op="gt", operand="12", state="ok", label="READY")],
+        )
+        tab = self.make_tab(sp)
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        tile.spin.setValue(12.5)
+        # First queued response is stale/echo after the write; the
+        # readback transaction drains it before sending its query.
+        self.session.transport.queue_response(b"echo\r\n")
+        self.session.transport.queue_response(b"12.6\r\n")
+
+        self.assertTrue(tab._activate_control("sp"))
+        self.assertTrue(wait_for(lambda: len(self.session.transport.sent_text) >= 2))
+        self.assertEqual(
+            self.session.transport.sent_text,
+            [("VOLT 12.50", None), ("MEAS:VOLT?", None)],
+        )
+        self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 2))
+        tab._tick()
+        self.assertFalse(tile.pending)
+        self.assertIn("12.6", tile.readback_label.text())
+        self.assertEqual(tile.property("tileState"), "ok")
+
+    def test_direct_readback_runs_once_on_connect(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        sp = setpoint_entry()
+        sp.readback = ReadbackSpec(
+            source="command",
+            command="MEAS:VOLT?",
+            delay_ms=0,
+            parse=ParseRule(kind="line", value_type="number"),
+        )
+        tab = self.make_tab(sp)
+        self.session.transport.queue_response(b"11.1\r\n")
+        tab.bind_to_session(1)
+        tab._tick()
+        self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
+        tab._tick()
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        self.assertEqual(self.session.transport.sent_text, [("MEAS:VOLT?", None)])
+        self.assertIn("11.1", tile.readback_label.text())
 
     def test_send_error_marks_tile_error(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
@@ -2336,7 +2394,10 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         self.assertTrue(dialog.tabs.isTabVisible(dialog.POLLING_TAB))
         self.assertEqual(dialog.enabled_check.text(), "Enable this control")
         self.assertEqual(dialog.control_mode_combo.currentData(), "toggle")
-        self.assertEqual(dialog.watch_combo.currentData(), "outp")
+        self.assertFalse(dialog._control_form.isRowVisible(dialog.watch_combo))
+        self.assertFalse(dialog.readback_box.isHidden())
+        self.assertEqual(dialog.readback_source_combo.currentData(), "entry")
+        self.assertEqual(dialog.readback_watch_combo.currentData(), "outp")
         self.assertTrue(dialog.confirm_check.isChecked())
         dialog.deleteLater()
 
@@ -2349,7 +2410,9 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         self.assertEqual(result.control.on_command, "OUTP ON")
         self.assertEqual(result.control.off_command, "OUTP OFF")
         self.assertTrue(result.control.confirm)
-        self.assertEqual(result.control.watch_entry_id, "outp")
+        self.assertEqual(result.control.watch_entry_id, "")
+        self.assertEqual(result.readback.source, "entry")
+        self.assertEqual(result.readback.watch_entry_id, "outp")
         self.assertEqual(result.command, "")
         self.assertEqual(result.rules, [])
         self.assertEqual(result.source, "poll")
@@ -2417,11 +2480,75 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         self.assertEqual(result.setpoint.step, 0.5)
         self.assertEqual(result.setpoint.decimals, 1)
         self.assertEqual(result.setpoint.unit, "V")
+        self.assertEqual(result.setpoint.watch_entry_id, "")
+        self.assertEqual(result.readback.source, "entry")
+        self.assertEqual(result.readback.watch_entry_id, "vmeas")
         # No control spec leaked.
         self.assertEqual(result.control, ControlSpec())
         # Polling fields cleared.
         self.assertEqual(result.command, "")
         self.assertEqual(result.rules, [])
+        dialog.deleteLater()
+
+    def test_setpoint_command_readback_uses_response_tab(self) -> None:
+        from ComPort_Zone.control_panel_models import SetpointSpec
+
+        entry = ControlPanelEntry(
+            label="Voltage",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(command_template="VOLT {value}", unit="V"),
+            readback=ReadbackSpec(
+                source="command",
+                command="MEAS:VOLT?",
+                delay_ms=20,
+                parse=ParseRule(kind="line", value_type="number"),
+                rules=[ColorRule(op="gt", operand="1", state="ok")],
+            ),
+        )
+        dialog = ControlPanelEntryDialog(entry, context=self.control_context())
+        self.assertFalse(dialog.readback_box.isHidden())
+        self.assertEqual(dialog.readback_source_combo.currentData(), "command")
+        self.assertEqual(dialog.readback_command_input.text(), "MEAS:VOLT?")
+        self.assertTrue(dialog.tabs.isTabVisible(dialog.RESPONSE_TAB))
+        self.assertFalse(dialog._parse_box.isHidden())
+        self.assertFalse(dialog._rules_box.isHidden())
+        result = dialog.values()
+        self.assertEqual(result.readback.source, "command")
+        self.assertEqual(result.readback.command, "MEAS:VOLT?")
+        self.assertEqual(result.readback.parse.value_type, "number")
+        self.assertEqual(len(result.readback.rules), 1)
+        dialog.deleteLater()
+
+    def test_setpoint_command_readback_dialog_scrolls_tab_pages(self) -> None:
+        from PySide6.QtWidgets import QDialogButtonBox, QScrollArea
+
+        from ComPort_Zone.control_panel_models import SetpointSpec
+
+        entry = ControlPanelEntry(
+            label="Voltage",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(command_template="VOLT {value}", unit="V"),
+            readback=ReadbackSpec(
+                source="command",
+                command="MEAS:VOLT?",
+                parse=ParseRule(kind="line", value_type="number"),
+                rules=[ColorRule(op="gt", operand="1", state="ok")],
+            ),
+        )
+        dialog = ControlPanelEntryDialog(entry, context=self.control_context())
+        general_page = dialog.tabs.widget(dialog.GENERAL_TAB)
+        response_page = dialog.tabs.widget(dialog.RESPONSE_TAB)
+        buttons = dialog.findChild(QDialogButtonBox)
+        self.assertIsInstance(general_page, QScrollArea)
+        self.assertIsInstance(response_page, QScrollArea)
+        self.assertTrue(general_page.widgetResizable())
+        self.assertTrue(response_page.widgetResizable())
+        self.assertEqual(
+            general_page.horizontalScrollBarPolicy(),
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        )
+        self.assertIsNotNone(buttons)
+        self.assertGreaterEqual(dialog.layout().indexOf(buttons), 0)
         dialog.deleteLater()
 
     def test_setpoint_validation_blocks_bad_template(self) -> None:

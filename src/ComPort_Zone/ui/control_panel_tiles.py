@@ -679,12 +679,16 @@ class SetpointTileWidget(TileFrame):
             self.spin.setSuffix(f" {spec.unit}" if spec.unit else "")
             self._value = spec.clamp(self._value)
             self._sync_widgets()
-            self.readback_label.setVisible(bool(spec.watch_entry_id))
-            if not spec.watch_entry_id:
+            has_readback = self._has_readback()
+            self.readback_label.setVisible(has_readback)
+            if not has_readback:
                 self.clear_readback()
         finally:
             self._setting_value = False
         self._refresh_send_enabled()
+
+    def _has_readback(self) -> bool:
+        return bool(self._entry.setpoint.watch_entry_id) or not self._entry.readback.is_default()
 
     def _slider_changed(self, step_index: int) -> None:
         if self._setting_value:
@@ -748,7 +752,7 @@ class SetpointTileWidget(TileFrame):
 
     def _refresh_readback(self) -> None:
         spec = self._entry.setpoint
-        if not spec.watch_entry_id:
+        if not self._has_readback():
             self.readback_label.setVisible(False)
             return
         unit = f" {spec.unit}" if spec.unit else ""

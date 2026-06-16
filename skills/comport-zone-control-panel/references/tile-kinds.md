@@ -92,13 +92,13 @@ Rules evaluate top-down — put specific matches before generic ones.
   "tile": {"col": 0, "row": 5, "span_w": 3, "span_h": 1, "kind": "control"},
   "control": {
     "mode": "toggle",
-    "on_command": "OUTP ON", "off_command": "OUTP OFF",
-    "watch_entry_id": "outp-state"
-  }
+    "on_command": "OUTP ON", "off_command": "OUTP OFF"
+  },
+  "readback": {"source": "entry", "watch_entry_id": "outp-state"}
 }
 ```
 
-The `watch_entry_id` must be another entry in the same panel that produces a verdict (most often a `led` or rule-bearing `value` tile). Without the watch, the toggle still works but its color won't reflect device state.
+The `readback` block can follow another entry (`source: "entry"`) or send its own query (`source: "command"`). It runs once on connect for initial state and again after each write; `mode: "interval"` keeps it refreshing periodically.
 
 `confirm: true` adds a "Are you sure?" prompt before each send — recommended for protective / destructive commands.
 
@@ -116,13 +116,13 @@ For numeric writes (output voltage, current limit, OVP threshold). The widget gi
   "setpoint": {
     "min_value": 0.0, "max_value": 30.0, "step": 0.1,
     "decimals": 2, "unit": "V",
-    "command_template": "VOLT {value}",
-    "watch_entry_id": "v-meas"
-  }
+    "command_template": "VOLT {value}"
+  },
+  "readback": {"source": "entry", "watch_entry_id": "v-meas"}
 }
 ```
 
-`watch_entry_id` is optional — when set, the tile shows the watched polled tile's formatted value as a readback line ("commanded vs. measured" — the killer feature for ops). The watched tile must produce a numeric value.
+`readback` is optional — when set, the tile shows the followed or directly queried value as a readback line ("commanded vs. measured" — the killer feature for ops). The followed tile or direct query should produce a numeric value.
 
 `{value}` is required in the template **exactly once**. If you need an instrument-specific format, hand it a different `decimals` value rather than wrapping the token.
 
@@ -130,7 +130,7 @@ For numeric writes (output voltage, current limit, OVP threshold). The widget gi
 
 ## `enum` — labeled dropdown
 
-Each row is a label + the command it sends. Optional `match_value` lights an indicator pill on the row whose value matches the watched tile (so the operator sees current mode while the dropdown stays free).
+Each row is a label + the command it sends. Optional `match_value` lights an indicator pill on the row whose value matches readback (so the operator sees current mode while the dropdown stays free).
 
 ```json
 {
@@ -141,9 +141,9 @@ Each row is a label + the command it sends. Optional `match_value` lights an ind
       {"label": "OFF", "command": "OUTP OFF",   "match_value": "OFF"},
       {"label": "CV",  "command": "MODE CV",    "match_value": "CV"},
       {"label": "CC",  "command": "MODE CC",    "match_value": "CC"}
-    ],
-    "watch_entry_id": "mode"
-  }
+    ]
+  },
+  "readback": {"source": "entry", "watch_entry_id": "mode"}
 }
 ```
 
@@ -201,8 +201,8 @@ Safe-AST evaluator: arithmetic + `abs / min / max / round / sqrt`. No string ops
 
 ## Common compound patterns
 
-- **CV/CC indicator + manual toggle**: a `led` tile polling `OUTP:MODE?` with text rules, *and* a `control` toggle with `watch_entry_id` pointing at the LED. Two tiles, one source of truth.
-- **Commanded vs. measured side-by-side**: a `setpoint` tile with `watch_entry_id` pointing at the corresponding `MEAS:VOLT?` value tile. The setpoint's readback line shows the live measurement next to your commanded value.
+- **CV/CC indicator + manual toggle**: a `led` tile polling `OUTP:MODE?` with text rules, *and* a `control` toggle whose `readback` follows that LED. Two tiles, one source of truth.
+- **Commanded vs. measured side-by-side**: a `setpoint` tile whose `readback` follows the corresponding `MEAS:VOLT?` value tile. The setpoint's readback line shows the live measurement next to your commanded value.
 - **Fault summary**: one `bits` tile decoding `STAT:QUES:COND?`, and a small `value` tile next to it polling `SYST:ERR?` to surface the last error string.
 - **Per-channel layout**: repeat the same 3-row block (V_meas / I_meas + V_set / I_set + ON-toggle) horizontally across columns 0–2 and 3–5 for a 2-channel supply.
 

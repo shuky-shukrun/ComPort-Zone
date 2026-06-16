@@ -397,7 +397,7 @@ Run focused tests:
 - App settings JSON import/export intentionally excludes quick actions.
 - `SettingsStore` should remain file I/O only. Schema/payload rules belong to `SettingsService`.
 - Controllers should make behavior decisions. Widgets should apply UI changes.
-- Control Panel TX goes only through `SessionPollDispatcher` (one per bound session, refcounted by `ControlPanelRunCoordinator`). Never send from the control-panel GUI tick directly — that breaks per-session serialization and puts serial I/O on the GUI thread.
+- Control Panel TX goes only through `SessionPollDispatcher` (one per bound session, refcounted by `ControlPanelRunCoordinator`), including write-tile readbacks. Never send from the control-panel GUI tick directly — that breaks per-session serialization and puts serial I/O on the GUI thread.
 - Control Panel tile colors come only from `ThemePalette` via the `tileState` QSS property (mapping in `ui/control_panel_tiles.tile_state_color`); no hex literals in tile widgets (enforced by `tests/test_control_panel_tiles`).
 - The Control Panel domain modules (`control_panel_models/parse/engine/catalog`) must stay Qt-free; they are re-exported via `core/control_panel.py` and `tests/test_core_no_pyside` enforces it. The internal `control_panel*` module/symbol names are intentional — they preserve byte-for-byte v1/v2 user-settings compatibility after the v3 rename.
 - Control Panel configs live-save: every mutation writes to `AppSettings.control_panels` (JSON key kept for back-compat) and calls `save_settings()`. There is no dirty state and no confirm-on-close for control-panel tabs.

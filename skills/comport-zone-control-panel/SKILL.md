@@ -34,9 +34,9 @@ Older 0.4.x ComPort Zone builds cannot import this schema — the wrapper key wa
 3. **Pick a tile kind per entry** (see `references/tile-kinds.md`):
    - `value` — live numeric readout (V, A, W, °C). Numeric tiles automatically grow a 120 s sparkline.
    - `led` — text / number state with color rules (CV/CC/OFF, READY/BUSY).
-   - `control` — button (one shot, e.g. *Clear faults*) or toggle (ON/OFF, watches a polled tile so the visual color follows reality).
-   - `setpoint` — slider + spinbox + optional readback for a numeric write (`VOLT {value}`, etc.).
-   - `enum` — labeled dropdown where each option sends its own command (Foldback OFF/CC/CV, Range 0.1/1/10 A, …).
+   - `control` — button (one shot, e.g. *Clear faults*) or toggle (ON/OFF, with shared readback so visual state follows reality).
+   - `setpoint` — slider + spinbox + shared readback for a numeric write (`VOLT {value}`, etc.).
+   - `enum` — labeled dropdown where each option sends its own command; shared readback can indicate the current option.
    - `bits` — per-bit lamp + label for status / fault registers (multiple bits can be active at once).
 
 4. **Write the JSON**. Always wrap the panel(s) in the versioned envelope:
@@ -85,7 +85,13 @@ A good shape for "I just need to see one measurement and toggle output":
       {
         "id": "output", "label": "Output",
         "tile": {"col": 2, "row": 1, "span_w": 2, "span_h": 1, "kind": "control"},
-        "control": {"mode": "toggle", "on_command": "OUTP ON", "off_command": "OUTP OFF"}
+        "control": {"mode": "toggle", "on_command": "OUTP ON", "off_command": "OUTP OFF"},
+        "readback": {
+          "source": "command",
+          "command": "OUTP?",
+          "parse": {"kind": "line", "value_type": "number"},
+          "rules": [{"op": "eq_num", "operand": "1", "state": "ok", "label": "ON"}]
+        }
       }
     ]
   }]
@@ -97,7 +103,7 @@ The richer worked examples in `references/examples.md` cover SCPI bench instrume
 ## Field reference & deeper material
 
 - **Field-by-field schema**: see `references/schema.md` — every wrapper, panel, entry, parse, tile, rule, control/setpoint/enum/bits spec, with allowed values and defaults.
-- **Tile-kind patterns**: see `references/tile-kinds.md` — when to pick which kind, the must-have fields, and live patterns (sparkline, watch / readback, indicator pill, master-arm gating).
+- **Tile-kind patterns**: see `references/tile-kinds.md` — when to pick which kind, the must-have fields, and live patterns (sparkline, readback, indicator pill, master-arm gating).
 - **Worked examples**: see `references/examples.md` — a bench-power-supply panel, an SCPI status-register panel, a derived-power panel.
 - **JSON Schema** (for downstream tooling): `assets/control-panel.schema.json` — vendored Draft-7 schema for the full envelope.
 - **Validator**: `scripts/validate.py` — runs the schema check + a few semantic rules (unique ids, no out-of-range bit positions, etc.). Only needs `pip install jsonschema`.
@@ -106,7 +112,8 @@ The richer worked examples in `references/examples.md` cover SCPI bench instrume
 
 - **Sparse fields, not optional.** Most fields have defaults. Omit a field and the importer uses the default; write the default explicitly if you prefer readability. Either way it round-trips.
 - **`{value}` token** in a setpoint's `command_template` is *required exactly once* — otherwise the importer rejects the entry. Use `"VOLT {value}"`, not `"VOLT"` or `"VOLT {value} {value}"`.
-- **Watch IDs.** `watch_entry_id` on a setpoint / enum / toggle must point to another entry's `id` in the same panel. The watched entry has to be a polled tile that actually produces a verdict (use a `value` or `led` tile, with rules if needed).
+- **Readback IDs.** `readback: {"source": "entry", "watch_entry_id": "..."}` must point to another entry's `id` in the same panel. The watched entry has to be a polled tile that actually produces a verdict (use a `value` or `led` tile, with rules if needed).
+- **Direct readback.** `readback: {"source": "command", "command": "OUTP?", ...}` sends that query once on connect and after each write. Default timing is one pull after 20 ms; set `"mode": "interval"` plus `"interval_ms"` when the device should be refreshed periodically.
 - **Bit positions** are 0..31 and **must not repeat** in the same `bits_spec`. State per bit is one of `ok / warn / fail / neutral`.
 - **LED text-rule order matters.** Rules evaluate top-down; the first hit wins. Put more-specific matches above more-general ones.
 - **Don't overlap tiles.** The importer normalizes overlaps deterministically by pushing later tiles down, but the result may not match what you sketched. Lay them out cleanly the first time.

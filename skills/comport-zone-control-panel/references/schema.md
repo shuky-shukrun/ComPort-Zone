@@ -36,7 +36,7 @@ Each entry is one tile. The same dataclass holds every shape — fields that don
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `id` | string | random | Unique inside the panel. Used as the `watch_entry_id` target. |
+| `id` | string | random | Unique inside the panel. Used by `readback.watch_entry_id` and derived expressions. |
 | `label` | string | `""` | Tile title. Falls back to `command` / `expression` if blank. |
 | `unit` | string | `""` | Appended to the numeric value on the tile (e.g. `"V"`). |
 | `command` | string | `""` | Send-string for polled / bits tiles. Empty for writing / derived tiles. |
@@ -59,6 +59,7 @@ Each entry is one tile. The same dataclass holds every shape — fields that don
 | `setpoint` | `SetpointSpec` | empty | Required when `tile.kind == "setpoint"`. |
 | `enum_spec` | `EnumSpec` | empty | Required when `tile.kind == "enum"`. |
 | `bits_spec` | `BitsSpec` | empty | Required when `tile.kind == "bits"`. |
+| `readback` | `ReadbackSpec` | empty | Optional for writing tiles; follows another tile or sends a direct readback command. |
 | `created_at`, `updated_at` | ISO-8601 string | now | Omit; importer fills. |
 
 ## TilePlacement
@@ -105,7 +106,6 @@ Numeric ops compare the parsed number. `eq_text` / `contains` compare the raw va
 | `on_command` | string | `""` | Sent on click / on-toggle. Required. |
 | `off_command` | string | `""` | Sent on off-toggle. Required for toggles. |
 | `confirm` | bool | `false` | Show a confirmation prompt before sending. |
-| `watch_entry_id` | string | `""` | Other entry whose verdict color this tile mirrors (toggles only). |
 
 ## SetpointSpec (kind = `setpoint`)
 
@@ -117,7 +117,6 @@ Numeric ops compare the parsed number. `eq_text` / `contains` compare the raw va
 | `decimals` | int | `2` | Display precision. Range `0..6`. |
 | `unit` | string | `""` | Suffix on the spinbox (e.g. `"V"`). |
 | `command_template` | string | `""` | Send-string with exactly one `{value}` token. Required. |
-| `watch_entry_id` | string | `""` | Polled tile whose live reading shows as the readback line. |
 | `confirm` | bool | `false` | Confirmation prompt before each send. |
 
 ## EnumSpec (kind = `enum`)
@@ -125,7 +124,6 @@ Numeric ops compare the parsed number. `eq_text` / `contains` compare the raw va
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `options` | list of `EnumOption` | `[]` | At least one option required. |
-| `watch_entry_id` | string | `""` | Polled tile whose value text marks the matching option as "indicated". |
 | `confirm` | bool | `false` | Confirmation prompt before each send. |
 
 `EnumOption`:
@@ -134,7 +132,21 @@ Numeric ops compare the parsed number. `eq_text` / `contains` compare the raw va
 | --- | --- | --- | --- |
 | `label` | string | `""` | Dropdown row text. Required. |
 | `command` | string | `""` | Sent when this option is selected + Send. Required. |
-| `match_value` | string | `""` | When equal (trimmed, case-insensitive) to the watched tile's value, this row gets the indicator pill. |
+| `match_value` | string | `""` | When equal (trimmed, case-insensitive) to the readback value, this row gets the indicator pill. |
+
+## ReadbackSpec (writing entries: `control`, `setpoint`, `enum`)
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `source` | enum | `"none"` | `"entry"` follows another tile; `"command"` sends this tile's readback command. |
+| `watch_entry_id` | string | `""` | Required when `source="entry"`; must be another entry id in the same panel. |
+| `command` | string | `""` | Required when `source="command"`; sent once on connect and after writes. |
+| `mode` | enum | `"once"` | `"once"` pulls after each write; `"interval"` keeps polling periodically. |
+| `delay_ms` | int | `20` | Delay before the post-write readback. Range `0..60000`. |
+| `interval_ms` | int | `1000` | Repeat period when `mode="interval"`. Range `20..3600000`. |
+| `timeout_ms` | int | `500` | Readback response timeout. Range `50..30000`. |
+| `parse` | `ParseRule` | line/text | Used for direct command readbacks. |
+| `rules` | list of `ColorRule` | `[]` | Direct readback state rules; toggles treat `ok` as ON and enums match option `match_value`. |
 
 ## BitsSpec (kind = `bits`)
 

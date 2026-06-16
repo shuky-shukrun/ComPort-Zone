@@ -70,6 +70,7 @@
         "setpoint":    { "$ref": "#/definitions/setpointSpec" },
         "enum_spec":   { "$ref": "#/definitions/enumSpec" },
         "bits_spec":   { "$ref": "#/definitions/bitsSpec" },
+        "readback":    { "$ref": "#/definitions/readbackSpec" },
         "created_at":  { "type": "string" },
         "updated_at":  { "type": "string" }
       },
@@ -114,8 +115,7 @@
         "mode":           { "enum": ["button", "toggle"] },
         "on_command":     { "type": "string" },
         "off_command":    { "type": "string" },
-        "confirm":        { "type": "boolean" },
-        "watch_entry_id": { "type": "string" }
+        "confirm":        { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -128,7 +128,6 @@
         "decimals":         { "type": "integer", "minimum": 0, "maximum": 6 },
         "unit":             { "type": "string" },
         "command_template": { "type": "string" },
-        "watch_entry_id":   { "type": "string" },
         "confirm":          { "type": "boolean" }
       },
       "additionalProperties": false
@@ -140,7 +139,6 @@
           "type": "array",
           "items": { "$ref": "#/definitions/enumOption" }
         },
-        "watch_entry_id": { "type": "string" },
         "confirm":        { "type": "boolean" }
       },
       "additionalProperties": false
@@ -151,6 +149,24 @@
         "label":       { "type": "string" },
         "command":     { "type": "string" },
         "match_value": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "readbackSpec": {
+      "type": "object",
+      "properties": {
+        "source":         { "enum": ["none", "entry", "command"] },
+        "watch_entry_id": { "type": "string" },
+        "command":        { "type": "string" },
+        "mode":           { "enum": ["once", "interval"] },
+        "delay_ms":       { "type": "integer", "minimum": 0, "maximum": 60000 },
+        "interval_ms":    { "type": "integer", "minimum": 20, "maximum": 3600000 },
+        "timeout_ms":     { "type": "integer", "minimum": 50, "maximum": 30000 },
+        "parse":          { "$ref": "#/definitions/parseRule" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/colorRule" }
+        }
       },
       "additionalProperties": false
     },

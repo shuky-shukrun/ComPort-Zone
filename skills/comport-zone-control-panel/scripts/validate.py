@@ -10,7 +10,8 @@ few semantic checks the schema can't express on its own:
   * enum specs must have at least one option, each with label + command
   * bits specs must have at least one bit, no duplicate positions,
     every bit must have a non-empty label
-  * watch_entry_id targets must exist in the same panel
+  * readback watch_entry_id targets must exist in the same panel
+  * direct readback commands must be non-empty
   * derived entries (source=derived) must carry an expression
 
 Usage:
@@ -103,11 +104,6 @@ def _semantic_checks(payload) -> list[str]:
                         errors.append(f"{entry_tag}: setpoint min_value must be < max_value")
                 if spec.get("step") is not None and spec.get("step", 0) <= 0:
                     errors.append(f"{entry_tag}: setpoint step must be > 0")
-                watch = spec.get("watch_entry_id", "")
-                if watch and watch not in id_set:
-                    errors.append(
-                        f"{entry_tag}: setpoint watch_entry_id {watch!r} not in panel"
-                    )
 
             if kind == "control":
                 spec = entry.get("control") or {}
@@ -115,11 +111,6 @@ def _semantic_checks(payload) -> list[str]:
                     errors.append(f"{entry_tag}: control needs on_command")
                 if spec.get("mode") == "toggle" and not (spec.get("off_command") or "").strip():
                     errors.append(f"{entry_tag}: toggle control needs off_command")
-                watch = spec.get("watch_entry_id", "")
-                if watch and watch not in id_set:
-                    errors.append(
-                        f"{entry_tag}: control watch_entry_id {watch!r} not in panel"
-                    )
 
             if kind == "enum":
                 spec = entry.get("enum_spec") or {}
@@ -135,11 +126,21 @@ def _semantic_checks(payload) -> list[str]:
                         errors.append(
                             f"{entry_tag}: enum option[{opt_idx}] needs a command"
                         )
-                watch = spec.get("watch_entry_id", "")
-                if watch and watch not in id_set:
-                    errors.append(
-                        f"{entry_tag}: enum watch_entry_id {watch!r} not in panel"
-                    )
+
+            if writing:
+                readback = entry.get("readback") or {}
+                readback_source = readback.get("source", "none")
+                if readback_source == "entry":
+                    watch = readback.get("watch_entry_id", "")
+                    if not watch:
+                        errors.append(f"{entry_tag}: readback source='entry' needs watch_entry_id")
+                    elif watch not in id_set:
+                        errors.append(
+                            f"{entry_tag}: readback watch_entry_id {watch!r} not in panel"
+                        )
+                elif readback_source == "command":
+                    if not (readback.get("command") or "").strip():
+                        errors.append(f"{entry_tag}: readback source='command' needs command")
 
             if kind == "bits":
                 spec = entry.get("bits_spec") or {}

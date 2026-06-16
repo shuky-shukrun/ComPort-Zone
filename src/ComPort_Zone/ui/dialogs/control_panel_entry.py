@@ -1,11 +1,11 @@
 """ControlPanel entry editor dialog: command, schedule, parse rule, color rules.
 
-Laid out as a live tile preview above three tabbed pages (General /
-Polling / Response & Rules) so the dialog stays short enough that OK is
-always on screen. The preview renders the entry through the real tile
-widgets, fed by the same parse/evaluate pipeline as the tester (FR-28):
-paste sample RX and both the tester line and the preview tile show what
-the control_panel would display. OK is gated on
+Laid out as a live tile preview above three scrollable tabbed pages
+(General / Polling / Response & Rules) so the dialog stays short enough
+that OK is always on screen. The preview renders the entry through the
+real tile widgets, fed by the same parse/evaluate pipeline as the tester
+(FR-28): paste sample RX and both the tester line and the preview tile
+show what the control_panel would display. OK is gated on
 ``ControlPanelEntry.validation_errors()``.
 """
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -22,12 +22,15 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -43,10 +46,16 @@ from ...control_panel_models import (
     BITS_STATES,
     COLOR_RULE_OPS,
     CONTROL_PANEL_SEND_MODES,
+    DEFAULT_READBACK_DELAY_MS,
+    DEFAULT_READBACK_INTERVAL_MS,
+    MAX_READBACK_DELAY_MS,
+    MAX_READBACK_INTERVAL_MS,
     MAX_POLL_INTERVAL_MS,
     MAX_POLL_TIMEOUT_MS,
     MIN_POLL_INTERVAL_MS,
     MIN_POLL_TIMEOUT_MS,
+    MIN_READBACK_DELAY_MS,
+    MIN_READBACK_INTERVAL_MS,
     RULE_STATES,
     SETPOINT_MAX_DECIMALS,
     SETPOINT_MIN_DECIMALS,
@@ -57,6 +66,7 @@ from ...control_panel_models import (
     ControlPanelEntry,
     EnumSpec,
     ParseRule,
+    ReadbackSpec,
     SetpointSpec,
 )
 from ...control_panel_parse import CompiledParseRule, evaluate_rules, format_tile_value, parse_response
@@ -87,6 +97,16 @@ SOURCE_LABELS = (("poll", "Polled command"), ("derived", "Computed from other ti
 CONTROL_MODE_LABELS = (
     ("button", "Button — send one command"),
     ("toggle", "Toggle — alternate ON/OFF"),
+)
+
+READBACK_SOURCE_LABELS = (
+    ("none", "None"),
+    ("entry", "Follow another tile"),
+    ("command", "Send readback command"),
+)
+READBACK_MODE_LABELS = (
+    ("once", "Once after each send"),
+    ("interval", "Repeat on interval"),
 )
 
 _RULE_COLUMNS = ("Operator", "Value", "Value 2", "State", "Color", "Label")
@@ -145,6 +165,7 @@ class ControlPanelEntryDialog(QDialog):
         self._preview_ready = False
         self.preview_tile: TileFrame | None = None
         original = self._original
+        readback_initial = self._initial_readback_spec(original)
 
         # --- identity -------------------------------------------------
         self.label_input = QLineEdit(original.label, self)
@@ -373,6 +394,61 @@ class ControlPanelEntryDialog(QDialog):
         enum_extras_form.addRow("Indicator follows", self.enum_watch_combo)
         enum_extras_form.addRow("", self.enum_confirm_check)
         enum_layout.addLayout(enum_extras_form)
+        self._enum_extras_form = enum_extras_form
+
+        # --- readback (shared by all writing tiles) -----------------------
+        self.readback_source_combo = ChevronComboBox(self)
+        for source, label in READBACK_SOURCE_LABELS:
+            self.readback_source_combo.addItem(label, source)
+        self._select_data(self.readback_source_combo, readback_initial.source)
+
+        self.readback_watch_combo = ChevronComboBox(self)
+        self.readback_watch_combo.addItem("Select a tile", "")
+        readback_watch_listed = False
+        for watch_id, watch_label in self._context.watch_candidates:
+            self.readback_watch_combo.addItem(watch_label, watch_id)
+            if watch_id == readback_initial.watch_entry_id:
+                readback_watch_listed = True
+        if readback_initial.watch_entry_id and not readback_watch_listed:
+            self.readback_watch_combo.addItem(
+                f"{readback_initial.watch_entry_id} (missing)",
+                readback_initial.watch_entry_id,
+            )
+        self._select_data(self.readback_watch_combo, readback_initial.watch_entry_id)
+
+        self.readback_command_input = QLineEdit(readback_initial.command, self)
+        self.readback_command_input.setPlaceholderText("MEAS:VOLT? ג€” sent after the write")
+
+        self.readback_mode_combo = ChevronComboBox(self)
+        for mode, label in READBACK_MODE_LABELS:
+            self.readback_mode_combo.addItem(label, mode)
+        self._select_data(self.readback_mode_combo, readback_initial.mode)
+
+        self.readback_delay_spin = QSpinBox(self)
+        self.readback_delay_spin.setRange(MIN_READBACK_DELAY_MS, MAX_READBACK_DELAY_MS)
+        self.readback_delay_spin.setValue(readback_initial.delay_ms)
+        self.readback_delay_spin.setSuffix(" ms")
+        self.readback_interval_spin = QSpinBox(self)
+        self.readback_interval_spin.setRange(
+            MIN_READBACK_INTERVAL_MS, MAX_READBACK_INTERVAL_MS
+        )
+        self.readback_interval_spin.setValue(readback_initial.interval_ms)
+        self.readback_interval_spin.setSuffix(" ms")
+        self.readback_timeout_spin = QSpinBox(self)
+        self.readback_timeout_spin.setRange(MIN_POLL_TIMEOUT_MS, MAX_POLL_TIMEOUT_MS)
+        self.readback_timeout_spin.setValue(readback_initial.timeout_ms)
+        self.readback_timeout_spin.setSuffix(" ms")
+
+        self.readback_box = QGroupBox("Readback", self)
+        readback_form = QFormLayout(self.readback_box)
+        readback_form.addRow("Source", self.readback_source_combo)
+        readback_form.addRow("Follow tile", self.readback_watch_combo)
+        readback_form.addRow("Command", self.readback_command_input)
+        readback_form.addRow("Mode", self.readback_mode_combo)
+        readback_form.addRow("After-send delay", self.readback_delay_spin)
+        readback_form.addRow("Repeat every", self.readback_interval_spin)
+        readback_form.addRow("Timeout", self.readback_timeout_spin)
+        self._readback_form = readback_form
 
         # --- bits / register (v3): one row per labeled bit -----------------
         self.bits_table = QTableWidget(0, 4, self)
@@ -419,19 +495,30 @@ class ControlPanelEntryDialog(QDialog):
         bits_layout.addLayout(bits_buttons)
         bits_layout.addWidget(bits_hint)
 
+        parse_initial = (
+            readback_initial.parse
+            if readback_initial.source == "command"
+            else original.parse
+        )
+        rules_initial = (
+            readback_initial.rules
+            if readback_initial.source == "command"
+            else original.rules
+        )
+
         # --- parse rule ---------------------------------------------------
         self.parse_kind_combo = ChevronComboBox(self)
         for kind, label in PARSE_KIND_LABELS:
             self.parse_kind_combo.addItem(label, kind)
-        self._select_data(self.parse_kind_combo, original.parse.kind)
-        self.pattern_input = QLineEdit(original.parse.pattern, self)
+        self._select_data(self.parse_kind_combo, parse_initial.kind)
+        self.pattern_input = QLineEdit(parse_initial.pattern, self)
         self.pattern_input.setPlaceholderText(r"e.g. ^V=([\d.]+)")
-        self.group_input = QLineEdit(str(original.parse.group), self)
+        self.group_input = QLineEdit(str(parse_initial.group), self)
         self.group_input.setPlaceholderText("Capture group index or name (0 = whole match)")
         self.value_type_combo = ChevronComboBox(self)
         for value_type, label in VALUE_TYPE_LABELS:
             self.value_type_combo.addItem(label, value_type)
-        self._select_data(self.value_type_combo, original.parse.value_type)
+        self._select_data(self.value_type_combo, parse_initial.value_type)
 
         parse_form = QFormLayout()
         parse_form.addRow("Parse", self.parse_kind_combo)
@@ -467,7 +554,7 @@ class ControlPanelEntryDialog(QDialog):
         self.rules_table.setFixedHeight(104)
         for column, width in ((0, 96), (1, 80), (2, 80), (3, 84), (4, 88)):
             self.rules_table.setColumnWidth(column, width)
-        for rule in original.rules:
+        for rule in rules_initial:
             self._append_rule_row(rule)
 
         add_rule = QPushButton("Add", self)
@@ -515,6 +602,7 @@ class ControlPanelEntryDialog(QDialog):
         general_layout.addWidget(self.control_box)
         general_layout.addWidget(self.setpoint_box)
         general_layout.addWidget(self.enum_box)
+        general_layout.addWidget(self.readback_box)
         general_layout.addWidget(self.bits_box)
         general_layout.addStretch(1)
 
@@ -540,9 +628,12 @@ class ControlPanelEntryDialog(QDialog):
         response_layout.addStretch(1)
 
         self.tabs = QTabWidget(self)
-        self.GENERAL_TAB = self.tabs.addTab(general_page, "General")
-        self.POLLING_TAB = self.tabs.addTab(polling_page, "Polling")
-        self.RESPONSE_TAB = self.tabs.addTab(response_page, "Response && Rules")
+        self.GENERAL_TAB = self.tabs.addTab(self._scroll_tab_page(general_page), "General")
+        self.POLLING_TAB = self.tabs.addTab(self._scroll_tab_page(polling_page), "Polling")
+        self.RESPONSE_TAB = self.tabs.addTab(
+            self._scroll_tab_page(response_page), "Response && Rules"
+        )
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self._general_form = general_form
         self._polling_form = polling_form
@@ -580,6 +671,8 @@ class ControlPanelEntryDialog(QDialog):
         layout.addWidget(self.tabs, 1)
         layout.addWidget(self.error_label)
         layout.addWidget(buttons)
+        initial_width, initial_height = self._initial_dialog_size()
+        self.resize(initial_width, initial_height)
 
         for signal in (
             self.parse_kind_combo.currentIndexChanged,
@@ -592,13 +685,22 @@ class ControlPanelEntryDialog(QDialog):
         self._refresh_parse_field_enablement()
         self.parse_kind_combo.currentIndexChanged.connect(self._refresh_parse_field_enablement)
         self.tile_kind_combo.currentIndexChanged.connect(self._refresh_shape)
+        self.readback_source_combo.currentIndexChanged.connect(self._refresh_readback_enablement)
+        self.readback_source_combo.currentIndexChanged.connect(self._refresh_shape)
+        self.readback_mode_combo.currentIndexChanged.connect(self._refresh_readback_enablement)
         # Everything the preview tile reflects funnels into one refresh.
         for line_edit in (self.label_input, self.unit_input, self.expression_input):
             line_edit.textChanged.connect(self._refresh_preview)
         self.command_input.textChanged.connect(self._refresh_preview)
+        self.readback_command_input.textChanged.connect(self._refresh_preview)
         self.span_combo.currentIndexChanged.connect(self._refresh_preview)
         self.enabled_check.toggled.connect(self._refresh_preview)
         self.control_mode_combo.currentIndexChanged.connect(self._refresh_preview)
+        self.readback_watch_combo.currentIndexChanged.connect(self._refresh_preview)
+        self.readback_mode_combo.currentIndexChanged.connect(self._refresh_preview)
+        self.readback_delay_spin.valueChanged.connect(lambda *_: self._refresh_preview())
+        self.readback_interval_spin.valueChanged.connect(lambda *_: self._refresh_preview())
+        self.readback_timeout_spin.valueChanged.connect(lambda *_: self._refresh_preview())
         self.rules_table.cellChanged.connect(lambda *_: self._refresh_preview())
         # v3 setpoint fields all feed the preview tile.
         for spin in (
@@ -615,6 +717,7 @@ class ControlPanelEntryDialog(QDialog):
         self.bits_table.cellChanged.connect(lambda *_: self._refresh_preview())
         self._preview_ready = True
         self._refresh_schedule_enablement()
+        self._refresh_readback_enablement()
         self._refresh_control_enablement()
         self._refresh_shape()
         self._refresh_tester()
@@ -630,6 +733,42 @@ class ControlPanelEntryDialog(QDialog):
                 combo.setCurrentIndex(index)
                 return
 
+    @staticmethod
+    def _scroll_tab_page(page: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        scroll.setMinimumHeight(220)
+        scroll.setWidget(page)
+        return scroll
+
+    @staticmethod
+    def _initial_dialog_size() -> tuple[int, int]:
+        width = 700
+        height = 720
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return width, height
+        available = screen.availableGeometry()
+        width = max(620, min(width, available.width() - 64))
+        height = max(420, min(height, available.height() - 96))
+        return width, height
+
+    @staticmethod
+    def _initial_readback_spec(entry: ControlPanelEntry) -> ReadbackSpec:
+        if not entry.readback.is_default():
+            return entry.readback
+        if entry.is_control() and entry.control.watch_entry_id:
+            return ReadbackSpec(source="entry", watch_entry_id=entry.control.watch_entry_id)
+        if entry.is_setpoint() and entry.setpoint.watch_entry_id:
+            return ReadbackSpec(source="entry", watch_entry_id=entry.setpoint.watch_entry_id)
+        if entry.is_enum() and entry.enum_spec.watch_entry_id:
+            return ReadbackSpec(source="entry", watch_entry_id=entry.enum_spec.watch_entry_id)
+        return ReadbackSpec()
+
     def _refresh_parse_field_enablement(self) -> None:
         is_regex = self.parse_kind_combo.currentData() == "regex"
         self.pattern_input.setEnabled(is_regex)
@@ -640,6 +779,19 @@ class ControlPanelEntryDialog(QDialog):
         is_interval = self.poll_mode_combo.currentData() == "interval"
         self.interval_spin.setEnabled(is_interval)
         self.stale_spin.setEnabled(is_interval)
+
+    def _refresh_readback_enablement(self) -> None:
+        source = str(self.readback_source_combo.currentData() or "none")
+        mode = str(self.readback_mode_combo.currentData() or "once")
+        self._readback_form.setRowVisible(self.readback_watch_combo, source == "entry")
+        self._readback_form.setRowVisible(self.readback_command_input, source == "command")
+        self._readback_form.setRowVisible(self.readback_mode_combo, source != "none")
+        self._readback_form.setRowVisible(self.readback_delay_spin, source != "none")
+        self._readback_form.setRowVisible(
+            self.readback_interval_spin, source != "none" and mode == "interval"
+        )
+        self._readback_form.setRowVisible(self.readback_timeout_spin, source == "command")
+        self._refresh_preview()
 
     def _current_shape(self) -> str:
         """Which of the six entry shapes the dialog is editing: control
@@ -679,6 +831,8 @@ class ControlPanelEntryDialog(QDialog):
         is_enum = shape == "enum"
         is_bits = shape == "bits"
         is_writable = is_control or is_setpoint or is_enum
+        readback_source = str(self.readback_source_combo.currentData() or "none")
+        has_command_readback = is_writable and readback_source == "command"
         # Bits tiles are polled (they read a register) — keep the poll-side
         # form rows visible, but expose the bits table on the General tab
         # instead of the color-rules section (which doesn't apply).
@@ -689,18 +843,21 @@ class ControlPanelEntryDialog(QDialog):
             self._set_row_visible(field_widget, is_poll_or_bits)
         for field_widget in self._send_fields:
             self._set_row_visible(field_widget, not is_derived)
-        self._parse_box.setVisible(is_poll_or_bits)
-        self._rules_box.setVisible(not is_writable and not is_bits)
+        self._parse_box.setVisible(is_poll_or_bits or has_command_readback)
+        self._rules_box.setVisible((not is_writable and not is_bits) or has_command_readback)
         self.control_box.setVisible(is_control)
         self.setpoint_box.setVisible(is_setpoint)
         self.enum_box.setVisible(is_enum)
+        self.readback_box.setVisible(is_writable)
         self.bits_box.setVisible(is_bits)
+        self._setpoint_form.setRowVisible(self.setpoint_watch_combo, False)
+        self._enum_extras_form.setRowVisible(self.enum_watch_combo, False)
         # Pages with nothing left to offer disappear entirely. Bits
         # entries are polled, so both polling/response tabs stay open
         # (only the color-rules section inside Response is hidden,
         # because each bit carries its own state).
         self.tabs.setTabVisible(self.POLLING_TAB, not is_derived)
-        self.tabs.setTabVisible(self.RESPONSE_TAB, not is_writable)
+        self.tabs.setTabVisible(self.RESPONSE_TAB, not is_writable or has_command_readback)
         if not self.tabs.isTabVisible(self.tabs.currentIndex()):
             self.tabs.setCurrentIndex(self.GENERAL_TAB)
         if is_control:
@@ -718,13 +875,14 @@ class ControlPanelEntryDialog(QDialog):
         self.enabled_check.setText(caption)
         if is_derived:
             self._refresh_expression_hint()
+        self._refresh_readback_enablement()
         self._refresh_preview()
 
     def _refresh_control_enablement(self) -> None:
         # OFF command and the watch entry only exist for toggles (FR-59).
         is_toggle = self.control_mode_combo.currentData() == "toggle"
         self._control_form.setRowVisible(self.off_command_input, is_toggle)
-        self._control_form.setRowVisible(self.watch_combo, is_toggle)
+        self._control_form.setRowVisible(self.watch_combo, False)
 
     # ------------------------------------------------------------- preview
 
@@ -1122,6 +1280,33 @@ class ControlPanelEntryDialog(QDialog):
         is_setpoint = shape == "setpoint"
         is_enum = shape == "enum"
         is_writable = is_control or is_setpoint or is_enum
+        readback_source = (
+            str(self.readback_source_combo.currentData() or "none")
+            if is_writable
+            else "none"
+        )
+        if readback_source == "entry":
+            readback = ReadbackSpec(
+                source="entry",
+                watch_entry_id=str(self.readback_watch_combo.currentData() or ""),
+                mode=str(self.readback_mode_combo.currentData() or "once"),
+                delay_ms=int(self.readback_delay_spin.value()),
+                interval_ms=int(self.readback_interval_spin.value()),
+                timeout_ms=int(self.readback_timeout_spin.value()),
+            )
+        elif readback_source == "command":
+            readback = ReadbackSpec(
+                source="command",
+                command=self.readback_command_input.text().strip(),
+                mode=str(self.readback_mode_combo.currentData() or "once"),
+                delay_ms=int(self.readback_delay_spin.value()),
+                interval_ms=int(self.readback_interval_spin.value()),
+                timeout_ms=int(self.readback_timeout_spin.value()),
+                parse=self._parse_rule_from_fields(),
+                rules=self._rules_from_table(),
+            )
+        else:
+            readback = ReadbackSpec()
         # Fields the current shape does not use are cleared: that keeps
         # the serialized form sparse and display_label() sensible
         # (FR-59/FR-61/FR-63); each writing kind carries its own spec.
@@ -1133,7 +1318,7 @@ class ControlPanelEntryDialog(QDialog):
                 on_command=self.on_command_input.text().strip(),
                 off_command=self.off_command_input.text().strip() if is_toggle else "",
                 confirm=self.confirm_check.isChecked(),
-                watch_entry_id=str(self.watch_combo.currentData() or "") if is_toggle else "",
+                watch_entry_id="",
             )
         else:
             control = ControlSpec()
@@ -1145,7 +1330,7 @@ class ControlPanelEntryDialog(QDialog):
                 decimals=int(self.setpoint_decimals_spin.value()),
                 unit=self.setpoint_unit_input.text().strip(),
                 command_template=self.setpoint_template_input.text().strip(),
-                watch_entry_id=str(self.setpoint_watch_combo.currentData() or ""),
+                watch_entry_id="",
                 confirm=self.setpoint_confirm_check.isChecked(),
             )
         else:
@@ -1153,7 +1338,7 @@ class ControlPanelEntryDialog(QDialog):
         if is_enum:
             enum_spec = EnumSpec(
                 options=self._enum_options_from_table(),
-                watch_entry_id=str(self.enum_watch_combo.currentData() or ""),
+                watch_entry_id="",
                 confirm=self.enum_confirm_check.isChecked(),
             )
         else:
@@ -1195,6 +1380,7 @@ class ControlPanelEntryDialog(QDialog):
             setpoint=setpoint,
             enum_spec=enum_spec,
             bits_spec=bits_spec,
+            readback=readback,
             created_at=original.created_at or utc_now_iso(),
             updated_at=utc_now_iso(),
         )

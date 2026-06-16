@@ -145,6 +145,39 @@ class PollResult:
 
 
 @dataclass(slots=True)
+class ReadbackRequest:
+    """A readback transaction for a writing tile.
+
+    The entry may be a real polled entry ("follow another tile") or a
+    synthetic readback entry built from the writing tile's own readback
+    command. owner_entry_id is the writing tile that requested it.
+    """
+
+    control_panel_id: str
+    owner_entry_id: str
+    entry: ControlPanelEntry
+    compiled: CompiledParseRule
+    result_queue: Queue["ReadbackResult"]
+    delay_ms: int = 0
+    submitted_at: float = 0.0
+
+
+@dataclass(slots=True)
+class ReadbackResult:
+    """Outcome of one readback transaction."""
+
+    control_panel_id: str
+    owner_entry_id: str
+    entry_id: str
+    status: str
+    outcome: ParseOutcome | None = None
+    raw_window: str = ""
+    error: str = ""
+    started_at: float = 0.0
+    finished_at: float = 0.0
+
+
+@dataclass(slots=True)
 class ControlRequest:
     """A control-tile send (v2, FR-60): fire the command, no RX window.
 
@@ -157,6 +190,7 @@ class ControlRequest:
     command: str
     send_mode: str = "Text"
     line_ending_override: str = ""
+    readback: ReadbackRequest | None = None
     result_queue: Queue = None  # type: ignore[assignment]  # tab's shared queue
     submitted_at: float = 0.0
 
@@ -324,7 +358,9 @@ class SessionPollDispatcher:
     def __init__(self, *, transport, clock: Clock = time.monotonic) -> None:
         self._transport = transport
         self._clock = clock
-        self._requests: Queue[PollRequest | ControlRequest] = Queue(maxsize=REQUEST_QUEUE_LIMIT)
+        self._requests: Queue[PollRequest | ReadbackRequest | ControlRequest] = Queue(
+            maxsize=REQUEST_QUEUE_LIMIT
+        )
         self._rx_queue: Queue[SerialEvent] | None = None
         self._thread: Thread | None = None
         self._stop_event = Event()
@@ -359,7 +395,13 @@ class SessionPollDispatcher:
         never interleave with this session's control_panel traffic."""
         return self._enqueue(request)
 
-    def _enqueue(self, request: "PollRequest | ControlRequest") -> bool:
+    def submit_readback(self, request: ReadbackRequest) -> bool:
+        """Queue a readback transaction. Used for connect-time and periodic
+        readbacks; post-write readbacks can be attached to ControlRequest
+        to keep them adjacent to the write."""
+        return self._enqueue(request)
+
+    def _enqueue(self, request: "PollRequest | ReadbackRequest | ControlRequest") -> bool:
         if not self.is_running or self._stop_event.is_set():
             return False
         request.submitted_at = self._clock()
@@ -404,7 +446,7 @@ class SessionPollDispatcher:
                 return
             self._answer_cancelled(request)
 
-    def _answer_cancelled(self, request: "PollRequest | ControlRequest") -> None:
+    def _answer_cancelled(self, request: "PollRequest | ReadbackRequest | ControlRequest") -> None:
         now = self._clock()
         if isinstance(request, ControlRequest):
             request.result_queue.put(
@@ -412,6 +454,18 @@ class SessionPollDispatcher:
                     control_panel_id=request.control_panel_id,
                     entry_id=request.entry_id,
                     status=POLL_CANCELLED,
+                    finished_at=now,
+                )
+            )
+            return
+        if isinstance(request, ReadbackRequest):
+            request.result_queue.put(
+                ReadbackResult(
+                    control_panel_id=request.control_panel_id,
+                    owner_entry_id=request.owner_entry_id,
+                    entry_id=request.entry.id,
+                    status=POLL_CANCELLED,
+                    started_at=now,
                     finished_at=now,
                 )
             )
@@ -440,44 +494,109 @@ class SessionPollDispatcher:
                 self._answer_cancelled(request)
                 continue
             if isinstance(request, ControlRequest):
-                request.result_queue.put(self._execute_control(request))
+                request.result_queue.put(self._execute_control(request, rx_queue))
+                continue
+            if isinstance(request, ReadbackRequest):
+                request.result_queue.put(self._execute_readback(request, rx_queue))
                 continue
             result = self._execute_transaction(request, rx_queue)
             request.result_queue.put(result)
 
-    def _execute_control(self, request: ControlRequest) -> ControlResult:
+    def _execute_control(
+        self, request: ControlRequest, rx_queue: Queue[SerialEvent] | None = None
+    ) -> ControlResult:
         """Fire one control command: send only, no RX collection. The
         journal window covers the send so the device's ack/echo stays out
         of the bound terminal's transcript (FR-60)."""
         self.traffic_journal.open_window()
         try:
-            try:
-                if request.send_mode == "Hex Bytes":
-                    self._transport.send_bytes(
-                        parse_hex_payload(request.command), source=CONTROL_PANEL_TX_SOURCE
-                    )
-                else:
-                    self._transport.send_text(
-                        request.command,
-                        request.line_ending_override or None,
-                        source=CONTROL_PANEL_TX_SOURCE,
-                    )
-            except Exception as exc:
-                return ControlResult(
-                    control_panel_id=request.control_panel_id,
-                    entry_id=request.entry_id,
-                    status=POLL_SEND_ERROR,
-                    error=str(exc),
-                    finished_at=self._clock(),
+            if request.send_mode == "Hex Bytes":
+                self._transport.send_bytes(
+                    parse_hex_payload(request.command), source=CONTROL_PANEL_TX_SOURCE
                 )
+            else:
+                self._transport.send_text(
+                    request.command,
+                    request.line_ending_override or None,
+                    source=CONTROL_PANEL_TX_SOURCE,
+                )
+        except Exception as exc:
             return ControlResult(
                 control_panel_id=request.control_panel_id,
                 entry_id=request.entry_id,
-                status=POLL_OK,
+                status=POLL_SEND_ERROR,
+                error=str(exc),
                 finished_at=self._clock(),
             )
         finally:
             self.traffic_journal.close_window()
+        result = ControlResult(
+            control_panel_id=request.control_panel_id,
+            entry_id=request.entry_id,
+            status=POLL_OK,
+            finished_at=self._clock(),
+        )
+        readback = request.readback
+        if readback is not None and rx_queue is not None:
+            if self._wait_delay(readback.delay_ms):
+                request.result_queue.put(
+                    self._execute_readback(readback, rx_queue, already_delayed=True)
+                )
+            else:
+                now = self._clock()
+                request.result_queue.put(
+                    ReadbackResult(
+                        control_panel_id=readback.control_panel_id,
+                        owner_entry_id=readback.owner_entry_id,
+                        entry_id=readback.entry.id,
+                        status=POLL_CANCELLED,
+                        started_at=now,
+                        finished_at=now,
+                    )
+                )
+        return result
+
+    def _wait_delay(self, delay_ms: int) -> bool:
+        """Sleep for a readback delay, waking early if the worker stops."""
+        if delay_ms <= 0:
+            return not self._stop_event.is_set()
+        deadline = self._clock() + delay_ms / 1000
+        while not self._stop_event.is_set():
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                return True
+            time.sleep(min(remaining, RX_POLL_CHUNK_S))
+        return False
+
+    def _execute_readback(
+        self,
+        request: ReadbackRequest,
+        rx_queue: Queue[SerialEvent],
+        *,
+        already_delayed: bool = False,
+    ) -> ReadbackResult:
+        if not already_delayed and not self._wait_delay(request.delay_ms):
+            now = self._clock()
+            return ReadbackResult(
+                control_panel_id=request.control_panel_id,
+                owner_entry_id=request.owner_entry_id,
+                entry_id=request.entry.id,
+                status=POLL_CANCELLED,
+                started_at=now,
+                finished_at=now,
+            )
+        result = self._execute_transaction(request, rx_queue)
+        return ReadbackResult(
+            control_panel_id=result.control_panel_id,
+            owner_entry_id=request.owner_entry_id,
+            entry_id=result.entry_id,
+            status=result.status,
+            outcome=result.outcome,
+            raw_window=result.raw_window,
+            error=result.error,
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+        )
 
     @staticmethod
     def _drain(rx_queue: Queue[SerialEvent]) -> None:
@@ -488,7 +607,7 @@ class SessionPollDispatcher:
                 return
 
     def _execute_transaction(
-        self, request: PollRequest, rx_queue: Queue[SerialEvent]
+        self, request: PollRequest | ReadbackRequest, rx_queue: Queue[SerialEvent]
     ) -> PollResult:
         """One poll: discard stale RX, send, collect RX until the parse
         rule decides or the entry timeout elapses. Factored out of the

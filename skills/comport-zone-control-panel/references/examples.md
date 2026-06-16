@@ -95,9 +95,9 @@ Adds setpoints, an output toggle, and an OVP fault LED. Mirrors what most lab su
         "setpoint": {
           "min_value": 0.0, "max_value": 30.0, "step": 0.01,
           "decimals": 2, "unit": "V",
-          "command_template": "VOLT {value}",
-          "watch_entry_id": "v-meas"
-        }
+          "command_template": "VOLT {value}"
+        },
+        "readback": {"source": "entry", "watch_entry_id": "v-meas"}
       },
       {
         "id": "i-set", "label": "Set current limit",
@@ -105,18 +105,18 @@ Adds setpoints, an output toggle, and an OVP fault LED. Mirrors what most lab su
         "setpoint": {
           "min_value": 0.0, "max_value": 5.0, "step": 0.001,
           "decimals": 3, "unit": "A",
-          "command_template": "CURR {value}",
-          "watch_entry_id": "i-meas"
-        }
+          "command_template": "CURR {value}"
+        },
+        "readback": {"source": "entry", "watch_entry_id": "i-meas"}
       },
       {
         "id": "output", "label": "Output",
         "tile": {"col": 0, "row": 3, "span_w": 4, "span_h": 1, "kind": "control"},
         "control": {
           "mode": "toggle",
-          "on_command": "OUTP ON", "off_command": "OUTP OFF",
-          "watch_entry_id": "mode"
-        }
+          "on_command": "OUTP ON", "off_command": "OUTP OFF"
+        },
+        "readback": {"source": "entry", "watch_entry_id": "mode"}
       },
       {
         "id": "clear", "label": "Clear faults",
@@ -128,7 +128,7 @@ Adds setpoints, an output toggle, and an OVP fault LED. Mirrors what most lab su
 }
 ```
 
-Notice the toggle watches the LED (`watch_entry_id: "mode"`) so the button color tracks the actual output state, even when somebody turns the supply on from the front panel.
+Notice the toggle readback follows the LED (`readback.watch_entry_id: "mode"`) so the button color tracks the actual output state, even when somebody turns the supply on from the front panel.
 
 ## 3 — SCPI bench: status registers + derived power
 
@@ -172,9 +172,9 @@ Full set, including a derived `value` tile and two `bits` registers. This is the
         "setpoint": {
           "min_value": 0, "max_value": 60, "step": 0.01,
           "decimals": 2, "unit": "V",
-          "command_template": "VOLT {value}",
-          "watch_entry_id": "voltage"
-        }
+          "command_template": "VOLT {value}"
+        },
+        "readback": {"source": "entry", "watch_entry_id": "voltage"}
       },
       {
         "id": "i-set", "label": "Set I",
@@ -182,14 +182,20 @@ Full set, including a derived `value` tile and two `bits` registers. This is the
         "setpoint": {
           "min_value": 0, "max_value": 10, "step": 0.001,
           "decimals": 3, "unit": "A",
-          "command_template": "CURR {value}",
-          "watch_entry_id": "current"
-        }
+          "command_template": "CURR {value}"
+        },
+        "readback": {"source": "entry", "watch_entry_id": "current"}
       },
       {
         "id": "output", "label": "Output",
         "tile": {"col": 0, "row": 4, "span_w": 4, "span_h": 1, "kind": "control"},
-        "control": {"mode": "toggle", "on_command": "OUTP ON", "off_command": "OUTP OFF"}
+        "control": {"mode": "toggle", "on_command": "OUTP ON", "off_command": "OUTP OFF"},
+        "readback": {
+          "source": "command",
+          "command": "OUTP?",
+          "parse": {"kind": "line", "value_type": "number"},
+          "rules": [{"op": "eq_num", "operand": "1", "state": "ok", "label": "ON"}]
+        }
       },
       {
         "id": "clear", "label": "Clear faults",
@@ -238,5 +244,5 @@ The `power` tile is **derived** — no command, no poll. Whenever `Voltage` or `
 
 - **Polled-text + rules → LED**. If the device reports state as a string, model it as a `value` or `led` tile with `value_type: "text"` and `contains` rules. Don't try to convert the string to a number first.
 - **OVP / fault summary** as a single LED tile with one rule `gt 0 → fail` is enough for many panels; reach for `bits` when the operator needs to see *which* bit triggered.
-- **Toggles always watch a polled tile** that knows the real state. Without the watch, the toggle becomes a "fire-and-forget" button that can lie about whether the output is on.
-- **Setpoints always watch their measurement counterpart** when one exists — the readback line makes commanded-vs-measured comparison instant.
+- **Toggles should have readback** from a polled state tile or direct state query. Without readback, the toggle becomes a "fire-and-forget" button that can lie about whether the output is on.
+- **Setpoints should use readback** from their measurement counterpart when one exists — the readback line makes commanded-vs-measured comparison instant.

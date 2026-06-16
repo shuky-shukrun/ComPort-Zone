@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from queue import Empty, Queue
 from typing import Protocol
@@ -58,6 +59,8 @@ from ..control_panel_engine import (
     ControlPanelPollScheduler,
     PollRequest,
     PollResult,
+    ReadbackRequest,
+    ReadbackResult,
     SessionPollDispatcher,
 )
 from ..control_panel_expr import (
@@ -82,6 +85,7 @@ from ..control_panel_models import (
     ControlPanelConfig,
     ControlPanelEntry,
     ControlPanelTabState,
+    ReadbackSpec,
     grid_row_count,
     normalize_layout,
 )
@@ -176,7 +180,7 @@ class ControlPanelTabWidget(QWidget):
         self.coordinator = coordinator
         self._clock = clock
         self.scheduler = ControlPanelPollScheduler(clock=clock)
-        self.result_queue: Queue[PollResult] = Queue()
+        self.result_queue: Queue[PollResult | ReadbackResult | ControlResult] = Queue()
         # v2 multi-session topology (FR-54..56): the control_panel's default
         # binding plus per-entry overrides each hold a shared, refcounted
         # dispatcher; health is gated per session at submit time.
@@ -188,6 +192,9 @@ class ControlPanelTabWidget(QWidget):
         self._entry_session: dict[str, int | None] = {}
         self._has_entry_overrides = False
         self._compiled: dict[str, CompiledParseRule] = {}
+        self._compiled_readbacks: dict[str, CompiledParseRule] = {}
+        self._readback_due: dict[str, float] = {}
+        self._readback_in_flight: set[str] = set()
         # v2 derived tiles (FR-61): compiled expressions, reverse dependency
         # map (input entry id -> derived entry ids) and the latest numeric
         # value per polled entry feeding them.
@@ -683,6 +690,135 @@ class ControlPanelTabWidget(QWidget):
                 continue
             if self.scheduler.trigger_now(entry.id, delay_s=index * 0.025):
                 index += 1
+        self._trigger_readbacks_on_connect(session_id, start_index=index)
+
+    # ------------------------------------------------------------- readback
+
+    def _readback_spec_for(self, entry: ControlPanelEntry) -> ReadbackSpec:
+        """Return the shared readback spec, with temporary support for the
+        older per-kind watch fields used by existing unreleased examples."""
+        if not entry.readback.is_default():
+            return entry.readback
+        if entry.is_control() and entry.control.watch_entry_id:
+            return ReadbackSpec(source="entry", watch_entry_id=entry.control.watch_entry_id)
+        if entry.is_setpoint() and entry.setpoint.watch_entry_id:
+            return ReadbackSpec(source="entry", watch_entry_id=entry.setpoint.watch_entry_id)
+        if entry.is_enum() and entry.enum_spec.watch_entry_id:
+            return ReadbackSpec(source="entry", watch_entry_id=entry.enum_spec.watch_entry_id)
+        return ReadbackSpec()
+
+    def _readback_unit_for(self, entry: ControlPanelEntry) -> str:
+        if entry.is_setpoint():
+            return entry.setpoint.unit
+        return entry.unit
+
+    def _direct_readback_entry(
+        self, entry: ControlPanelEntry, readback: ReadbackSpec
+    ) -> ControlPanelEntry:
+        """Build a poll-shaped entry for a writing tile's own readback
+        command. It is never persisted; the dispatcher only needs the
+        command, parse, send settings, timeout, and display unit."""
+        return replace(
+            entry,
+            command=readback.command,
+            timeout_ms=readback.timeout_ms,
+            parse=readback.parse,
+            rules=list(readback.rules),
+            unit=self._readback_unit_for(entry),
+            source="poll",
+        )
+
+    def _readback_target_session_id(
+        self, owner: ControlPanelEntry, readback: ReadbackSpec
+    ) -> int | None:
+        if readback.source == "entry":
+            return self._entry_session.get(readback.watch_entry_id)
+        if readback.source == "command":
+            return self._entry_session.get(owner.id)
+        return None
+
+    def _build_readback_request(
+        self,
+        owner: ControlPanelEntry,
+        *,
+        delay_ms: int | None = None,
+        required_session_id: int | None = None,
+    ) -> tuple[ReadbackRequest, int] | None:
+        readback = self._readback_spec_for(owner)
+        if readback.source == "none" or not owner.enabled:
+            return None
+        session_id = self._readback_target_session_id(owner, readback)
+        if session_id is None:
+            return None
+        if required_session_id is not None and session_id != required_session_id:
+            return None
+        if readback.source == "entry":
+            target_entry = self.config.entry_by_id(readback.watch_entry_id)
+            if target_entry is None or not target_entry.enabled or target_entry.is_writable():
+                return None
+            compiled = self._compiled.get(target_entry.id)
+            if compiled is None:
+                return None
+            entry_for_request = target_entry
+        else:
+            compiled = self._compiled_readbacks.get(owner.id)
+            if compiled is None:
+                return None
+            entry_for_request = self._direct_readback_entry(owner, readback)
+        request = ReadbackRequest(
+            control_panel_id=self.config.id,
+            owner_entry_id=owner.id,
+            entry=entry_for_request,
+            compiled=compiled,
+            result_queue=self.result_queue,
+            delay_ms=readback.delay_ms if delay_ms is None else delay_ms,
+        )
+        return request, session_id
+
+    def _schedule_readback(self, owner_entry_id: str, *, delay_s: float = 0.0) -> None:
+        due = self._clock() + max(0.0, delay_s)
+        existing = self._readback_due.get(owner_entry_id)
+        if existing is None or due < existing:
+            self._readback_due[owner_entry_id] = due
+
+    def _trigger_readbacks_on_connect(self, session_id: int, *, start_index: int = 0) -> None:
+        index = start_index
+        for entry in self.config.entries:
+            if not entry.enabled or not entry.is_writable():
+                continue
+            readback = self._readback_spec_for(entry)
+            if readback.source == "none":
+                continue
+            if self._readback_target_session_id(entry, readback) != session_id:
+                continue
+            self._schedule_readback(entry.id, delay_s=index * 0.025)
+            index += 1
+
+    def _submit_due_readbacks(self) -> None:
+        if not self._dispatchers or not self._readback_due:
+            return
+        now = self._clock()
+        for owner_id, due in list(self._readback_due.items()):
+            if due > now or owner_id in self._readback_in_flight:
+                continue
+            owner = self.config.entry_by_id(owner_id)
+            if owner is None or not owner.enabled:
+                self._readback_due.pop(owner_id, None)
+                continue
+            built = self._build_readback_request(owner, delay_ms=0)
+            if built is None:
+                self._readback_due.pop(owner_id, None)
+                continue
+            request, session_id = built
+            gate = self._gates.get(session_id)
+            if gate is None or not gate.connected or gate.batch_running:
+                continue
+            dispatcher = self._dispatchers.get(session_id)
+            if dispatcher is None:
+                continue
+            if dispatcher.submit_readback(request):
+                self._readback_in_flight.add(owner_id)
+                self._readback_due.pop(owner_id, None)
 
     def poll_now(self, entry_id: str) -> bool:
         """Manual one-shot poll for any pollable entry (FR-53)."""
@@ -1031,17 +1167,26 @@ class ControlPanelTabWidget(QWidget):
             return False
         if confirm and not self._confirm_control(label, command):
             return False
+        readback_built = self._build_readback_request(entry, required_session_id=session_id)
+        readback_request = readback_built[0] if readback_built is not None else None
         request = ControlRequest(
             control_panel_id=self.config.id,
             entry_id=entry_id,
             command=command,
             send_mode=entry.send_mode,
             line_ending_override=entry.line_ending_override,
+            readback=readback_request,
             result_queue=self.result_queue,
         )
         if not dispatcher.submit_control(request):
             self.coordinator.notify(f"{label}: could not queue the command.")
             return False
+        if readback_request is not None:
+            self._readback_in_flight.add(entry_id)
+        else:
+            readback = self._readback_spec_for(entry)
+            if readback.source != "none":
+                self._schedule_readback(entry_id, delay_s=readback.delay_ms / 1000)
         if intent is not None:
             self._control_intent[entry_id] = intent
         self._control_sent_command[entry_id] = command
@@ -1056,7 +1201,8 @@ class ControlPanelTabWidget(QWidget):
     def _control_is_on(self, entry: ControlPanelEntry) -> bool:
         """A toggle's current state: the watch entry's verdict when one is
         set ("ok" means ON), else the tile's optimistic state."""
-        watch_id = entry.control.watch_entry_id
+        readback = self._readback_spec_for(entry)
+        watch_id = readback.watch_entry_id if readback.source == "entry" else ""
         if watch_id:
             runtime = self._runtimes.get(watch_id)
             return bool(runtime is not None and runtime.state == "ok")
@@ -1084,6 +1230,8 @@ class ControlPanelTabWidget(QWidget):
             tile.set_pending(False)
         intent = self._control_intent.pop(result.entry_id, None)
         sent_command = self._control_sent_command.pop(result.entry_id, "")
+        if result.status != POLL_OK:
+            self._readback_in_flight.discard(result.entry_id)
         if entry is None:
             return
         runtime = self._runtimes.setdefault(
@@ -1093,12 +1241,14 @@ class ControlPanelTabWidget(QWidget):
         runtime.timestamp_text = datetime.now().strftime("%H:%M:%S")
         if result.status == POLL_OK:
             runtime.last_success_at = self._clock()
-            runtime.state = "neutral"
-            runtime.state_caption = ""
-            runtime.tooltip = "Command sent."
+            has_readback = self._readback_spec_for(entry).source != "none"
+            if not has_readback:
+                runtime.state = "neutral"
+                runtime.state_caption = ""
+                runtime.tooltip = "Command sent."
             if (
                 entry.control.mode == "toggle"
-                and not entry.control.watch_entry_id
+                and self._readback_spec_for(entry).source == "none"
                 and intent is not None
                 and isinstance(tile, ControlTileWidget)
             ):
@@ -1321,6 +1471,7 @@ class ControlPanelTabWidget(QWidget):
         if self._tick_count % STALENESS_SWEEP_EVERY_TICKS == 0:
             self._sweep_staleness()
         self._submit_due()
+        self._submit_due_readbacks()
 
     def _drain_results(self) -> None:
         while True:
@@ -1377,6 +1528,9 @@ class ControlPanelTabWidget(QWidget):
         if isinstance(result, ControlResult):
             self._handle_control_result(result)
             return
+        if isinstance(result, ReadbackResult):
+            self._handle_readback_result(result)
+            return
         if result.status == POLL_CANCELLED:
             self.scheduler.skip(result.entry_id)
             return
@@ -1411,6 +1565,110 @@ class ControlPanelTabWidget(QWidget):
         # Send errors are real alerts (FR-58); timeouts produce "stale"
         # which detect_transition deliberately ignores.
         self._check_alert_transition(entry, prev_state, runtime.state, None)
+
+    def _handle_readback_result(self, result: ReadbackResult) -> None:
+        self._readback_in_flight.discard(result.owner_entry_id)
+        owner = self.config.entry_by_id(result.owner_entry_id)
+        if owner is not None:
+            readback = self._readback_spec_for(owner)
+            if result.status != POLL_CANCELLED and readback.mode == "interval":
+                self._schedule_readback(
+                    result.owner_entry_id,
+                    delay_s=readback.interval_ms / 1000,
+                )
+        if result.status == POLL_CANCELLED:
+            return
+        entry = self.config.entry_by_id(result.entry_id)
+        if (
+            entry is not None
+            and owner is not None
+            and result.entry_id != result.owner_entry_id
+        ):
+            if result.status == POLL_OK and result.outcome is not None:
+                self._apply_outcome(entry, result.outcome, result.raw_window)
+            else:
+                self._apply_readback_failure(entry, result)
+            return
+        if owner is None:
+            return
+        if result.status == POLL_OK and result.outcome is not None:
+            self._apply_direct_readback(owner, result.outcome, result.raw_window)
+        else:
+            self._apply_readback_failure(owner, result)
+
+    def _apply_readback_failure(
+        self, entry: ControlPanelEntry, result: ReadbackResult
+    ) -> None:
+        existing_runtime = self._runtimes.get(entry.id)
+        prev_state = existing_runtime.state if existing_runtime is not None else "neutral"
+        runtime = self._runtimes.setdefault(entry.id, TileRuntime(entry_id=entry.id))
+        runtime.last_result_at = self._clock()
+        runtime.timestamp_text = datetime.now().strftime("%H:%M:%S")
+        if result.status == POLL_TIMEOUT:
+            timeout_ms = (
+                self._readback_spec_for(entry).timeout_ms
+                if entry.is_writable()
+                else entry.timeout_ms
+            )
+            runtime.consecutive_timeouts += 1
+            runtime.state = "stale"
+            runtime.state_caption = TILE_STATE_CAPTIONS["stale"]
+            runtime.color = ""
+            runtime.tooltip = (
+                f"Readback timed out within {timeout_ms} ms "
+                f"({runtime.consecutive_timeouts} timeout(s) in a row).\n"
+                f"RX window: {result.raw_window[-500:]}"
+            )
+        elif result.status == POLL_SEND_ERROR:
+            runtime.state = "error"
+            runtime.state_caption = TILE_STATE_CAPTIONS["error"]
+            runtime.color = ""
+            runtime.tooltip = f"Readback send failed: {result.error}"
+        self._update_tile(entry.id)
+        self._check_alert_transition(entry, prev_state, runtime.state, None)
+
+    def _apply_direct_readback(
+        self,
+        entry: ControlPanelEntry,
+        outcome: ParseOutcome,
+        raw_window: str = "",
+    ) -> None:
+        readback = self._readback_spec_for(entry)
+        prev = self._runtimes.get(entry.id)
+        prev_state = prev.state if prev is not None else "neutral"
+        verdict = evaluate_rules(readback.rules, outcome)
+        runtime = self._runtimes.setdefault(entry.id, TileRuntime(entry_id=entry.id))
+        runtime.value_text = format_tile_value(outcome, self._readback_unit_for(entry))
+        runtime.value_number = outcome.value_number
+        runtime.state = verdict.state
+        runtime.state_caption = verdict.label or TILE_STATE_CAPTIONS.get(verdict.state, "")
+        runtime.color = verdict.color
+        runtime.last_result_at = self._clock()
+        runtime.timestamp_text = datetime.now().strftime("%H:%M:%S")
+        runtime.consecutive_timeouts = 0
+        if outcome.error:
+            runtime.tooltip = f"{outcome.error}\nReadback RX window: {raw_window[-500:]}"
+        else:
+            runtime.tooltip = f"Readback RX window: {raw_window[-500:]}"
+        self._update_tile(entry.id)
+        self._refresh_direct_readback_tile(entry, runtime, raw_value_text=outcome.value_text)
+        self._check_alert_transition(entry, prev_state, runtime.state, outcome)
+
+    def _refresh_direct_readback_tile(
+        self,
+        entry: ControlPanelEntry,
+        runtime: TileRuntime,
+        *,
+        raw_value_text: str,
+    ) -> None:
+        tile = self.grid.tile(entry.id)
+        color = runtime.color or tile_state_color(runtime.state, self._theme)
+        if isinstance(tile, SetpointTileWidget):
+            tile.set_readback(runtime.value_text, runtime.state, color)
+        elif isinstance(tile, EnumTileWidget):
+            tile.update_indicator(raw_value_text)
+        elif isinstance(tile, ControlTileWidget) and entry.control.mode == "toggle":
+            tile.set_on(runtime.state == "ok")
 
     def _apply_outcome(self, entry: ControlPanelEntry, outcome: ParseOutcome, raw_window: str = "") -> None:
         """The shared value sink (poll results AND derived recomputes):
@@ -1506,7 +1764,7 @@ class ControlPanelTabWidget(QWidget):
                 continue
             if runtime.state in ("stale", "error") or not runtime.last_success_at:
                 continue
-            if entry.is_control():
+            if entry.is_writable():
                 continue
             if entry.is_derived():
                 # A derived value is as fresh as its inputs (FR-61).
@@ -1600,12 +1858,26 @@ class ControlPanelTabWidget(QWidget):
         refresh the grid + session topology; called after every config
         mutation."""
         self._compiled = {}
+        self._compiled_readbacks = {}
         self._has_entry_overrides = any(
             entry.target_endpoint for entry in self.config.entries if not entry.is_derived()
         )
         schedulable: list[ControlPanelEntry] = []
         for entry in self.config.entries:
-            if entry.is_control() or entry.is_derived():
+            if entry.is_writable() or entry.is_derived():
+                readback = self._readback_spec_for(entry) if entry.is_writable() else ReadbackSpec()
+                if readback.source == "command":
+                    try:
+                        self._compiled_readbacks[entry.id] = CompiledParseRule.compile(
+                            readback.parse
+                        )
+                    except ValueError as exc:
+                        runtime = self._runtimes.setdefault(
+                            entry.id, TileRuntime(entry_id=entry.id)
+                        )
+                        runtime.state = "error"
+                        runtime.state_caption = TILE_STATE_CAPTIONS["error"]
+                        runtime.tooltip = f"Invalid readback parse rule: {exc}"
                 # Controls send on click (FR-59); derived entries compute
                 # from siblings (FR-61) — neither is ever scheduled.
                 continue
@@ -1621,20 +1893,25 @@ class ControlPanelTabWidget(QWidget):
         self._controls_by_watch = {}
         self._writable_watchers = {}
         for entry in self.config.entries:
-            if entry.is_control() and entry.control.watch_entry_id:
+            readback = self._readback_spec_for(entry) if entry.is_writable() else ReadbackSpec()
+            if (
+                entry.is_control()
+                and readback.source == "entry"
+                and readback.watch_entry_id
+            ):
                 self._controls_by_watch.setdefault(
-                    entry.control.watch_entry_id, []
+                    readback.watch_entry_id, []
                 ).append(entry.id)
             # v3 writable tiles can also watch a polled tile (setpoint
             # readback, enum indicator). Collected here so the funnel
             # fan-out is a single dict lookup (FR-66, FR-70).
-            if entry.is_setpoint() and entry.setpoint.watch_entry_id:
+            if (
+                (entry.is_setpoint() or entry.is_enum())
+                and readback.source == "entry"
+                and readback.watch_entry_id
+            ):
                 self._writable_watchers.setdefault(
-                    entry.setpoint.watch_entry_id, []
-                ).append(entry.id)
-            elif entry.is_enum() and entry.enum_spec.watch_entry_id:
-                self._writable_watchers.setdefault(
-                    entry.enum_spec.watch_entry_id, []
+                    readback.watch_entry_id, []
                 ).append(entry.id)
         for entry_id in list(self._runtimes):
             if self.config.entry_by_id(entry_id) is None:
@@ -1648,6 +1925,11 @@ class ControlPanelTabWidget(QWidget):
         for entry_id in list(self._control_sent_command):
             if self.config.entry_by_id(entry_id) is None:
                 del self._control_sent_command[entry_id]
+        live_entry_ids = {entry.id for entry in self.config.entries}
+        for entry_id in list(self._readback_due):
+            if entry_id not in live_entry_ids:
+                del self._readback_due[entry_id]
+        self._readback_in_flight.intersection_update(live_entry_ids)
         # History clears when the entry goes away OR when it stops being
         # numeric (e.g. converted to a control tile) — re-enabling later
         # should start fresh rather than replay old samples (FR-46).

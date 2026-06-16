@@ -19,6 +19,8 @@ from ComPort_Zone.control_panel_engine import (
     PollRequest,
     PollResult,
     PollTrafficJournal,
+    ReadbackRequest,
+    ReadbackResult,
     SessionPollDispatcher,
 )
 from ComPort_Zone.control_panel_models import ControlPanelEntry, ParseRule
@@ -491,6 +493,24 @@ def make_control_request(
     )
 
 
+def make_readback_request(
+    owner_entry_id: str = "ctl",
+    entry: ControlPanelEntry | None = None,
+    results: Queue | None = None,
+    control_panel_id: str = "dash",
+    delay_ms: int = 0,
+) -> ReadbackRequest:
+    entry = entry or make_entry("readback", command="READ:ctl?")
+    return ReadbackRequest(
+        control_panel_id=control_panel_id,
+        owner_entry_id=owner_entry_id,
+        entry=entry,
+        compiled=CompiledParseRule.compile(entry.parse),
+        result_queue=results if results is not None else Queue(),
+        delay_ms=delay_ms,
+    )
+
+
 class ControlExecutionTests(unittest.TestCase):
     """Threadless tests driving _execute_control synchronously."""
 
@@ -620,6 +640,38 @@ class DispatcherThreadTests(unittest.TestCase):
         self.assertEqual(
             self.fake.sent_text,
             [("POLL1", None), ("CTL", None), ("POLL2", None)],
+        )
+
+    def test_control_readback_runs_before_next_queued_poll(self) -> None:
+        self.dispatcher.start()
+        results: Queue = Queue()
+        readback_entry = make_entry("actual", command="READ:CTL?")
+        control = make_control_request(command="CTL", results=results)
+        control.readback = make_readback_request(
+            owner_entry_id="ctl",
+            entry=readback_entry,
+            results=results,
+            delay_ms=0,
+        )
+        self.fake.queue_response(b"echo\r\n")
+        self.fake.queue_response(b"7\r\n")
+        self.fake.queue_response(b"2\r\n")
+        self.assertTrue(self.dispatcher.submit_control(control))
+        self.assertTrue(self.dispatcher.submit(make_request(make_entry("b", command="POLL2"), results)))
+
+        received = [results.get(timeout=1.0) for _ in range(3)]
+        self.assertEqual(
+            [type(result).__name__ for result in received],
+            ["ReadbackResult", "ControlResult", "PollResult"],
+        )
+        self.assertIsInstance(received[0], ReadbackResult)
+        assert isinstance(received[0], ReadbackResult)
+        self.assertEqual(received[0].status, POLL_OK)
+        assert received[0].outcome is not None
+        self.assertEqual(received[0].outcome.value_number, 7.0)
+        self.assertEqual(
+            self.fake.sent_text,
+            [("CTL", None), ("READ:CTL?", None), ("POLL2", None)],
         )
 
     def test_cancelled_control_is_answered_with_control_result(self) -> None:

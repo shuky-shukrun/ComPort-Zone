@@ -5,7 +5,7 @@ Version: 3.0
 Date: 2026-06-13
 Applies to: ComPort Zone >= 0.5.0 (v1: settings schema v5; v2 features: schema v6; v3 features: schema v7)
 
-v3.0 turns the feature **into Control Panel**. The user-visible surface renames from "ControlPanel View" to "Control Panel" everywhere a person sees it; internal symbols (`ControlPanelConfig`, `AppSettings.control_panels`, `control_panel_value_log.py`, `tests/test_control_panel_*`, every QSS selector starting with `#control_panel`) stay so existing user JSON, exports, and CSV logs load byte-for-byte. v3 adds two industrial write widgets — a numeric setpoint with optional readback and an enum/dropdown selector — and wraps every writing tile in a master-arm safety gate that boots disarmed at every restart. The per-panel CSV log gains a `kind` column (`poll` / `derived` / `control`) so monitoring data and control actions land in one audit file (FR-63..FR-77).
+v3.0 turns the feature **into Control Panel**. The user-visible surface renames from "ControlPanel View" to "Control Panel" everywhere a person sees it; internal symbols (`ControlPanelConfig`, `AppSettings.control_panels`, `control_panel_value_log.py`, `tests/test_control_panel_*`, every QSS selector starting with `#control_panel`) stay so existing user JSON, exports, and CSV logs load byte-for-byte. v3 adds two industrial write widgets — a numeric setpoint and an enum/dropdown selector — plus shared readback for all writing tiles, and wraps every writing tile in a master-arm safety gate that boots disarmed at every restart. The per-panel CSV log gains a `kind` column (`poll` / `derived` / `control`) so monitoring data and control actions land in one audit file (FR-63..FR-77).
 
 v1.x requirements that talk about a "control_panel" describe the same feature the user now sees as a "control panel"; this doc keeps the old wording in places that document internal symbol names (e.g. "the bound terminal still labels poll TX with `source=\"control_panel\"`"). The interfaces, JSON keys, and class names are unchanged; only labels move.
 
@@ -31,8 +31,8 @@ This document is the requirements contract for the feature. The companion implem
 | Control tile *(v2)* | A tile that sends a command on click instead of polling (FR-59). Button or toggle. |
 | Derived entry *(v2)* | An entry whose value is computed from other entries via a safe arithmetic expression instead of polling (FR-61). |
 | Alert *(v2)* | A record created when an entry's state transitions into `fail` or `error` (FR-57). |
-| Setpoint tile *(v3)* | A writing tile with a slider + numeric field that sends a templated command with the chosen value; may mirror a polled tile's value as a readback (FR-63..67). |
-| Enum tile *(v3)* | A writing tile with a dropdown of labeled options, each carrying its own send command; may highlight the option matching a polled tile's value (FR-68..71). |
+| Setpoint tile *(v3)* | A writing tile with a slider + numeric field that sends a templated command with the chosen value; shared readback can follow another tile or send a direct query (FR-63..67). |
+| Enum tile *(v3)* | A writing tile with a dropdown of labeled options, each carrying its own send command; shared readback can highlight the option matching the current value (FR-68..71). |
 | Writing tile *(v3)* | Any tile that sends on user action: control button, control toggle, setpoint, or enum (FR-72). Read-only tiles (value, LED, derived) are not writing tiles. |
 | Master arm *(v3)* | A per-panel transient gate. While **Disarmed** (the boot state and the default after any unbind/restart), every writing tile refuses to send and renders visually inert. **Armed** unlocks sends for the session; per-tile confirmation (when configured) still applies. Esc on the focused panel disarms instantly (FR-72..75). |
 | Audit row *(v3)* | The CSV value log gains a `kind` column (`poll` / `derived` / `control`). Control sends append one row per result with the sent command + ok/error state (FR-76..77). |
@@ -154,7 +154,7 @@ Decided with the product owner; v1/v2 decisions stand except where amended:
 
 ### 4.15 Control tiles (v2)
 
-- **FR-59** Tile kind `control` sends instead of polling. Modes: `button` (one command per click) and `toggle` (ON/OFF commands; the visual state follows an optional watch entry's verdict — `ok` renders ON — or an optimistic local flag when no watch entry is set). Optional per-tile confirmation shows the standard Yes/No prompt (default No) naming the command and target. Control entries are never scheduled, never stale, never alert, and keep no history.
+- **FR-59** Tile kind `control` sends instead of polling. Modes: `button` (one command per click) and `toggle` (ON/OFF commands; the visual state follows optional readback verdict — `ok` renders ON — or an optimistic local flag when no readback is set). Optional per-tile confirmation shows the standard Yes/No prompt (default No) naming the command and target. Control entries are never scheduled, never stale, never alert, and keep no history.
 - **FR-60** Control sends serialize through the same per-session FIFO dispatcher as polls (never interleaved with control_panel traffic on the wire) inside a traffic-journal window (device acks stay out of the terminal transcript). A click is refused with a status message when the target is unresolved, disconnected, or running a command file; clicks are allowed while polling is user-paused (an explicit click is explicit intent). The tile shows pending / success-flash / error feedback per send.
 
 ### 4.16 Derived/math tiles (v2)
@@ -167,17 +167,17 @@ Decided with the product owner; v1/v2 decisions stand except where amended:
 
 ### 4.18 Numeric setpoint widget (v3)
 
-- **FR-63** Tile kind `setpoint` is a writing tile that sends a single command derived from a user-chosen numeric value. Its `SetpointSpec` carries `min_value`, `max_value`, `step` (all floats), `decimals` (int, render precision), `unit` (display-only string, e.g. "V" / "°C"), `command_template` (string containing exactly one `{value}` placeholder, e.g. `"VOLT {value}"`), optional `watch_entry_id` (mirrors a polled tile's value as a readback line under the setpoint), and `confirm` (per-tile confirmation toggle, same semantics as control tiles).
+- **FR-63** Tile kind `setpoint` is a writing tile that sends a single command derived from a user-chosen numeric value. Its `SetpointSpec` carries `min_value`, `max_value`, `step` (all floats), `decimals` (int, render precision), `unit` (display-only string, e.g. "V" / "°C"), `command_template` (string containing exactly one `{value}` placeholder, e.g. `"VOLT {value}"`), and `confirm` (per-tile confirmation toggle, same semantics as control tiles). Readback is shared across writing tiles through `ControlPanelEntry.readback`.
 - **FR-64** The tile renders a `QSlider` (horizontal, integer range mapping to `min + i * step`) plus a paired `QDoubleSpinBox` (range = `min..max`, single-step = `step`, decimals = `decimals`); both bind to the same float state and update each other without infinite recurse. A Send button (▶) submits exactly one command per click. Typing a value outside `[min, max]` clamps the field to the bound and flashes the input briefly so the user sees the clamp.
 - **FR-65** The command is `command_template.replace("{value}", formatted)`, where `formatted = f"{value:.{decimals}g}"`. Validation at edit time and configure time: `min < max`; `step > 0`; `step <= max - min`; `command_template` contains exactly one `{value}`; in Hex Bytes mode the templated command with a sample value passes the existing hex-payload validator. Validation failures gate the editor dialog's OK and, for configure-time failures (e.g. a stale config), render an error tile.
-- **FR-66** When `watch_entry_id` is set, every funnel update for the watched entry pushes its `value_text` (with optional state coloring) into the setpoint tile's readback line as `→ <value> <unit if known>`. Watched id must reference a polled tile (not another writing tile); validation rejects self-watch and write-tile-watch.
-- **FR-67** Setpoint tiles never poll, never alert, keep no history, and never appear in derived expressions. They route through the same per-session FIFO dispatcher as control tiles (FR-60) so a Send never interleaves on the wire with polls or other writes.
+- **FR-66** Writing-tile readback uses `ReadbackSpec`: `source="entry"` follows another polled tile, while `source="command"` sends a direct readback command with its own parse/rule configuration. Default behavior is `mode="once"`, `delay_ms=20`: after a write succeeds, the readback transaction is sent next on the same dispatcher FIFO when it targets the same session. `mode="interval"` schedules further readbacks every `interval_ms` after each readback completes.
+- **FR-67** All writing tiles with readback configured pull it once when their target session connects, including the initial bind to an already-connected session. Setpoint tiles never participate in the normal poll scheduler, never alert, keep no history, and never appear in derived expressions; only their readback transactions may query the device.
 
 ### 4.19 Enum / dropdown selector widget (v3)
 
-- **FR-68** Tile kind `enum` is a writing tile that sends one of N labeled commands chosen from a dropdown. Its `EnumSpec` carries `options: list[EnumOption]` (each option: `label`, `command`, optional `match_value`), optional `watch_entry_id`, and `confirm`. At least one option is required.
+- **FR-68** Tile kind `enum` is a writing tile that sends one of N labeled commands chosen from a dropdown. Its `EnumSpec` carries `options: list[EnumOption]` (each option: `label`, `command`, optional `match_value`) and `confirm`. At least one option is required.
 - **FR-69** The tile renders a `QComboBox` (full width) plus a Send button (▶). The user picks an option from the dropdown; clicking Send submits exactly the chosen option's `command`. Each click is one send, even on rapid clicks (de-bounced through the pending-state mechanism shared with control toggles).
-- **FR-70** When `watch_entry_id` is set, the funnel compares the watched entry's `value_text` (trimmed, case-insensitive) against each option's `match_value`; the first match becomes the *indicated* option (rendered with a subtle pill background) regardless of the user's combo selection — the user can still send a different option. When no `match_value` matches (or no watch is set), no option is indicated.
+- **FR-70** When readback is configured, the funnel compares the readback value text (trimmed, case-insensitive) against each option's `match_value`; the first match becomes the *indicated* option (rendered with a subtle pill background) regardless of the user's combo selection — the user can still send a different option. When no `match_value` matches (or no readback is set), no option is indicated.
 - **FR-71** Editor validation: at least one option; each option needs non-empty `label` AND non-empty `command`; `match_value` is optional; in Hex Bytes mode each `command` passes the hex-payload validator. Duplicate labels render but the dialog shows a warning (operators sometimes want two paths to the same outcome). Enum tiles never poll, never alert, keep no history.
 
 ### 4.20 Master arm safety gate (v3)
@@ -207,7 +207,7 @@ Decided with the product owner; v1/v2 decisions stand except where amended:
 - **NFR-11 (Expression safety, v2)** Derived-tile expressions are parsed to an AST and evaluated by a whitelisting interpreter — no `eval`, `exec`, or compiled code objects; node and length caps bound work; every failure surfaces as an error tile, never as an exception escaping the GUI tick.
 - **NFR-12 (v2 tick budget)** The GUI tick stays under the v1 budget with v2 load: 64 entries including derived tiles, full histories, alerts enabled, and two target sessions average < 5 ms per tick (benchmarked). Sparkline repaints are coalesced (≤ 1 per tile per result + 1 Hz window slide); the chart repaints only while visible.
 - **NFR-13 (Sound robustness, v2)** Alert sound degrades gracefully: missing QtMultimedia or a missing wav asset falls back to the system beep; sound failures never affect alert records or polling.
-- **NFR-14 (v3 tick budget)** The GUI tick stays under the v2 budget with v3 load: the v2 reference mix (64 entries incl. derived + full histories + alerts + 2 sessions) plus 6 setpoint tiles and 6 enum tiles with active watch readbacks averages < 5 ms per tick (benchmarked). Writing tiles repaint only when their state or watched value changes; the master-arm visual broadcast fires only on Arm/Disarm transitions, not per tick.
+- **NFR-14 (v3 tick budget)** The GUI tick stays under the v2 budget with v3 load: the v2 reference mix (64 entries incl. derived + full histories + alerts + 2 sessions) plus 6 setpoint tiles and 6 enum tiles with active readbacks averages < 5 ms per tick (benchmarked). Writing tiles repaint only when their state or readback value changes; the master-arm visual broadcast fires only on Arm/Disarm transitions, not per tick.
 - **NFR-15 (Master-arm robustness, v3)** Master arm state is transient. Tests assert: every panel construction starts Disarmed; every restart starts Disarmed; auto-disarm on unbind / session close / `apply_imported_settings` / `shutdown`; the `armingChanged` signal reaches every writing tile in the panel.
 
 ## 6. Out of scope (v3)
@@ -246,7 +246,7 @@ v3 additions to the accepted-limitations list:
 
 - **Audit-log gap on crash.** Control rows are written when the result lands (FR-77); a process crash between queue and result leaves no row for that send. The CSV captures what completed, not what was attempted. Pre-write at submit time was considered and declined — it would either require a two-row scheme (more complex) or in-place file edits (loses crash safety).
 - **Master arm covers writing tiles only.** A misconfigured *polled* entry (e.g. a poll command that has side effects on a device — `OUTP 0` masquerading as a query) is not gated by arming because the polling subsystem doesn't know it's a write. The remedy is to model side-effect commands as control tiles. The requirements doc warns against this in the editor copy.
-- **Setpoint readback latency.** The readback line mirrors the watched polled tile's most recent value — which lags behind the actual device by up to one poll interval plus the network/serial round-trip. For closed-loop setpoint adjustment the operator should rely on the device itself, not the readback line.
+- **Readback latency.** Readback that follows another tile mirrors that tile's most recent value and may lag by up to one poll interval plus the transport round-trip. Direct command readback runs immediately after writes by default, but it still reflects what the device reports, not a closed-loop guarantee.
 
 ## 8. Acceptance criteria → test mapping
 
@@ -286,7 +286,7 @@ v3 additions to the accepted-limitations list:
 | NFR-7 (Qt-free domain incl. v2 modules) | `tests/test_core_no_pyside.py` |
 | NFR-11 (expression safety rejection matrix) | `tests/test_control_panel_expr.py` |
 | NFR-12 (v2 tick budget) | `tests/test_app_control_panels.py` |
-| NFR-14 (v3 tick budget with 6 setpoint + 6 enum + watch readbacks) | `tests/test_app_control_panels.py` |
+| NFR-14 (v3 tick budget with 6 setpoint + 6 enum + readbacks) | `tests/test_app_control_panels.py` |
 | NFR-15 (master arm transience: boot-disarmed, auto-disarm matrix, signal coverage) | `tests/test_control_panel_tab.py`, `tests/test_app_control_panels.py` |
 
 ## 9. References

@@ -17,6 +17,7 @@ from ComPort_Zone.control_panel_models import (
     MAX_TILE_SPAN,
     MIN_POLL_INTERVAL_MS,
     ParseRule,
+    ReadbackSpec,
     TilePlacement,
     control_panel_uses_v2_features,
     control_panel_uses_v3_features,
@@ -444,6 +445,40 @@ class V3EntryFieldTests(unittest.TestCase):
             control_panel_uses_v3_features(ControlPanelConfig(entries=[v2_entry]))
         )
 
+    def test_readback_spec_round_trip_and_validation(self) -> None:
+        spec = ReadbackSpec(
+            source="command",
+            command="MEAS:VOLT?",
+            mode="interval",
+            delay_ms=20,
+            interval_ms=250,
+            timeout_ms=750,
+            parse=ParseRule(kind="regex", pattern=r"V=([\d.]+)", value_type="number"),
+            rules=[ColorRule(op="gt", operand="10", state="ok", label="READY")],
+        )
+        restored = ReadbackSpec.from_dict(spec.to_dict())
+        self.assertEqual(restored, spec)
+        self.assertEqual(restored.validation_errors("Text"), [])
+        self.assertIn(
+            "Readback command must not be empty.",
+            ReadbackSpec(source="command").validation_errors("Text"),
+        )
+        self.assertIn(
+            "Readback source tile must be selected.",
+            ReadbackSpec(source="entry").validation_errors("Text"),
+        )
+
+    def test_readback_marks_entry_as_v3_feature(self) -> None:
+        entry = ControlPanelEntry(
+            tile=TilePlacement(kind="control"),
+            control=ControlSpec(on_command="OUTP ON"),
+            readback=ReadbackSpec(source="entry", watch_entry_id="outp"),
+        )
+        self.assertTrue(entry_uses_v3_features(entry))
+        restored = ControlPanelEntry.from_dict(entry.to_dict())
+        self.assertEqual(restored.readback.source, "entry")
+        self.assertEqual(restored.readback.watch_entry_id, "outp")
+
     def test_setpoint_round_trip(self) -> None:
         from ComPort_Zone.control_panel_models import SetpointSpec
 
@@ -853,7 +888,9 @@ class ExampleControlPanelTests(unittest.TestCase):
         self.assertEqual(setpoint.setpoint.command_template, "VOLT {value}")
         self.assertEqual(setpoint.setpoint.min_value, 0.0)
         self.assertEqual(setpoint.setpoint.max_value, 30.0)
-        self.assertEqual(setpoint.setpoint.watch_entry_id, output.id)
+        self.assertEqual(setpoint.readback.source, "command")
+        self.assertEqual(setpoint.readback.command, "MEAS:VOLT?")
+        self.assertEqual(setpoint.readback.parse.value_type, "number")
 
         enum_entries = [e for e in example.entries if e.is_enum()]
         self.assertEqual(len(enum_entries), 1)
@@ -862,6 +899,8 @@ class ExampleControlPanelTests(unittest.TestCase):
             [opt.label for opt in enum_entry.enum_spec.options],
             ["OFF", "CV", "CC"],
         )
+        self.assertEqual(enum_entry.readback.source, "entry")
+        self.assertEqual(enum_entry.readback.watch_entry_id, "example-mode")
 
     def test_output_rules_map_states_and_labels(self) -> None:
         output = next(
