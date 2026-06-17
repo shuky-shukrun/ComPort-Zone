@@ -1285,11 +1285,16 @@ class ControlPanelTabWidget(QWidget):
         if intent is not None:
             self._control_intent[entry_id] = intent
         self._control_sent_command[entry_id] = command
+        # Record what was just commanded so the next readback can flag a
+        # mismatch (device clamped / rejected / disagreed) — FR-66/FR-70.
         if isinstance(tile, ControlTileWidget):
+            tile.set_commanded(intent)
             tile.set_pending(True)
         elif isinstance(tile, SetpointTileWidget):
+            tile.mark_commanded()
             tile.set_pending(True)
         elif isinstance(tile, EnumTileWidget):
+            tile.mark_commanded()
             tile.set_pending(True)
         return True
 
@@ -1769,14 +1774,18 @@ class ControlPanelTabWidget(QWidget):
         *,
         raw_value_text: str,
     ) -> None:
+        """Reflect a direct (``source="command"``) readback into the
+        owning writing tile's input control: the setpoint spinbox value,
+        the enum combo selection, or the toggle ON/OFF state. Each tile
+        raises its own mismatch warning when the readback differs from
+        the value last commanded (FR-66/FR-70)."""
         tile = self.grid.tile(entry.id)
-        color = runtime.color or tile_state_color(runtime.state, self._theme)
         if isinstance(tile, SetpointTileWidget):
-            tile.set_readback(runtime.value_text, runtime.state, color)
+            tile.apply_readback(runtime.value_number)
         elif isinstance(tile, EnumTileWidget):
-            tile.update_indicator(raw_value_text)
+            tile.apply_readback(raw_value_text)
         elif isinstance(tile, ControlTileWidget) and entry.control.mode == "toggle":
-            tile.set_on(runtime.state == "ok")
+            tile.apply_readback(runtime.state == "ok")
 
     def _apply_outcome(self, entry: ControlPanelEntry, outcome: ParseOutcome, raw_window: str = "") -> None:
         """The shared value sink (poll results AND derived recomputes):
@@ -1946,36 +1955,35 @@ class ControlPanelTabWidget(QWidget):
         raw_value_text: str | None = None,
         only_owner_id: str | None = None,
     ) -> None:
-        """Push the watched entry's latest verdict into every writing
-        tile that watches it: setpoint tiles update their readback field
-        (FR-66); enum tiles update their indicated option (FR-70); toggle
-        controls flip their visual ON/OFF.
+        """Push the watched entry's latest value into every writing
+        tile that follows it (FR-66/FR-70): setpoint tiles reflect the
+        watched number into their spinbox; enum tiles drive their combo
+        selection to the matching option; toggle controls flip their
+        visual ON/OFF. Each tile reflects only while the user is not
+        editing it, and raises a mismatch warning when the followed value
+        differs from what the tile last commanded.
 
-        Setpoint readbacks show the formatted ``runtime.value_text``
-        (with the polled tile's unit) — that's what ops want to see.
-        Enum indicators match against the raw parsed value
-        (``raw_value_text``) because option ``match_value`` is the
-        wire-level token, not the display label. Pass ``only_owner_id``
-        to limit the fan-out to a single writing tile (used by
-        connect-time follow-mode seeding).
+        Enum matching uses the raw parsed value (``raw_value_text``)
+        because option ``match_value`` is the wire-level token, not the
+        display label. Pass ``only_owner_id`` to limit the fan-out to a
+        single writing tile (used by connect-time follow-mode seeding).
         """
-        color = runtime.color or tile_state_color(runtime.state, self._theme)
         match_text = raw_value_text if raw_value_text is not None else runtime.value_text
         for watcher_id in self._writable_watchers.get(input_entry_id, ()):
             if only_owner_id is not None and watcher_id != only_owner_id:
                 continue
             tile = self.grid.tile(watcher_id)
             if isinstance(tile, SetpointTileWidget):
-                tile.set_readback(runtime.value_text, runtime.state, color)
+                tile.apply_readback(runtime.value_number)
             elif isinstance(tile, EnumTileWidget):
-                tile.update_indicator(match_text)
+                tile.apply_readback(match_text)
             elif isinstance(tile, ControlTileWidget):
                 # Follow-mode toggles ride the watched tile's verdict so
                 # the ON/OFF visual tracks the device, not just the
                 # user's last click (FR-66 analogue for controls).
                 entry = self.config.entry_by_id(watcher_id)
                 if entry is not None and entry.control.mode == "toggle":
-                    tile.set_on(runtime.state == "ok")
+                    tile.apply_readback(runtime.state == "ok")
 
     # -------------------------------------------------------- config edits
 

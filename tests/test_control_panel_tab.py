@@ -1482,8 +1482,9 @@ class SetpointTileTests(ControlPanelTabTestBase):
         tile = tab.grid.tile("sp")
         assert isinstance(tile, SetpointTileWidget)
         self.assertFalse(hasattr(tile, "slider"))
-        self.assertTrue(tile.readback_field.isReadOnly())
-        self.assertTrue(tile.readback_field.isHidden())
+        # The spinbox is the readback display now — there is no separate
+        # read-only readback field.
+        self.assertFalse(hasattr(tile, "readback_field"))
 
         tile.set_value(5.0)
         self.assertAlmostEqual(tile.value, 5.0, places=4)
@@ -1572,7 +1573,9 @@ class SetpointTileTests(ControlPanelTabTestBase):
     def test_readback_follows_watched_entry(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
 
-        # The setpoint watches the polled volt entry's value.
+        # The setpoint watches the polled volt entry's value; the readback
+        # reflects straight into the spinbox (no separate field). With no
+        # command issued there is no mismatch warning.
         polled = volt_entry()
         polled.id = "vmeas"
         polled.label = "Measured"
@@ -1583,9 +1586,8 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.run_poll_round(tab, b"12.34\r\n")
         tile = tab.grid.tile("sp")
         assert isinstance(tile, SetpointTileWidget)
-        self.assertFalse(tile.readback_field.isHidden())
-        self.assertTrue(tile.readback_field.isReadOnly())
-        self.assertEqual(tile.readback_field.text(), "12.34 V")
+        self.assertAlmostEqual(tile.spin.value(), 12.34, places=4)
+        self.assertFalse(tile.mismatch)
 
     def test_direct_readback_command_runs_after_send(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
@@ -1617,8 +1619,10 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.assertTrue(wait_for(lambda: tab.result_queue.qsize() >= 2))
         tab._tick()
         self.assertFalse(tile.pending)
-        self.assertEqual(tile.readback_field.text(), "12.6 V")
-        self.assertAlmostEqual(tile.spin.value(), 12.5, places=4)
+        # The readback (12.6) reflects into the spinbox; since 12.5 was
+        # commanded, the spinbox flags a mismatch (device != commanded).
+        self.assertAlmostEqual(tile.spin.value(), 12.6, places=4)
+        self.assertTrue(tile.mismatch)
         self.assertEqual(tile.property("tileState"), "ok")
 
     def test_direct_readback_runs_once_on_connect(self) -> None:
@@ -1640,8 +1644,10 @@ class SetpointTileTests(ControlPanelTabTestBase):
         self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
         tab._tick()
         self.assertEqual(self.session.transport.sent_text, [("MEAS:VOLT?", None)])
-        self.assertEqual(tile.readback_field.text(), "11.1 V")
+        # Connect-time readback seeds the spinbox; nothing was commanded
+        # so there is no mismatch warning.
         self.assertAlmostEqual(tile.spin.value(), 11.1, places=4)
+        self.assertFalse(tile.mismatch)
 
     def test_followed_readback_on_connect_seeds_setpoint_value(self) -> None:
         # Follow-mode setpoint should adopt the watched tile's first
@@ -1671,8 +1677,8 @@ class SetpointTileTests(ControlPanelTabTestBase):
             self.session.transport.sent_text,
             [("MEAS:VOLT?", None)],
         )
-        self.assertEqual(tile.readback_field.text(), "7.25 V")
         self.assertAlmostEqual(tile.spin.value(), 7.25, places=4)
+        self.assertFalse(tile.mismatch)
 
     def test_send_error_marks_tile_error(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
@@ -1723,8 +1729,7 @@ class SetpointTileTests(ControlPanelTabTestBase):
             self.session.transport.sent_text,
             [("MEAS:VOLT?", None)],
         )
-        # Fan-out still seeded the spinbox + readback box.
-        self.assertEqual(tile.readback_field.text(), "5.5 V")
+        # Fan-out still reflected the watched value into the spinbox.
         self.assertAlmostEqual(tile.spin.value(), 5.5, places=4)
 
     def test_setpoint_never_scheduled(self) -> None:
@@ -1744,13 +1749,13 @@ class SetpointTileTests(ControlPanelTabTestBase):
         assert isinstance(tile, SetpointTileWidget)
         tab.grid.set_edit_mode(True)
         self.assertFalse(tile.send_button.isEnabled())
-        for widget in (tile.spin, tile.readback_field, tile.send_button):
+        for widget in (tile.spin, tile.send_button):
             self.assertTrue(
                 widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             )
         tab.grid.set_edit_mode(False)
         self.assertTrue(tile.send_button.isEnabled())
-        for widget in (tile.spin, tile.readback_field, tile.send_button):
+        for widget in (tile.spin, tile.send_button):
             self.assertFalse(
                 widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             )
@@ -1852,14 +1857,16 @@ class EnumTileTests(ControlPanelTabTestBase):
         self.run_poll_round(tab, b"CC\r\n")
         tile = tab.grid.tile("mode")
         assert isinstance(tile, EnumTileWidget)
+        # The readback drives the combo's selection to the matching option.
         self.assertEqual(tile.indicated_index, 1)
-        # Watched value changes -> indicator follows.
+        self.assertEqual(tile.combo.currentIndex(), 1)
+        # Watched value changes -> selection follows.
         self.clock.advance_ms(1100)
         self.run_poll_round(tab, b"cv\r\n")  # case-insensitive match
         self.assertEqual(tile.indicated_index, 0)
-        # Combo selection is independent of indicator.
-        tile.combo.setCurrentIndex(2)
-        self.assertEqual(tile.indicated_index, 0)
+        self.assertEqual(tile.combo.currentIndex(), 0)
+        # Nothing was commanded, so the follow never raises a mismatch.
+        self.assertFalse(tile.mismatch)
 
     def test_indicator_misses_unknown_value(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import EnumTileWidget

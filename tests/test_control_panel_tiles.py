@@ -716,6 +716,201 @@ class SetpointSpinboxRegressionTests(unittest.TestCase):
         tile.deleteLater()
 
 
+class ReadbackIntoInputTests(unittest.TestCase):
+    """The readback reflects into each writing tile's own input control
+    (no separate readback area) and flags a mismatch vs the commanded
+    value with a warning property (FR-66/FR-70, redesign 2026-06)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def make_setpoint() -> ControlPanelEntry:
+        entry = ControlPanelEntry(
+            id="sp",
+            label="Set V",
+            tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="setpoint"),
+        )
+        entry.setpoint.min_value = 0.0
+        entry.setpoint.max_value = 30.0
+        entry.setpoint.step = 0.01
+        entry.setpoint.decimals = 2
+        entry.setpoint.unit = "V"
+        entry.setpoint.command_template = "VOLT {value}"
+        return entry
+
+    @staticmethod
+    def make_enum() -> ControlPanelEntry:
+        from ComPort_Zone.control_panel_models import EnumOption, EnumSpec
+
+        entry = ControlPanelEntry(
+            id="mode",
+            label="Mode",
+            tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="enum"),
+        )
+        entry.enum_spec = EnumSpec(
+            options=[
+                EnumOption(label="CV", command="MODE CV", match_value="CV"),
+                EnumOption(label="CC", command="MODE CC", match_value="CC"),
+                EnumOption(label="OFF", command="MODE OFF", match_value="OFF"),
+            ]
+        )
+        return entry
+
+    @staticmethod
+    def make_toggle() -> ControlPanelEntry:
+        entry = ControlPanelEntry(
+            id="ctrl",
+            label="Output",
+            tile=TilePlacement(col=0, row=0, span_w=1, span_h=1, kind="control"),
+        )
+        entry.control = ControlSpec(
+            mode="toggle", on_command="OUTP ON", off_command="OUTP OFF"
+        )
+        return entry
+
+    # ----------------------------------------------------------- setpoint
+
+    def test_setpoint_reflects_readback_without_command(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.apply_readback(7.5)
+        self.assertAlmostEqual(tile.spin.value(), 7.5, places=4)
+        self.assertFalse(tile.mismatch)
+        self.assertEqual(tile.spin.property("mismatch"), "false")
+        tile.deleteLater()
+
+    def test_setpoint_mismatch_warns_when_device_differs(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.set_value(25.0)
+        tile.mark_commanded()            # commanded 25 V
+        tile.apply_readback(10.0)        # device reports a clamped 10 V
+        # The spinbox snaps to the device value and warns the command
+        # was not accepted.
+        self.assertAlmostEqual(tile.spin.value(), 10.0, places=4)
+        self.assertTrue(tile.mismatch)
+        self.assertEqual(tile.spin.property("mismatch"), "true")
+        # Device later reaches the commanded value -> warning clears.
+        tile.apply_readback(25.0)
+        self.assertFalse(tile.mismatch)
+        self.assertEqual(tile.spin.property("mismatch"), "false")
+        tile.deleteLater()
+
+    def test_setpoint_holds_readback_while_user_editing(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.set_value(5.0)
+        # textEdited fires only on user keystrokes -> we are now editing.
+        tile.spin.lineEdit().textEdited.emit("9")
+        tile.apply_readback(20.0)
+        self.assertAlmostEqual(tile.spin.value(), 5.0, places=4)  # not overwritten
+        # Focus leaves the field -> editing ends -> readback reflects.
+        tile._on_spin_focus_out()
+        tile.apply_readback(20.0)
+        self.assertAlmostEqual(tile.spin.value(), 20.0, places=4)
+        tile.deleteLater()
+
+    def test_setpoint_mismatch_clears_on_user_edit(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.set_value(25.0)
+        tile.mark_commanded()
+        tile.apply_readback(10.0)
+        self.assertTrue(tile.mismatch)
+        # Starting a fresh edit invalidates the prior command's comparison.
+        tile.spin.lineEdit().textEdited.emit("2")
+        self.assertFalse(tile.mismatch)
+        self.assertEqual(tile.spin.property("mismatch"), "false")
+        tile.deleteLater()
+
+    def test_setpoint_non_numeric_readback_leaves_field(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        tile = SetpointTileWidget(self.make_setpoint())
+        tile.set_value(8.0)
+        tile.apply_readback(None)
+        self.assertAlmostEqual(tile.spin.value(), 8.0, places=4)
+        tile.deleteLater()
+
+    # --------------------------------------------------------------- enum
+
+    def test_enum_readback_drives_selection(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import EnumTileWidget
+
+        tile = EnumTileWidget(self.make_enum())
+        tile.apply_readback("CC")
+        self.assertEqual(tile.combo.currentIndex(), 1)
+        self.assertEqual(tile.indicated_index, 1)
+        self.assertFalse(tile.mismatch)
+        tile.deleteLater()
+
+    def test_enum_mismatch_when_device_differs_from_command(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import EnumTileWidget
+
+        tile = EnumTileWidget(self.make_enum())
+        tile.combo.setCurrentIndex(0)   # user picks CV
+        tile.mark_commanded()           # commanded CV
+        tile.apply_readback("CC")       # device reports CC
+        self.assertEqual(tile.combo.currentIndex(), 1)
+        self.assertTrue(tile.mismatch)
+        self.assertEqual(tile.combo.property("mismatch"), "true")
+        tile.apply_readback("CV")       # device agrees -> clears
+        self.assertFalse(tile.mismatch)
+        self.assertEqual(tile.combo.property("mismatch"), "false")
+        tile.deleteLater()
+
+    def test_enum_holds_selection_while_editing(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import EnumTileWidget
+
+        tile = EnumTileWidget(self.make_enum())
+        tile.combo.setCurrentIndex(0)
+        tile._is_editing = lambda: True   # dropdown open / focused
+        tile.apply_readback("CC")
+        self.assertEqual(tile.combo.currentIndex(), 0)  # not yanked away
+        tile._is_editing = lambda: False
+        tile.apply_readback("CC")
+        self.assertEqual(tile.combo.currentIndex(), 1)
+        tile.deleteLater()
+
+    def test_enum_unknown_readback_leaves_selection(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import EnumTileWidget
+
+        tile = EnumTileWidget(self.make_enum())
+        tile.combo.setCurrentIndex(2)
+        tile.apply_readback("WAT")  # matches no option
+        self.assertEqual(tile.indicated_index, -1)
+        self.assertEqual(tile.combo.currentIndex(), 2)  # unchanged
+        tile.deleteLater()
+
+    # ------------------------------------------------------------- toggle
+
+    def test_toggle_mismatch_when_device_disagrees(self) -> None:
+        tile = ControlTileWidget(self.make_toggle())
+        tile.set_commanded(True)     # commanded ON
+        tile.apply_readback(False)   # device stays OFF
+        self.assertFalse(tile.is_on)
+        self.assertTrue(tile.mismatch)
+        self.assertEqual(tile.button.property("mismatch"), "true")
+        tile.apply_readback(True)    # device agrees -> clears
+        self.assertTrue(tile.is_on)
+        self.assertFalse(tile.mismatch)
+        self.assertEqual(tile.button.property("mismatch"), "false")
+        tile.deleteLater()
+
+    def test_toggle_no_mismatch_without_command(self) -> None:
+        tile = ControlTileWidget(self.make_toggle())
+        tile.apply_readback(True)   # pure follow, nothing commanded
+        self.assertTrue(tile.is_on)
+        self.assertFalse(tile.mismatch)
+        tile.deleteLater()
+
+
 class ThemingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

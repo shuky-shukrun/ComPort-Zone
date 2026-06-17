@@ -14,6 +14,7 @@ FR-36).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QDrag, QMouseEvent
@@ -25,7 +26,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMenu,
     QPushButton,
     QSizePolicy,
@@ -462,9 +462,12 @@ class ControlTileWidget(TileFrame):
         self._is_on = False
         self._pending = False
         self._panel_armed = False
+        self._commanded_on: bool | None = None  # last toggle direction sent
+        self._mismatch = False
         self.setProperty("panelArmed", "false")
         self.button = QPushButton("", self)
         self.button.setObjectName("tileControlButton")
+        self.button.setProperty("mismatch", "false")
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.button.clicked.connect(lambda: self.activateRequested.emit(self.entry_id))
         row = QHBoxLayout()
@@ -492,6 +495,40 @@ class ControlTileWidget(TileFrame):
         if self._is_on != is_on:
             self._is_on = is_on
             self._refresh_button()
+
+    @property
+    def mismatch(self) -> bool:
+        """True when the readback state differs from the commanded one."""
+        return self._mismatch
+
+    def set_commanded(self, on: bool | None) -> None:
+        """Record the commanded ON/OFF direction (toggle only).
+
+        Called by the tab on a successful Send so a later readback can
+        flag a mismatch if the device ended up in the other state
+        (FR-59). ``None`` clears tracking (e.g. momentary buttons).
+        """
+        self._commanded_on = on
+        self._set_mismatch(False)
+
+    def apply_readback(self, is_on: bool) -> None:
+        """Reflect a device readback into the toggle visual + mismatch.
+
+        Sets the ON/OFF state from the device and raises the warning when
+        it disagrees with the last commanded direction.
+        """
+        self.set_on(is_on)
+        if self._commanded_on is None:
+            self._set_mismatch(False)
+        else:
+            self._set_mismatch(is_on != self._commanded_on)
+
+    def _set_mismatch(self, on: bool) -> None:
+        if self._mismatch == on:
+            return
+        self._mismatch = on
+        self.button.setProperty("mismatch", "true" if on else "false")
+        _repolish(self.button)
 
     @property
     def pending(self) -> bool:
@@ -553,27 +590,46 @@ class _SelectOnFocusDoubleSpinBox(QDoubleSpinBox):
     types ``12.5`` and the value lands at ``10``. Selecting on focus
     sidesteps the whole class of bugs — the user's first keystroke now
     replaces the buffer with a clean value.
+
+    ``on_focus_in`` / ``on_focus_out`` let the owning tile track whether
+    the user is mid-edit, so readback reflection knows when to hold off
+    (FR-66 "reflect except while editing").
     """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.on_focus_in: Callable[[], None] | None = None
+        self.on_focus_out: Callable[[], None] | None = None
 
     def focusInEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         super().focusInEvent(event)
+        if self.on_focus_in is not None:
+            self.on_focus_in()
         # Defer selectAll until after Qt's own focusInEvent has run, which
         # otherwise clears the selection it just made.
         line = self.lineEdit()
         if line is not None:
             QTimer.singleShot(0, line.selectAll)
 
+    def focusOutEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().focusOutEvent(event)
+        if self.on_focus_out is not None:
+            self.on_focus_out()
+
 
 class SetpointTileWidget(TileFrame):
-    """Numeric setpoint with a typeable command field + optional readback box
+    """Numeric setpoint whose spinbox is *also* its readback display
     (v3, FR-63..FR-67).
 
-    The spinbox carries the actual float value. When readback is configured,
-    a second read-only field shows the followed or directly queried value.
-    Send (▶) stages the value on the tab and emits
-    ``activateRequested`` — same funnel control tiles use, so the
-    master-arm gate, the per-tile confirm, and the per-session FIFO
-    dispatcher all fire for free.
+    The spinbox carries the commanded float value AND mirrors the latest
+    readback (followed tile or direct query) — there is no separate
+    readback field. Readback reflects into the spinbox whenever the user
+    is not actively editing it; if a readback differs from the value the
+    user last commanded, the spinbox shows a mismatch warning color so a
+    device that clamped or rejected the command is obvious. Send (▶)
+    stages the value on the tab and emits ``activateRequested`` — same
+    funnel control tiles use, so the master-arm gate, the per-tile
+    confirm, and the per-session FIFO dispatcher all fire for free.
     """
 
     def __init__(self, entry: ControlPanelEntry, parent: QWidget | None = None) -> None:
@@ -582,9 +638,9 @@ class SetpointTileWidget(TileFrame):
         self._panel_armed = False
         self.setProperty("panelArmed", "false")
         self._setting_value = False  # re-entry guard for programmatic spinbox updates
-        self._readback_text = ""
-        self._readback_state = "neutral"
-        self._readback_color = ""
+        self._user_editing = False   # True between a user keystroke/step and focus-out/send
+        self._commanded_value: float | None = None  # last value Send committed
+        self._mismatch = False
 
         spec = entry.setpoint
         self._value: float = spec.clamp(spec.min_value)
@@ -592,19 +648,11 @@ class SetpointTileWidget(TileFrame):
         self.spin = _SelectOnFocusDoubleSpinBox(self)
         self.spin.setObjectName("tileSetpointSpin")
         self.spin.setKeyboardTracking(False)
+        self.spin.setProperty("mismatch", "false")
         self.spin.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-
-        self.readback_field = QLineEdit("—", self)
-        self.readback_field.setObjectName("tileSetpointReadback")
-        self.readback_field.setReadOnly(True)
-        self.readback_field.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.readback_field.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        self.readback_field.setVisible(False)
+        self.spin.on_focus_in = self._on_spin_focus_in
+        self.spin.on_focus_out = self._on_spin_focus_out
 
         self.send_button = QPushButton("▶", self)
         self.send_button.setObjectName("tileSetpointSend")
@@ -618,7 +666,6 @@ class SetpointTileWidget(TileFrame):
         input_row.setContentsMargins(0, 0, 0, 0)
         input_row.setSpacing(SPACE_SM)
         input_row.addWidget(self.spin, 1)
-        input_row.addWidget(self.readback_field, 1)
         input_row.addWidget(self.send_button)
 
         self.body_layout.addLayout(input_row)
@@ -633,6 +680,10 @@ class SetpointTileWidget(TileFrame):
         line = self.spin.lineEdit()
         if line is not None:
             line.returnPressed.connect(self._submit_via_enter)
+            # textEdited fires only on user keystrokes (never on
+            # programmatic setValue), so it's the clean signal that the
+            # user is editing and the prior command's comparison is moot.
+            line.textEdited.connect(self._on_user_edit)
         self._apply_spec(spec)
 
     def _submit_via_enter(self) -> None:
@@ -671,34 +722,62 @@ class SetpointTileWidget(TileFrame):
                 self.send_button.setText("▶")
 
     def set_value(self, value: float) -> None:
-        """External setter (used by the dialog preview + arm-change paths)."""
+        """Seed the editable value without any mismatch bookkeeping.
+
+        Used for connect-time seeding (FR-67), the dialog preview, and
+        arm-change paths — i.e. "this is just the value to show", not a
+        device readback to compare against a command.
+        """
         clamped = self._entry.setpoint.clamp(value)
         if clamped != self._value:
             self._value = clamped
             self._sync_widgets()
 
-    def set_readback(self, value_text: str, state: str, color: str) -> None:
-        """Push the watched entry's latest value into the readback field."""
-        self._readback_text = value_text
-        self._readback_state = state
-        self._readback_color = color
-        self._refresh_readback()
+    def mark_commanded(self) -> None:
+        """Record the currently shown value as the commanded value.
 
-    def clear_readback(self) -> None:
-        self._readback_text = ""
-        self._refresh_readback()
+        Called by the tab right after a Send is queued. Subsequent
+        readbacks compare against this; a difference raises the mismatch
+        warning (FR-66). Clears the editing flag so the post-send readback
+        is allowed to reflect even though the spinbox may still hold focus.
+        """
+        self._commanded_value = self._value
+        self._user_editing = False
+        line = self.spin.lineEdit()
+        if line is not None:
+            line.setModified(False)
+        self._set_mismatch(False)
+
+    def apply_readback(self, value_number: float | None) -> None:
+        """Reflect a device readback into the spinbox (FR-66).
+
+        Writes the value unless the user is mid-edit, then flags a
+        mismatch when it differs from the last commanded value. A
+        non-numeric readback (``None``) leaves the field untouched.
+        """
+        if value_number is None:
+            return
+        try:
+            readback = self._entry.setpoint.clamp(float(value_number))
+        except (TypeError, ValueError):
+            return
+        if self._is_editing():
+            return  # don't fight the user; a later readback will reflect
+        self._value = readback
+        self._sync_widgets()
+        self._update_mismatch(readback)
 
     def set_edit_mode(self, enabled: bool) -> None:
         super().set_edit_mode(enabled)
         # Mouse-transparent so drag-to-place still works.
-        for widget in (self.spin, self.readback_field, self.send_button):
+        for widget in (self.spin, self.send_button):
             widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, enabled)
         self._refresh_send_enabled()
 
     # ----------------------------------------------------------- internals
 
     def _apply_spec(self, spec) -> None:
-        """Reconfigure the spinbox/readback box for a possibly edited spec."""
+        """Reconfigure the spinbox for a possibly edited spec."""
         self._setting_value = True
         try:
             self.spin.setRange(spec.min_value, spec.max_value)
@@ -707,34 +786,77 @@ class SetpointTileWidget(TileFrame):
             self.spin.setSuffix(f" {spec.unit}" if spec.unit else "")
             self._value = spec.clamp(self._value)
             self._sync_widgets()
-            has_readback = self._has_readback()
-            if has_readback:
-                self._refresh_readback()
-            else:
-                self.clear_readback()
         finally:
             self._setting_value = False
         self._refresh_send_enabled()
 
-    def _has_readback(self) -> bool:
-        return bool(self._entry.setpoint.watch_entry_id) or not self._entry.readback.is_default()
-
     def _spin_changed(self, value: float) -> None:
         if self._setting_value:
             return
+        # A user-driven change (typing committed, step arrows) means the
+        # user is entering a new value — invalidate the prior command's
+        # comparison and treat this as an active edit.
         spec = self._entry.setpoint
         clamped = spec.clamp(value)
         self._value = clamped
-        self._setting_value = True
-        try:
-            if clamped != value:
-                # User typed out of range — clamp visually too.
+        self._user_editing = True
+        self._commanded_value = None
+        self._set_mismatch(False)
+        if clamped != value:
+            # User typed out of range — clamp visually too.
+            self._setting_value = True
+            try:
                 self.spin.setValue(clamped)
-        finally:
-            self._setting_value = False
+            finally:
+                self._setting_value = False
 
     def _sync_widgets(self) -> None:
-        self.spin.setValue(self._value)
+        prev = self._setting_value
+        self._setting_value = True
+        try:
+            self.spin.setValue(self._value)
+            line = self.spin.lineEdit()
+            if line is not None:
+                line.setModified(False)
+        finally:
+            self._setting_value = prev
+
+    def _on_user_edit(self, _text: str = "") -> None:
+        self._user_editing = True
+        self._commanded_value = None
+        self._set_mismatch(False)
+
+    def _on_spin_focus_in(self) -> None:
+        # Fresh focus: no edits yet, so readback may still reflect until
+        # the first keystroke flips _user_editing back on.
+        self._user_editing = False
+
+    def _on_spin_focus_out(self) -> None:
+        self._user_editing = False
+
+    def _is_editing(self) -> bool:
+        return self._user_editing
+
+    def _update_mismatch(self, readback: float) -> None:
+        commanded = self._commanded_value
+        if commanded is None:
+            self._set_mismatch(False)
+            return
+        decimals = self._entry.setpoint.effective_decimals()
+        same = f"{readback:.{decimals}f}" == f"{commanded:.{decimals}f}"
+        self._set_mismatch(not same)
+
+    def _set_mismatch(self, on: bool) -> None:
+        if self._mismatch == on:
+            return
+        self._mismatch = on
+        self.spin.setProperty("mismatch", "true" if on else "false")
+        _repolish(self.spin)
+
+    @property
+    def mismatch(self) -> bool:
+        """True when the latest readback differs from the commanded value."""
+        return self._mismatch
 
     def set_panel_armed(self, armed: bool) -> None:
         if self._panel_armed != armed:
@@ -757,16 +879,6 @@ class SetpointTileWidget(TileFrame):
             self.send_button.setToolTip("")
         self.spin.setEnabled(self._entry.enabled and not self.edit_mode)
 
-    def _refresh_readback(self) -> None:
-        if not self._has_readback():
-            self.readback_field.setVisible(False)
-            return
-        self.readback_field.setText(self._readback_text or "—")
-        self.readback_field.setVisible(True)
-        # Borrow the state property surface so QSS picks the right color.
-        _set_state_property(self.readback_field, self._readback_state)
-        _apply_custom_style(self.readback_field, "color: {color};", self._readback_color)
-
     def rendered_command(self) -> str:
         """The exact wire string a Send right now would produce. Used by
         the tab when staging the pending value AND by tests."""
@@ -774,14 +886,17 @@ class SetpointTileWidget(TileFrame):
 
 
 class EnumTileWidget(TileFrame):
-    """Multi-position selector with one command per option (v3, FR-68..FR-71).
+    """Multi-position selector whose dropdown is *also* its readback display
+    (v3, FR-68..FR-71).
 
     Internally a QComboBox plus a Send (▶) button. The user picks an
     option from the dropdown and clicks Send to fire that option's
-    command — same FIFO dispatcher as control/setpoint. An optional
-    watch_entry_id highlights the option whose ``match_value`` matches
-    the watched polled tile (decoupled from the user's combo selection
-    so they can still send a different option).
+    command — same FIFO dispatcher as control/setpoint. When a
+    ``watch_entry_id`` readback is configured, the readback drives the
+    combo's selection to the option whose ``match_value`` matches the
+    device — except while the user is actively choosing (dropdown open /
+    focused). If that reflected option differs from the option the user
+    last sent, the combo shows a mismatch warning color (FR-66/FR-70).
     """
 
     def __init__(self, entry: ControlPanelEntry, parent: QWidget | None = None) -> None:
@@ -789,11 +904,18 @@ class EnumTileWidget(TileFrame):
         self._pending = False
         self._panel_armed = False
         self.setProperty("panelArmed", "false")
-        self._indicated_index = -1
+        self._indicated_index = -1     # option the latest readback matched
+        self._commanded_index = -1     # option the last Send committed
+        self._mismatch = False
 
         self.combo = QComboBox(self)
         self.combo.setObjectName("tileEnumCombo")
+        self.combo.setProperty("mismatch", "false")
         self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # activated fires only on user selection (not programmatic
+        # setCurrentIndex), so it's the signal that the user chose a new
+        # option — clearing the prior command's mismatch comparison.
+        self.combo.activated.connect(self._on_user_select)
 
         self.send_button = QPushButton("▶", self)
         self.send_button.setObjectName("tileEnumSend")
@@ -841,33 +963,39 @@ class EnumTileWidget(TileFrame):
 
     @property
     def indicated_index(self) -> int:
+        """The option index the latest readback matched (-1 if none)."""
         return self._indicated_index
 
-    def set_indicated_index(self, index: int) -> None:
-        """Highlight an option without changing the user's selection.
+    @property
+    def mismatch(self) -> bool:
+        """True when the readback option differs from the commanded one."""
+        return self._mismatch
 
-        Used by the funnel to mirror the watched polled tile's value
-        — operators still keep their own choice in the combo (FR-70).
+    def mark_commanded(self) -> None:
+        """Record the currently selected option as the commanded one.
+
+        Called by the tab right after a Send is queued; later readbacks
+        compare against it to raise the mismatch warning (FR-66/FR-70).
         """
-        valid = -1 <= index < self.combo.count()
-        if not valid or index == self._indicated_index:
-            return
-        prev = self._indicated_index
-        self._indicated_index = index
-        # Use a foreground-role tweak on the indicated row so QSS rules
-        # apply uniformly regardless of theme.
-        for row in (prev, index):
-            if 0 <= row < self.combo.count():
-                self.combo.setItemData(
-                    row,
-                    "on" if row == index else "off",
-                    int(Qt.ItemDataRole.UserRole) + 1,
-                )
-        self.combo.update()
+        self._commanded_index = self.combo.currentIndex()
+        self._set_mismatch(False)
 
-    def update_indicator(self, value_text: str) -> None:
-        """Recompute the indicated option from the watched value."""
-        self.set_indicated_index(self._entry.enum_spec.indicated_index(value_text))
+    def apply_readback(self, value_text: str) -> None:
+        """Drive the combo's selection from a device readback (FR-70).
+
+        Resolves ``value_text`` to an option via ``match_value`` and
+        selects it unless the user is choosing right now; then flags a
+        mismatch when it differs from the commanded option.
+        """
+        index = self._entry.enum_spec.indicated_index(value_text)
+        self._indicated_index = index
+        if index >= 0 and not self._is_editing():
+            self.combo.blockSignals(True)
+            try:
+                self.combo.setCurrentIndex(index)
+            finally:
+                self.combo.blockSignals(False)
+        self._update_mismatch(index)
 
     def selected_command(self) -> str:
         """Return the command for whatever option the user has picked."""
@@ -906,7 +1034,33 @@ class EnumTileWidget(TileFrame):
                     self.combo.setCurrentIndex(index)
         finally:
             self.combo.blockSignals(False)
-        self._indicated_index = -1  # caller re-applies via update_indicator
+        self._indicated_index = -1   # caller re-applies via apply_readback
+        self._commanded_index = -1
+        self._set_mismatch(False)
+
+    def _on_user_select(self, _index: int) -> None:
+        # User picked a different option — the previous command's
+        # comparison no longer applies.
+        self._commanded_index = -1
+        self._set_mismatch(False)
+
+    def _is_editing(self) -> bool:
+        view = self.combo.view()
+        popup_open = bool(view is not None and view.isVisible())
+        return popup_open or self.combo.hasFocus()
+
+    def _update_mismatch(self, index: int) -> None:
+        if self._commanded_index < 0:
+            self._set_mismatch(False)
+            return
+        self._set_mismatch(index != self._commanded_index)
+
+    def _set_mismatch(self, on: bool) -> None:
+        if self._mismatch == on:
+            return
+        self._mismatch = on
+        self.combo.setProperty("mismatch", "true" if on else "false")
+        _repolish(self.combo)
 
     def set_panel_armed(self, armed: bool) -> None:
         if self._panel_armed != armed:

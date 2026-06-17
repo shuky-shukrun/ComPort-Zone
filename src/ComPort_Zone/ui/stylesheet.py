@@ -815,6 +815,10 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#tileControlButton[controlState="on"] {{
         background: {ok_bg}; color: {green}; border-color: {ok_bd};
     }}
+    /* Mismatch: the device's reported state disagrees with the last
+       commanded direction (FR-59). Amber border wins over the on/off
+       surface so the warning reads regardless of ON/OFF. */
+    QPushButton#tileControlButton[mismatch="true"] {{ border-color: {amber}; }}
 
     QDoubleSpinBox#tileSetpointSpin {{
         background: {field}; color: {tx};
@@ -824,6 +828,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QDoubleSpinBox#tileSetpointSpin:focus {{ border-color: {accent}; }}
     QDoubleSpinBox#tileSetpointSpin:disabled {{ color: {tx_faint}; }}
+    /* Mismatch: the readback differs from the commanded value (the
+       device clamped/rejected the setpoint) — FR-66. */
+    QDoubleSpinBox#tileSetpointSpin[mismatch="true"] {{
+        color: {amber}; border-color: {amber};
+    }}
     /* Custom subcontrols so the step buttons stay clickable when the
        spinbox is themed (Qt drops native rendering once any spinbox QSS
        lands). */
@@ -864,20 +873,6 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#tileSetpointSend:hover {{ background: {press_bg}; border-color: {accent}; }}
     QPushButton#tileSetpointSend:pressed {{ background: {press_bg}; }}
     QPushButton#tileSetpointSend:disabled {{ color: {tx_faint}; background: transparent; }}
-    QLineEdit#tileSetpointReadback {{
-        background: {panel}; color: {tx2};
-        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
-        padding: 3px 6px; min-height: 22px;
-        font-family: {MONO};
-        font-size: {MICRO_FS}px;
-    }}
-    QLineEdit#tileSetpointReadback[tileState="ok"] {{ color: {green}; border-color: {ok_bd}; }}
-    QLineEdit#tileSetpointReadback[tileState="warn"] {{ color: {amber}; border-color: {amber}; }}
-    QLineEdit#tileSetpointReadback[tileState="fail"], QLineEdit#tileSetpointReadback[tileState="error"] {{
-        color: {red};
-        border-color: {danger_bd};
-    }}
-    QLineEdit#tileSetpointReadback[tileState="stale"] {{ color: {stale_ink}; }}
 
     QComboBox#tileEnumCombo {{
         background: {field}; color: {tx};
@@ -886,6 +881,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QComboBox#tileEnumCombo:focus {{ border-color: {accent}; }}
     QComboBox#tileEnumCombo:disabled {{ color: {tx_faint}; }}
+    /* Mismatch: the readback option differs from the commanded one
+       (FR-70). */
+    QComboBox#tileEnumCombo[mismatch="true"] {{
+        color: {amber}; border-color: {amber};
+    }}
     QComboBox#tileEnumCombo::drop-down {{ width: 18px; border: none; }}
     QPushButton#tileEnumSend {{
         background: {hover}; color: {tx};
