@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import faulthandler
 import sys
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QSplashScreen
 
@@ -57,6 +58,48 @@ merge_quick_files = _quick_actions.merge_quick_files
 # Preserve the historical test/plugin seam where ComPort_Zone.app.default_config_path
 # can be monkeypatched before constructing MainWindow.
 MainWindow.config_path_supplier = staticmethod(lambda: default_config_path())
+
+
+# If the GUI thread stalls (a deadlock or a busy-loop), the app would just
+# look "stuck" with no clue why. The watchdog below keeps pushing a
+# faulthandler "dump after N seconds" deadline forward from the GUI thread;
+# while the UI is responsive the dump never fires, but the moment the GUI
+# thread stops servicing its timer, the pending dump fires from
+# faulthandler's own thread and writes every thread's stack to
+# freeze-dump.txt — including the stuck GUI thread — so the hang can be
+# diagnosed instead of guessed at.
+_FREEZE_WATCHDOG_STALL_S = 10.0
+_FREEZE_WATCHDOG_TICK_MS = 2000
+_freeze_dump_file = None  # module-level so the handle outlives install_*
+
+
+def freeze_dump_path():
+    return default_config_path().parent / "freeze-dump.txt"
+
+
+def install_freeze_watchdog(window) -> QTimer | None:
+    global _freeze_dump_file
+    try:
+        path = freeze_dump_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Append so a captured dump survives a relaunch (the user can send
+        # the file after force-killing the frozen app).
+        _freeze_dump_file = open(path, "a", encoding="utf-8")
+    except Exception:
+        return None
+    faulthandler.enable()
+
+    def _heartbeat() -> None:
+        faulthandler.cancel_dump_traceback_later()
+        faulthandler.dump_traceback_later(
+            _FREEZE_WATCHDOG_STALL_S, file=_freeze_dump_file, exit=False
+        )
+
+    timer = QTimer(window)
+    timer.timeout.connect(_heartbeat)
+    timer.start(_FREEZE_WATCHDOG_TICK_MS)
+    _heartbeat()
+    return timer
 
 
 def set_windows_app_user_model_id() -> None:
@@ -182,7 +225,12 @@ def run(initial_file: str | None = None) -> int:
     )
     window.show()
     splash.finish(window)
+    install_freeze_watchdog(window)
     window.run_startup_actions()
     if initial_file:
         window.open_command_file_editor(initial_file)
-    return app.exec()
+    result = app.exec()
+    # Clean exit: cancel the armed dump so a slow-but-normal shutdown
+    # never writes a spurious freeze report.
+    faulthandler.cancel_dump_traceback_later()
+    return result

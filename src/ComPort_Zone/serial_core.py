@@ -356,9 +356,24 @@ class SerialClient:
         if reader_stop:
             reader_stop.set()
         if port:
+            # Unblock a reader parked in port.read() BEFORE close(). On
+            # Windows, closing a port while a blocking/overlapped read is
+            # in flight can hang the calling thread (here the GUI thread
+            # during app shutdown) — which leaves the process alive after
+            # the window closes and the COM handle held. cancel_read()
+            # makes the pending read return at once so close() is clean.
+            cancel_read = getattr(port, "cancel_read", None)
+            if cancel_read is not None:
+                try:
+                    cancel_read()
+                except Exception:
+                    pass
             try:
                 port.close()
             except SerialException:
+                pass
+            except Exception:
+                # Never let a driver-level close error abort shutdown.
                 pass
         if reader_thread and reader_thread.is_alive() and reader_thread is not current_thread():
             reader_thread.join(timeout=1.0)
