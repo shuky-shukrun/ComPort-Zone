@@ -242,6 +242,7 @@ class TabContextMenuBuilderTests(unittest.TestCase):
                 [
                     "New Control Panel",
                     "Rename Control Panel",
+                    "Duplicate Control Panel",
                     "Bind to Terminal",
                     "Pause Polling",
                     "Add Entry...",

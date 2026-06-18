@@ -59,6 +59,12 @@ class TabContextMenuBuilder:
             lambda tab_index=index: host.rename_control_panel(tab_index),
             icon=QStyle.StandardPixmap.SP_FileDialogDetailedView,
         )
+        host._add_context_action(
+            menu,
+            "Duplicate Control Panel",
+            lambda tab_index=index: host.duplicate_control_panel(tab_index),
+            icon=QStyle.StandardPixmap.SP_FileDialogContentsView,
+        )
         bind_menu = menu.addMenu("Bind to Terminal")
         bind_menu.setIcon(standard_icon(QStyle.StandardPixmap.SP_ComputerIcon))
         bind_menu.aboutToShow.connect(

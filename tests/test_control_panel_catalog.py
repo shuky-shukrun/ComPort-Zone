@@ -69,6 +69,34 @@ class CatalogTests(unittest.TestCase):
     def test_duplicate_unknown_id(self) -> None:
         self.assertIsNone(self.catalog.duplicate("ghost"))
 
+    def test_duplicate_remaps_follow_watch_ids(self) -> None:
+        from ComPort_Zone.control_panel_models import (
+            ParseRule,
+            ReadbackSpec,
+            SetpointSpec,
+            TilePlacement,
+        )
+
+        watched = ControlPanelEntry(
+            id="meas", label="Measured", command="MEAS:VOLT?",
+            parse=ParseRule(kind="line", value_type="number"),
+        )
+        setpoint = ControlPanelEntry(
+            id="sp", label="Set V",
+            tile=TilePlacement(kind="setpoint"),
+            setpoint=SetpointSpec(command_template="VOLT {value}"),
+            readback=ReadbackSpec(source="entry", watch_entry_id="meas"),
+        )
+        source = self.catalog.add(
+            ControlPanelConfig(name="PSU", entries=[watched, setpoint])
+        )
+        clone = self.catalog.duplicate(source.id)
+        assert clone is not None
+        new_watched, new_setpoint = clone.entries
+        # The follow reference points at the COPY's watched id, not the original.
+        self.assertNotEqual(new_watched.id, "meas")
+        self.assertEqual(new_setpoint.readback.watch_entry_id, new_watched.id)
+
     def test_rename_dedupes_and_rejects_blank(self) -> None:
         first = self.catalog.add(make_config("PSU"))
         second = self.catalog.add(make_config("Scope"))

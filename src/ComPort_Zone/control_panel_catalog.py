@@ -18,9 +18,22 @@ from uuid import uuid4
 
 from .control_panel_models import (
     ControlPanelConfig,
+    ControlPanelEntry,
     control_panel_uses_v2_features,
     control_panel_uses_v3_features,
 )
+
+
+def _remap_watch_ids(entry: ControlPanelEntry, id_map: dict[str, str]) -> None:
+    """Repoint a writing entry's follow-mode ``watch_entry_id`` at the
+    remapped id when its target was copied alongside it (used by
+    :meth:`ControlPanelCatalog.duplicate`). Derived entries reference
+    siblings by label, not id, so they need no remapping."""
+    for spec in (entry.readback, entry.control, entry.setpoint, entry.enum_spec):
+        watch_id = getattr(spec, "watch_entry_id", "")
+        if watch_id and watch_id in id_map:
+            spec.watch_entry_id = id_map[watch_id]
+
 
 CONTROL_PANEL_EXPORT_KEY = "comport_zone_control_panels"
 CONTROL_PANEL_EXPORT_VERSION = 3
@@ -82,14 +95,24 @@ class ControlPanelCatalog:
         return config
 
     def duplicate(self, control_panel_id: str) -> ControlPanelConfig | None:
-        """Deep-copy a config under a fresh id and "<name> Copy" name."""
+        """Deep-copy a config under a fresh id and "<name> Copy" name.
+
+        Entry ids are regenerated, and follow-mode ``watch_entry_id``
+        references are remapped to the new ids so a duplicated panel's
+        readbacks keep pointing at the copies (not the originals).
+        """
         source = self.by_id(control_panel_id)
         if source is None:
             return None
         clone = ControlPanelConfig.from_dict(source.to_dict())
         clone.id = uuid4().hex
+        id_map: dict[str, str] = {}
         for entry in clone.entries:
-            entry.id = uuid4().hex
+            new_id = uuid4().hex
+            id_map[entry.id] = new_id
+            entry.id = new_id
+        for entry in clone.entries:
+            _remap_watch_ids(entry, id_map)
         clone.name = self.unique_name(f"{source.name} Copy")
         clone.touch()
         self._control_panels.append(clone)

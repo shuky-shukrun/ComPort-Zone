@@ -1044,6 +1044,18 @@ class MainWindow(QMainWindow):
             control_panel.rename(unique)
             self.update_tab_titles()
 
+    def duplicate_control_panel(self, index: int) -> None:
+        control_panel = self.control_panel_at(index)
+        if control_panel is None:
+            return
+        clone = self.control_panel_catalog.duplicate(control_panel.config.id)
+        if clone is None:
+            return
+        self.save_settings()
+        self.refresh_control_panel_lists()
+        self.open_control_panel_tab(clone.id)
+        self.set_status(f"Duplicated control panel as {clone.name}.")
+
     def show_control_panel_manager(self) -> None:
         ControlPanelManagerDialog(
             catalog=self.control_panel_catalog,
