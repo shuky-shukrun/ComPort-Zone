@@ -273,6 +273,8 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
         self.assertNotIn("user", tab.scheduler.paused_reasons)
 
     def test_saved_indicator_updates_on_persisted_changes(self) -> None:
+        # Boot with no connected device so auto-bind doesn't mark "Saved".
+        self.session.transport.disconnect()
         tab = self.make_tab(volt_entry())
         self.assertEqual(tab.save_state_label.text(), "")
         tab.rename("Rack 9")
@@ -2113,11 +2115,38 @@ class MasterArmTests(ControlPanelTabTestBase):
 
 
 class ControlPanelTabBindingTests(ControlPanelTabTestBase):
-    def test_unbound_by_default(self) -> None:
+    def test_stays_unbound_when_no_device_connected(self) -> None:
+        # With nothing connected there's nothing to auto-bind to.
+        self.session.transport.disconnect()
         tab = self.make_tab(volt_entry())
+        self.assertIsNone(tab.bound_session_id)
         self.assertIn("unbound", tab.scheduler.paused_reasons)
         self.assertEqual(tab.bind_chip.text(), "Unbound")
         self.assertEqual(tab.bind_chip.property("state"), "unbound")
+
+    def test_autobinds_to_sole_connected_session(self) -> None:
+        # Exactly one connected terminal (the base harness default) -> the
+        # panel binds itself, no manual bind needed.
+        tab = self.make_tab(volt_entry())
+        self.assertEqual(tab.bound_session_id, 1)
+        self.assertNotIn("unbound", tab.scheduler.paused_reasons)
+
+    def test_no_autobind_when_multiple_sessions_connected(self) -> None:
+        # Two connected terminals is ambiguous — never guess.
+        self.sessions.append(FakeTerminalSession(2, endpoint="COM9"))
+        tab = self.make_tab(volt_entry())
+        self.assertIsNone(tab.bound_session_id)
+        self.assertIn("unbound", tab.scheduler.paused_reasons)
+
+    def test_autobinds_when_the_sole_device_connects(self) -> None:
+        # Boot unbound (nothing connected); when the one device comes up
+        # the coordinator's binding-state refresh auto-binds.
+        self.session.transport.disconnect()
+        tab = self.make_tab(volt_entry())
+        self.assertIsNone(tab.bound_session_id)
+        self.session.transport.connect(object())
+        tab.refresh_binding_state()  # what coordinator.refresh_control_panels() calls
+        self.assertEqual(tab.bound_session_id, 1)
 
     def test_closing_target_unbinds_and_releases(self) -> None:
         tab = self.make_tab(volt_entry())

@@ -185,6 +185,9 @@ class ControlPanelTabWidget(QWidget):
         # binding plus per-entry overrides each hold a shared, refcounted
         # dispatcher; health is gated per session at submit time.
         self._bound_session_id: int | None = None
+        # Re-entrancy guard for auto-bind: bind_to_session() calls
+        # refresh_binding_state(), which is where auto-bind lives.
+        self._autobinding = False
         self._dispatchers: dict[int, SessionPollDispatcher] = {}
         self._gates: dict[int, "SessionHealthLike"] = {}
         self._gate_connected_prev: dict[int, bool] = {}
@@ -1519,9 +1522,31 @@ class ControlPanelTabWidget(QWidget):
                 lines.append((label, "polling", True))
         return lines
 
+    def _maybe_autobind(self) -> None:
+        """Bind to the sole connected session when unbound.
+
+        The single-device case is overwhelmingly common; making the user
+        bind by hand each session is friction. Only fires when the panel
+        is unbound AND exactly one open terminal is connected, so it never
+        guesses between multiple devices. A panel becomes unbound only by
+        never having been bound or by its bound tab closing — there is no
+        user "unbind" action — so re-binding here never fights the user.
+        """
+        if self._autobinding or self._bound_session_id is not None:
+            return
+        connected = [t for t in self.coordinator.bind_targets() if t.connected]
+        if len(connected) != 1:
+            return
+        self._autobinding = True
+        try:
+            self.bind_to_session(connected[0].session_id)
+        finally:
+            self._autobinding = False
+
     def refresh_binding_state(self) -> None:
         """Re-render the binding chip (cheap; called on connection events
         and from the tick when gate states change)."""
+        self._maybe_autobind()
         lines = self._target_status_lines()
         user_paused = "user" in self.scheduler.paused_reasons
         healthy_lines = [line for line in lines if line[2]]
