@@ -825,10 +825,12 @@ def build_stylesheet(theme: ThemePalette) -> str:
        surface so the warning reads regardless of ON/OFF. */
     QPushButton#tileControlButton[mismatch="true"] {{ border-color: {amber}; }}
 
+    /* No step buttons (NoButtons) — numeric validation/clamping stays in
+       the widget; tight padding keeps the value close to the border. */
     QDoubleSpinBox#tileSetpointSpin {{
         background: {field}; color: {tx};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
-        padding: 3px 24px 3px 6px; min-height: 24px;
+        padding: 1px 6px; min-height: 18px;
         font-family: {MONO};
     }}
     QDoubleSpinBox#tileSetpointSpin:focus {{ border-color: {accent}; }}
@@ -838,42 +840,10 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QDoubleSpinBox#tileSetpointSpin[mismatch="true"] {{
         color: {amber}; border-color: {amber};
     }}
-    /* Custom subcontrols so the step buttons stay clickable when the
-       spinbox is themed (Qt drops native rendering once any spinbox QSS
-       lands). */
-    QDoubleSpinBox#tileSetpointSpin::up-button,
-    QDoubleSpinBox#tileSetpointSpin::down-button {{
-        subcontrol-origin: border;
-        width: 18px;
-        background: transparent;
-        border-left: 1px solid {bd_soft};
-    }}
-    QDoubleSpinBox#tileSetpointSpin::up-button {{ subcontrol-position: top right; }}
-    QDoubleSpinBox#tileSetpointSpin::down-button {{ subcontrol-position: bottom right; }}
-    QDoubleSpinBox#tileSetpointSpin::up-button:hover,
-    QDoubleSpinBox#tileSetpointSpin::down-button:hover {{ background: {hover}; }}
-    QDoubleSpinBox#tileSetpointSpin::up-button:pressed,
-    QDoubleSpinBox#tileSetpointSpin::down-button:pressed {{ background: {press_bg}; }}
-    QDoubleSpinBox#tileSetpointSpin::up-arrow {{
-        image: none;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-bottom: 5px solid {tx2};
-        width: 0; height: 0;
-    }}
-    QDoubleSpinBox#tileSetpointSpin::down-arrow {{
-        image: none;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid {tx2};
-        width: 0; height: 0;
-    }}
-    QDoubleSpinBox#tileSetpointSpin::up-arrow:disabled,
-    QDoubleSpinBox#tileSetpointSpin::down-arrow:disabled {{ border-color: transparent; }}
     QPushButton#tileSetpointSend {{
         background: {hover}; color: {tx};
         border: 1px solid {bd_strong}; border-radius: {RADIUS_SM}px;
-        font-weight: 700; min-height: 22px;
+        font-weight: 700; min-height: 18px;
     }}
     QPushButton#tileSetpointSend:hover {{ background: {press_bg}; border-color: {accent}; }}
     QPushButton#tileSetpointSend:pressed {{ background: {press_bg}; }}
@@ -882,7 +852,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QComboBox#tileEnumCombo {{
         background: {field}; color: {tx};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
-        padding: 3px 8px; min-height: 22px;
+        padding: 1px 6px; min-height: 18px;
     }}
     QComboBox#tileEnumCombo:focus {{ border-color: {accent}; }}
     QComboBox#tileEnumCombo:disabled {{ color: {tx_faint}; }}
@@ -895,7 +865,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#tileEnumSend {{
         background: {hover}; color: {tx};
         border: 1px solid {bd_strong}; border-radius: {RADIUS_SM}px;
-        font-weight: 700; min-height: 22px;
+        font-weight: 700; min-height: 18px;
     }}
     QPushButton#tileEnumSend:hover {{ background: {press_bg}; border-color: {accent}; }}
     QPushButton#tileEnumSend:pressed {{ background: {press_bg}; }}

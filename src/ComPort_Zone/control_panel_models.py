@@ -27,11 +27,6 @@ from typing import Any
 from uuid import uuid4
 
 TILE_KINDS = ("value", "led", "control", "setpoint", "enum", "bits")
-# Writing tiles carry input widgets (spinbox+send, dropdown+send, button)
-# that need room — they render at least this many columns wide so the
-# controls aren't clipped on a dense grid.
-WRITABLE_TILE_KINDS = ("control", "setpoint", "enum")
-MIN_WRITABLE_TILE_COLUMNS = 2
 # Semantic states a tile can render. "ok"/"warn"/"fail" come from color
 # rules, "neutral" is the no-rule-matched default, "stale" means no recent
 # successful poll, "error" covers send/parse failures.
@@ -1167,10 +1162,6 @@ class ControlPanelTabState:
 def _clamp_placement(tile: TilePlacement, columns: int) -> None:
     tile.span_w = max(1, min(MAX_TILE_SPAN, tile.span_w, columns))
     tile.span_h = max(1, min(MAX_TILE_SPAN, tile.span_h))
-    # Input tiles need at least MIN_WRITABLE_TILE_COLUMNS to render their
-    # controls without clipping (capped at the grid width).
-    if tile.kind in WRITABLE_TILE_KINDS:
-        tile.span_w = max(tile.span_w, min(MIN_WRITABLE_TILE_COLUMNS, columns))
     tile.col = max(0, min(tile.col, columns - tile.span_w))
     tile.row = max(0, tile.row)
 

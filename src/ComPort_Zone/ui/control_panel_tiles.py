@@ -797,6 +797,9 @@ class SetpointTileWidget(TileFrame):
         self.spin = _SelectOnFocusDoubleSpinBox(self)
         self.spin.setObjectName("tileSetpointSpin")
         self.spin.setKeyboardTracking(False)
+        # No up/down arrows — the field still validates + clamps numeric
+        # input; stepBy() (Enter/keyboard) keeps working.
+        self.spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         self.spin.setProperty("mismatch", "false")
         self.spin.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
