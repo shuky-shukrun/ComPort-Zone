@@ -27,6 +27,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -693,7 +694,9 @@ class ControlPanelTabWidget(QWidget):
 
     def _trigger_on_connect(self, session_id: int) -> None:
         """Fire each enabled on_connect entry targeting this session once,
-        staggered (FR-52)."""
+        staggered (FR-52), and arm the panel on its bound device coming up
+        (FR-74) unless it's view-only."""
+        self._maybe_arm_on_connect(session_id)
         index = 0
         for entry in self.config.entries:
             if entry.poll_mode != "on_connect" or not entry.enabled:
@@ -703,6 +706,22 @@ class ControlPanelTabWidget(QWidget):
             if self.scheduler.trigger_now(entry.id, delay_s=index * 0.025):
                 index += 1
         self._trigger_readbacks_on_connect(session_id, start_index=index)
+
+    def _maybe_arm_on_connect(self, session_id: int) -> None:
+        """Arm the panel when its bound device connects (FR-74).
+
+        Fires only on the connect edge (this method's caller), so a manual
+        disarm during a live connection is respected; a fresh reconnect
+        re-arms. Skipped for view-only panels and panels with no writable
+        tiles (nothing to arm).
+        """
+        if self.config.view_only or self._armed:
+            return
+        if session_id != self._bound_session_id:
+            return
+        if not any(entry.is_writable() for entry in self.config.entries):
+            return
+        self.set_armed(True)
 
     # ------------------------------------------------------------- readback
 
@@ -2266,6 +2285,19 @@ class ControlPanelTabWidget(QWidget):
         hint.setObjectName("dialogHint")
         form.addRow(hint)
 
+        self.view_only_check = QCheckBox("View only (don't arm on connect)", container)
+        self.view_only_check.setChecked(self.config.view_only)
+        self.view_only_check.toggled.connect(self._view_only_toggled)
+        form.addRow(self.view_only_check)
+        view_only_hint = QLabel(
+            "Armed automatically when the bound device connects, unless this "
+            "is on — then the panel stays disarmed for monitoring only.",
+            container,
+        )
+        view_only_hint.setWordWrap(True)
+        view_only_hint.setObjectName("dialogHint")
+        form.addRow(view_only_hint)
+
         action = QWidgetAction(menu)
         action.setDefaultWidget(container)
         menu.addAction(action)
@@ -2291,6 +2323,16 @@ class ControlPanelTabWidget(QWidget):
         self.config.rows = value
         self.grid.relayout()
         self._refresh_grid_size_label()
+        self._layout_changed()
+
+    def _view_only_toggled(self, checked: bool) -> None:
+        if checked == self.config.view_only:
+            return
+        self.config.view_only = checked
+        # Turning view-only on must take effect immediately — a panel armed
+        # right now should drop to disarmed.
+        if checked and self._armed:
+            self._force_disarm("set to view only")
         self._layout_changed()
 
     # -------------------------------------------------------------- dialogs

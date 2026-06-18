@@ -16,6 +16,8 @@ All notable changes to ComPort Zone are documented here.
 
 ### Changed
 
+- A Control Panel now **arms itself when its bound device connects** (instead of always booting disarmed), so operators don't have to click Arm every session. A new per-panel **View only** option (in the grid-size popover) opts out — the panel stays disarmed for monitoring. Arm state is still transient (never persisted); a manual disarm during a live connection sticks until the next reconnect.
+- A Control Panel **auto-binds to the sole connected terminal** when it has no binding yet, so the common single-device setup needs no manual bind.
 - Control Panel default grid is now **10 columns × 6 rows** (was 4 × 5), and the shipped Example panel is re-laid to use the wider grid. Existing saved panels keep their stored size (use the Columns/Rows control to change them).
 - Settings schema bumped to **v7** for the v3 Control Panel features (setpoint or enum kind, any `SetpointSpec` non-default, any `EnumSpec.options` non-empty). Panels using only v1 fields keep their v5 floor; v2-only panels keep their v6 floor; mixed panels declare the max. Export JSON stamps `version: 3` only when the payload actually uses v3 features; v1/v2 exports still stamp 1/2.
 

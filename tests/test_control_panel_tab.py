@@ -1983,8 +1983,12 @@ class EnumTileTests(ControlPanelTabTestBase):
 class MasterArmTests(ControlPanelTabTestBase):
     """Master-arm transient gate (v3, FR-72..FR-75 + NFR-15).
 
-    These tests deliberately use the base class's make_tab (no
-    auto-arm) so they exercise the disarmed-by-default invariant.
+    A panel now arms itself when its bound device connects (FR-74), and
+    the base harness session is connected — so these gate-mechanics tests
+    build view-only panels (auto-arm suppressed) to keep a known disarmed
+    start. ``view_only`` only blocks the *automatic* arm; manual arming
+    still works, which is what these tests exercise. Arm-on-connect itself
+    is covered by its own tests below.
     """
 
     def setUp(self) -> None:
@@ -1992,10 +1996,54 @@ class MasterArmTests(ControlPanelTabTestBase):
         self.status_messages: list[str] = []
         self.coordinator._set_status = self.status_messages.append
 
+    def make_tab(self, *entries, tab_state=None, view_only=True):
+        config = ControlPanelConfig(name="Bench", entries=list(entries), view_only=view_only)
+        tab = ControlPanelTabWidget(
+            self.host,
+            config,
+            tab_state,
+            coordinator=self.coordinator,
+            clock=self.clock,
+            start_timer=False,
+            alert_sounder=StubAlertSounder(),
+        )
+        self.tabs.append(tab)
+        return tab
+
     def test_panel_boots_disarmed(self) -> None:
-        tab = self.make_tab(control_entry())
+        # Before any device is connected the panel is disarmed.
+        self.session.transport.disconnect()
+        tab = self.make_tab(control_entry(), view_only=False)
         self.assertFalse(tab.is_armed)
         self.assertFalse(tab.arm_button.isChecked())
+
+    def test_arms_on_connect_by_default(self) -> None:
+        # A normal panel arms itself once its bound device is connected
+        # (the base harness session is connected, so auto-bind +
+        # connect-edge arm fire at construction).
+        tab = self.make_tab(control_entry(), view_only=False)
+        self.assertTrue(tab.is_armed)
+
+    def test_view_only_panel_stays_disarmed_on_connect(self) -> None:
+        tab = self.make_tab(control_entry())  # view_only=True
+        self.assertFalse(tab.is_armed)
+
+    def test_manual_disarm_not_rearmed_within_connection(self) -> None:
+        # Auto-arm fires only on the connect edge: a deliberate disarm
+        # while the device stays connected must stick.
+        tab = self.make_tab(control_entry(), view_only=False)
+        self.assertTrue(tab.is_armed)
+        tab.set_armed(False)
+        tab._tick()
+        tab.refresh_binding_state()
+        self.assertFalse(tab.is_armed)
+
+    def test_enabling_view_only_disarms_now(self) -> None:
+        tab = self.make_tab(control_entry(), view_only=False)
+        self.assertTrue(tab.is_armed)
+        tab._view_only_toggled(True)
+        self.assertTrue(tab.config.view_only)
+        self.assertFalse(tab.is_armed)
 
     def test_disarmed_click_refused_with_status(self) -> None:
         tab = self.make_tab(control_entry())

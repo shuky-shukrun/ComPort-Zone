@@ -231,6 +231,14 @@ class ControlPanelConfigTests(unittest.TestCase):
         self.assertEqual(ControlPanelConfig.from_dict({"rows": 0}).rows, 1)
         self.assertEqual(ControlPanelConfig.from_dict({}).rows, 6)
 
+    def test_view_only_round_trips_sparsely(self) -> None:
+        # Default off -> omitted from the payload; on -> written + restored.
+        self.assertNotIn("view_only", ControlPanelConfig(name="X").to_dict())
+        self.assertFalse(ControlPanelConfig.from_dict({"name": "X"}).view_only)
+        payload = ControlPanelConfig(name="X", view_only=True).to_dict()
+        self.assertTrue(payload["view_only"])
+        self.assertTrue(ControlPanelConfig.from_dict(payload).view_only)
+
     def test_blank_name_falls_back(self) -> None:
         self.assertEqual(ControlPanelConfig.from_dict({"name": "   "}).name, "ControlPanel")
 

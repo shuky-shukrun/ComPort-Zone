@@ -1055,6 +1055,11 @@ class ControlPanelConfig:
     # capture survives restarts (FR-49). Sparse in to_dict.
     csv_log_enabled: bool = False
     csv_log_path: str = ""
+    # v3.1: a control panel arms itself when its bound device connects so
+    # ops don't have to click Arm every session. Mark a panel view_only to
+    # keep it disarmed (monitoring-only). Transient arm state is never
+    # persisted; this is just the per-panel default. Sparse in to_dict.
+    view_only: bool = False
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
@@ -1083,6 +1088,8 @@ class ControlPanelConfig:
             payload["csv_log_enabled"] = True
         if self.csv_log_path:
             payload["csv_log_path"] = self.csv_log_path
+        if self.view_only:
+            payload["view_only"] = True
         return payload
 
     @classmethod
@@ -1112,6 +1119,7 @@ class ControlPanelConfig:
             favorite=bool(data.get("favorite", False)),
             csv_log_enabled=bool(data.get("csv_log_enabled", False)),
             csv_log_path=str(data.get("csv_log_path", "")),
+            view_only=bool(data.get("view_only", False)),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
