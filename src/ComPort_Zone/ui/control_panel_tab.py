@@ -417,6 +417,7 @@ class ControlPanelTabWidget(QWidget):
         self.grid.tilePollNowRequested.connect(self.poll_now)
         self.grid.tileControlActivated.connect(self._activate_control)
         self.grid.tileChartRequested.connect(self.open_chart)
+        self.grid.editModeRequested.connect(self._enter_edit_mode)
         self.grid.set_config(self.config)
 
         # Esc on the focused panel disarms (FR-75). Scoped to the grid
@@ -2255,6 +2256,12 @@ class ControlPanelTabWidget(QWidget):
 
     def _edit_mode_toggled(self, checked: bool) -> None:
         self.grid.set_edit_mode(checked)
+
+    def _enter_edit_mode(self) -> None:
+        """A tile long-press asks for edit mode. Drive it through the
+        toolbar button so its checked state stays in sync."""
+        if not self.edit_layout_button.isChecked():
+            self.edit_layout_button.setChecked(True)
 
     # ---------------------------------------------------------- grid sizing
 

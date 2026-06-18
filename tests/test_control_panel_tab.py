@@ -2256,6 +2256,14 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         self.assertIsNotNone(tab.grid.tile("trip"))
         self.assertGreater(self.host.save_count, saves)
 
+    def test_tile_long_press_enters_edit_mode(self) -> None:
+        tab = self.make_tab(volt_entry())
+        self.assertFalse(tab.grid._edit_mode)
+        self.assertFalse(tab.edit_layout_button.isChecked())
+        tab.grid.editModeRequested.emit()  # what a tile long-press fires
+        self.assertTrue(tab.edit_layout_button.isChecked())
+        self.assertTrue(tab.grid._edit_mode)
+
     def test_apply_entry_edit_replaces(self) -> None:
         tab = self.make_tab(volt_entry())
         edited = volt_entry()

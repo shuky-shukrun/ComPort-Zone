@@ -53,6 +53,7 @@ class ControlPanelGridWidget(QWidget):
     tilePollNowRequested = Signal(str)
     tileControlActivated = Signal(str)
     tileChartRequested = Signal(str)
+    editModeRequested = Signal()  # a tile long-press asks to enter edit mode
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -93,6 +94,7 @@ class ControlPanelGridWidget(QWidget):
                 tile.activateRequested.connect(self.tileControlActivated)
                 tile.chartRequested.connect(self.tileChartRequested)
                 tile.spanRequested.connect(self._handle_span_request)
+                tile.editModeRequested.connect(self.editModeRequested)
                 tile.set_edit_mode(self._edit_mode)
                 tile.apply_theme_palette(self._theme)
                 tile.show()

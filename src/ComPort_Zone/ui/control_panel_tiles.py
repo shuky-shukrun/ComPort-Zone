@@ -47,6 +47,10 @@ from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM
 
 CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
 
+# Press-and-hold this long on a tile's chrome to flip the panel into
+# layout-edit mode without hunting for the toolbar button.
+LONG_PRESS_MS = 2000
+
 # Default state captions for LED tiles; a matching ColorRule ``label``
 # overrides these (FR-29).
 TILE_STATE_CAPTIONS = {
@@ -148,6 +152,7 @@ class TileFrame(QFrame):
     pollNowRequested = Signal(str)
     activateRequested = Signal(str)  # emitted by control tiles only (FR-59)
     chartRequested = Signal(str)  # emitted by value tiles only (FR-48)
+    editModeRequested = Signal()  # long-press on the tile chrome (FR: edit UX)
 
     def set_panel_armed(self, armed: bool) -> None:
         """Default: tiles are unaffected by master arm. Writing-tile
@@ -170,6 +175,11 @@ class TileFrame(QFrame):
         self._edit_mode = False
         self._press_pos: QPoint | None = None
         self._runtime: TileRuntime | None = None
+        # Long-press-to-edit: a hold on the tile chrome (not over an
+        # interactive child) enters edit mode after LONG_PRESS_MS.
+        self._long_press_timer = QTimer(self)
+        self._long_press_timer.setSingleShot(True)
+        self._long_press_timer.timeout.connect(self._on_long_press)
 
         self.title_label = QLabel(entry.display_label())
         self.title_label.setObjectName("tileTitle")
@@ -248,9 +258,22 @@ class TileFrame(QFrame):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_pos = event.position().toPoint()
+            # Arm long-press-to-edit only when not already editing.
+            if not self._edit_mode:
+                self._long_press_timer.start(LONG_PRESS_MS)
         super().mousePressEvent(event)
 
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._long_press_timer.stop()
+        super().mouseReleaseEvent(event)
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        # Any real movement means this is a drag/scroll, not a hold —
+        # cancel the pending long-press.
+        if self._long_press_timer.isActive() and self._press_pos is not None:
+            moved = (event.position().toPoint() - self._press_pos).manhattanLength()
+            if moved >= QApplication.startDragDistance():
+                self._long_press_timer.stop()
         if (
             not self._edit_mode
             or self._press_pos is None
@@ -268,6 +291,10 @@ class TileFrame(QFrame):
         drag.setMimeData(mime)
         drag.setPixmap(self.grab())
         drag.exec(Qt.DropAction.MoveAction)
+
+    def _on_long_press(self) -> None:
+        if not self._edit_mode:
+            self.editModeRequested.emit()
 
     # -------------------------------------------------------- context menu
 

@@ -911,6 +911,90 @@ class ReadbackIntoInputTests(unittest.TestCase):
         tile.deleteLater()
 
 
+class LongPressEditTests(unittest.TestCase):
+    """Press-and-hold a tile's chrome to enter edit mode."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _press(pos=(5, 5)):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        return QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(*pos),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+    @staticmethod
+    def _move(pos):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        return QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(*pos),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+    def _tile(self):
+        from ComPort_Zone.ui.control_panel_tiles import ValueTileWidget
+
+        return ValueTileWidget(make_entry("a"))
+
+    def test_press_arms_timer_and_release_cancels(self) -> None:
+        tile = self._tile()
+        tile.mousePressEvent(self._press())
+        self.assertTrue(tile._long_press_timer.isActive())
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        release = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            QPointF(5, 5),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        tile.mouseReleaseEvent(release)
+        self.assertFalse(tile._long_press_timer.isActive())
+        tile.deleteLater()
+
+    def test_move_beyond_threshold_cancels(self) -> None:
+        tile = self._tile()
+        tile.mousePressEvent(self._press((5, 5)))
+        self.assertTrue(tile._long_press_timer.isActive())
+        tile.mouseMoveEvent(self._move((500, 500)))  # far drag
+        self.assertFalse(tile._long_press_timer.isActive())
+        tile.deleteLater()
+
+    def test_not_armed_in_edit_mode(self) -> None:
+        tile = self._tile()
+        tile.set_edit_mode(True)
+        tile.mousePressEvent(self._press())
+        self.assertFalse(tile._long_press_timer.isActive())
+        tile.deleteLater()
+
+    def test_timeout_requests_edit_mode_once(self) -> None:
+        tile = self._tile()
+        seen: list[bool] = []
+        tile.editModeRequested.connect(lambda: seen.append(True))
+        tile._on_long_press()
+        self.assertEqual(seen, [True])
+        # Already editing -> no further request.
+        tile.set_edit_mode(True)
+        tile._on_long_press()
+        self.assertEqual(seen, [True])
+        tile.deleteLater()
+
+
 class ThemingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
