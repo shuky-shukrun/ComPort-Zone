@@ -760,6 +760,12 @@ def build_stylesheet(theme: ThemePalette) -> str:
         border: 2px solid {accent};
         background: {mix_hex(accent, elevated, 0.22)};
     }}
+    /* Ctrl-click multi-select highlight (for copying several tiles). Last
+       so it wins over the other border states when a tile is selected. */
+    QFrame#controlPanelTile[selected="true"] {{
+        border: 2px solid {accent};
+        background: {mix_hex(accent, elevated, 0.32)};
+    }}
     QFrame#controlPanelTile QLabel {{ background: transparent; }}
     QFrame#controlPanelTile[entryEnabled="false"] QLabel {{ color: {tx_faint}; }}
 

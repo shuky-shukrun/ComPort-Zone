@@ -16,7 +16,6 @@ FR-27, FR-31, FR-32, FR-36).
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable
 from copy import deepcopy
@@ -26,7 +25,7 @@ from queue import Empty, Queue
 from typing import Protocol
 from uuid import uuid4
 
-from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -91,7 +90,9 @@ from ..control_panel_models import (
     ControlPanelTabState,
     ReadbackSpec,
     append_placement,
+    grid_row_count,
     normalize_layout,
+    remap_watch_ids,
 )
 from ..control_panel_parse import (
     CompiledParseRule,
@@ -106,13 +107,14 @@ from .control_panel_alert_panel import AlertHistoryPanel
 from .control_panel_chart import DEFAULT_SPAN_S, ControlPanelChartPage
 from .control_panel_grid import ControlPanelGridWidget
 from .control_panel_tiles import (
-    CONTROL_PANEL_TILE_CLIPBOARD_MIME,
     TILE_STATE_CAPTIONS,
     ControlTileWidget,
     EnumTileWidget,
     SetpointTileWidget,
     TileRuntime,
     ValueTileWidget,
+    clipboard_tile_dicts,
+    set_clipboard_tiles,
     tile_state_color,
 )
 from .dialogs.control_panel_entry import ControlPanelEntryDialog, EntryDialogContext
@@ -2439,34 +2441,75 @@ class ControlPanelTabWidget(QWidget):
         dialog.deleteLater()
 
     def copy_entry(self, entry_id: str) -> None:
-        """Put a tile (its entry) on the clipboard so it can be pasted into
-        this or another control panel."""
-        entry = self.config.entry_by_id(entry_id)
-        if entry is None:
-            return
-        mime = QMimeData()
-        mime.setData(
-            CONTROL_PANEL_TILE_CLIPBOARD_MIME,
-            json.dumps(entry.to_dict()).encode("utf-8"),
+        """Put one or more tiles on the clipboard so they can be pasted into
+        this or another control panel.
+
+        Right-clicking a tile that is part of a ctrl-click selection copies
+        the whole selection; right-clicking outside the selection copies
+        just that tile (matching file-manager conventions)."""
+        selected = self.grid.selected_ids()
+        ids = selected if entry_id in selected else {entry_id}
+        # Preserve a stable, readable order (top-to-bottom, left-to-right)
+        # so a pasted block keeps its on-screen arrangement.
+        entries = sorted(
+            (e for e in self.config.entries if e.id in ids),
+            key=lambda e: (e.tile.row, e.tile.col),
         )
-        mime.setText(entry.display_label())  # plain-text fallback
-        QApplication.clipboard().setMimeData(mime)
-        self.coordinator.notify(f"Copied tile '{entry.display_label()}'.")
+        if not entries:
+            return
+        set_clipboard_tiles(
+            [entry.to_dict() for entry in entries],
+            ", ".join(entry.display_label() for entry in entries),
+        )
+        if len(entries) == 1:
+            self.coordinator.notify(f"Copied tile '{entries[0].display_label()}'.")
+        else:
+            self.coordinator.notify(f"Copied {len(entries)} tiles.")
 
     def paste_entry(self) -> None:
-        """Add a copied tile from the clipboard as a new entry (fresh id),
-        placed like any newly added tile."""
-        data = QApplication.clipboard().mimeData()
-        if data is None or not data.hasFormat(CONTROL_PANEL_TILE_CLIPBOARD_MIME):
+        """Add copied tile(s) from the clipboard as new entries (fresh ids).
+
+        A single tile is placed like any newly added tile (last active
+        row). A multi-tile block keeps its relative arrangement, anchored
+        on a fresh row below the existing content. Follow-mode references
+        between the pasted tiles are remapped to the new ids."""
+        dicts = clipboard_tile_dicts()
+        if not dicts:
             self.coordinator.notify("Clipboard has no tile to paste.")
             return
         try:
-            raw = bytes(data.data(CONTROL_PANEL_TILE_CLIPBOARD_MIME))
-            payload = json.loads(raw.decode("utf-8"))
-            entry = ControlPanelEntry.from_dict(payload)
-        except (ValueError, TypeError, UnicodeDecodeError):
+            entries = [ControlPanelEntry.from_dict(payload) for payload in dicts]
+        except (ValueError, TypeError):
             self.coordinator.notify("Could not paste tile — clipboard data is invalid.")
             return
-        entry.id = uuid4().hex  # fresh id so it never collides in this panel
-        self.add_entry(entry)
-        self.coordinator.notify(f"Pasted tile '{entry.display_label()}'.")
+        # Fresh ids so pasted tiles never collide; remap follow refs that
+        # pointed at a tile copied alongside this one.
+        id_map: dict[str, str] = {}
+        for entry in entries:
+            new_id = uuid4().hex
+            id_map[entry.id] = new_id
+            entry.id = new_id
+        for entry in entries:
+            remap_watch_ids(entry, id_map)
+        if len(entries) == 1:
+            self.add_entry(entries[0])
+        else:
+            self._paste_entry_block(entries)
+        self.grid.set_selection({entry.id for entry in entries})
+        if len(entries) == 1:
+            self.coordinator.notify(f"Pasted tile '{entries[0].display_label()}'.")
+        else:
+            self.coordinator.notify(f"Pasted {len(entries)} tiles.")
+
+    def _paste_entry_block(self, entries: list[ControlPanelEntry]) -> None:
+        """Append a block of pasted tiles below the existing content,
+        preserving their relative columns/rows."""
+        min_col = min(entry.tile.col for entry in entries)
+        min_row = min(entry.tile.row for entry in entries)
+        anchor_row = grid_row_count(self.config.entries)
+        for entry in entries:
+            entry.tile.col = max(0, entry.tile.col - min_col)
+            entry.tile.row = anchor_row + (entry.tile.row - min_row)
+        self.config.entries.extend(entries)
+        normalize_layout(self.config.entries, self.config.columns)
+        self._configure_entries()

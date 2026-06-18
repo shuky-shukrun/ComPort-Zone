@@ -13,6 +13,7 @@ FR-36).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -51,10 +52,60 @@ CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
 CONTROL_PANEL_TILE_CLIPBOARD_MIME = "application/x-comport-zone-control-tile"
 
 
+def app_clipboard():
+    """The application clipboard, behind a seam so tests can substitute a
+    deterministic fake (the offscreen Qt clipboard is unreliable across the
+    full test suite). All tile copy/paste clipboard access goes through
+    this one accessor."""
+    return QApplication.clipboard()
+
+
+def set_clipboard_tiles(tile_dicts: list[dict], text: str) -> None:
+    """Put one or more tile (entry) dicts on the clipboard under the shared
+    ``{"tiles": [...]}`` format, with ``text`` as a plain-text fallback."""
+    mime = QMimeData()
+    mime.setData(
+        CONTROL_PANEL_TILE_CLIPBOARD_MIME,
+        json.dumps({"tiles": tile_dicts}).encode("utf-8"),
+    )
+    mime.setText(text)
+    app_clipboard().setMimeData(mime)
+
+
+def clipboard_tile_dicts() -> list[dict]:
+    """The list of tile (entry) dicts on the clipboard, or [] if none.
+
+    The payload is ``{"tiles": [entry_dict, ...]}`` so one or many tiles
+    share a format; a bare entry dict (legacy single-tile copy) is also
+    accepted for forward/backward compatibility."""
+    data = app_clipboard().mimeData()
+    if data is None or not data.hasFormat(CONTROL_PANEL_TILE_CLIPBOARD_MIME):
+        return []
+    try:
+        raw = bytes(data.data(CONTROL_PANEL_TILE_CLIPBOARD_MIME))
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return []
+    if isinstance(payload, dict) and isinstance(payload.get("tiles"), list):
+        tiles = payload["tiles"]
+    elif isinstance(payload, list):
+        tiles = payload
+    elif isinstance(payload, dict):
+        tiles = [payload]  # legacy single-entry dict
+    else:
+        return []
+    return [tile for tile in tiles if isinstance(tile, dict)]
+
+
 def clipboard_has_tile() -> bool:
     """True when the system clipboard holds a copied control-panel tile."""
-    data = QApplication.clipboard().mimeData()
+    data = app_clipboard().mimeData()
     return data is not None and data.hasFormat(CONTROL_PANEL_TILE_CLIPBOARD_MIME)
+
+
+def clipboard_tile_count() -> int:
+    """How many control-panel tiles the clipboard holds (0 if none)."""
+    return len(clipboard_tile_dicts())
 
 # Press-and-hold this long on a tile's chrome to flip the panel into
 # layout-edit mode without hunting for the toolbar button.
@@ -178,6 +229,7 @@ class TileFrame(QFrame):
     activateRequested = Signal(str)  # emitted by control tiles only (FR-59)
     chartRequested = Signal(str)  # emitted by value tiles only (FR-48)
     editModeRequested = Signal()  # long-press on the tile chrome (FR: edit UX)
+    selectionToggled = Signal(str)  # ctrl-click adds/removes from selection
 
     def set_panel_armed(self, armed: bool) -> None:
         """Default: tiles are unaffected by master arm. Writing-tile
@@ -200,6 +252,12 @@ class TileFrame(QFrame):
         self._edit_mode = False
         self._press_pos: QPoint | None = None
         self._runtime: TileRuntime | None = None
+        # Multi-select: ctrl-click toggles membership so several tiles can
+        # be copied at once. The grid owns the set and pushes state here;
+        # the provider lets the context menu label "Copy N Tiles".
+        self._selected = False
+        self.setProperty("selected", "false")
+        self.selected_count_provider: Callable[[], int] | None = None
         # Long-press-to-edit: a hold on the tile chrome (not over an
         # interactive child) enters edit mode after LONG_PRESS_MS.
         self._long_press_timer = QTimer(self)
@@ -300,6 +358,18 @@ class TileFrame(QFrame):
     def edit_mode(self) -> bool:
         return self._edit_mode
 
+    def set_selected(self, selected: bool) -> None:
+        """Reflect this tile's membership in the grid's selection set."""
+        self._selected = selected
+        value = "true" if selected else "false"
+        if self.property("selected") != value:
+            self.setProperty("selected", value)
+            _repolish(self)
+
+    @property
+    def is_selected(self) -> bool:
+        return self._selected
+
     def _in_resize_corner(self, pos: QPoint) -> bool:
         return (
             pos.x() >= self.width() - RESIZE_CORNER_PX
@@ -308,6 +378,13 @@ class TileFrame(QFrame):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            # Ctrl-click toggles selection (for multi-tile copy) — takes
+            # priority over resize/long-press/drag and never sends.
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._long_press_timer.stop()
+                self.selectionToggled.emit(self.entry_id)
+                event.accept()
+                return
             if self._edit_mode and self._in_resize_corner(event.position().toPoint()):
                 self._begin_resize(event)
                 event.accept()
@@ -446,9 +523,20 @@ class TileFrame(QFrame):
         duplicate_action.triggered.connect(
             lambda: self.duplicateRequested.emit(self.entry_id)
         )
-        copy_action = menu.addAction("Copy Tile")
+        selected_count = (
+            self.selected_count_provider() if self.selected_count_provider else 0
+        )
+        copy_label = (
+            f"Copy {selected_count} Tiles"
+            if self._selected and selected_count > 1
+            else "Copy Tile"
+        )
+        copy_action = menu.addAction(copy_label)
         copy_action.triggered.connect(lambda: self.copyRequested.emit(self.entry_id))
-        paste_action = menu.addAction("Paste Tile")
+        paste_count = clipboard_tile_count()
+        paste_action = menu.addAction(
+            f"Paste {paste_count} Tiles" if paste_count > 1 else "Paste Tile"
+        )
         paste_action.setEnabled(clipboard_has_tile())
         paste_action.triggered.connect(lambda: self.pasteRequested.emit())
         enabled_action = menu.addAction("Enabled")

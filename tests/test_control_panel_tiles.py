@@ -1090,6 +1090,91 @@ class LongPressEditTests(unittest.TestCase):
         tile.deleteLater()
 
 
+class TileSelectionTests(unittest.TestCase):
+    """Ctrl-click multi-select for copying several tiles at once."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _ctrl_press(pos=(5, 5)):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        return QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(*pos),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+
+    def _grid(self, *entries: ControlPanelEntry) -> ControlPanelGridWidget:
+        grid = ControlPanelGridWidget()
+        grid.resize(800, 600)
+        grid.set_config(make_config(*entries))
+        grid.relayout()
+        return grid
+
+    def test_ctrl_click_emits_toggle_and_skips_long_press(self) -> None:
+        tile = ValueTileWidget(make_entry("a"))
+        seen: list[str] = []
+        tile.selectionToggled.connect(seen.append)
+        tile.mousePressEvent(self._ctrl_press())
+        self.assertEqual(seen, ["a"])
+        # Ctrl-click must not arm the long-press-to-edit timer.
+        self.assertFalse(tile._long_press_timer.isActive())
+        tile.deleteLater()
+
+    def test_set_selected_toggles_property(self) -> None:
+        tile = ValueTileWidget(make_entry("a"))
+        self.assertEqual(tile.property("selected"), "false")
+        tile.set_selected(True)
+        self.assertEqual(tile.property("selected"), "true")
+        self.assertTrue(tile.is_selected)
+        tile.set_selected(False)
+        self.assertEqual(tile.property("selected"), "false")
+        tile.deleteLater()
+
+    def test_grid_toggle_marks_and_unmarks(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid._toggle_selection("a")
+        self.assertEqual(grid.selected_ids(), {"a"})
+        self.assertTrue(grid.tile("a").is_selected)
+        self.assertFalse(grid.tile("b").is_selected)
+        grid._toggle_selection("a")
+        self.assertEqual(grid.selected_ids(), set())
+        self.assertFalse(grid.tile("a").is_selected)
+        grid.deleteLater()
+
+    def test_grid_set_and_clear_selection(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid.set_selection({"a", "b"})
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        self.assertTrue(grid.tile("a").is_selected)
+        self.assertTrue(grid.tile("b").is_selected)
+        grid.clear_selection()
+        self.assertEqual(grid.selected_ids(), set())
+        self.assertFalse(grid.tile("b").is_selected)
+        grid.deleteLater()
+
+    def test_selection_pruned_when_entry_removed(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid.set_selection({"a", "b"})
+        grid.set_config(make_config(make_entry("b", col=1)))  # 'a' gone
+        self.assertEqual(grid.selected_ids(), {"b"})
+        grid.deleteLater()
+
+    def test_selected_count_provider_reports_size(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        provider = grid.tile("a").selected_count_provider
+        self.assertIsNotNone(provider)
+        grid.set_selection({"a", "b"})
+        self.assertEqual(provider(), 2)
+        grid.deleteLater()
+
+
 class TextWrapTests(unittest.TestCase):
     """Long tile text wraps instead of being clipped/elided."""
 

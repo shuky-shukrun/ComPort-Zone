@@ -1276,6 +1276,17 @@ def append_placement(
     return (0, grid_row_count(entries))
 
 
+def remap_watch_ids(entry: "ControlPanelEntry", id_map: dict[str, str]) -> None:
+    """Repoint a writing entry's follow-mode ``watch_entry_id`` at the
+    remapped id when its target was copied alongside it (used when a panel
+    is duplicated or several tiles are pasted together). Derived entries
+    reference siblings by label, not id, so they need no remapping."""
+    for spec in (entry.readback, entry.control, entry.setpoint, entry.enum_spec):
+        watch_id = getattr(spec, "watch_entry_id", "")
+        if watch_id and watch_id in id_map:
+            spec.watch_entry_id = id_map[watch_id]
+
+
 def visible_row_count(config: "ControlPanelConfig") -> int:
     """Rows the grid should reserve room for: at least ``config.rows`` (the
     user-configured minimum) but expands automatically when tiles overflow."""

@@ -75,6 +75,27 @@ def wait_for(condition: Callable[[], bool], timeout: float = 1.0) -> bool:
     return condition()
 
 
+class FakeClipboard:
+    """In-process stand-in for QApplication.clipboard().
+
+    The offscreen Qt clipboard is unreliable under the full suite (QMimeData
+    ownership churn segfaults at teardown), so clipboard tests patch
+    ``control_panel_tiles.app_clipboard`` to return one of these instead —
+    fully deterministic and isolated per test."""
+
+    def __init__(self) -> None:
+        self._mime = None
+
+    def setMimeData(self, mime) -> None:  # noqa: N802 (Qt API shape)
+        self._mime = mime
+
+    def mimeData(self):  # noqa: N802 (Qt API shape)
+        return self._mime
+
+    def clear(self) -> None:
+        self._mime = None
+
+
 def volt_entry() -> ControlPanelEntry:
     return ControlPanelEntry(
         id="volts",
@@ -2281,6 +2302,19 @@ class ControlPanelTabBindingTests(ControlPanelTabTestBase):
 
 
 class ControlPanelTabConfigTests(ControlPanelTabTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        # Route all tile clipboard access through a deterministic in-process
+        # fake (see FakeClipboard) so copy/paste tests don't depend on the
+        # flaky offscreen Qt clipboard.
+        self.clipboard = FakeClipboard()
+        patcher = patch(
+            "ComPort_Zone.ui.control_panel_tiles.app_clipboard",
+            return_value=self.clipboard,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_add_entry_fills_active_row_and_saves(self) -> None:
         # First tile sits at (0,0); the next fills the same (last active)
         # row at the next free column.
@@ -2340,8 +2374,6 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         self.assertEqual(len(tab.config.entries), 1)
 
     def test_copy_paste_tile_across_panels(self) -> None:
-        from PySide6.QtWidgets import QApplication
-
         source = self.make_tab(volt_entry())
         dest = self.make_tab(trip_entry())
         source.copy_entry("volts")
@@ -2353,15 +2385,56 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         self.assertEqual(pasted.command, "MEAS:VOLT?")
         self.assertNotEqual(pasted.id, "volts")
         self.assertIsNotNone(dest.grid.tile(pasted.id))
-        QApplication.clipboard().clear()
 
     def test_paste_without_clipboard_tile_is_noop(self) -> None:
-        from PySide6.QtWidgets import QApplication
-
-        QApplication.clipboard().clear()
         tab = self.make_tab(volt_entry())
-        tab.paste_entry()
+        tab.paste_entry()  # clipboard fake starts empty
         self.assertEqual(len(tab.config.entries), 1)
+
+    def test_copy_selected_block_pastes_preserving_layout(self) -> None:
+        source = self.make_tab(volt_entry(), trip_entry())  # cols 0 & 1, row 0
+        source.grid.set_selection({"volts", "trip"})
+        source.copy_entry("volts")  # target is in the selection -> copy both
+
+        dest = self.make_tab()
+        dest.paste_entry()
+        self.assertEqual(len(dest.config.entries), 2)
+        pasted = sorted(dest.config.entries, key=lambda e: e.tile.col)
+        # Relative columns preserved (0 and 1), still on a single row.
+        self.assertEqual([e.tile.col for e in pasted], [0, 1])
+        self.assertEqual(pasted[0].tile.row, pasted[1].tile.row)
+        self.assertEqual(pasted[0].command, "MEAS:VOLT?")
+        self.assertEqual(pasted[1].command, "TRIP?")
+        # The pasted tiles become the new selection.
+        self.assertEqual(
+            dest.grid.selected_ids(), {e.id for e in dest.config.entries}
+        )
+
+    def test_copy_ignores_selection_when_target_not_selected(self) -> None:
+        source = self.make_tab(volt_entry(), trip_entry())
+        source.grid.set_selection({"trip"})  # selection excludes the target
+        source.copy_entry("volts")  # right-click outside selection -> just it
+
+        dest = self.make_tab()
+        dest.paste_entry()
+        self.assertEqual(len(dest.config.entries), 1)
+        self.assertEqual(dest.config.entries[0].command, "MEAS:VOLT?")
+
+    def test_paste_block_remaps_follow_reference(self) -> None:
+        source = self.make_tab(
+            outp_state_entry(), control_entry("toggle", watch_entry_id="outp")
+        )
+        source.grid.set_selection({"outp", "ctrl"})
+        source.copy_entry("ctrl")
+
+        dest = self.make_tab()
+        dest.paste_entry()
+        self.assertEqual(len(dest.config.entries), 2)
+        pasted_outp = next(e for e in dest.config.entries if e.command == "OUTP?")
+        pasted_ctrl = next(e for e in dest.config.entries if e.tile.kind == "control")
+        # The follow ref now points at the pasted 'outp', not the original id.
+        self.assertEqual(pasted_ctrl.control.watch_entry_id, pasted_outp.id)
+        self.assertNotEqual(pasted_ctrl.control.watch_entry_id, "outp")
 
     def test_apply_entry_edit_replaces(self) -> None:
         tab = self.make_tab(volt_entry())

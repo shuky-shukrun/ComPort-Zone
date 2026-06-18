@@ -16,6 +16,7 @@ from PySide6.QtGui import (
     QDragLeaveEvent,
     QDragMoveEvent,
     QDropEvent,
+    QMouseEvent,
     QPaintEvent,
     QPainter,
     QPen,
@@ -34,6 +35,7 @@ from .control_panel_tiles import (
     CONTROL_PANEL_TILE_MIME_TYPE,
     TileFrame,
     clipboard_has_tile,
+    clipboard_tile_count,
     create_tile,
     tile_class_for,
 )
@@ -66,6 +68,7 @@ class ControlPanelGridWidget(QWidget):
         self.setAcceptDrops(True)
         self._config: ControlPanelConfig | None = None
         self._tiles: dict[str, TileFrame] = {}
+        self._selected_ids: set[str] = set()
         self._edit_mode = False
         self._drop_cell: tuple[int, int] | None = None
         self._drop_span: tuple[int, int] = (1, 1)
@@ -103,13 +106,20 @@ class ControlPanelGridWidget(QWidget):
                 tile.chartRequested.connect(self.tileChartRequested)
                 tile.spanRequested.connect(self._handle_span_request)
                 tile.editModeRequested.connect(self.editModeRequested)
+                tile.selectionToggled.connect(self._toggle_selection)
                 tile.cell_metrics_provider = self._cell_stride
+                tile.selected_count_provider = lambda: len(self._selected_ids)
                 tile.set_edit_mode(self._edit_mode)
                 tile.apply_theme_palette(self._theme)
                 tile.show()
                 self._tiles[entry.id] = tile
             else:
                 tile.update_entry(entry)
+        # Drop selection of any entry that no longer exists, then mirror
+        # the (possibly pruned) selection onto the live tiles.
+        self._selected_ids &= set(self._tiles)
+        for entry_id, tile in self._tiles.items():
+            tile.set_selected(entry_id in self._selected_ids)
         self.relayout()
 
     def tile(self, entry_id: str) -> TileFrame | None:
@@ -123,7 +133,10 @@ class ControlPanelGridWidget(QWidget):
         menu = QMenu(self)
         add_action = menu.addAction("Add Entry…")
         add_action.triggered.connect(lambda: self.addEntryRequested.emit())
-        paste_action = menu.addAction("Paste Tile")
+        paste_count = clipboard_tile_count()
+        paste_action = menu.addAction(
+            f"Paste {paste_count} Tiles" if paste_count > 1 else "Paste Tile"
+        )
         paste_action.setEnabled(clipboard_has_tile())
         paste_action.triggered.connect(lambda: self.pasteRequested.emit())
         menu.exec(event.globalPos())
@@ -131,6 +144,44 @@ class ControlPanelGridWidget(QWidget):
 
     def tiles(self) -> list[TileFrame]:
         return list(self._tiles.values())
+
+    # -------------------------------------------------------- selection
+
+    def selected_ids(self) -> set[str]:
+        """Entry ids currently selected (ctrl-click) for multi-tile copy."""
+        return set(self._selected_ids)
+
+    def _toggle_selection(self, entry_id: str) -> None:
+        if entry_id in self._selected_ids:
+            self._selected_ids.discard(entry_id)
+        else:
+            self._selected_ids.add(entry_id)
+        tile = self._tiles.get(entry_id)
+        if tile is not None:
+            tile.set_selected(entry_id in self._selected_ids)
+
+    def set_selection(self, ids: set[str]) -> None:
+        """Replace the selection with ``ids`` (intersected with live tiles)."""
+        self._selected_ids = set(ids) & set(self._tiles)
+        for entry_id, tile in self._tiles.items():
+            tile.set_selected(entry_id in self._selected_ids)
+
+    def clear_selection(self) -> None:
+        if not self._selected_ids:
+            return
+        self._selected_ids.clear()
+        for tile in self._tiles.values():
+            tile.set_selected(False)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        # A plain click on empty grid space clears the selection (tiles
+        # handle their own clicks, so this only fires off-tile).
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        ):
+            self.clear_selection()
+        super().mousePressEvent(event)
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme
