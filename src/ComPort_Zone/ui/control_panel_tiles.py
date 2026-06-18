@@ -54,6 +54,10 @@ LONG_PRESS_MS = 1000
 # Size of the bottom-right resize grip (px) used in edit mode.
 RESIZE_CORNER_PX = 18
 
+# How long a writing tile stays highlighted after its value updates, so a
+# fresh readback is noticeable at a glance.
+UPDATE_FLASH_MS = 3000
+
 # Default state captions for LED tiles; a matching ColorRule ``label``
 # overrides these (FR-29).
 TILE_STATE_CAPTIONS = {
@@ -184,6 +188,12 @@ class TileFrame(QFrame):
         self._long_press_timer = QTimer(self)
         self._long_press_timer.setSingleShot(True)
         self._long_press_timer.timeout.connect(self._on_long_press)
+        # Brief "value just updated" highlight (writing tiles only — the
+        # tab calls flash_update(); read-only tiles never trigger it).
+        self.setProperty("recentlyUpdated", "false")
+        self._update_flash_timer = QTimer(self)
+        self._update_flash_timer.setSingleShot(True)
+        self._update_flash_timer.timeout.connect(self._clear_update_flash)
         # Corner-drag resize (edit mode). The grid injects a provider that
         # returns the per-cell stride so pixel drags map to whole spans.
         self.cell_metrics_provider: Callable[[], tuple[float, float, int]] | None = None
@@ -364,6 +374,22 @@ class TileFrame(QFrame):
     def _on_long_press(self) -> None:
         if not self._edit_mode:
             self.editModeRequested.emit()
+
+    def flash_update(self) -> None:
+        """Briefly highlight the tile to show its value just refreshed.
+
+        Called by the tab for writing tiles when a readback changes their
+        value; the highlight clears itself after ``UPDATE_FLASH_MS``
+        (restarting the timer keeps a steadily-updating tile lit)."""
+        if self.property("recentlyUpdated") != "true":
+            self.setProperty("recentlyUpdated", "true")
+            _repolish(self)
+        self._update_flash_timer.start(UPDATE_FLASH_MS)
+
+    def _clear_update_flash(self) -> None:
+        if self.property("recentlyUpdated") != "false":
+            self.setProperty("recentlyUpdated", "false")
+            _repolish(self)
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         super().paintEvent(event)
@@ -628,17 +654,20 @@ class ControlTileWidget(TileFrame):
         self._commanded_on = on
         self._set_mismatch(False)
 
-    def apply_readback(self, is_on: bool) -> None:
+    def apply_readback(self, is_on: bool) -> bool:
         """Reflect a device readback into the toggle visual + mismatch.
 
         Sets the ON/OFF state from the device and raises the warning when
-        it disagrees with the last commanded direction.
+        it disagrees with the last commanded direction. Returns True when
+        the ON/OFF state actually changed.
         """
+        changed = is_on != self._is_on
         self.set_on(is_on)
         if self._commanded_on is None:
             self._set_mismatch(False)
         else:
             self._set_mismatch(is_on != self._commanded_on)
+        return changed
 
     def _set_mismatch(self, on: bool) -> None:
         if self._mismatch == on:
@@ -865,24 +894,27 @@ class SetpointTileWidget(TileFrame):
             line.setModified(False)
         self._set_mismatch(False)
 
-    def apply_readback(self, value_number: float | None) -> None:
+    def apply_readback(self, value_number: float | None) -> bool:
         """Reflect a device readback into the spinbox (FR-66).
 
         Writes the value unless the user is mid-edit, then flags a
         mismatch when it differs from the last commanded value. A
         non-numeric readback (``None``) leaves the field untouched.
+        Returns True when the displayed value actually changed.
         """
         if value_number is None:
-            return
+            return False
         try:
             readback = self._entry.setpoint.clamp(float(value_number))
         except (TypeError, ValueError):
-            return
+            return False
         if self._is_editing():
-            return  # don't fight the user; a later readback will reflect
+            return False  # don't fight the user; a later readback will reflect
+        changed = readback != self._value
         self._value = readback
         self._sync_widgets()
         self._update_mismatch(readback)
+        return changed
 
     def set_edit_mode(self, enabled: bool) -> None:
         super().set_edit_mode(enabled)
@@ -1097,14 +1129,16 @@ class EnumTileWidget(TileFrame):
         self._commanded_index = self.combo.currentIndex()
         self._set_mismatch(False)
 
-    def apply_readback(self, value_text: str) -> None:
+    def apply_readback(self, value_text: str) -> bool:
         """Drive the combo's selection from a device readback (FR-70).
 
         Resolves ``value_text`` to an option via ``match_value`` and
         selects it unless the user is choosing right now; then flags a
-        mismatch when it differs from the commanded option.
+        mismatch when it differs from the commanded option. Returns True
+        when the matched option changed.
         """
         index = self._entry.enum_spec.indicated_index(value_text)
+        changed = index >= 0 and index != self._indicated_index
         self._indicated_index = index
         if index >= 0 and not self._is_editing():
             self.combo.blockSignals(True)
@@ -1113,6 +1147,7 @@ class EnumTileWidget(TileFrame):
             finally:
                 self.combo.blockSignals(False)
         self._update_mismatch(index)
+        return changed
 
     def selected_command(self) -> str:
         """Return the command for whatever option the user has picked."""

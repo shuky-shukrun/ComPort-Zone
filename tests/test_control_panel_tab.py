@@ -1770,6 +1770,38 @@ class SetpointTileTests(ControlPanelTabTestBase):
         # Fan-out still reflected the watched value into the spinbox.
         self.assertAlmostEqual(tile.spin.value(), 5.5, places=4)
 
+    def test_follow_tile_clock_and_flash_track_watched(self) -> None:
+        # A follow-mode writing tile's clock must advance with the watched
+        # tile (it used to stay frozen), and the tile flashes when its
+        # value changes.
+        from ComPort_Zone.ui.control_panel_tiles import SetpointTileWidget
+
+        polled = volt_entry()
+        polled.id = "vmeas"
+        polled.label = "Measured"
+        sp = setpoint_entry(watch_entry_id="vmeas")
+        tab = self.make_tab(polled, sp)
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"12.34\r\n")
+
+        tile = tab.grid.tile("sp")
+        assert isinstance(tile, SetpointTileWidget)
+        self.assertAlmostEqual(tile.spin.value(), 12.34, places=4)
+        sp_runtime = tab._runtimes.get("sp")
+        self.assertIsNotNone(sp_runtime)
+        self.assertNotEqual(sp_runtime.timestamp_text, "")  # clock advanced
+        self.assertEqual(tile.property("recentlyUpdated"), "true")  # value changed -> flash
+
+    def test_read_only_tile_never_flashes(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.clock.advance_ms(50)
+        self.run_poll_round(tab, b"5.0\r\n")
+        tile = tab.grid.tile("volts")
+        # The flash is for writing tiles only; a value tile never lights it.
+        self.assertNotEqual(tile.property("recentlyUpdated"), "true")
+
     def test_setpoint_never_scheduled(self) -> None:
         tab = self.make_tab(setpoint_entry())
         tab.bind_to_session(1)

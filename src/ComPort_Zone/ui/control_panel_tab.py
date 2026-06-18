@@ -1852,12 +1852,15 @@ class ControlPanelTabWidget(QWidget):
         raises its own mismatch warning when the readback differs from
         the value last commanded (FR-66/FR-70)."""
         tile = self.grid.tile(entry.id)
+        changed = False
         if isinstance(tile, SetpointTileWidget):
-            tile.apply_readback(runtime.value_number)
+            changed = tile.apply_readback(runtime.value_number)
         elif isinstance(tile, EnumTileWidget):
-            tile.apply_readback(raw_value_text)
+            changed = tile.apply_readback(raw_value_text)
         elif isinstance(tile, ControlTileWidget) and entry.control.mode == "toggle":
-            tile.apply_readback(self._reading_is_on(runtime))
+            changed = tile.apply_readback(self._reading_is_on(runtime))
+        if changed and tile is not None:
+            tile.flash_update()
 
     def _apply_outcome(self, entry: ControlPanelEntry, outcome: ParseOutcome, raw_window: str = "") -> None:
         """The shared value sink (poll results AND derived recomputes):
@@ -2045,10 +2048,11 @@ class ControlPanelTabWidget(QWidget):
             if only_owner_id is not None and watcher_id != only_owner_id:
                 continue
             tile = self.grid.tile(watcher_id)
+            changed = False
             if isinstance(tile, SetpointTileWidget):
-                tile.apply_readback(runtime.value_number)
+                changed = tile.apply_readback(runtime.value_number)
             elif isinstance(tile, EnumTileWidget):
-                tile.apply_readback(match_text)
+                changed = tile.apply_readback(match_text)
             elif isinstance(tile, ControlTileWidget):
                 # Follow-mode toggles ride the watched tile's reading so
                 # the ON/OFF visual tracks the device, not just the
@@ -2058,7 +2062,21 @@ class ControlPanelTabWidget(QWidget):
                 # readings to "ok" with different colors.
                 entry = self.config.entry_by_id(watcher_id)
                 if entry is not None and entry.control.mode == "toggle":
-                    tile.apply_readback(self._reading_is_on(runtime))
+                    changed = tile.apply_readback(self._reading_is_on(runtime))
+            # Keep the follow tile's own clock ticking with the watched
+            # tile — fan-out used to update the value but never the
+            # timestamp, so a followed tile's clock looked frozen.
+            self._touch_follow_runtime(watcher_id, runtime)
+            if changed and tile is not None:
+                tile.flash_update()
+
+    def _touch_follow_runtime(self, watcher_id: str, source: TileRuntime) -> None:
+        """Mirror the watched tile's timestamp onto a follow tile so its
+        clock advances each time the source updates."""
+        rt = self._runtimes.setdefault(watcher_id, TileRuntime(entry_id=watcher_id))
+        rt.timestamp_text = source.timestamp_text
+        rt.last_result_at = self._clock()
+        self._update_tile(watcher_id)
 
     # -------------------------------------------------------- config edits
 

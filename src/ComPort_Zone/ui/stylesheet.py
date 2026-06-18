@@ -755,6 +755,11 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QFrame#controlPanelTile[tileState="error"] {{ border: 1px solid {danger_bd}; }}
     QFrame#controlPanelTile[editMode="true"] {{ border: 1px dashed {accent}; }}
     QFrame#controlPanelTile[entryEnabled="false"] {{ border: 1px dashed {bd}; }}
+    /* Brief flash when a writing tile's value just refreshed (3 s). */
+    QFrame#controlPanelTile[recentlyUpdated="true"] {{
+        border: 2px solid {accent};
+        background: {mix_hex(accent, elevated, 0.22)};
+    }}
     QFrame#controlPanelTile QLabel {{ background: transparent; }}
     QFrame#controlPanelTile[entryEnabled="false"] QLabel {{ color: {tx_faint}; }}
 

@@ -929,6 +929,48 @@ class ReadbackIntoInputTests(unittest.TestCase):
         self.assertFalse(tile.mismatch)
         tile.deleteLater()
 
+    def test_apply_readback_reports_value_change(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import (
+            ControlTileWidget,
+            EnumTileWidget,
+            SetpointTileWidget,
+        )
+
+        sp = SetpointTileWidget(self.make_setpoint())
+        self.assertTrue(sp.apply_readback(5.0))   # 0 -> 5
+        self.assertFalse(sp.apply_readback(5.0))  # unchanged
+        sp.deleteLater()
+
+        en = EnumTileWidget(self.make_enum())
+        self.assertTrue(en.apply_readback("CC"))   # none -> CC
+        self.assertFalse(en.apply_readback("CC"))  # unchanged
+        en.deleteLater()
+
+        tg = ControlTileWidget(self.make_toggle())
+        self.assertTrue(tg.apply_readback(True))   # off -> on
+        self.assertFalse(tg.apply_readback(True))  # unchanged
+        tg.deleteLater()
+
+
+class UpdateFlashTests(unittest.TestCase):
+    """The 3 s "value just updated" highlight on writing tiles."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    def test_flash_sets_then_clears(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import ValueTileWidget
+
+        tile = ValueTileWidget(make_entry("a"))
+        self.assertEqual(tile.property("recentlyUpdated"), "false")
+        tile.flash_update()
+        self.assertEqual(tile.property("recentlyUpdated"), "true")
+        self.assertTrue(tile._update_flash_timer.isActive())
+        tile._clear_update_flash()  # what the timer fires
+        self.assertEqual(tile.property("recentlyUpdated"), "false")
+        tile.deleteLater()
+
 
 class LongPressEditTests(unittest.TestCase):
     """Press-and-hold a tile's chrome to enter edit mode."""
