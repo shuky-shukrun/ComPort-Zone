@@ -812,7 +812,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#tileControlButton {{
         background: {hover}; color: {tx};
         border: 1px solid {bd_strong}; border-radius: {RADIUS_MD}px;
-        font-weight: 700; padding: 6px 18px; min-height: 26px;
+        font-weight: 700; padding: 3px 12px; min-height: 20px;
     }}
     QPushButton#tileControlButton:hover {{ background: {press_bg}; border-color: {accent}; }}
     QPushButton#tileControlButton:pressed {{ background: {press_bg}; }}

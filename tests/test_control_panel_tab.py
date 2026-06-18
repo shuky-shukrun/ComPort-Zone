@@ -338,7 +338,9 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
     def test_history_collected_for_numeric_polls(self) -> None:
         # The sparkline pipeline starts at _apply_outcome (FR-46): every
         # successful numeric poll appends a (clock, value) sample.
-        tab = self.make_tab(volt_entry())
+        entry = volt_entry()
+        entry.tile.span_h = 2  # sparkline shows on a >=2-row tile
+        tab = self.make_tab(entry)
         tab.bind_to_session(1)
         self.assertNotIn("volts", tab._histories)
         self.clock.advance_ms(50)

@@ -142,12 +142,27 @@ class TileWidgetTests(unittest.TestCase):
         tile.deleteLater()
 
     def test_value_tile_hosts_sparkline_for_numeric_entries(self) -> None:
-        entry = make_entry("a")  # default parse value_type is "number"
         from ComPort_Zone.control_panel_models import ParseRule
 
+        # Sparkline needs a >=2-row tile so the value isn't squeezed.
+        entry = make_entry("a", span_h=2)
         entry.parse = ParseRule(kind="line", value_type="number")
         tile = ValueTileWidget(entry)
         self.assertIsInstance(tile.sparkline, SparklineWidget)
+        self.assertTrue(tile.sparkline.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_value_tile_hides_sparkline_on_single_row(self) -> None:
+        from ComPort_Zone.control_panel_models import ParseRule
+
+        entry = make_entry("a", span_h=1)
+        entry.parse = ParseRule(kind="line", value_type="number")
+        tile = ValueTileWidget(entry)
+        # A 1-row numeric tile keeps the value readable, no trend strip.
+        self.assertFalse(tile.sparkline.isVisibleTo(tile))
+        # Growing the tile to 2 rows brings the sparkline back.
+        entry.tile.span_h = 2
+        tile.update_entry(entry)
         self.assertTrue(tile.sparkline.isVisibleTo(tile))
         tile.deleteLater()
 
@@ -163,7 +178,7 @@ class TileWidgetTests(unittest.TestCase):
     def test_value_tile_hides_sparkline_when_show_sparkline_off(self) -> None:
         from ComPort_Zone.control_panel_models import ParseRule
 
-        entry = make_entry("a")
+        entry = make_entry("a", span_h=2)
         entry.parse = ParseRule(kind="line", value_type="number")
         entry.show_sparkline = False
         tile = ValueTileWidget(entry)
@@ -262,7 +277,7 @@ class TileWidgetTests(unittest.TestCase):
     def test_set_history_feeds_visible_sparkline(self) -> None:
         from ComPort_Zone.control_panel_models import ParseRule
 
-        entry = make_entry("a")
+        entry = make_entry("a", span_h=2)
         entry.parse = ParseRule(kind="line", value_type="number")
         tile = ValueTileWidget(entry)
         self.assertTrue(
@@ -589,7 +604,7 @@ class SparklineSizingRegressionTests(unittest.TestCase):
         cls.qt = QApplication.instance() or QApplication([])
 
     def test_sparkline_expands_to_fill_tile_width(self) -> None:
-        config = make_config(make_entry("v"))
+        config = make_config(make_entry("v", span_h=2))
         grid = ControlPanelGridWidget()
         grid.resize(800, 240)
         grid.set_config(config)
@@ -604,7 +619,8 @@ class SparklineSizingRegressionTests(unittest.TestCase):
         # SPACE_LG body margins still gives us > 100 px.
         self.assertGreaterEqual(spark.width(), 100,
                                 f"sparkline only {spark.width()} px wide")
-        self.assertEqual(spark.height(), 28)  # fixed
+        from ComPort_Zone.ui.control_panel_sparkline import SPARKLINE_HEIGHT
+        self.assertEqual(spark.height(), SPARKLINE_HEIGHT)  # fixed
         grid.deleteLater()
 
 

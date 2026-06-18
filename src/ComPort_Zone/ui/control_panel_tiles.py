@@ -58,6 +58,12 @@ RESIZE_CORNER_PX = 18
 # fresh readback is noticeable at a glance.
 UPDATE_FLASH_MS = 3000
 
+# A value tile shows its sparkline only once it spans at least this many
+# rows. On a single-row tile the value + trend would not fit and the value
+# would clip, so the reading wins; make the tile 2 rows tall to see the
+# trend strip.
+SPARKLINE_MIN_ROWS = 2
+
 # Default state captions for LED tiles; a matching ColorRule ``label``
 # overrides these (FR-29).
 TILE_STATE_CAPTIONS = {
@@ -481,7 +487,12 @@ class ValueTileWidget(TileFrame):
 
     @staticmethod
     def _wants_sparkline(entry: ControlPanelEntry) -> bool:
-        return entry.show_sparkline and entry.is_numeric()
+        # Needs a multi-row tile so the value isn't squeezed (FR-46).
+        return (
+            entry.show_sparkline
+            and entry.is_numeric()
+            and entry.tile.span_h >= SPARKLINE_MIN_ROWS
+        )
 
     def update_entry(self, entry: ControlPanelEntry) -> None:
         super().update_entry(entry)

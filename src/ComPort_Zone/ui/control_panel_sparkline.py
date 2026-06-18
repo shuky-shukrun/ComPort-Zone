@@ -22,7 +22,7 @@ from ..themes import THEMES, ThemePalette
 # A 120-second window keeps the strip readable on dense polls while
 # still showing minute-scale trends (FR-46).
 SPARKLINE_WINDOW_S = 120.0
-SPARKLINE_HEIGHT = 28
+SPARKLINE_HEIGHT = 22
 # Cap paint input so a tile with maxed-out history (~600 samples) still
 # repaints cheaply (NFR-1).
 SPARKLINE_BUCKETS = 64

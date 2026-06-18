@@ -39,7 +39,7 @@ from .control_panel_tiles import (
 from .tokens import SPACE_MD
 
 GRID_GUTTER = SPACE_MD
-ROW_HEIGHT_MIN = 58
+ROW_HEIGHT_MIN = 68
 ROW_HEIGHT_MAX = 160
 
 
