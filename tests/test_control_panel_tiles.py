@@ -456,7 +456,8 @@ class GridGeometryTests(unittest.TestCase):
         small = grid.tile("small")
         wide = grid.tile("wide")
         assert small is not None and wide is not None
-        self.assertEqual(wide.width(), 2 * small.width() + GRID_GUTTER)
+        # ±1 for half-pixel cell-width rounding (cell_w isn't always integer).
+        self.assertAlmostEqual(wide.width(), 2 * small.width() + GRID_GUTTER, delta=1)
         grid.deleteLater()
 
     def test_tall_span_doubles_height_plus_gutter(self) -> None:
@@ -476,7 +477,7 @@ class GridGeometryTests(unittest.TestCase):
         small = grid.tile("small")
         big = grid.tile("big")
         assert small is not None and big is not None
-        self.assertEqual(big.width(), 2 * small.width() + GRID_GUTTER)
+        self.assertAlmostEqual(big.width(), 2 * small.width() + GRID_GUTTER, delta=1)
         self.assertEqual(big.height(), 2 * small.height() + GRID_GUTTER)
         grid.deleteLater()
 

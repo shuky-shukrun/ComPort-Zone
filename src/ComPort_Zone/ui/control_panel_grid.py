@@ -36,11 +36,11 @@ from .control_panel_tiles import (
     create_tile,
     tile_class_for,
 )
-from .tokens import SPACE_LG
+from .tokens import SPACE_MD
 
-GRID_GUTTER = SPACE_LG
-ROW_HEIGHT_MIN = 96
-ROW_HEIGHT_MAX = 180
+GRID_GUTTER = SPACE_MD
+ROW_HEIGHT_MIN = 76
+ROW_HEIGHT_MAX = 170
 
 
 class ControlPanelGridWidget(QWidget):

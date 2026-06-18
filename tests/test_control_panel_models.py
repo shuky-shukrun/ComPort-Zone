@@ -1016,6 +1016,23 @@ class LayoutMathTests(unittest.TestCase):
     def test_place_tile_unknown_id(self) -> None:
         self.assertFalse(place_tile([], 4, "ghost", 0, 0))
 
+    def test_writing_tiles_clamp_to_min_two_columns(self) -> None:
+        # control/setpoint/enum render at least 2 columns wide.
+        for kind in ("control", "setpoint", "enum"):
+            entry = make_entry("a", col=0, row=0, span_w=1)
+            entry.tile.kind = kind
+            normalize_layout([entry], 10)
+            self.assertEqual(entry.tile.span_w, 2, msg=kind)
+        # Read-only kinds stay as authored.
+        value = make_entry("v", col=0, row=0, span_w=1)
+        normalize_layout([value], 10)
+        self.assertEqual(value.tile.span_w, 1)
+        # Capped at the grid width — a 1-column grid can't force 2.
+        narrow = make_entry("a", col=0, row=0, span_w=1)
+        narrow.tile.kind = "setpoint"
+        normalize_layout([narrow], 1)
+        self.assertEqual(narrow.tile.span_w, 1)
+
     def test_append_placement_empty_panel(self) -> None:
         self.assertEqual(append_placement([], 10, 1, 1), (0, 0))
 

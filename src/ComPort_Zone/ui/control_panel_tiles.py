@@ -43,7 +43,7 @@ from ..control_panel_models import (
 )
 from ..themes import ThemePalette
 from .control_panel_sparkline import SparklineWidget
-from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM
+from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS
 
 CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
 
@@ -223,8 +223,8 @@ class TileFrame(QFrame):
         footer.addWidget(self.timestamp_label, 1)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(SPACE_LG, SPACE_MD, SPACE_LG, SPACE_MD)
-        root.setSpacing(SPACE_SM)
+        root.setContentsMargins(SPACE_MD, SPACE_SM, SPACE_MD, SPACE_SM)
+        root.setSpacing(SPACE_XS)
         root.addLayout(header)
         root.addLayout(self.body_layout, 1)
         root.addLayout(footer)

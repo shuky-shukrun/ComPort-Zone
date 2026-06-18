@@ -747,7 +747,7 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QFrame#controlPanelTile {{
         background: {elevated};
         border: 1px solid {bd_soft};
-        border-radius: {RADIUS_LG}px;
+        border-radius: {RADIUS_MD}px;
     }}
     QFrame#controlPanelTile[tileState="ok"] {{ border: 1px solid {ok_bd}; }}
     QFrame#controlPanelTile[tileState="warn"] {{ border: 1px solid {mix_hex(amber, bg, 0.5)}; }}
