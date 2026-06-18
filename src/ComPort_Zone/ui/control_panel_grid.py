@@ -23,6 +23,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 from ..control_panel_models import (
+    DEFAULT_GRID_COLUMNS,
     ControlPanelConfig,
     place_tile,
     set_tile_span,
@@ -127,7 +128,7 @@ class ControlPanelGridWidget(QWidget):
 
     def _cell_metrics(self) -> tuple[float, float, int]:
         """(cell width, row height, columns) for the current width."""
-        columns = self._config.columns if self._config else 4
+        columns = self._config.columns if self._config else DEFAULT_GRID_COLUMNS
         available = max(0, self.width() - GRID_GUTTER * (columns + 1))
         cell_w = available / columns if columns else 0
         row_h = int(max(ROW_HEIGHT_MIN, min(ROW_HEIGHT_MAX, cell_w * 0.6)))

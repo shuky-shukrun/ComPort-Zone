@@ -224,11 +224,12 @@ class ControlPanelConfigTests(unittest.TestCase):
     def test_columns_clamped(self) -> None:
         self.assertEqual(ControlPanelConfig.from_dict({"columns": 99}).columns, 12)
         self.assertEqual(ControlPanelConfig.from_dict({"columns": 0}).columns, 1)
+        self.assertEqual(ControlPanelConfig.from_dict({}).columns, 10)
 
     def test_rows_clamped(self) -> None:
         self.assertEqual(ControlPanelConfig.from_dict({"rows": 999}).rows, 24)
         self.assertEqual(ControlPanelConfig.from_dict({"rows": 0}).rows, 1)
-        self.assertEqual(ControlPanelConfig.from_dict({}).rows, 5)
+        self.assertEqual(ControlPanelConfig.from_dict({}).rows, 6)
 
     def test_blank_name_falls_back(self) -> None:
         self.assertEqual(ControlPanelConfig.from_dict({"name": "   "}).name, "ControlPanel")
@@ -868,13 +869,13 @@ class ExampleControlPanelTests(unittest.TestCase):
 
         identity = polled_by_command["*IDN?"]
         self.assertEqual(identity.poll_mode, "on_connect")
-        self.assertEqual((identity.tile.span_w, identity.tile.span_h), (2, 1))
+        self.assertEqual((identity.tile.span_w, identity.tile.span_h), (4, 1))
         self.assertEqual(identity.tile.kind, "value")
         self.assertEqual(identity.parse.value_type, "text")
 
         firmware = polled_by_command["SYST:FIRM?"]
         self.assertEqual(firmware.poll_mode, "on_connect")
-        self.assertEqual((firmware.tile.span_w, firmware.tile.span_h), (2, 1))
+        self.assertEqual((firmware.tile.span_w, firmware.tile.span_h), (4, 1))
         self.assertEqual(firmware.tile.kind, "value")
 
         output = polled_by_command["OUTP?"]

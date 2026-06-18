@@ -79,10 +79,10 @@ DEFAULT_READBACK_INTERVAL_MS = 1000
 
 GRID_COLUMNS_MIN = 1
 GRID_COLUMNS_MAX = 12
-DEFAULT_GRID_COLUMNS = 4
+DEFAULT_GRID_COLUMNS = 10
 GRID_ROWS_MIN = 1
 GRID_ROWS_MAX = 24
-DEFAULT_GRID_ROWS = 5
+DEFAULT_GRID_ROWS = 6
 MAX_TILE_SPAN = 5
 
 
@@ -1309,7 +1309,7 @@ def example_control_panel() -> ControlPanelConfig:
             "Arm in the header to enable controls."
         ),
         favorite=True,
-        columns=4,
+        columns=10,
         entries=[
             ControlPanelEntry(
                 label="Identity",
@@ -1317,7 +1317,15 @@ def example_control_panel() -> ControlPanelConfig:
                 poll_mode="on_connect",
                 timeout_ms=1000,
                 parse=ParseRule(kind="line", value_type="text"),
-                tile=TilePlacement(col=0, row=0, span_w=2, span_h=1, kind="value"),
+                tile=TilePlacement(col=0, row=0, span_w=4, span_h=1, kind="value"),
+            ),
+            ControlPanelEntry(
+                label="Firmware",
+                command="SYST:FIRM?",
+                poll_mode="on_connect",
+                timeout_ms=1000,
+                parse=ParseRule(kind="line", value_type="text"),
+                tile=TilePlacement(col=4, row=0, span_w=4, span_h=1, kind="value"),
             ),
             ControlPanelEntry(
                 id=output_entry_id,
@@ -1330,7 +1338,7 @@ def example_control_panel() -> ControlPanelConfig:
                     ColorRule(op="eq_num", operand="1", state="ok", label="ON"),
                     ColorRule(op="eq_num", operand="0", state="warn", label="OFF"),
                 ],
-                tile=TilePlacement(col=2, row=0, span_w=1, span_h=1, kind="led"),
+                tile=TilePlacement(col=8, row=0, span_w=1, span_h=1, kind="led"),
             ),
             ControlPanelEntry(
                 id=mode_entry_id,
@@ -1339,19 +1347,11 @@ def example_control_panel() -> ControlPanelConfig:
                 interval_ms=500,
                 timeout_ms=250,
                 parse=ParseRule(kind="line", value_type="text"),
-                tile=TilePlacement(col=3, row=0, span_w=1, span_h=1, kind="value"),
-            ),
-            ControlPanelEntry(
-                label="Firmware",
-                command="SYST:FIRM?",
-                poll_mode="on_connect",
-                timeout_ms=1000,
-                parse=ParseRule(kind="line", value_type="text"),
-                tile=TilePlacement(col=0, row=1, span_w=2, span_h=1, kind="value"),
+                tile=TilePlacement(col=9, row=0, span_w=1, span_h=1, kind="value"),
             ),
             ControlPanelEntry(
                 label="Output voltage",
-                tile=TilePlacement(col=0, row=2, span_w=2, span_h=1, kind="setpoint"),
+                tile=TilePlacement(col=0, row=1, span_w=3, span_h=1, kind="setpoint"),
                 setpoint=SetpointSpec(
                     min_value=0.0,
                     max_value=30.0,
@@ -1368,7 +1368,7 @@ def example_control_panel() -> ControlPanelConfig:
             ),
             ControlPanelEntry(
                 label="Regulation",
-                tile=TilePlacement(col=2, row=2, span_w=2, span_h=1, kind="enum"),
+                tile=TilePlacement(col=3, row=1, span_w=3, span_h=1, kind="enum"),
                 enum_spec=EnumSpec(
                     options=[
                         EnumOption(label="OFF", command="OUTP OFF", match_value="OFF"),

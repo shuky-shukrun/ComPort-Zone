@@ -531,7 +531,7 @@ class ControlPanelSchemaTests(unittest.TestCase):
         # polled subset for this ordering check.
         self.assertEqual(
             [entry.command for entry in example.entries if entry.command],
-            ["*IDN?", "OUTP?", "SOUR:FUNC:MODE?", "SYST:FIRM?"],
+            ["*IDN?", "SYST:FIRM?", "OUTP?", "SOUR:FUNC:MODE?"],
         )
 
     def test_emptied_control_panel_library_stays_empty(self) -> None:

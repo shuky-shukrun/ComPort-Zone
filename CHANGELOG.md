@@ -16,6 +16,7 @@ All notable changes to ComPort Zone are documented here.
 
 ### Changed
 
+- Control Panel default grid is now **10 columns × 6 rows** (was 4 × 5), and the shipped Example panel is re-laid to use the wider grid. Existing saved panels keep their stored size (use the Columns/Rows control to change them).
 - Settings schema bumped to **v7** for the v3 Control Panel features (setpoint or enum kind, any `SetpointSpec` non-default, any `EnumSpec.options` non-empty). Panels using only v1 fields keep their v5 floor; v2-only panels keep their v6 floor; mixed panels declare the max. Export JSON stamps `version: 3` only when the payload actually uses v3 features; v1/v2 exports still stamp 1/2.
 
 - **ControlPanel View v2.0**: nine new capabilities on top of the original ControlPanel View — history visualization, multi-device polling, control tiles, derived (computed) tiles, alerts, and richer color customization. All charting is custom-painted (QPainter) — no new dependencies.
