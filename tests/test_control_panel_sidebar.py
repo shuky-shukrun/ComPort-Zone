@@ -50,6 +50,7 @@ def make_actions(calls: list) -> QuickActionsSidebarActions:
         control_panel_open_by_id=remember("open"),
         control_panel_favorite_toggle=remember("favorite"),
         control_panel_rename_by_id=remember("rename"),
+        control_panel_duplicate_by_id=remember("duplicate"),
         control_panel_delete_by_id=remember("delete"),
         new_control_panel=lambda: calls.append(("new",)),
         import_control_panels=lambda: calls.append(("import",)),
@@ -153,9 +154,19 @@ class ControlPanelSidebarTests(unittest.TestCase):
         )
         titles = [action.text() for action in menu.actions() if not action.isSeparator()]
         self.assertEqual(
-            titles, ["Open", "Add to Favorites", "Rename", "Delete Control Panel"]
+            titles,
+            ["Open", "Add to Favorites", "Rename", "Duplicate", "Delete Control Panel"],
         )
         menu.deleteLater()
+
+    def test_context_menu_duplicate_dispatches(self) -> None:
+        config = make_config("Bench")
+        populate_control_panel_list(self.sidebar.control_panel_list, [config])
+        item = self.sidebar.control_panel_list.item(0)
+        self.sidebar._on_control_panel_action(
+            self.sidebar.control_panel_list, item, "duplicate"
+        )
+        self.assertIn(("duplicate", config.id), self.calls)
 
     def test_favorites_page_includes_control_panel_panel(self) -> None:
         self.assertIn("favorite_control_panel", self.sidebar.sections)

@@ -426,6 +426,7 @@ class MainWindow(QMainWindow):
                 control_panel_open_by_id=self.open_control_panel_tab,
                 control_panel_favorite_toggle=self.set_control_panel_favorite,
                 control_panel_rename_by_id=self.rename_control_panel_by_id,
+                control_panel_duplicate_by_id=self.duplicate_control_panel_by_id,
                 control_panel_delete_by_id=self.delete_control_panel_by_id,
                 new_control_panel=self.new_control_panel_tab,
                 import_control_panels=self.import_control_panels_json,
@@ -1046,9 +1047,11 @@ class MainWindow(QMainWindow):
 
     def duplicate_control_panel(self, index: int) -> None:
         control_panel = self.control_panel_at(index)
-        if control_panel is None:
-            return
-        clone = self.control_panel_catalog.duplicate(control_panel.config.id)
+        if control_panel is not None:
+            self.duplicate_control_panel_by_id(control_panel.config.id)
+
+    def duplicate_control_panel_by_id(self, control_panel_id: str) -> None:
+        clone = self.control_panel_catalog.duplicate(control_panel_id)
         if clone is None:
             return
         self.save_settings()

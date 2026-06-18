@@ -60,6 +60,7 @@ class QuickActionsSidebarActions:
     control_panel_open_by_id: Callable[[str], None] | None = None
     control_panel_favorite_toggle: Callable[[str, bool], None] | None = None
     control_panel_rename_by_id: Callable[[str], None] | None = None
+    control_panel_duplicate_by_id: Callable[[str], None] | None = None
     control_panel_delete_by_id: Callable[[str], None] | None = None
     new_control_panel: Callable[[], None] | None = None
     import_control_panels: Callable[[], None] | None = None
@@ -545,6 +546,10 @@ class QuickActionsSidebar(QuickActionsDrawer):
             if self.actions.control_panel_rename_by_id is not None:
                 self.actions.control_panel_rename_by_id(control_panel_id)
             return
+        if key == "duplicate":
+            if self.actions.control_panel_duplicate_by_id is not None:
+                self.actions.control_panel_duplicate_by_id(control_panel_id)
+            return
         if key == "remove":
             if self.actions.control_panel_delete_by_id is not None:
                 self.actions.control_panel_delete_by_id(control_panel_id)
@@ -676,6 +681,11 @@ class QuickActionsSidebar(QuickActionsDrawer):
             menu, "Rename", "edit",
             lambda it=item: self._on_control_panel_action(quick_list, it, "edit"),
         )
+        if self.actions.control_panel_duplicate_by_id is not None:
+            self._menu_action(
+                menu, "Duplicate", "copy",
+                lambda it=item: self._on_control_panel_action(quick_list, it, "duplicate"),
+            )
         self._menu_action(
             menu, "Delete Control Panel", "x",
             lambda it=item: self._on_control_panel_action(quick_list, it, "remove"),
