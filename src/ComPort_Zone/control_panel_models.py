@@ -1245,6 +1245,37 @@ def grid_row_count(entries: list[ControlPanelEntry]) -> int:
     return max(entry.tile.row + entry.tile.span_h for entry in entries)
 
 
+def append_placement(
+    entries: list[ControlPanelEntry], columns: int, span_w: int, span_h: int
+) -> tuple[int, int]:
+    """Where a freshly added tile of ``span_w`` x ``span_h`` should land.
+
+    Fills the **last active row** (the highest row that already holds a
+    tile — empty rows the user left above it are preserved) left-to-right:
+    the first column where the tile fits without overlapping an existing
+    one. When nothing fits in that row, the tile drops to a fresh row
+    below everything. An empty panel starts at (0, 0).
+    """
+    columns = max(GRID_COLUMNS_MIN, columns)
+    span_w = max(1, min(span_w, columns))
+    occupied: set[tuple[int, int]] = set()
+    for entry in entries:
+        occupied.update(_cells(entry.tile))
+    if not occupied:
+        return (0, 0)
+    last_row = max(row for _col, row in occupied)
+    for col in range(0, columns - span_w + 1):
+        cells = {
+            (col + dx, last_row + dy)
+            for dx in range(span_w)
+            for dy in range(span_h)
+        }
+        if occupied.isdisjoint(cells):
+            return (col, last_row)
+    # Doesn't fit alongside the last row's tiles — start a new row below.
+    return (0, grid_row_count(entries))
+
+
 def visible_row_count(config: "ControlPanelConfig") -> int:
     """Rows the grid should reserve room for: at least ``config.rows`` (the
     user-configured minimum) but expands automatically when tiles overflow."""

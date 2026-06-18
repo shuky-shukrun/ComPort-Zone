@@ -87,7 +87,7 @@ from ..control_panel_models import (
     ControlPanelEntry,
     ControlPanelTabState,
     ReadbackSpec,
-    grid_row_count,
+    append_placement,
     normalize_layout,
 )
 from ..control_panel_parse import (
@@ -2199,8 +2199,12 @@ class ControlPanelTabWidget(QWidget):
             self._recompute_derived(entry.id)
 
     def add_entry(self, entry: ControlPanelEntry) -> None:
-        entry.tile.col = 0
-        entry.tile.row = grid_row_count(self.config.entries)
+        entry.tile.col, entry.tile.row = append_placement(
+            self.config.entries,
+            self.config.columns,
+            entry.tile.span_w,
+            entry.tile.span_h,
+        )
         self.config.entries.append(entry)
         normalize_layout(self.config.entries, self.config.columns)
         self._configure_entries()

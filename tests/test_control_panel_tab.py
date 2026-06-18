@@ -2247,12 +2247,14 @@ class ControlPanelTabBindingTests(ControlPanelTabTestBase):
 
 
 class ControlPanelTabConfigTests(ControlPanelTabTestBase):
-    def test_add_entry_places_below_and_saves(self) -> None:
+    def test_add_entry_fills_active_row_and_saves(self) -> None:
+        # First tile sits at (0,0); the next fills the same (last active)
+        # row at the next free column.
         tab = self.make_tab(volt_entry())
         saves = self.host.save_count
         new_entry = trip_entry()
         tab.add_entry(new_entry)
-        self.assertEqual((new_entry.tile.col, new_entry.tile.row), (0, 1))
+        self.assertEqual((new_entry.tile.col, new_entry.tile.row), (1, 0))
         self.assertIsNotNone(tab.grid.tile("trip"))
         self.assertGreater(self.host.save_count, saves)
 

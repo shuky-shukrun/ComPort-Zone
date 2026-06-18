@@ -19,6 +19,7 @@ from ComPort_Zone.control_panel_models import (
     ParseRule,
     ReadbackSpec,
     TilePlacement,
+    append_placement,
     control_panel_uses_v2_features,
     control_panel_uses_v3_features,
     default_control_panels,
@@ -1014,6 +1015,35 @@ class LayoutMathTests(unittest.TestCase):
 
     def test_place_tile_unknown_id(self) -> None:
         self.assertFalse(place_tile([], 4, "ghost", 0, 0))
+
+    def test_append_placement_empty_panel(self) -> None:
+        self.assertEqual(append_placement([], 10, 1, 1), (0, 0))
+
+    def test_append_placement_fills_last_active_row(self) -> None:
+        entries = [make_entry("a", col=0, row=0, span_w=2)]
+        # Next free column on the same (last active) row.
+        self.assertEqual(append_placement(entries, 10, 1, 1), (2, 0))
+
+    def test_append_placement_preserves_empty_rows_above(self) -> None:
+        # Tiles only on row 3; rows 0-2 are intentionally empty.
+        entries = [make_entry("a", col=0, row=3)]
+        self.assertEqual(append_placement(entries, 10, 1, 1), (1, 3))
+
+    def test_append_placement_wraps_when_row_full(self) -> None:
+        # Row 0 fully occupied across all 4 columns -> new row below.
+        entries = [
+            make_entry("a", col=0, row=0),
+            make_entry("b", col=1, row=0),
+            make_entry("c", col=2, row=0),
+            make_entry("d", col=3, row=0),
+        ]
+        self.assertEqual(append_placement(entries, 4, 1, 1), (0, 1))
+
+    def test_append_placement_wraps_when_span_does_not_fit(self) -> None:
+        # One 1x1 at col 0 of a 4-wide grid; a 4-wide tile can't fit beside
+        # it, so it drops to the next row.
+        entries = [make_entry("a", col=0, row=0)]
+        self.assertEqual(append_placement(entries, 4, 4, 1), (0, 1))
 
     def test_set_tile_span_grows_and_displaces(self) -> None:
         entries = [make_entry("a", col=0, row=0), make_entry("b", col=1, row=0)]
