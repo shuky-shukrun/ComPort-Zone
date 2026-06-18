@@ -611,6 +611,9 @@ class ControlTileWidget(TileFrame):
         self.button = QPushButton("", self)
         self.button.setObjectName("tileControlButton")
         self.button.setProperty("mismatch", "false")
+        # Tab-reachable but not click-focusable: a click that disables the
+        # button (pending) must not bounce focus to the next tile.
+        self.button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.button.clicked.connect(lambda: self.activateRequested.emit(self.entry_id))
         row = QHBoxLayout()
@@ -802,6 +805,9 @@ class SetpointTileWidget(TileFrame):
 
         self.send_button = QPushButton("▶", self)
         self.send_button.setObjectName("tileSetpointSend")
+        # Not click-focusable: a click that disables it (pending) must not
+        # bounce focus to the next tile. Enter in the spinbox still sends.
+        self.send_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.setFixedWidth(36)
         self.send_button.clicked.connect(
@@ -1068,6 +1074,9 @@ class EnumTileWidget(TileFrame):
 
         self.send_button = QPushButton("▶", self)
         self.send_button.setObjectName("tileEnumSend")
+        # Not click-focusable: disabling it on send must not bounce focus
+        # to the next tile.
+        self.send_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.setFixedWidth(36)
         self.send_button.clicked.connect(

@@ -929,6 +929,23 @@ class ReadbackIntoInputTests(unittest.TestCase):
         self.assertFalse(tile.mismatch)
         tile.deleteLater()
 
+    def test_action_buttons_not_click_focusable(self) -> None:
+        # Clicking a tile's action button must not grab focus, else
+        # disabling it on send bounces focus to the next tile.
+        from ComPort_Zone.ui.control_panel_tiles import (
+            ControlTileWidget,
+            EnumTileWidget,
+            SetpointTileWidget,
+        )
+
+        sp = SetpointTileWidget(self.make_setpoint())
+        en = EnumTileWidget(self.make_enum())
+        tg = ControlTileWidget(self.make_toggle())
+        for btn in (sp.send_button, en.send_button, tg.button):
+            self.assertEqual(btn.focusPolicy(), Qt.FocusPolicy.TabFocus)
+        for tile in (sp, en, tg):
+            tile.deleteLater()
+
     def test_apply_readback_reports_value_change(self) -> None:
         from ComPort_Zone.ui.control_panel_tiles import (
             ControlTileWidget,
