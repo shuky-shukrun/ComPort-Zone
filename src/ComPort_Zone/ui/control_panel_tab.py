@@ -1298,14 +1298,36 @@ class ControlPanelTabWidget(QWidget):
             tile.set_pending(True)
         return True
 
+    @staticmethod
+    def _reading_is_on(runtime: TileRuntime | None) -> bool:
+        """Interpret a readback runtime as a toggle's ON/OFF.
+
+        Prefer the parsed *value*: a numeric reading is ON when non-zero
+        (the natural reading of a 0/1 status query like ``OUTP?`` —
+        regardless of how its color rules map verdict states), and a
+        textual reading is ON for the usual truthy tokens. Only when the
+        value carries no clear on/off signal do we fall back to the
+        verdict state (``ok`` = ON), preserving the older verdict-driven
+        configuration for text status tiles.
+        """
+        if runtime is None:
+            return False
+        if runtime.value_number is not None:
+            return runtime.value_number != 0
+        text = (runtime.value_text or "").strip().lower()
+        if text in {"1", "on", "true", "yes", "enabled", "high", "open"}:
+            return True
+        if text in {"0", "off", "false", "no", "disabled", "low", "closed", ""}:
+            return False
+        return runtime.state == "ok"
+
     def _control_is_on(self, entry: ControlPanelEntry) -> bool:
-        """A toggle's current state: the watch entry's verdict when one is
-        set ("ok" means ON), else the tile's optimistic state."""
+        """A toggle's current state: derived from the watch entry's latest
+        reading when one is set, else the tile's optimistic state."""
         readback = self._readback_spec_for(entry)
         watch_id = readback.watch_entry_id if readback.source == "entry" else ""
         if watch_id:
-            runtime = self._runtimes.get(watch_id)
-            return bool(runtime is not None and runtime.state == "ok")
+            return self._reading_is_on(self._runtimes.get(watch_id))
         tile = self.grid.tile(entry.id)
         return isinstance(tile, ControlTileWidget) and tile.is_on
 
@@ -1785,7 +1807,7 @@ class ControlPanelTabWidget(QWidget):
         elif isinstance(tile, EnumTileWidget):
             tile.apply_readback(raw_value_text)
         elif isinstance(tile, ControlTileWidget) and entry.control.mode == "toggle":
-            tile.apply_readback(runtime.state == "ok")
+            tile.apply_readback(self._reading_is_on(runtime))
 
     def _apply_outcome(self, entry: ControlPanelEntry, outcome: ParseOutcome, raw_window: str = "") -> None:
         """The shared value sink (poll results AND derived recomputes):
@@ -1978,12 +2000,15 @@ class ControlPanelTabWidget(QWidget):
             elif isinstance(tile, EnumTileWidget):
                 tile.apply_readback(match_text)
             elif isinstance(tile, ControlTileWidget):
-                # Follow-mode toggles ride the watched tile's verdict so
+                # Follow-mode toggles ride the watched tile's reading so
                 # the ON/OFF visual tracks the device, not just the
-                # user's last click (FR-66 analogue for controls).
+                # user's last click (FR-66 analogue for controls). Derive
+                # ON/OFF from the watched value (0/1, on/off), not its
+                # verdict state — a 0/1 status tile commonly maps both
+                # readings to "ok" with different colors.
                 entry = self.config.entry_by_id(watcher_id)
                 if entry is not None and entry.control.mode == "toggle":
-                    tile.apply_readback(runtime.state == "ok")
+                    tile.apply_readback(self._reading_is_on(runtime))
 
     # -------------------------------------------------------- config edits
 

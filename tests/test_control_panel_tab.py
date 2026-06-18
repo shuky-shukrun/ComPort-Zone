@@ -1241,6 +1241,42 @@ class ControlTileTests(ControlPanelTabTestBase):
         tab._drain_results()
         self.assertEqual(self.session.transport.sent_text, before)
 
+    def test_follow_toggle_tracks_value_not_verdict(self) -> None:
+        # Regression: a follow-mode toggle must track the watched tile's
+        # VALUE (0 -> OFF, 1 -> ON), not its verdict state. The user's
+        # OUTP:SETTING? tile maps BOTH 0 and 1 to "ok" (red vs green) —
+        # so a verdict-driven toggle wrongly read ON for every value.
+        watched = ControlPanelEntry(
+            id="outp",
+            label="OUTP:SETTING?",
+            command="OUTP:SETTING?",
+            interval_ms=1000,
+            timeout_ms=500,
+            parse=ParseRule(kind="line", value_type="number"),
+            rules=[
+                ColorRule(op="eq_num", operand="0", state="ok", color="#aa0000", label="0"),
+                ColorRule(op="eq_num", operand="1", state="ok", color="#00aa00", label="1"),
+            ],
+            tile=TilePlacement(col=2, row=1, kind="led"),
+        )
+        tab = self.make_tab(watched, control_entry("toggle", watch_entry_id="outp"))
+        tab.bind_to_session(1)
+        tile = tab.grid.tile("ctrl")
+        assert isinstance(tile, ControlTileWidget)
+
+        # Device reports output OFF (0) — both rules are "ok", but the
+        # value is 0, so the toggle must read OFF.
+        self.clock.advance_ms(80)
+        self.run_poll_round(tab, b"0\r\n")
+        self.assertFalse(tile.is_on)
+        self.assertEqual(tile.button.text(), "OFF")
+
+        # Device reports output ON (1) — toggle follows to ON.
+        self.clock.advance_ms(1100)
+        self.run_poll_round(tab, b"1\r\n")
+        self.assertTrue(tile.is_on)
+        self.assertEqual(tile.button.text(), "ON")
+
     def test_unwatched_toggle_flips_optimistically(self) -> None:
         tab = self.make_tab(control_entry("toggle"))
         tab.bind_to_session(1)
