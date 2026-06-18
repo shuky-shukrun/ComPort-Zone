@@ -46,6 +46,15 @@ from .control_panel_sparkline import SparklineWidget
 from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS
 
 CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
+# Clipboard format for copy/paste of a tile (its entry) within or across
+# panels — distinct from the in-grid drag mime above.
+CONTROL_PANEL_TILE_CLIPBOARD_MIME = "application/x-comport-zone-control-tile"
+
+
+def clipboard_has_tile() -> bool:
+    """True when the system clipboard holds a copied control-panel tile."""
+    data = QApplication.clipboard().mimeData()
+    return data is not None and data.hasFormat(CONTROL_PANEL_TILE_CLIPBOARD_MIME)
 
 # Press-and-hold this long on a tile's chrome to flip the panel into
 # layout-edit mode without hunting for the toolbar button.
@@ -160,6 +169,8 @@ class TileFrame(QFrame):
 
     editRequested = Signal(str)
     duplicateRequested = Signal(str)
+    copyRequested = Signal(str)
+    pasteRequested = Signal()
     removeRequested = Signal(str)
     enableToggled = Signal(str, bool)
     spanRequested = Signal(str, int, int)
@@ -435,6 +446,11 @@ class TileFrame(QFrame):
         duplicate_action.triggered.connect(
             lambda: self.duplicateRequested.emit(self.entry_id)
         )
+        copy_action = menu.addAction("Copy Tile")
+        copy_action.triggered.connect(lambda: self.copyRequested.emit(self.entry_id))
+        paste_action = menu.addAction("Paste Tile")
+        paste_action.setEnabled(clipboard_has_tile())
+        paste_action.triggered.connect(lambda: self.pasteRequested.emit())
         enabled_action = menu.addAction("Enabled")
         enabled_action.setCheckable(True)
         enabled_action.setChecked(self._entry.enabled)

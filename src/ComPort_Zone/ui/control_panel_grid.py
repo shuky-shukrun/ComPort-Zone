@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from ..control_panel_models import (
     DEFAULT_GRID_COLUMNS,
@@ -33,6 +33,7 @@ from ..themes import THEMES, ThemePalette
 from .control_panel_tiles import (
     CONTROL_PANEL_TILE_MIME_TYPE,
     TileFrame,
+    clipboard_has_tile,
     create_tile,
     tile_class_for,
 )
@@ -49,6 +50,9 @@ class ControlPanelGridWidget(QWidget):
     layoutChanged = Signal()
     tileEditRequested = Signal(str)
     tileDuplicateRequested = Signal(str)
+    tileCopyRequested = Signal(str)
+    pasteRequested = Signal()
+    addEntryRequested = Signal()
     tileRemoveRequested = Signal(str)
     tileEnableToggled = Signal(str, bool)
     tilePollNowRequested = Signal(str)
@@ -90,6 +94,8 @@ class ControlPanelGridWidget(QWidget):
                 tile = create_tile(entry, self)
                 tile.editRequested.connect(self.tileEditRequested)
                 tile.duplicateRequested.connect(self.tileDuplicateRequested)
+                tile.copyRequested.connect(self.tileCopyRequested)
+                tile.pasteRequested.connect(self.pasteRequested)
                 tile.removeRequested.connect(self.tileRemoveRequested)
                 tile.enableToggled.connect(self.tileEnableToggled)
                 tile.pollNowRequested.connect(self.tilePollNowRequested)
@@ -108,6 +114,20 @@ class ControlPanelGridWidget(QWidget):
 
     def tile(self, entry_id: str) -> TileFrame | None:
         return self._tiles.get(entry_id)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        # Right-click on empty grid space (tiles handle their own menu):
+        # add a new entry, or paste a copied tile.
+        if self._config is None:
+            return
+        menu = QMenu(self)
+        add_action = menu.addAction("Add Entry…")
+        add_action.triggered.connect(lambda: self.addEntryRequested.emit())
+        paste_action = menu.addAction("Paste Tile")
+        paste_action.setEnabled(clipboard_has_tile())
+        paste_action.triggered.connect(lambda: self.pasteRequested.emit())
+        menu.exec(event.globalPos())
+        menu.deleteLater()
 
     def tiles(self) -> list[TileFrame]:
         return list(self._tiles.values())

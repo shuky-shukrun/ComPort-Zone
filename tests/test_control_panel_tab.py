@@ -2339,6 +2339,30 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         tab.duplicate_entry_via_dialog("ghost")
         self.assertEqual(len(tab.config.entries), 1)
 
+    def test_copy_paste_tile_across_panels(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        source = self.make_tab(volt_entry())
+        dest = self.make_tab(trip_entry())
+        source.copy_entry("volts")
+
+        dest.paste_entry()
+        self.assertEqual(len(dest.config.entries), 2)
+        pasted = next(e for e in dest.config.entries if e.id != "trip")
+        # Same content, fresh id, real tile created.
+        self.assertEqual(pasted.command, "MEAS:VOLT?")
+        self.assertNotEqual(pasted.id, "volts")
+        self.assertIsNotNone(dest.grid.tile(pasted.id))
+        QApplication.clipboard().clear()
+
+    def test_paste_without_clipboard_tile_is_noop(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().clear()
+        tab = self.make_tab(volt_entry())
+        tab.paste_entry()
+        self.assertEqual(len(tab.config.entries), 1)
+
     def test_apply_entry_edit_replaces(self) -> None:
         tab = self.make_tab(volt_entry())
         edited = volt_entry()

@@ -16,6 +16,7 @@ FR-27, FR-31, FR-32, FR-36).
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from copy import deepcopy
@@ -25,7 +26,7 @@ from queue import Empty, Queue
 from typing import Protocol
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -105,6 +106,7 @@ from .control_panel_alert_panel import AlertHistoryPanel
 from .control_panel_chart import DEFAULT_SPAN_S, ControlPanelChartPage
 from .control_panel_grid import ControlPanelGridWidget
 from .control_panel_tiles import (
+    CONTROL_PANEL_TILE_CLIPBOARD_MIME,
     TILE_STATE_CAPTIONS,
     ControlTileWidget,
     EnumTileWidget,
@@ -417,6 +419,9 @@ class ControlPanelTabWidget(QWidget):
         self.grid.layoutChanged.connect(self._layout_changed)
         self.grid.tileEditRequested.connect(self.edit_entry_via_dialog)
         self.grid.tileDuplicateRequested.connect(self.duplicate_entry_via_dialog)
+        self.grid.tileCopyRequested.connect(self.copy_entry)
+        self.grid.pasteRequested.connect(self.paste_entry)
+        self.grid.addEntryRequested.connect(self.add_entry_via_dialog)
         self.grid.tileRemoveRequested.connect(self.remove_entry)
         self.grid.tileEnableToggled.connect(self.set_entry_enabled)
         self.grid.tilePollNowRequested.connect(self.poll_now)
@@ -2432,3 +2437,36 @@ class ControlPanelTabWidget(QWidget):
         if dialog.exec():
             self.add_entry(dialog.values())
         dialog.deleteLater()
+
+    def copy_entry(self, entry_id: str) -> None:
+        """Put a tile (its entry) on the clipboard so it can be pasted into
+        this or another control panel."""
+        entry = self.config.entry_by_id(entry_id)
+        if entry is None:
+            return
+        mime = QMimeData()
+        mime.setData(
+            CONTROL_PANEL_TILE_CLIPBOARD_MIME,
+            json.dumps(entry.to_dict()).encode("utf-8"),
+        )
+        mime.setText(entry.display_label())  # plain-text fallback
+        QApplication.clipboard().setMimeData(mime)
+        self.coordinator.notify(f"Copied tile '{entry.display_label()}'.")
+
+    def paste_entry(self) -> None:
+        """Add a copied tile from the clipboard as a new entry (fresh id),
+        placed like any newly added tile."""
+        data = QApplication.clipboard().mimeData()
+        if data is None or not data.hasFormat(CONTROL_PANEL_TILE_CLIPBOARD_MIME):
+            self.coordinator.notify("Clipboard has no tile to paste.")
+            return
+        try:
+            raw = bytes(data.data(CONTROL_PANEL_TILE_CLIPBOARD_MIME))
+            payload = json.loads(raw.decode("utf-8"))
+            entry = ControlPanelEntry.from_dict(payload)
+        except (ValueError, TypeError, UnicodeDecodeError):
+            self.coordinator.notify("Could not paste tile — clipboard data is invalid.")
+            return
+        entry.id = uuid4().hex  # fresh id so it never collides in this panel
+        self.add_entry(entry)
+        self.coordinator.notify(f"Pasted tile '{entry.display_label()}'.")
