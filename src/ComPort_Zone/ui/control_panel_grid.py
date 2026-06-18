@@ -48,6 +48,7 @@ class ControlPanelGridWidget(QWidget):
 
     layoutChanged = Signal()
     tileEditRequested = Signal(str)
+    tileDuplicateRequested = Signal(str)
     tileRemoveRequested = Signal(str)
     tileEnableToggled = Signal(str, bool)
     tilePollNowRequested = Signal(str)
@@ -88,6 +89,7 @@ class ControlPanelGridWidget(QWidget):
             if tile is None:
                 tile = create_tile(entry, self)
                 tile.editRequested.connect(self.tileEditRequested)
+                tile.duplicateRequested.connect(self.tileDuplicateRequested)
                 tile.removeRequested.connect(self.tileRemoveRequested)
                 tile.enableToggled.connect(self.tileEnableToggled)
                 tile.pollNowRequested.connect(self.tilePollNowRequested)

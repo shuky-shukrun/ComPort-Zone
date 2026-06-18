@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
 from queue import Empty, Queue
 from typing import Protocol
+from uuid import uuid4
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -414,6 +416,7 @@ class ControlPanelTabWidget(QWidget):
         self.grid = ControlPanelGridWidget()
         self.grid.layoutChanged.connect(self._layout_changed)
         self.grid.tileEditRequested.connect(self.edit_entry_via_dialog)
+        self.grid.tileDuplicateRequested.connect(self.duplicate_entry_via_dialog)
         self.grid.tileRemoveRequested.connect(self.remove_entry)
         self.grid.tileEnableToggled.connect(self.set_entry_enabled)
         self.grid.tilePollNowRequested.connect(self.poll_now)
@@ -2390,4 +2393,24 @@ class ControlPanelTabWidget(QWidget):
         )
         if dialog.exec():
             self.apply_entry_edit(dialog.values())
+        dialog.deleteLater()
+
+    def duplicate_entry_via_dialog(self, entry_id: str) -> None:
+        """Open the editor pre-filled with a copy of an existing entry.
+
+        The copy gets a fresh id and a "(copy)" label so it is added as a
+        new tile (via the normal add flow) rather than replacing the
+        original; the user can tweak anything before accepting.
+        """
+        entry = self.config.entry_by_id(entry_id)
+        if entry is None:
+            return
+        clone = deepcopy(entry)
+        clone.id = uuid4().hex
+        clone.label = f"{entry.display_label()} (copy)"
+        dialog = ControlPanelEntryDialog(
+            clone, parent=self, context=self._entry_dialog_context()
+        )
+        if dialog.exec():
+            self.add_entry(dialog.values())
         dialog.deleteLater()

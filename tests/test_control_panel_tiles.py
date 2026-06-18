@@ -420,6 +420,14 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual(len(grid.tiles()), 2)
         grid.deleteLater()
 
+    def test_grid_relays_duplicate_request(self) -> None:
+        grid = self.make_grid(make_config(make_entry("a")))
+        seen: list[str] = []
+        grid.tileDuplicateRequested.connect(seen.append)
+        grid.tile("a").duplicateRequested.emit("a")
+        self.assertEqual(seen, ["a"])
+        grid.deleteLater()
+
     def test_grid_injects_cell_stride_provider(self) -> None:
         # Tiles need the grid's per-cell stride for corner-drag resize.
         grid = self.make_grid(make_config(make_entry("a")), width=800)

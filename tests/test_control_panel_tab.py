@@ -2266,6 +2266,45 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         self.assertTrue(tab.edit_layout_button.isChecked())
         self.assertTrue(tab.grid._edit_mode)
 
+    def test_duplicate_entry_adds_copy_with_new_id(self) -> None:
+        tab = self.make_tab(volt_entry())
+
+        captured: dict[str, object] = {}
+
+        class FakeDialog:
+            def __init__(self, entry=None, parent=None, context=None):
+                captured["entry"] = entry
+
+            def exec(self):
+                return True
+
+            def values(self):
+                return captured["entry"]
+
+            def deleteLater(self):
+                pass
+
+        with patch(
+            "ComPort_Zone.ui.control_panel_tab.ControlPanelEntryDialog", FakeDialog
+        ):
+            tab.duplicate_entry_via_dialog("volts")
+
+        self.assertEqual(len(tab.config.entries), 2)
+        original = tab.config.entry_by_id("volts")
+        assert original is not None
+        copy = next(e for e in tab.config.entries if e.id != "volts")
+        # New id, copied command/kind, original untouched, "(copy)" label.
+        self.assertNotEqual(copy.id, "volts")
+        self.assertEqual(copy.command, original.command)
+        self.assertEqual(copy.tile.kind, original.tile.kind)
+        self.assertIn("(copy)", copy.label)
+        self.assertIsNotNone(tab.grid.tile(copy.id))
+
+    def test_duplicate_unknown_entry_is_noop(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.duplicate_entry_via_dialog("ghost")
+        self.assertEqual(len(tab.config.entries), 1)
+
     def test_apply_entry_edit_replaces(self) -> None:
         tab = self.make_tab(volt_entry())
         edited = volt_entry()

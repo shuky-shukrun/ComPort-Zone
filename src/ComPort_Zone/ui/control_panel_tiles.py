@@ -49,7 +49,7 @@ CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
 
 # Press-and-hold this long on a tile's chrome to flip the panel into
 # layout-edit mode without hunting for the toolbar button.
-LONG_PRESS_MS = 2000
+LONG_PRESS_MS = 1000
 
 # Size of the bottom-right resize grip (px) used in edit mode.
 RESIZE_CORNER_PX = 18
@@ -149,6 +149,7 @@ class TileFrame(QFrame):
     """Shared tile chrome: header, footer, context menu, edit-mode drag."""
 
     editRequested = Signal(str)
+    duplicateRequested = Signal(str)
     removeRequested = Signal(str)
     enableToggled = Signal(str, bool)
     spanRequested = Signal(str, int, int)
@@ -398,6 +399,10 @@ class TileFrame(QFrame):
             menu.addSeparator()
         edit_action = menu.addAction("Edit Entry…")
         edit_action.triggered.connect(lambda: self.editRequested.emit(self.entry_id))
+        duplicate_action = menu.addAction("Duplicate Entry…")
+        duplicate_action.triggered.connect(
+            lambda: self.duplicateRequested.emit(self.entry_id)
+        )
         enabled_action = menu.addAction("Enabled")
         enabled_action.setCheckable(True)
         enabled_action.setChecked(self._entry.enabled)
