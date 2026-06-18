@@ -1006,6 +1006,39 @@ class LongPressEditTests(unittest.TestCase):
         tile.deleteLater()
 
 
+class TextWrapTests(unittest.TestCase):
+    """Long tile text wraps instead of being clipped/elided."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    def test_title_wraps_and_keeps_full_text(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import ValueTileWidget
+
+        long_label = "Output Voltage Setpoint Channel A Readback"
+        entry = make_entry("a")
+        entry.label = long_label
+        tile = ValueTileWidget(entry)
+        self.assertTrue(tile.title_label.wordWrap())
+        self.assertEqual(tile.title_label.text(), long_label)
+        tile.deleteLater()
+
+    def test_value_label_wraps(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import ValueTileWidget
+
+        tile = ValueTileWidget(make_entry("a"))
+        self.assertTrue(tile.value_label.wordWrap())
+        tile.deleteLater()
+
+    def test_led_caption_wraps(self) -> None:
+        from ComPort_Zone.ui.control_panel_tiles import LedTileWidget
+
+        tile = LedTileWidget(make_entry("a", kind="led"))
+        self.assertTrue(tile.caption_label.wordWrap())
+        tile.deleteLater()
+
+
 class CornerResizeTests(unittest.TestCase):
     """Drag the bottom-right corner (edit mode) to resize in whole cells."""
 

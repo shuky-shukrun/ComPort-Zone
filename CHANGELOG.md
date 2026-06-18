@@ -16,6 +16,7 @@ All notable changes to ComPort Zone are documented here.
 
 ### Changed
 
+- Control Panel **layout editing is more direct**: press-and-hold a tile (~2 s) to enter edit mode, drag a tile's **bottom-right corner** to resize it in whole grid cells, and newly added tiles fill the **last active row** left-to-right (wrapping to a new row only when full) instead of always dropping to the bottom. Long tile titles now **wrap** instead of being clipped.
 - A Control Panel now **arms itself when its bound device connects** (instead of always booting disarmed), so operators don't have to click Arm every session. A new per-panel **View only** option (in the grid-size popover) opts out — the panel stays disarmed for monitoring. Arm state is still transient (never persisted); a manual disarm during a live connection sticks until the next reconnect.
 - A Control Panel **auto-binds to the sole connected terminal** when it has no binding yet, so the common single-device setup needs no manual bind.
 - Control Panel default grid is now **10 columns × 6 rows** (was 4 × 5), and the shipped Example panel is re-laid to use the wider grid. Existing saved panels keep their stored size (use the Columns/Rows control to change them).

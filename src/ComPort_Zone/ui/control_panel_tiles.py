@@ -193,6 +193,8 @@ class TileFrame(QFrame):
 
         self.title_label = QLabel(entry.display_label())
         self.title_label.setObjectName("tileTitle")
+        # Long labels wrap to a second line instead of being clipped.
+        self.title_label.setWordWrap(True)
         self.timestamp_label = QLabel("")
         self.timestamp_label.setObjectName("tileTimestamp")
 
@@ -512,6 +514,8 @@ class LedTileWidget(TileFrame):
         self.lamp.setFixedSize(LED_LAMP, LED_LAMP)
         self.caption_label = QLabel(TILE_STATE_CAPTIONS["neutral"])
         self.caption_label.setObjectName("tileStateCaption")
+        self.caption_label.setWordWrap(True)
+        self.caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(SPACE_LG)
