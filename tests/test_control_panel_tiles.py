@@ -420,6 +420,17 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual(len(grid.tiles()), 2)
         grid.deleteLater()
 
+    def test_grid_injects_cell_stride_provider(self) -> None:
+        # Tiles need the grid's per-cell stride for corner-drag resize.
+        grid = self.make_grid(make_config(make_entry("a")), width=800)
+        provider = grid.tile("a").cell_metrics_provider
+        self.assertIsNotNone(provider)
+        stride_x, stride_y, columns = provider()
+        self.assertGreater(stride_x, 0)
+        self.assertGreater(stride_y, 0)
+        self.assertEqual(columns, 4)  # make_config default
+        grid.deleteLater()
+
     def test_columns_position_tiles_left_to_right(self) -> None:
         grid = self.make_grid(make_config(make_entry("a", col=0), make_entry("b", col=1)))
         tile_a = grid.tile("a")
@@ -992,6 +1003,83 @@ class LongPressEditTests(unittest.TestCase):
         tile.set_edit_mode(True)
         tile._on_long_press()
         self.assertEqual(seen, [True])
+        tile.deleteLater()
+
+
+class CornerResizeTests(unittest.TestCase):
+    """Drag the bottom-right corner (edit mode) to resize in whole cells."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    def _tile(self):
+        from ComPort_Zone.ui.control_panel_tiles import ValueTileWidget
+
+        tile = ValueTileWidget(make_entry("a"))
+        tile.resize(120, 96)
+        # Stub the grid's stride provider: 100 px per cell column/row, 4 cols.
+        tile.cell_metrics_provider = lambda: (100.0, 100.0, 4)
+        return tile
+
+    @staticmethod
+    def _ev(kind, global_pos, *, local=(0, 0)):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        type_map = {
+            "press": QEvent.Type.MouseButtonPress,
+            "move": QEvent.Type.MouseMove,
+            "release": QEvent.Type.MouseButtonRelease,
+        }
+        button = Qt.MouseButton.LeftButton if kind != "move" else Qt.MouseButton.NoButton
+        buttons = Qt.MouseButton.LeftButton if kind != "release" else Qt.MouseButton.NoButton
+        return QMouseEvent(
+            type_map[kind],
+            QPointF(*local),
+            QPointF(*global_pos),
+            button,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+    def test_corner_press_starts_resize(self) -> None:
+        tile = self._tile()
+        tile.set_edit_mode(True)
+        # Press inside the bottom-right corner zone.
+        tile.mousePressEvent(self._ev("press", (1000, 1000), local=(115, 91)))
+        self.assertTrue(tile._resizing)
+        tile.deleteLater()
+
+    def test_press_outside_corner_does_not_resize(self) -> None:
+        tile = self._tile()
+        tile.set_edit_mode(True)
+        tile.mousePressEvent(self._ev("press", (1000, 1000), local=(10, 10)))
+        self.assertFalse(tile._resizing)
+        tile.deleteLater()
+
+    def test_corner_drag_emits_span_request(self) -> None:
+        tile = self._tile()
+        tile.set_edit_mode(True)
+        seen: list[tuple[str, int, int]] = []
+        tile.spanRequested.connect(lambda eid, w, h: seen.append((eid, w, h)))
+        tile.mousePressEvent(self._ev("press", (1000, 1000), local=(115, 91)))
+        # Drag +220 px right (≈ +2 cells), +110 px down (≈ +1 cell).
+        tile.mouseMoveEvent(self._ev("move", (1220, 1110)))
+        self.assertIn(("a", 3, 2), seen)
+        tile.mouseReleaseEvent(self._ev("release", (1220, 1110)))
+        self.assertFalse(tile._resizing)
+        tile.deleteLater()
+
+    def test_corner_drag_clamps_to_limits(self) -> None:
+        tile = self._tile()
+        tile.set_edit_mode(True)
+        emitted: list[tuple[int, int]] = []
+        tile.spanRequested.connect(lambda _eid, w, h: emitted.append((w, h)))
+        tile.mousePressEvent(self._ev("press", (1000, 1000), local=(115, 91)))
+        # Huge drag: width clamps to columns (4), height to MAX_TILE_SPAN (5).
+        tile.mouseMoveEvent(self._ev("move", (5000, 5000)))
+        self.assertEqual(emitted[-1], (4, 5))
         tile.deleteLater()
 
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QDrag, QMouseEvent
+from PySide6.QtGui import QColor, QDrag, QMouseEvent, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -50,6 +50,9 @@ CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
 # Press-and-hold this long on a tile's chrome to flip the panel into
 # layout-edit mode without hunting for the toolbar button.
 LONG_PRESS_MS = 2000
+
+# Size of the bottom-right resize grip (px) used in edit mode.
+RESIZE_CORNER_PX = 18
 
 # Default state captions for LED tiles; a matching ColorRule ``label``
 # overrides these (FR-29).
@@ -180,6 +183,13 @@ class TileFrame(QFrame):
         self._long_press_timer = QTimer(self)
         self._long_press_timer.setSingleShot(True)
         self._long_press_timer.timeout.connect(self._on_long_press)
+        # Corner-drag resize (edit mode). The grid injects a provider that
+        # returns the per-cell stride so pixel drags map to whole spans.
+        self.cell_metrics_provider: Callable[[], tuple[float, float, int]] | None = None
+        self._resizing = False
+        self._resize_start_global: QPoint | None = None
+        self._resize_start_span: tuple[int, int] = (1, 1)
+        self._resize_last_span: tuple[int, int] = (1, 1)
 
         self.title_label = QLabel(entry.display_label())
         self.title_label.setObjectName("tileTitle")
@@ -249,14 +259,29 @@ class TileFrame(QFrame):
         if self.property("editMode") != value:
             self.setProperty("editMode", value)
             _repolish(self)
+        # Mouse tracking so the corner shows a resize cursor on hover.
+        self.setMouseTracking(enabled)
         self.setCursor(Qt.CursorShape.OpenHandCursor if enabled else Qt.CursorShape.ArrowCursor)
+        if not enabled:
+            self._resizing = False
+        self.update()  # paint / clear the resize grip
 
     @property
     def edit_mode(self) -> bool:
         return self._edit_mode
 
+    def _in_resize_corner(self, pos: QPoint) -> bool:
+        return (
+            pos.x() >= self.width() - RESIZE_CORNER_PX
+            and pos.y() >= self.height() - RESIZE_CORNER_PX
+        )
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            if self._edit_mode and self._in_resize_corner(event.position().toPoint()):
+                self._begin_resize(event)
+                event.accept()
+                return
             self._press_pos = event.position().toPoint()
             # Arm long-press-to-edit only when not already editing.
             if not self._edit_mode:
@@ -265,9 +290,23 @@ class TileFrame(QFrame):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._long_press_timer.stop()
+        if self._resizing:
+            self._resizing = False
+            event.accept()
+            return
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._resizing:
+            self._update_resize(event)
+            event.accept()
+            return
+        # Hover feedback: resize cursor over the corner in edit mode.
+        if self._edit_mode and not (event.buttons() & Qt.MouseButton.LeftButton):
+            corner = self._in_resize_corner(event.position().toPoint())
+            self.setCursor(
+                Qt.CursorShape.SizeFDiagCursor if corner else Qt.CursorShape.OpenHandCursor
+            )
         # Any real movement means this is a drag/scroll, not a hold —
         # cancel the pending long-press.
         if self._long_press_timer.isActive() and self._press_pos is not None:
@@ -292,9 +331,51 @@ class TileFrame(QFrame):
         drag.setPixmap(self.grab())
         drag.exec(Qt.DropAction.MoveAction)
 
+    def _begin_resize(self, event: QMouseEvent) -> None:
+        self._long_press_timer.stop()
+        self._press_pos = None
+        self._resizing = True
+        self._resize_start_global = event.globalPosition().toPoint()
+        span = (self._entry.tile.span_w, self._entry.tile.span_h)
+        self._resize_start_span = span
+        self._resize_last_span = span
+
+    def _update_resize(self, event: QMouseEvent) -> None:
+        provider = self.cell_metrics_provider
+        if provider is None or self._resize_start_global is None:
+            return
+        stride_x, stride_y, columns = provider()
+        if stride_x <= 0 or stride_y <= 0:
+            return
+        delta = event.globalPosition().toPoint() - self._resize_start_global
+        start_w, start_h = self._resize_start_span
+        # Round so the span flips at the half-cell crossing — feels natural.
+        new_w = start_w + round(delta.x() / stride_x)
+        new_h = start_h + round(delta.y() / stride_y)
+        new_w = max(1, min(MAX_TILE_SPAN, int(columns), new_w))
+        new_h = max(1, min(MAX_TILE_SPAN, new_h))
+        if (new_w, new_h) != self._resize_last_span:
+            self._resize_last_span = (new_w, new_h)
+            self.spanRequested.emit(self.entry_id, new_w, new_h)
+
     def _on_long_press(self) -> None:
         if not self._edit_mode:
             self.editModeRequested.emit()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().paintEvent(event)
+        if not self._edit_mode:
+            return
+        painter = QPainter(self)
+        color = self.palette().color(QPalette.ColorRole.WindowText)
+        color.setAlpha(110)
+        pen = QPen(color)
+        pen.setWidth(2)
+        painter.setPen(pen)
+        w, h, m = self.width(), self.height(), 4
+        for off in (4, 9, 14):
+            painter.drawLine(w - m - off, h - m, w - m, h - m - off)
+        painter.end()
 
     # -------------------------------------------------------- context menu
 

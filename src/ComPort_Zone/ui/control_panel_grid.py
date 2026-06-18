@@ -95,6 +95,7 @@ class ControlPanelGridWidget(QWidget):
                 tile.chartRequested.connect(self.tileChartRequested)
                 tile.spanRequested.connect(self._handle_span_request)
                 tile.editModeRequested.connect(self.editModeRequested)
+                tile.cell_metrics_provider = self._cell_stride
                 tile.set_edit_mode(self._edit_mode)
                 tile.apply_theme_palette(self._theme)
                 tile.show()
@@ -135,6 +136,12 @@ class ControlPanelGridWidget(QWidget):
         cell_w = available / columns if columns else 0
         row_h = int(max(ROW_HEIGHT_MIN, min(ROW_HEIGHT_MAX, cell_w * 0.6)))
         return cell_w, row_h, columns
+
+    def _cell_stride(self) -> tuple[float, float, int]:
+        """Per-cell stride (cell size + gutter) + column count, handed to
+        tiles so a corner-drag in pixels maps to whole-cell spans."""
+        cell_w, row_h, columns = self._cell_metrics()
+        return cell_w + GRID_GUTTER, row_h + GRID_GUTTER, columns
 
     def relayout(self) -> None:
         """Position every tile from its TilePlacement (manual geometry)."""

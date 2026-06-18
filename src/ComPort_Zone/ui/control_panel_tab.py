@@ -324,7 +324,9 @@ class ControlPanelTabWidget(QWidget):
         self.edit_layout_button = QToolButton(header)
         self.edit_layout_button.setObjectName("controlPanelHeaderButton")
         self.edit_layout_button.setCheckable(True)
-        self.edit_layout_button.setToolTip("Edit layout: drag tiles, resize via right-click")
+        self.edit_layout_button.setToolTip(
+            "Edit layout: drag tiles to move, drag the bottom-right corner to resize"
+        )
         set_button_icon(self.edit_layout_button, "arrows", 15)
         self.edit_layout_button.toggled.connect(self._edit_mode_toggled)
         self.edit_layout_button.setFixedHeight(CONTROL_H_SM)
