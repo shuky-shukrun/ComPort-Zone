@@ -2553,6 +2553,45 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         self.assertEqual(result.rules[0].op, "gt")
         dialog.deleteLater()
 
+    def test_text_tile_shape_hides_data_fields(self) -> None:
+        dialog = ControlPanelEntryDialog()
+        index = dialog.tile_kind_combo.findData("text")
+        self.assertGreaterEqual(index, 0)
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        # A static note has only the General tab — no polling/response.
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.POLLING_TAB))
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.RESPONSE_TAB))
+        # The Text body row appears; command/unit/source rows hide.
+        self.assertTrue(dialog._is_row_visible(dialog.body_input))
+        self.assertFalse(dialog._is_row_visible(dialog.command_input))
+        self.assertFalse(dialog._is_row_visible(dialog.unit_input))
+        self.assertFalse(dialog._is_row_visible(dialog.source_combo))
+        dialog.deleteLater()
+
+    def test_text_tile_values_build_static_entry(self) -> None:
+        dialog = ControlPanelEntryDialog()
+        index = dialog.tile_kind_combo.findData("text")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        dialog.label_input.setText("Bench notes")
+        dialog.body_input.setPlainText("Mind the 30 V limit")
+        result = dialog.values()
+        self.assertEqual(result.tile.kind, "text")
+        self.assertTrue(result.is_static())
+        self.assertEqual(result.label, "Bench notes")
+        self.assertEqual(result.body, "Mind the 30 V limit")
+        self.assertEqual(result.command, "")
+        self.assertEqual(result.validation_errors(), [])
+
+    def test_text_tile_accepts_without_command(self) -> None:
+        # OK must not be gated on a command for a static tile.
+        dialog = ControlPanelEntryDialog()
+        index = dialog.tile_kind_combo.findData("text")
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        dialog.body_input.setPlainText("Read me")
+        dialog._accept_if_valid()
+        self.assertEqual(dialog.result(), 1)
+        dialog.deleteLater()
+
     def test_preview_aspect_ratio_tracks_span(self) -> None:
         # The preview tile should be roughly square for 1×1, taller for
         # tall tiles, wider for wide tiles, and uniformly scaled for

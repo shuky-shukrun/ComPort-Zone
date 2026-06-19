@@ -651,7 +651,7 @@ class ControlPanelTabWidget(QWidget):
         default binding without per-entry work."""
         mapping: dict[str, int | None] = {}
         for entry in self.config.entries:
-            if entry.is_derived():
+            if entry.is_derived() or entry.is_static():
                 continue
             if entry.target_endpoint:
                 session = self.coordinator.resolve_endpoint(entry.target_endpoint)
@@ -2122,6 +2122,9 @@ class ControlPanelTabWidget(QWidget):
         )
         schedulable: list[ControlPanelEntry] = []
         for entry in self.config.entries:
+            if entry.is_static():
+                # Text/separator tiles are decorative — no parse, no schedule.
+                continue
             if entry.is_writable() or entry.is_derived():
                 readback = self._readback_spec_for(entry) if entry.is_writable() else ReadbackSpec()
                 if readback.source == "command":

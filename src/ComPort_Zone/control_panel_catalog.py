@@ -20,15 +20,17 @@ from .control_panel_models import (
     ControlPanelConfig,
     control_panel_uses_v2_features,
     control_panel_uses_v3_features,
+    control_panel_uses_v4_features,
     remap_watch_ids,
 )
 
 CONTROL_PANEL_EXPORT_KEY = "comport_zone_control_panels"
-CONTROL_PANEL_EXPORT_VERSION = 3
+CONTROL_PANEL_EXPORT_VERSION = 4
 # Payloads are stamped with the lowest version that can represent them, so
-# v1/v2 builds keep importing exports they can fully represent (FR-39).
+# v1/v2/v3 builds keep importing exports they can fully represent (FR-39).
 CONTROL_PANEL_EXPORT_V1 = 1
 CONTROL_PANEL_EXPORT_V2 = 2
+CONTROL_PANEL_EXPORT_V3 = 3
 
 
 class ControlPanelCatalog:
@@ -146,11 +148,14 @@ def export_control_panels_payload(configs: list[ControlPanelConfig]) -> dict[str
     Stamped with the lowest version that can fully represent the payload,
     so older builds keep importing exports they can fully model: a
     v1-shaped collection stays at version 1; a v2-shaped collection
-    stays at version 2; only collections that actually use a v3 widget
-    stamp version 3.
+    stays at version 2; a v3-shaped collection stays at version 3; only
+    collections that actually use a v4 widget (static text/separator)
+    stamp version 4.
     """
-    if any(control_panel_uses_v3_features(config) for config in configs):
+    if any(control_panel_uses_v4_features(config) for config in configs):
         version = CONTROL_PANEL_EXPORT_VERSION
+    elif any(control_panel_uses_v3_features(config) for config in configs):
+        version = CONTROL_PANEL_EXPORT_V3
     elif any(control_panel_uses_v2_features(config) for config in configs):
         version = CONTROL_PANEL_EXPORT_V2
     else:

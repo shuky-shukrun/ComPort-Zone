@@ -775,6 +775,13 @@ def build_stylesheet(theme: ThemePalette) -> str:
         font-weight: 600;
         letter-spacing: 0.4px;
     }}
+    /* Static "text" tile: a flatter surface than data tiles + a readable,
+       slightly muted body so notes read as documentation, not readings. */
+    QFrame#controlPanelTile[tileRole="text"] {{
+        background: {mix_hex(elevated, bg, 0.5)};
+        border: 1px solid {bd_soft};
+    }}
+    QLabel#tileBody {{ color: {tx2}; font-size: {LABEL_FS}px; }}
     QLabel#tileTimestamp {{ color: {tx_faint}; font-size: {MICRO_FS}px; font-family: {MONO}; }}
     QLabel#tileValue {{
         color: {tx};

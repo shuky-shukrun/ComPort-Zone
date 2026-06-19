@@ -26,7 +26,10 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-TILE_KINDS = ("value", "led", "control", "setpoint", "enum", "bits")
+TILE_KINDS = ("value", "led", "control", "setpoint", "enum", "bits", "text")
+# Static tiles carry no command/parse and are never polled — they just
+# label/explain the panel (text note) or visually divide it (separator).
+STATIC_TILE_KINDS = ("text",)
 # Semantic states a tile can render. "ok"/"warn"/"fail" come from color
 # rules, "neutral" is the no-rule-matched default, "stale" means no recent
 # successful poll, "error" covers send/parse failures.
@@ -848,14 +851,27 @@ class ControlPanelEntry:
     enum_spec: EnumSpec = field(default_factory=EnumSpec)
     bits_spec: BitsSpec = field(default_factory=BitsSpec)
     readback: ReadbackSpec = field(default_factory=ReadbackSpec)
+    # --- v4 fields (sparse in to_dict) ---------------------------------
+    # Explanatory body text for static "text" tiles (no data exchange).
+    body: str = ""
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
 
     def display_label(self) -> str:
+        if self.is_static():
+            return self.label or "Text"
         return self.label or self.command or self.expression
 
     def is_control(self) -> bool:
         return self.tile.kind == "control"
+
+    def is_text(self) -> bool:
+        return self.tile.kind == "text"
+
+    def is_static(self) -> bool:
+        """Decorative tiles with no data exchange (text note / separator):
+        never polled, never writable, never charted."""
+        return self.tile.kind in STATIC_TILE_KINDS
 
     def is_setpoint(self) -> bool:
         return self.tile.kind == "setpoint"
@@ -879,11 +895,11 @@ class ControlPanelEntry:
         return self.source == "derived"
 
     def is_polled(self) -> bool:
-        return not self.is_writable() and not self.is_derived()
+        return not self.is_writable() and not self.is_derived() and not self.is_static()
 
     def is_numeric(self) -> bool:
         """Whether this entry produces numeric values (history/sparkline/chart)."""
-        if self.is_writable() or self.is_bits():
+        if self.is_writable() or self.is_bits() or self.is_static():
             return False
         return self.is_derived() or self.parse.value_type == "number"
 
@@ -940,6 +956,9 @@ class ControlPanelEntry:
         readback_payload = self.readback.to_dict()
         if readback_payload:
             payload["readback"] = readback_payload
+        # v4 field.
+        if self.body:
+            payload["body"] = self.body
         return payload
 
     @classmethod
@@ -985,6 +1004,7 @@ class ControlPanelEntry:
             enum_spec=EnumSpec.from_dict(_dict_value(data.get("enum_spec"))),
             bits_spec=BitsSpec.from_dict(_dict_value(data.get("bits_spec"))),
             readback=ReadbackSpec.from_dict(_dict_value(data.get("readback"))),
+            body=str(data.get("body", "")),
             created_at=str(data.get("created_at", _utc_now_iso())),
             updated_at=str(data.get("updated_at", _utc_now_iso())),
         )
@@ -999,6 +1019,9 @@ class ControlPanelEntry:
         Color rules apply to non-writing entries only.
         """
         errors: list[str] = []
+        if self.is_static():
+            # Static tiles carry no command/parse/spec — nothing to validate.
+            return errors
         if self.is_control():
             errors.extend(self.control.validation_errors(self.send_mode))
             errors.extend(self.readback.validation_errors(self.send_mode))
@@ -1342,6 +1365,18 @@ def entry_uses_v3_features(entry: ControlPanelEntry) -> bool:
 
 def control_panel_uses_v3_features(config: ControlPanelConfig) -> bool:
     return any(entry_uses_v3_features(entry) for entry in config.entries)
+
+
+def entry_uses_v4_features(entry: ControlPanelEntry) -> bool:
+    """Whether this entry uses any persisted v4 capability (FR-39 v4):
+    static text/separator tiles. A v1..v3 build would coerce an unknown
+    kind to "value", so a panel that actually uses one must push the
+    schema floor to keep older builds from silently misreading it."""
+    return entry.is_static() or bool(entry.body)
+
+
+def control_panel_uses_v4_features(config: ControlPanelConfig) -> bool:
+    return any(entry_uses_v4_features(entry) for entry in config.entries)
 
 
 def example_control_panel() -> ControlPanelConfig:

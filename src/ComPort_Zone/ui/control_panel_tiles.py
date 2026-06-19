@@ -539,12 +539,14 @@ class TileFrame(QFrame):
         )
         paste_action.setEnabled(clipboard_has_tile())
         paste_action.triggered.connect(lambda: self.pasteRequested.emit())
-        enabled_action = menu.addAction("Enabled")
-        enabled_action.setCheckable(True)
-        enabled_action.setChecked(self._entry.enabled)
-        enabled_action.toggled.connect(
-            lambda checked: self.enableToggled.emit(self.entry_id, checked)
-        )
+        if not self._entry.is_static():
+            # Static (text/separator) tiles have nothing to enable/disable.
+            enabled_action = menu.addAction("Enabled")
+            enabled_action.setCheckable(True)
+            enabled_action.setChecked(self._entry.enabled)
+            enabled_action.toggled.connect(
+                lambda checked: self.enableToggled.emit(self.entry_id, checked)
+            )
         size_menu = menu.addMenu("Size")
         tile = self._entry.tile
         last_h: int | None = None
@@ -1540,6 +1542,43 @@ class BitsTileWidget(TileFrame):
                 label.setFont(font)
 
 
+class TextTileWidget(TileFrame):
+    """Static note tile: an optional title (the label) over a wrapped body
+    of explanatory text. No command, no polling, no arming — purely
+    documentation/labelling on the panel surface."""
+
+    def __init__(self, entry: ControlPanelEntry, parent: QWidget | None = None) -> None:
+        super().__init__(entry, parent)
+        self.setProperty("tileRole", "text")
+        self.body_label = QLabel("")
+        self.body_label.setObjectName("tileBody")
+        self.body_label.setWordWrap(True)
+        self.body_label.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        self.body_layout.addWidget(self.body_label, 1)
+        self.timestamp_label.hide()  # static tiles never show a timestamp
+        self._apply_text_content(entry)
+
+    def _apply_text_content(self, entry: ControlPanelEntry) -> None:
+        # The title row shows the label only when set; an untitled note is
+        # all body, and an empty body collapses so the title owns the tile.
+        self.title_label.setText(entry.label)
+        self.title_label.setVisible(bool(entry.label.strip()))
+        self.body_label.setText(entry.body)
+        self.body_label.setVisible(bool(entry.body.strip()))
+
+    def update_entry(self, entry: ControlPanelEntry) -> None:
+        super().update_entry(entry)
+        self._apply_text_content(entry)
+
+    def update_runtime(self, runtime: TileRuntime) -> bool:
+        return False  # static tiles ignore all runtime updates (no data)
+
+    def _render_runtime(self, runtime: TileRuntime) -> bool:
+        return False
+
+
 TILE_CLASSES: dict[str, type[TileFrame]] = {
     "value": ValueTileWidget,
     "led": LedTileWidget,
@@ -1547,6 +1586,7 @@ TILE_CLASSES: dict[str, type[TileFrame]] = {
     "setpoint": SetpointTileWidget,
     "enum": EnumTileWidget,
     "bits": BitsTileWidget,
+    "text": TextTileWidget,
 }
 
 

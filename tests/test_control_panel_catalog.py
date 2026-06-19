@@ -9,6 +9,7 @@ from pathlib import Path
 from ComPort_Zone.control_panel_catalog import (
     CONTROL_PANEL_EXPORT_KEY,
     CONTROL_PANEL_EXPORT_V2,
+    CONTROL_PANEL_EXPORT_V3,
     CONTROL_PANEL_EXPORT_VERSION,
     ControlPanelCatalog,
     export_control_panels_payload,
@@ -134,8 +135,8 @@ class TransferPayloadTests(unittest.TestCase):
         # A v2-shaped payload (no v3 widgets) stays at version 2 so v2
         # builds keep importing it. v3 builds keep reading it.
         self.assertEqual(payload[CONTROL_PANEL_EXPORT_KEY], CONTROL_PANEL_EXPORT_V2)
-        # Also confirm CONTROL_PANEL_EXPORT_VERSION has moved to v3.
-        self.assertEqual(CONTROL_PANEL_EXPORT_VERSION, 3)
+        # Also confirm CONTROL_PANEL_EXPORT_VERSION has moved to v4.
+        self.assertEqual(CONTROL_PANEL_EXPORT_VERSION, 4)
         restored = import_control_panels_payload(json.loads(json.dumps(payload)))
         self.assertEqual(restored[0].entries[0].poll_mode, "on_connect")
 
@@ -153,10 +154,11 @@ class TransferPayloadTests(unittest.TestCase):
             command_template="VOLT {value}", max_value=30
         )
         payload = export_control_panels_payload([config])
-        # v3 features bump the stamp to the current CONTROL_PANEL_EXPORT_VERSION.
-        self.assertEqual(payload[CONTROL_PANEL_EXPORT_KEY], CONTROL_PANEL_EXPORT_VERSION)
+        # v3 features (no v4 widget) stay at version 3 so v3 builds keep
+        # importing them.
+        self.assertEqual(payload[CONTROL_PANEL_EXPORT_KEY], CONTROL_PANEL_EXPORT_V3)
 
-        # An enum-only panel also bumps to version 3.
+        # An enum-only panel also stamps version 3.
         enum_config = make_config("Mode Selector")
         enum_config.entries[0].tile = TilePlacement(kind="enum")
         enum_config.entries[0].enum_spec = EnumSpec(
@@ -164,16 +166,30 @@ class TransferPayloadTests(unittest.TestCase):
         )
         self.assertEqual(
             export_control_panels_payload([enum_config])[CONTROL_PANEL_EXPORT_KEY],
-            CONTROL_PANEL_EXPORT_VERSION,
+            CONTROL_PANEL_EXPORT_V3,
         )
         # Mixed v1 + v3 in one bundle stamps the highest version present.
         mixed_payload = export_control_panels_payload([make_config("V1"), enum_config])
-        self.assertEqual(mixed_payload[CONTROL_PANEL_EXPORT_KEY], CONTROL_PANEL_EXPORT_VERSION)
+        self.assertEqual(mixed_payload[CONTROL_PANEL_EXPORT_KEY], CONTROL_PANEL_EXPORT_V3)
         # A v3 payload round-trips losslessly.
         restored = import_control_panels_payload(json.loads(json.dumps(payload)))
         self.assertEqual(restored[0].entries[0].tile.kind, "setpoint")
         self.assertEqual(restored[0].entries[0].setpoint.command_template, "VOLT {value}")
         self.assertEqual(restored[0].entries[0].setpoint.max_value, 30)
+
+    def test_export_stamps_version_4_for_static_tiles(self) -> None:
+        from ComPort_Zone.control_panel_models import TilePlacement
+
+        config = make_config("Docs")
+        config.entries[0].tile = TilePlacement(kind="text")
+        config.entries[0].body = "Bench notes"
+        payload = export_control_panels_payload([config])
+        # A static text/separator tile is a v4 feature -> highest stamp.
+        self.assertEqual(payload[CONTROL_PANEL_EXPORT_KEY], CONTROL_PANEL_EXPORT_VERSION)
+        self.assertEqual(CONTROL_PANEL_EXPORT_VERSION, 4)
+        restored = import_control_panels_payload(json.loads(json.dumps(payload)))
+        self.assertEqual(restored[0].entries[0].tile.kind, "text")
+        self.assertEqual(restored[0].entries[0].body, "Bench notes")
 
     def test_import_rejects_non_object(self) -> None:
         with self.assertRaises(ValueError):

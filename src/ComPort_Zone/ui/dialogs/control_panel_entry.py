@@ -91,6 +91,7 @@ TILE_KIND_LABELS = (
     ("setpoint", "Numeric setpoint"),
     ("enum", "Enum / dropdown"),
     ("bits", "Bits / register"),
+    ("text", "Text / note"),
 )
 POLL_MODE_LABELS = (("interval", "Every interval"), ("on_connect", "Once on connect"))
 SOURCE_LABELS = (("poll", "Polled command"), ("derived", "Computed from other tiles"))
@@ -172,6 +173,11 @@ class ControlPanelEntryDialog(QDialog):
         self.label_input.setPlaceholderText("Tile title (defaults to the command)")
         self.unit_input = QLineEdit(original.unit, self)
         self.unit_input.setPlaceholderText("V, °C, rpm…")
+        # Body text for a static "text / note" tile (no data exchange).
+        self.body_input = QPlainTextEdit(original.body, self)
+        self.body_input.setPlaceholderText("Explanatory text shown on the tile…")
+        self.body_input.setTabChangesFocus(True)
+        self.body_input.setFixedHeight(96)
 
         # --- source (v2, FR-61) -------------------------------------------
         self.source_combo = ChevronComboBox(self)
@@ -596,6 +602,7 @@ class ControlPanelEntryDialog(QDialog):
         general_form = QFormLayout()
         general_form.addRow("Label", self.label_input)
         general_form.addRow("Unit", self.unit_input)
+        general_form.addRow("Text", self.body_input)
         general_form.addRow("Source", self.source_combo)
         general_form.addRow("Expression", self.expression_container)
         general_form.addRow("Command", self.command_input)
@@ -699,6 +706,7 @@ class ControlPanelEntryDialog(QDialog):
         for line_edit in (self.label_input, self.unit_input, self.expression_input):
             line_edit.textChanged.connect(self._refresh_preview)
         self.command_input.textChanged.connect(self._refresh_preview)
+        self.body_input.textChanged.connect(self._refresh_preview)
         self.readback_command_input.textChanged.connect(self._refresh_preview)
         self.span_combo.currentIndexChanged.connect(self._refresh_preview)
         self.enabled_check.toggled.connect(self._refresh_preview)
@@ -811,10 +819,12 @@ class ControlPanelEntryDialog(QDialog):
         self._refresh_preview()
 
     def _current_shape(self) -> str:
-        """Which of the six entry shapes the dialog is editing: control
-        button/toggle, setpoint, enum, bits/register (all kind-wins),
-        a derived entry, or a polled command (default)."""
+        """Which entry shape the dialog is editing: a static text/note tile,
+        a control button/toggle, setpoint, enum, bits/register (all
+        kind-wins), a derived entry, or a polled command (default)."""
         kind = self.tile_kind_combo.currentData()
+        if kind == "text":
+            return "static"
         if kind == "control":
             return "control"
         if kind == "setpoint":
@@ -841,6 +851,7 @@ class ControlPanelEntryDialog(QDialog):
 
     def _refresh_shape(self) -> None:
         shape = self._current_shape()
+        is_static = shape == "static"
         is_poll = shape == "poll"
         is_derived = shape == "derived"
         is_control = shape == "control"
@@ -854,14 +865,23 @@ class ControlPanelEntryDialog(QDialog):
         # form rows visible, but expose the bits table on the General tab
         # instead of the color-rules section (which doesn't apply).
         is_poll_or_bits = is_poll or is_bits
-        self._set_row_visible(self.source_combo, not is_writable and not is_bits)
+        # A static text/note tile carries no data exchange: only Label, the
+        # multi-line Text body, Tile and Size apply — everything else hides.
+        self._set_row_visible(self.unit_input, not is_static)
+        self._set_row_visible(self.body_input, is_static)
+        self._set_row_visible(
+            self.source_combo, not is_writable and not is_bits and not is_static
+        )
         self._set_row_visible(self.expression_container, is_derived)
         for field_widget in self._schedule_fields:
             self._set_row_visible(field_widget, is_poll_or_bits)
         for field_widget in self._send_fields:
-            self._set_row_visible(field_widget, not is_derived)
+            self._set_row_visible(field_widget, not is_derived and not is_static)
+        self._set_row_visible(self.enabled_check, not is_static)
         self._parse_box.setVisible(is_poll_or_bits or has_command_readback)
-        self._rules_box.setVisible((not is_writable and not is_bits) or has_command_readback)
+        self._rules_box.setVisible(
+            (not is_writable and not is_bits and not is_static) or has_command_readback
+        )
         self.control_box.setVisible(is_control)
         self.setpoint_box.setVisible(is_setpoint)
         self.enum_box.setVisible(is_enum)
@@ -872,9 +892,11 @@ class ControlPanelEntryDialog(QDialog):
         # Pages with nothing left to offer disappear entirely. Bits
         # entries are polled, so both polling/response tabs stay open
         # (only the color-rules section inside Response is hidden,
-        # because each bit carries its own state).
-        self.tabs.setTabVisible(self.POLLING_TAB, not is_derived)
-        self.tabs.setTabVisible(self.RESPONSE_TAB, not is_writable or has_command_readback)
+        # because each bit carries its own state). Static tiles drop both.
+        self.tabs.setTabVisible(self.POLLING_TAB, not is_derived and not is_static)
+        self.tabs.setTabVisible(
+            self.RESPONSE_TAB, (not is_writable and not is_static) or has_command_readback
+        )
         if not self.tabs.isTabVisible(self.tabs.currentIndex()):
             self.tabs.setCurrentIndex(self.GENERAL_TAB)
         if is_control:
@@ -1292,6 +1314,7 @@ class ControlPanelEntryDialog(QDialog):
             span_h=int(span_h),
         )
         shape = self._current_shape()
+        is_static = shape == "static"
         is_derived = shape == "derived"
         is_control = shape == "control"
         is_setpoint = shape == "setpoint"
@@ -1368,10 +1391,10 @@ class ControlPanelEntryDialog(QDialog):
         return ControlPanelEntry(
             id=original.id,
             label=self.label_input.text().strip(),
-            unit=self.unit_input.text().strip(),
+            unit="" if is_static else self.unit_input.text().strip(),
             command=(
                 ""
-                if (is_derived or is_writable)
+                if (is_derived or is_writable or is_static)
                 else self.command_input.text().strip()
             ),
             send_mode=self.mode_combo.currentText(),
@@ -1381,8 +1404,8 @@ class ControlPanelEntryDialog(QDialog):
             stale_after_ms=self.stale_spin.value(),
             parse=self._parse_rule_from_fields(),
             tile=tile,
-            rules=[] if (is_writable or is_bits) else self._rules_from_table(),
-            enabled=self.enabled_check.isChecked(),
+            rules=[] if (is_writable or is_bits or is_static) else self._rules_from_table(),
+            enabled=True if is_static else self.enabled_check.isChecked(),
             poll_mode=(
                 "interval"
                 if is_derived or is_writable
@@ -1398,6 +1421,7 @@ class ControlPanelEntryDialog(QDialog):
             enum_spec=enum_spec,
             bits_spec=bits_spec,
             readback=readback,
+            body=self.body_input.toPlainText() if is_static else "",
             created_at=original.created_at or utc_now_iso(),
             updated_at=utc_now_iso(),
         )

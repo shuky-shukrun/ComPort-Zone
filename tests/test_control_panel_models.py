@@ -725,6 +725,60 @@ class V3EntryFieldTests(unittest.TestCase):
         self.assertEqual(good_enum.validation_errors(), [])
 
 
+class StaticTileTests(unittest.TestCase):
+    """Text/separator tiles carry no data exchange (v4)."""
+
+    def test_text_tile_predicates(self) -> None:
+        entry = ControlPanelEntry(tile=TilePlacement(kind="text"))
+        self.assertTrue(entry.is_static())
+        self.assertTrue(entry.is_text())
+        self.assertFalse(entry.is_polled())
+        self.assertFalse(entry.is_writable())
+        self.assertFalse(entry.is_derived())
+        self.assertFalse(entry.is_numeric())
+
+    def test_static_tile_has_no_validation_errors(self) -> None:
+        # No command/parse/spec needed — nothing to validate.
+        entry = ControlPanelEntry(tile=TilePlacement(kind="text"), body="Hello")
+        self.assertEqual(entry.validation_errors(), [])
+        # Even a number-typed parse can't make a static tile numeric.
+        entry.parse = ParseRule(value_type="number")
+        self.assertFalse(entry.is_numeric())
+
+    def test_body_round_trips_sparsely(self) -> None:
+        self.assertNotIn("body", ControlPanelEntry(command="X?").to_dict())
+        noted = ControlPanelEntry(
+            tile=TilePlacement(kind="text"), label="Title", body="Explain"
+        )
+        payload = noted.to_dict()
+        self.assertEqual(payload["body"], "Explain")
+        restored = ControlPanelEntry.from_dict(payload)
+        self.assertEqual(restored.body, "Explain")
+        self.assertEqual(restored.tile.kind, "text")
+
+    def test_display_label_falls_back_for_static(self) -> None:
+        self.assertEqual(
+            ControlPanelEntry(tile=TilePlacement(kind="text")).display_label(), "Text"
+        )
+        self.assertEqual(
+            ControlPanelEntry(
+                tile=TilePlacement(kind="text"), label="Notes"
+            ).display_label(),
+            "Notes",
+        )
+
+    def test_entry_uses_v4_features(self) -> None:
+        from ComPort_Zone.control_panel_models import entry_uses_v4_features
+
+        self.assertFalse(entry_uses_v4_features(ControlPanelEntry(command="X?")))
+        self.assertTrue(
+            entry_uses_v4_features(ControlPanelEntry(tile=TilePlacement(kind="text")))
+        )
+        self.assertTrue(
+            entry_uses_v4_features(ControlPanelEntry(command="X?", body="note"))
+        )
+
+
 class BitsSpecTests(unittest.TestCase):
     """Status / fault register tile spec (v3, multi-bit indicator)."""
 

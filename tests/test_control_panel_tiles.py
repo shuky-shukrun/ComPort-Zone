@@ -26,6 +26,7 @@ from ComPort_Zone.ui.control_panel_tiles import (
     BitsTileWidget,
     ControlTileWidget,
     LedTileWidget,
+    TextTileWidget,
     TileRuntime,
     ValueTileWidget,
     create_tile,
@@ -413,6 +414,57 @@ class BitsTileTests(unittest.TestCase):
         self.assertTrue(tile._empty_label.isVisibleTo(tile) or
                         tile._empty_label.isVisible() or
                         not tile._empty_label.isHidden())
+        tile.deleteLater()
+
+
+class TextTileTests(unittest.TestCase):
+    """Static text/note tiles: title + body, no data exchange."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _text_entry(label: str = "Notes", body: str = "Be careful") -> ControlPanelEntry:
+        return ControlPanelEntry(
+            id="note",
+            label=label,
+            body=body,
+            tile=TilePlacement(kind="text"),
+        )
+
+    def test_factory_picks_text_widget(self) -> None:
+        tile = create_tile(self._text_entry())
+        self.assertIsInstance(tile, TextTileWidget)
+        tile.deleteLater()
+
+    def test_renders_title_and_body(self) -> None:
+        tile = TextTileWidget(self._text_entry("Section A", "Read this first"))
+        self.assertEqual(tile.title_label.text(), "Section A")
+        self.assertTrue(tile.title_label.isVisibleTo(tile))
+        self.assertEqual(tile.body_label.text(), "Read this first")
+        # No timestamp footer on a static tile.
+        self.assertFalse(tile.timestamp_label.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_untitled_note_hides_title_row(self) -> None:
+        tile = TextTileWidget(self._text_entry(label="", body="Just body"))
+        self.assertFalse(tile.title_label.isVisibleTo(tile))
+        self.assertTrue(tile.body_label.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_update_entry_refreshes_text(self) -> None:
+        tile = TextTileWidget(self._text_entry("Old", "old body"))
+        tile.update_entry(self._text_entry("New", "new body"))
+        self.assertEqual(tile.title_label.text(), "New")
+        self.assertEqual(tile.body_label.text(), "new body")
+        tile.deleteLater()
+
+    def test_update_runtime_is_a_noop(self) -> None:
+        # Static tiles are never scheduled, but a stray runtime must not crash.
+        tile = TextTileWidget(self._text_entry())
+        runtime = TileRuntime(entry_id="note", value_text="13 V", state="ok")
+        self.assertFalse(tile.update_runtime(runtime))
         tile.deleteLater()
 
 

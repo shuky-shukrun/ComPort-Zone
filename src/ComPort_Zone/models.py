@@ -11,6 +11,7 @@ from .control_panel_models import (
     ControlPanelTabState,
     control_panel_uses_v2_features,
     control_panel_uses_v3_features,
+    control_panel_uses_v4_features,
     default_control_panels,
 )
 
@@ -40,7 +41,7 @@ EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
 # Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
 EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
 EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
-SETTINGS_SCHEMA_VERSION = 7
+SETTINGS_SCHEMA_VERSION = 8
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 # Feature floors: a saved payload declares the highest floor of any
 # feature it actually contains, so files without LAN/Control Panel
@@ -55,6 +56,9 @@ CONTROL_PANEL_V2_SCHEMA_FLOOR = 6
 # v1/v2-shaped library keeps its prior floor; only a panel that actually
 # uses a v3 widget pushes the floor to 7 (FR-39 v3).
 CONTROL_PANEL_V3_SCHEMA_FLOOR = 7
+# Control Panel v4 capabilities (static text / separator tiles) — only a
+# panel that actually uses one pushes the floor to 8 (FR-39 v4).
+CONTROL_PANEL_V4_SCHEMA_FLOOR = 8
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
@@ -562,6 +566,8 @@ class AppSettings:
             floors.append(CONTROL_PANEL_V2_SCHEMA_FLOOR)
         if any(control_panel_uses_v3_features(config) for config in self.control_panels):
             floors.append(CONTROL_PANEL_V3_SCHEMA_FLOOR)
+        if any(control_panel_uses_v4_features(config) for config in self.control_panels):
+            floors.append(CONTROL_PANEL_V4_SCHEMA_FLOOR)
         return max(floors)
 
     def to_dict(self) -> dict[str, Any]:
