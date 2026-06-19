@@ -447,6 +447,11 @@ class ControlPanelTabWidget(QWidget):
         self.scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
 
         empty_page = QWidget(self)
+        # Right-click the empty placeholder to add/paste a first tile — the
+        # grid (and its context menu) isn't shown until a tile exists.
+        empty_page.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        empty_page.customContextMenuRequested.connect(self._show_empty_page_menu)
+        self.empty_page = empty_page
         empty_layout = QVBoxLayout(empty_page)
         empty_layout.addStretch(1)
         empty_title = QLabel("No entries yet", empty_page)
@@ -490,6 +495,25 @@ class ControlPanelTabWidget(QWidget):
         if self.stack.currentIndex() == self.CHART_PAGE:
             return
         self.stack.setCurrentIndex(self.GRID_PAGE if self.config.entries else self.EMPTY_PAGE)
+
+    def _build_empty_page_menu(self) -> QMenu:
+        """Context menu for the no-tiles placeholder — mirrors the grid's
+        empty-area menu so a brand-new panel can add/paste its first tile."""
+        menu = QMenu(self)
+        add_action = menu.addAction("Add Entry…")
+        add_action.triggered.connect(self.add_entry_via_dialog)
+        count = len(clipboard_tile_dicts())
+        paste_action = menu.addAction(
+            f"Paste {count} Tiles" if count > 1 else "Paste Tile"
+        )
+        paste_action.setEnabled(count > 0)
+        paste_action.triggered.connect(self.paste_entry)
+        return menu
+
+    def _show_empty_page_menu(self, pos) -> None:
+        menu = self._build_empty_page_menu()
+        menu.exec(self.empty_page.mapToGlobal(pos))
+        menu.deleteLater()
 
     def _note_saved(self) -> None:
         """Reflect the auto-save in the header (control_panels have no dirty

@@ -6,7 +6,7 @@ All notable changes to ComPort Zone are documented here.
 
 ### Added
 
-- **Copy/paste tiles between Control Panels** — a tile's right-click menu gains **Copy Tile**, and right-clicking empty grid space (or a tile) offers **Paste Tile**, so you can move a configured tile to another panel (or the same one). The copy rides the system clipboard, the paste lands as a new tile with a fresh id.
+- **Copy/paste tiles between Control Panels** — a tile's right-click menu gains **Copy Tile**, and right-clicking empty grid space (or a tile) offers **Paste Tile**, so you can move a configured tile to another panel (or the same one). The copy rides the system clipboard, the paste lands as a new tile with a fresh id. On a brand-new panel with no tiles yet, right-clicking the empty placeholder offers the same **Add Entry… / Paste Tile** menu (the grid's own menu only appears once a tile exists).
 - **Copy/paste *multiple* tiles at once** — **Ctrl-click** tiles to build a selection (highlighted in the accent color), then Copy/Paste acts on the whole group. The menu reflects the count ("Copy 3 Tiles" / "Paste 3 Tiles"). A pasted block keeps the tiles' relative arrangement on a fresh row below the existing content, follow-mode references between the copied tiles are remapped to the pasted copies, and the pasted tiles land pre-selected. A plain click on empty grid space clears the selection.
 - **Duplicate Control Panel** is now on the panel tab's right-click menu **and the sidebar's right-click menu** (both the Control Panels page and the Favorites list), alongside the existing Control Panels manager. Duplicating remaps follow-mode `watch_entry_id` references to the copied tiles, so readbacks in the copy point at the copy.
 

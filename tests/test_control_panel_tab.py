@@ -2482,6 +2482,44 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         tab.add_entry(volt_entry())
         self.assertEqual(tab.stack.currentIndex(), 1)
 
+    def test_empty_page_offers_add_and_paste_menu(self) -> None:
+        tab = self.make_tab()  # no entries -> empty placeholder is shown
+        self.assertEqual(tab.stack.currentIndex(), tab.EMPTY_PAGE)
+        # The grid (and its context menu) isn't shown with zero tiles, so the
+        # placeholder must carry its own right-click menu.
+        self.assertEqual(
+            tab.empty_page.contextMenuPolicy(),
+            Qt.ContextMenuPolicy.CustomContextMenu,
+        )
+
+        menu = tab._build_empty_page_menu()
+        titles = [a.text() for a in menu.actions()]
+        self.assertEqual(titles, ["Add Entry…", "Paste Tile"])
+        # Fake clipboard starts empty -> nothing to paste.
+        paste = next(a for a in menu.actions() if a.text() == "Paste Tile")
+        self.assertFalse(paste.isEnabled())
+
+        class FakeDialog:
+            def __init__(self, entry=None, parent=None, context=None):
+                pass
+
+            def exec(self):
+                return True
+
+            def values(self):
+                return volt_entry()
+
+            def deleteLater(self):
+                pass
+
+        with patch(
+            "ComPort_Zone.ui.control_panel_tab.ControlPanelEntryDialog", FakeDialog
+        ):
+            next(a for a in menu.actions() if a.text() == "Add Entry…").trigger()
+        menu.deleteLater()
+        self.assertEqual(len(tab.config.entries), 1)
+        self.assertEqual(tab.stack.currentIndex(), tab.GRID_PAGE)
+
     def test_rename_updates_title_and_summary(self) -> None:
         tab = self.make_tab(volt_entry())
         tab.rename("Rack 3")
