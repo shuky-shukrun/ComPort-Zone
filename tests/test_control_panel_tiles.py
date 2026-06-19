@@ -26,6 +26,7 @@ from ComPort_Zone.ui.control_panel_tiles import (
     BitsTileWidget,
     ControlTileWidget,
     LedTileWidget,
+    SeparatorTileWidget,
     TextTileWidget,
     TileRuntime,
     ValueTileWidget,
@@ -464,6 +465,46 @@ class TextTileTests(unittest.TestCase):
         # Static tiles are never scheduled, but a stray runtime must not crash.
         tile = TextTileWidget(self._text_entry())
         runtime = TileRuntime(entry_id="note", value_text="13 V", state="ok")
+        self.assertFalse(tile.update_runtime(runtime))
+        tile.deleteLater()
+
+
+class SeparatorTileTests(unittest.TestCase):
+    """Static divider tiles: a rule with an optional caption."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def _sep_entry(label: str = "") -> ControlPanelEntry:
+        return ControlPanelEntry(id="sep", label=label, tile=TilePlacement(kind="separator"))
+
+    def test_factory_picks_separator_widget(self) -> None:
+        tile = create_tile(self._sep_entry())
+        self.assertIsInstance(tile, SeparatorTileWidget)
+        tile.deleteLater()
+
+    def test_caption_shown_when_labelled(self) -> None:
+        tile = SeparatorTileWidget(self._sep_entry("Outputs"))
+        self.assertEqual(tile.caption_label.text(), "Outputs")
+        self.assertTrue(tile.caption_label.isVisibleTo(tile))
+        # Both rules flank a caption.
+        self.assertTrue(tile._right_rule.isVisibleTo(tile))
+        # The header title row is suppressed for a divider.
+        self.assertFalse(tile.title_label.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_uncaptioned_collapses_to_single_rule(self) -> None:
+        tile = SeparatorTileWidget(self._sep_entry(label=""))
+        self.assertFalse(tile.caption_label.isVisibleTo(tile))
+        self.assertFalse(tile._right_rule.isVisibleTo(tile))
+        self.assertTrue(tile._left_rule.isVisibleTo(tile))
+        tile.deleteLater()
+
+    def test_update_runtime_is_a_noop(self) -> None:
+        tile = SeparatorTileWidget(self._sep_entry("X"))
+        runtime = TileRuntime(entry_id="sep", value_text="1", state="fail")
         self.assertFalse(tile.update_runtime(runtime))
         tile.deleteLater()
 

@@ -778,6 +778,36 @@ class StaticTileTests(unittest.TestCase):
             entry_uses_v4_features(ControlPanelEntry(command="X?", body="note"))
         )
 
+    def test_separator_tile_predicates(self) -> None:
+        entry = ControlPanelEntry(tile=TilePlacement(kind="separator"))
+        self.assertTrue(entry.is_separator())
+        self.assertTrue(entry.is_static())
+        self.assertFalse(entry.is_text())
+        self.assertFalse(entry.is_polled())
+        self.assertFalse(entry.is_numeric())
+        self.assertEqual(entry.validation_errors(), [])
+
+    def test_separator_display_label_and_v4(self) -> None:
+        from ComPort_Zone.control_panel_models import entry_uses_v4_features
+
+        sep = ControlPanelEntry(tile=TilePlacement(kind="separator"))
+        self.assertEqual(sep.display_label(), "Separator")
+        self.assertEqual(
+            ControlPanelEntry(
+                tile=TilePlacement(kind="separator"), label="Outputs"
+            ).display_label(),
+            "Outputs",
+        )
+        self.assertTrue(entry_uses_v4_features(sep))
+        # A separator carries its caption in `label`, not `body`.
+        self.assertNotIn("body", sep.to_dict())
+        self.assertEqual(
+            ControlPanelEntry.from_dict(
+                ControlPanelEntry(tile=TilePlacement(kind="separator")).to_dict()
+            ).tile.kind,
+            "separator",
+        )
+
 
 class BitsSpecTests(unittest.TestCase):
     """Status / fault register tile spec (v3, multi-bit indicator)."""

@@ -1579,6 +1579,57 @@ class TextTileWidget(TileFrame):
         return False
 
 
+class SeparatorTileWidget(TileFrame):
+    """Static divider: a horizontal rule with an optional centered caption
+    (the label). No data exchange — purely visual sectioning of a panel."""
+
+    def __init__(self, entry: ControlPanelEntry, parent: QWidget | None = None) -> None:
+        super().__init__(entry, parent)
+        self.setProperty("tileRole", "separator")
+        self.title_label.hide()  # a separator has no header row
+        self.timestamp_label.hide()
+        self._left_rule = self._make_rule()
+        self._right_rule = self._make_rule()
+        self.caption_label = QLabel("")
+        self.caption_label.setObjectName("tileSeparatorCaption")
+        self.caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rule_row = QHBoxLayout()
+        rule_row.setContentsMargins(0, 0, 0, 0)
+        rule_row.setSpacing(SPACE_SM)
+        rule_row.addWidget(self._left_rule, 1)
+        rule_row.addWidget(self.caption_label, 0)
+        rule_row.addWidget(self._right_rule, 1)
+        # Vertically centre the rule within the tile.
+        self.body_layout.addStretch(1)
+        self.body_layout.addLayout(rule_row)
+        self.body_layout.addStretch(1)
+        self._apply_caption(entry)
+
+    def _make_rule(self) -> QFrame:
+        rule = QFrame(self)
+        rule.setObjectName("tileSeparatorLine")
+        rule.setFixedHeight(2)
+        return rule
+
+    def _apply_caption(self, entry: ControlPanelEntry) -> None:
+        caption = entry.label.strip()
+        self.caption_label.setText(caption)
+        self.caption_label.setVisible(bool(caption))
+        # Without a caption the right rule collapses so the left rule spans
+        # the tile as one clean line.
+        self._right_rule.setVisible(bool(caption))
+
+    def update_entry(self, entry: ControlPanelEntry) -> None:
+        super().update_entry(entry)
+        self._apply_caption(entry)
+
+    def update_runtime(self, runtime: TileRuntime) -> bool:
+        return False
+
+    def _render_runtime(self, runtime: TileRuntime) -> bool:
+        return False
+
+
 TILE_CLASSES: dict[str, type[TileFrame]] = {
     "value": ValueTileWidget,
     "led": LedTileWidget,
@@ -1587,6 +1638,7 @@ TILE_CLASSES: dict[str, type[TileFrame]] = {
     "enum": EnumTileWidget,
     "bits": BitsTileWidget,
     "text": TextTileWidget,
+    "separator": SeparatorTileWidget,
 }
 
 

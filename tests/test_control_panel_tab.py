@@ -2592,6 +2592,26 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         self.assertEqual(dialog.result(), 1)
         dialog.deleteLater()
 
+    def test_separator_shape_hides_body_and_tabs(self) -> None:
+        dialog = ControlPanelEntryDialog()
+        index = dialog.tile_kind_combo.findData("separator")
+        self.assertGreaterEqual(index, 0)
+        dialog.tile_kind_combo.setCurrentIndex(index)
+        # A divider has no data tabs and no body — its label is the caption.
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.POLLING_TAB))
+        self.assertFalse(dialog.tabs.isTabVisible(dialog.RESPONSE_TAB))
+        self.assertFalse(dialog._is_row_visible(dialog.body_input))
+        self.assertFalse(dialog._is_row_visible(dialog.command_input))
+        dialog.label_input.setText("Outputs")
+        result = dialog.values()
+        self.assertEqual(result.tile.kind, "separator")
+        self.assertTrue(result.is_separator())
+        self.assertEqual(result.label, "Outputs")
+        self.assertEqual(result.body, "")
+        self.assertEqual(result.command, "")
+        self.assertEqual(result.validation_errors(), [])
+        dialog.deleteLater()
+
     def test_preview_aspect_ratio_tracks_span(self) -> None:
         # The preview tile should be roughly square for 1×1, taller for
         # tall tiles, wider for wide tiles, and uniformly scaled for

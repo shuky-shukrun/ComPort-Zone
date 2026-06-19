@@ -26,10 +26,10 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-TILE_KINDS = ("value", "led", "control", "setpoint", "enum", "bits", "text")
+TILE_KINDS = ("value", "led", "control", "setpoint", "enum", "bits", "text", "separator")
 # Static tiles carry no command/parse and are never polled — they just
 # label/explain the panel (text note) or visually divide it (separator).
-STATIC_TILE_KINDS = ("text",)
+STATIC_TILE_KINDS = ("text", "separator")
 # Semantic states a tile can render. "ok"/"warn"/"fail" come from color
 # rules, "neutral" is the no-rule-matched default, "stale" means no recent
 # successful poll, "error" covers send/parse failures.
@@ -858,6 +858,8 @@ class ControlPanelEntry:
     updated_at: str = field(default_factory=_utc_now_iso)
 
     def display_label(self) -> str:
+        if self.is_separator():
+            return self.label or "Separator"
         if self.is_static():
             return self.label or "Text"
         return self.label or self.command or self.expression
@@ -867,6 +869,9 @@ class ControlPanelEntry:
 
     def is_text(self) -> bool:
         return self.tile.kind == "text"
+
+    def is_separator(self) -> bool:
+        return self.tile.kind == "separator"
 
     def is_static(self) -> bool:
         """Decorative tiles with no data exchange (text note / separator):

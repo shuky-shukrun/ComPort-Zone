@@ -782,6 +782,18 @@ def build_stylesheet(theme: ThemePalette) -> str:
         border: 1px solid {bd_soft};
     }}
     QLabel#tileBody {{ color: {tx2}; font-size: {LABEL_FS}px; }}
+    /* Static "separator" tile: no chrome, just a rule (+ optional caption). */
+    QFrame#controlPanelTile[tileRole="separator"] {{
+        background: transparent;
+        border: none;
+    }}
+    QFrame#tileSeparatorLine {{ background: {bd_strong}; border: none; }}
+    QLabel#tileSeparatorCaption {{
+        color: {tx2};
+        font-size: {LABEL_FS}px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+    }}
     QLabel#tileTimestamp {{ color: {tx_faint}; font-size: {MICRO_FS}px; font-family: {MONO}; }}
     QLabel#tileValue {{
         color: {tx};

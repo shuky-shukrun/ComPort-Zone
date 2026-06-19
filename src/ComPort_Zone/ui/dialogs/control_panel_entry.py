@@ -92,6 +92,7 @@ TILE_KIND_LABELS = (
     ("enum", "Enum / dropdown"),
     ("bits", "Bits / register"),
     ("text", "Text / note"),
+    ("separator", "Separator / divider"),
 )
 POLL_MODE_LABELS = (("interval", "Every interval"), ("on_connect", "Once on connect"))
 SOURCE_LABELS = (("poll", "Polled command"), ("derived", "Computed from other tiles"))
@@ -823,7 +824,7 @@ class ControlPanelEntryDialog(QDialog):
         a control button/toggle, setpoint, enum, bits/register (all
         kind-wins), a derived entry, or a polled command (default)."""
         kind = self.tile_kind_combo.currentData()
-        if kind == "text":
+        if kind in ("text", "separator"):
             return "static"
         if kind == "control":
             return "control"
@@ -865,10 +866,12 @@ class ControlPanelEntryDialog(QDialog):
         # form rows visible, but expose the bits table on the General tab
         # instead of the color-rules section (which doesn't apply).
         is_poll_or_bits = is_poll or is_bits
-        # A static text/note tile carries no data exchange: only Label, the
-        # multi-line Text body, Tile and Size apply — everything else hides.
+        # Static tiles carry no data exchange: only Label, Tile and Size
+        # apply (plus the multi-line Text body for a "text" note — a
+        # "separator" uses its label as an optional caption only).
+        is_text = is_static and self.tile_kind_combo.currentData() == "text"
         self._set_row_visible(self.unit_input, not is_static)
-        self._set_row_visible(self.body_input, is_static)
+        self._set_row_visible(self.body_input, is_text)
         self._set_row_visible(
             self.source_combo, not is_writable and not is_bits and not is_static
         )
@@ -1421,7 +1424,11 @@ class ControlPanelEntryDialog(QDialog):
             enum_spec=enum_spec,
             bits_spec=bits_spec,
             readback=readback,
-            body=self.body_input.toPlainText() if is_static else "",
+            body=(
+                self.body_input.toPlainText()
+                if (is_static and tile.kind == "text")
+                else ""
+            ),
             created_at=original.created_at or utc_now_iso(),
             updated_at=utc_now_iso(),
         )
