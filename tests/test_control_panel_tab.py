@@ -29,6 +29,7 @@ from ComPort_Zone.ui.control_panel_tab import ControlPanelTabWidget
 from ComPort_Zone.ui.control_panel_targets import ControlPanelRunCoordinator
 from ComPort_Zone.ui.control_panel_tiles import ControlTileWidget, ValueTileWidget
 from ComPort_Zone.ui.dialogs.control_panel_entry import ControlPanelEntryDialog
+from ComPort_Zone.ui.stylesheet import build_stylesheet
 
 from tests.fakes.fake_terminal_session import FakeTerminalSession
 
@@ -2325,6 +2326,17 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         self.assertEqual((new_entry.tile.col, new_entry.tile.row), (1, 0))
         self.assertIsNotNone(tab.grid.tile("trip"))
         self.assertGreater(self.host.save_count, saves)
+
+    def test_add_entry_button_shares_run_button_style(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+
+        tab = self.make_tab()
+        # A QPushButton carrying the object name the green "Run"-style QSS
+        # rule targets, so the panel's primary CTA matches the editor's.
+        self.assertIsInstance(tab.add_entry_button, QPushButton)
+        self.assertEqual(tab.add_entry_button.objectName(), "controlPanelAddButton")
+        qss = build_stylesheet(THEMES["ComPort Zone Dark"])
+        self.assertIn("controlPanelAddButton", qss)
 
     def test_tile_long_press_enters_edit_mode(self) -> None:
         tab = self.make_tab(volt_entry())

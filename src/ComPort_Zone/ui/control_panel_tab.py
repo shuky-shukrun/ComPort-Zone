@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
@@ -395,13 +396,15 @@ class ControlPanelTabWidget(QWidget):
         self.arm_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.arm_button.toggled.connect(self._arm_button_toggled)
 
-        self.add_entry_button = QToolButton(header)
-        self.add_entry_button.setObjectName("controlPanelHeaderButton")
-        self.add_entry_button.setText("Add Entry")
-        self.add_entry_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        set_button_icon(self.add_entry_button, "plus", 15)
+        # Primary action — styled like the command editor's "Run" button
+        # (vivid brand green, white icon + label) so the panel's main CTA
+        # reads the same as the editor's.
+        self.add_entry_button = QPushButton("Add Entry", header)
+        self.add_entry_button.setObjectName("controlPanelAddButton")
+        set_button_icon(self.add_entry_button, "plus", 12, "#ffffff")
         self.add_entry_button.clicked.connect(self.add_entry_via_dialog)
-        self.add_entry_button.setFixedHeight(CONTROL_H_SM)
+        # Height comes from the shared button QSS (min-height + padding), so
+        # it matches the editor's "Run" button exactly.
         self.add_entry_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
         header_layout.addWidget(self.name_label)

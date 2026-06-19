@@ -535,12 +535,16 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QToolButton#editorToolButton:hover {{ background: {hover}; }}
     QFrame#editorToolbarRule {{ background: {bd_soft}; border: none; max-height: 1px; min-height: 1px; }}
     QLabel#editorSendLabel {{ color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px; }}
-    QPushButton#editorRunButton {{
+    QPushButton#editorRunButton, QPushButton#controlPanelAddButton {{
         background: {run_btn}; color: {on_accent}; border: none; border-radius: {RADIUS_SM}px;
         padding: 4px 14px; font-weight: 700; min-height: 24px;
     }}
-    QPushButton#editorRunButton:hover {{ background: {run_btn_hover}; }}
-    QPushButton#editorRunButton:pressed {{ background: {run_btn_press}; }}
+    QPushButton#editorRunButton:hover, QPushButton#controlPanelAddButton:hover {{
+        background: {run_btn_hover};
+    }}
+    QPushButton#editorRunButton:pressed, QPushButton#controlPanelAddButton:pressed {{
+        background: {run_btn_press};
+    }}
     /* Grayed-out while no terminal is connected to run into. The #id selector
        outweighs the generic QPushButton:disabled rule, so it needs its own. */
     QPushButton#editorRunButton:disabled {{ background: {elevated}; color: {tx_faint}; }}
