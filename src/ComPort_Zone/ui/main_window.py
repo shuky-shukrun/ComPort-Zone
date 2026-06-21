@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 from collections.abc import Callable
 from html import escape
 from pathlib import Path
@@ -8,7 +9,6 @@ from typing import ClassVar, cast
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QIcon
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -72,11 +72,11 @@ from ..storage import SettingsStore, default_config_path
 from ..themes import THEMES, ThemePalette
 from ..version_check import (
     GITHUB_ISSUES_URL,
-    GITHUB_LATEST_RELEASE_API_URL,
     GITHUB_REPOSITORY_URL,
+    ReleaseInfo,
     VersionCheckResult,
     build_version_check_result,
-    release_info_from_json,
+    fetch_latest_release,
 )
 from ..workspace_settings_controller import WorkspaceSettingsController
 from ..workspace_state import WorkspaceStateService
@@ -139,6 +139,11 @@ class ConnectionStatusLabel(QLabel):
 class MainWindow(QMainWindow):
     config_path_supplier: ClassVar[Callable[[], Path]] = staticmethod(default_config_path)
 
+    # Emitted from the version-check worker thread with the fetched
+    # ReleaseInfo (or the Exception raised) and whether the check was
+    # automatic. A queued connection marshals it back to the GUI thread.
+    version_check_finished = Signal(object, bool)
+
     def __init__(self, *, defer_startup_actions: bool = False) -> None:
         super().__init__()
         self.settings_store = SettingsStore(self.config_path_supplier())
@@ -198,9 +203,9 @@ class MainWindow(QMainWindow):
         self._deferred_startup_prompt_settings = (
             defer_startup_actions and self._should_prompt_first_session_settings()
         )
-        self.version_check_network = QNetworkAccessManager(self)
-        self._version_check_reply: QNetworkReply | None = None
+        self._version_check_running = False
         self._version_check_previous_status: str | None = None
+        self.version_check_finished.connect(self._on_version_check_finished)
 
         self.setWindowTitle("ComPort Zone")
         self.setWindowIcon(app_icon())
@@ -2367,38 +2372,39 @@ class MainWindow(QMainWindow):
         return dialog
 
     def check_for_updates(self, *, automatic: bool = False) -> None:
-        if self._version_check_reply is not None:
+        if self._version_check_running:
             if not automatic:
                 self.set_status("Version check already in progress.")
             return
-        request = QNetworkRequest(QUrl(GITHUB_LATEST_RELEASE_API_URL))
-        request.setRawHeader(b"Accept", b"application/vnd.github+json")
-        request.setRawHeader(
-            b"User-Agent",
-            f"ComPort-Zone/{__version__}".encode("ascii", "ignore"),
-        )
-        reply = self.version_check_network.get(request)
-        self._version_check_reply = reply
+        self._version_check_running = True
         self._version_check_previous_status = self.footer.text() if automatic else None
-        reply.finished.connect(
-            lambda target=reply, auto=automatic: self._finish_version_check(target, automatic=auto)
-        )
+        user_agent = f"ComPort-Zone/{__version__}"
+
+        def _worker() -> None:
+            # Runs off the GUI thread on Python's own SSL stack (urllib) —
+            # never Qt's network/OpenSSL path, which can crash on an
+            # OpenSSL version mismatch. The result hops back to the GUI
+            # thread via the queued ``version_check_finished`` signal.
+            try:
+                payload: object = fetch_latest_release(user_agent=user_agent)
+            except Exception as exc:  # noqa: BLE001 — report any failure to the user
+                payload = exc
+            self.version_check_finished.emit(payload, automatic)
+
+        threading.Thread(
+            target=_worker, name="version-check", daemon=True
+        ).start()
         self.set_status("Checking for updates...")
 
-    def _finish_version_check(self, reply: QNetworkReply, *, automatic: bool) -> None:
-        if self._version_check_reply is reply:
-            self._version_check_reply = None
-        try:
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                raise RuntimeError(reply.errorString())
-            release = release_info_from_json(bytes(reply.readAll()))
-            result = build_version_check_result(__version__, release)
-        except Exception as exc:
-            self._show_version_check_error(str(exc), automatic=automatic)
-        else:
+    def _on_version_check_finished(self, payload: object, automatic: bool) -> None:
+        """GUI-thread slot for ``version_check_finished`` (queued)."""
+        self._version_check_running = False
+        if isinstance(payload, ReleaseInfo):
+            result = build_version_check_result(__version__, payload)
             self._show_version_check_result(result, automatic=automatic)
-        finally:
-            reply.deleteLater()
+        else:
+            detail = str(payload) if payload else "Unknown error."
+            self._show_version_check_error(detail, automatic=automatic)
 
     def _show_version_check_error(self, detail: str, *, automatic: bool) -> None:
         if automatic:

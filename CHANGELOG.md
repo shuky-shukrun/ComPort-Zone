@@ -20,6 +20,10 @@ All notable changes to ComPort Zone are documented here.
   - **Naming migration** — "ControlPanel View" → "Control Panel" everywhere the user sees it: menus (`File > New Control Panel`, `Open Control Panel`), commands (`Control Panels…`, `Import/Export Control Panels`), sidebar rail page (Control Panels + Favorite Control Panels), manager dialog, Preferences tab, status-bar wording, README. Internal symbols (`ControlPanelConfig`, `ControlPanelTabWidget`, `AppSettings.control_panels`, `control_panel_value_log.py`, `tests/test_control_panel_*`, QSS object names) keep their names — your v1/v2 saved settings load with zero diff. `Ctrl+Shift+D` keeps its binding.
   - **Shipped example** — the favorited starter panel renames to **Example Control Panel** and gains two demonstration entries: a setpoint slider for output voltage (`VOLT {value}`, 0..30 V step 0.1, watches the polled `OUTP?` tile) and an enum for regulation mode (OFF / CV / CC, watches a polled `SOUR:FUNC:MODE?` tile).
 
+### Fixed
+
+- **Crash (access violation) on launch / when connecting** — the automatic "check for updates" ran its HTTPS request through Qt's `QNetworkAccessManager`, which loads the system OpenSSL. When that differs from the OpenSSL Qt was built against (e.g. a newer build on `PATH`), the request can fault with a native access violation that corrupts the process and shows up as repeated crashes (often surfacing in unrelated GUI repaints right after a connect). The update check now runs on a background thread through Python's own `urllib`/SSL stack — Qt's network/OpenSSL path is no longer used anywhere in the app — so the crash can't occur and the check never blocks the UI.
+
 ### Changed
 
 - The Control Panel header's **Add Entry** button now uses the same vivid-green primary-button design as the command editor's **Run** button (white icon + label), so the panel's main action reads as the clear call-to-action.

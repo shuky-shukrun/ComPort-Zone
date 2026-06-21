@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
+
+DEFAULT_HTTP_TIMEOUT_SECONDS = 8
 
 GITHUB_REPOSITORY_URL = "https://github.com/shuky-shukrun/ComPort-Zone"
 GITHUB_RELEASES_URL = f"{GITHUB_REPOSITORY_URL}/releases"
@@ -95,3 +98,27 @@ def build_version_check_result(current_version: str, release: ReleaseInfo) -> Ve
         release_url=release.html_url or GITHUB_RELEASES_URL,
         update_available=is_newer_version(release.version, current_version),
     )
+
+
+def fetch_latest_release(
+    *,
+    user_agent: str,
+    url: str = GITHUB_LATEST_RELEASE_API_URL,
+    timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
+) -> ReleaseInfo:
+    """Fetch + parse the latest GitHub release over HTTPS using Python's
+    own SSL stack (``urllib``).
+
+    Deliberately kept off Qt's network path: PySide6's ``QNetworkAccessManager``
+    loads the system OpenSSL, which can differ from the version Qt was built
+    against and crash an HTTPS request with a native access violation.
+    Python's ``ssl`` uses its own consistent OpenSSL, so this is stable —
+    and the call belongs on a worker thread, never the GUI thread.
+    """
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": user_agent, "Accept": "application/vnd.github+json"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read()
+    return release_info_from_json(body)
