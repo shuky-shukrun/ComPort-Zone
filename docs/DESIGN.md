@@ -397,7 +397,7 @@ ControlPanel rules:
 - Writing-tile readbacks use the same dispatcher transaction path. `source="entry"` follows another tile's poll definition; `source="command"` uses the writing tile's direct readback command and parse/rules. Readbacks pull once on connect, and setpoint connect-time readbacks seed the editable command value without sending. Same-session post-write readbacks are attached to the write request so they run before the next queued control_panel transaction.
 - Configs are a settings library (`AppSettings.control_panels`, schema v5 with feature floors) and live-save on every mutation; opening an already-open control_panel focuses the existing tab.
 - Restore recreates control_panel tabs with the workspace and rebinds only on a unique endpoint match; otherwise the tab stays visibly unbound with a one-click bind menu.
-- Requirements contract: `docs/control_panel-view-requirements.md`.
+- Requirements contract: `docs/control-panel-requirements.md`.
 
 ## Flow: Settings Save, Import, Export
 

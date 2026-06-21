@@ -1,3 +1,37 @@
+# ComPort Zone v0.5.0 Release Notes
+
+Release date: 2026-06-10
+
+ComPort Zone v0.5.0 introduces the **Control Panel** — a live operator console for your bench. Alongside the terminal and the command-file editor, you can now build a grid of tiles that poll your device in the background and let you drive it: monitor values and status, push setpoints and toggles behind a master-arm safety gate, chart trends, log to CSV, and get alerted when something goes out of range.
+
+## Highlights
+
+- **Control Panel** — a new workspace tab type: a grid of polling and control tiles bound to a connection.
+- Monitor with value, LED, bits/register, and computed tiles; drive with button, toggle, setpoint, and enum tiles — all behind a **Master Arm** safety gate.
+- In-tile sparklines and a full chart page for numeric tiles; FAIL/ERROR alerts with a bell, badge, taskbar flash, and optional sound; optional CSV value logging.
+- Arrange tiles on a drag-and-drop grid, keep named panels in a library, star favorites, import/export as JSON; a favorited **Example Control Panel** is seeded on first run.
+
+## The Control Panel
+
+Open one from **File ▸ New Control Panel**, **Tools ▸ Control Panels…** (Ctrl+Shift+D), the command palette, the tab strip, or the drawer's Control Panels page. A panel binds to an open terminal tab and shares its connection — with per-entry overrides, one panel can drive multiple devices at once. Poll traffic stays out of the terminal transcript, and polling pauses and resumes automatically as the connection drops and returns.
+
+- **Monitoring tiles** — *value* (parsed reading with color rules → OK/WARN/FAIL/stale/error), *LED* (GO/NO-GO with a caption override), *bits / register* (labelled status & fault bits), and *derived* (computed from other tiles, e.g. `{Volts} * {Amps}`).
+- **Control tiles** — *button*/*toggle* sends, a numeric *setpoint* with a `{value}` command template, and *enum* dropdowns. Writing tiles mirror a live readback and warn when the device's value differs from what was commanded.
+- **Master Arm** — panels boot disarmed; writing tiles won't send until you Arm the panel, Esc disarms instantly, and unbinding or disconnecting force-disarms. A panel can auto-arm on connect, or stay in a monitor-only View-only mode.
+- **Trends, alerts, logging** — in-tile sparklines and a chart page (span presets + hover crosshair); bell/badge/taskbar/sound alerts on FAIL/ERROR; optional CSV logging of every value and control send.
+- **Layout & library** — long-press to edit, drag to move and resize, configurable grid, copy/paste tiles across panels, duplicate panels, static text & divider tiles, live-save, favorites, JSON import/export, and workspace restore.
+
+## Fixed
+
+- **Crash (access violation) on launch or when connecting** — the automatic update check no longer uses Qt's OpenSSL network path (a version mismatch could fault natively, often surfacing as crashes during unrelated repaints right after a connect); it now runs on a background thread through Python's own `urllib`/SSL stack.
+- Hardened serial-port close against a shutdown hang, plus a UI-freeze watchdog.
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, and saved Control Panels under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required. Older builds stay forward-compatible with settings files that don't use Control Panel tiles.
+
+---
+
 # ComPort Zone v0.4.2 Release Notes
 
 Release date: 2026-06-10

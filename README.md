@@ -6,7 +6,7 @@
 
 Connect to COM ports and TCP endpoints, watch traffic in a structured terminal, fire off saved commands, and run repeatable command files — in an IDE-style desktop app or a matching headless CLI.
 
-![Version](https://img.shields.io/badge/version-0.4.2-3aa675)
+![Version](https://img.shields.io/badge/version-0.5.0-3aa675)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Python](https://img.shields.io/badge/python-3.12%2B-3776AB)
 ![UI](https://img.shields.io/badge/UI-PySide6-41cd52)
@@ -55,6 +55,14 @@ The integrated editor opens command files as workspace tabs with line numbers, s
 ### Control Panel: monitor and drive your gear
 
 Build a control panel of the values you keep checking — voltages, temperatures, fault flags — and let it poll them in the background. Each tile is one command with its own interval, response parse rule (first line or a regex capture), and ordered color rules that turn the tile green/amber/red from the reply; LED tiles make GO/NO-GO states readable across the room, control tiles (button or toggle) *send* on click for ON/OFF rails or zeroing offsets, **setpoint tiles** drive a slider+field with optional readback for analog setpoints, **enum tiles** offer dropdown mode selection with indicator-follows-readback, and **computed tiles** show derived values like `{Volts} * {Amps}` over your other tiles. Every writing tile is gated by a header **Master Arm** toggle — the panel boots disarmed, Esc disarms instantly, and unbinding force-disarms. Numeric tiles paint a 120 s sparkline under the value; double-click any one to open a full chart page with span presets (1/5/30/60 min) and a hover crosshair. A control panel binds to one of your open terminal tabs and shares its connection — or, with per-entry overrides, one panel can drive **multiple devices at once**. Poll traffic stays out of the transcript so the terminal remains yours for manual commands; polling pauses automatically while the port is disconnected or a command file is running, and resumes by itself. Transitions into FAIL/ERROR ring a bell with an unseen badge, flash the taskbar, and (optionally) play a short tone — silenceable per tile or globally. Optional CSV logging captures every parsed value (and every control send, marked with a `kind` column) for unattended runs and audit. Arrange tiles on a drag-and-drop grid (with 2×1/2×2 sizes), keep named control panels in your library and the drawer's Control Panels page, star favorites, share them as JSON, and they restore with your workspace — `File > New Control Panel` or **Ctrl+Shift+D** to manage them.
+
+<div align="center">
+<img src="docs/media/comport-zone-control-panel.png" alt="A Control Panel of live value, LED, and status tiles bound to a power supply, with the master-arm header and Favorite Control Panels drawer" width="900">
+</div>
+
+<div align="center">
+<img src="docs/media/comport-zone-control-panel-chart.png" alt="The full-page chart for a numeric Control Panel tile, with span presets, follow-live, and a hover readout" width="900">
+</div>
 
 ### A workspace that splits
 
