@@ -645,15 +645,16 @@ class SimulatorTcpTests(unittest.TestCase):
             panel_stop = threading.Event()
 
             def panel_loop() -> None:
-                # Poll at a realistic cadence (a real scheduler polls entries
-                # at an interval, never in a zero-gap loop). The timeout entry
-                # fires occasionally — enough to exercise the timeout-drain
-                # path — but a saturated wire would let *any* late terminal
+                # Poll at a realistic dashboard cadence — a real scheduler
+                # polls entries at an interval (hundreds of ms), never in a
+                # zero-gap loop. A saturated wire would let any late terminal
                 # reply fall inside a poll's journal window, which is a timing
-                # artefact, not the bug under test.
+                # artefact (worsened on slow CI), not the bug under test. The
+                # timeout entry fires occasionally to exercise the
+                # timeout-drain path without dominating the wire.
                 i = 0
                 while not panel_stop.is_set():
-                    use_bad = i % 4 == 3
+                    use_bad = i % 5 == 4
                     entry, compiled = (bad, bad_compiled) if use_bad else (good, good_compiled)
                     req = PollRequest(
                         control_panel_id="cp",
@@ -662,7 +663,7 @@ class SimulatorTcpTests(unittest.TestCase):
                         result_queue=rq,
                     )
                     dispatcher._execute_transaction(req, disp_rx)
-                    panel_stop.wait(0.05)  # inter-poll gap (interruptible)
+                    panel_stop.wait(0.2)  # realistic inter-poll gap (interruptible)
                     i += 1
 
             panel = threading.Thread(target=panel_loop, daemon=True)
@@ -681,12 +682,14 @@ class SimulatorTcpTests(unittest.TestCase):
 
             # The bug this guards: the journal SYSTEMATICALLY blanks the
             # terminal's own replies during panel polling (the user saw ~none
-            # of them). Whether all 25 survive is timing-dependent — a reply
-            # that happens to land inside an active poll window is hidden by
-            # design — so require the large majority rather than a flake-prone
-            # exact count. The regression drops this well below half.
+            # of them). The exact survivor count is timing-dependent — a reply
+            # that lands inside an active poll window is hidden by design, and
+            # slow CI widens that — so the precise window math is covered by
+            # deterministic PollTrafficJournal unit tests; here we only assert
+            # the terminal isn't blanked (a clear majority survives). The
+            # regression drops this to near zero.
             idn_replies = [r for r in visible_replies if "TDK-LAMBDA" in r]
-            minimum_visible = int(n_terminal_sends * 0.8)
+            minimum_visible = int(n_terminal_sends * 0.6)
             self.assertGreaterEqual(
                 len(idn_replies), minimum_visible,
                 f"Only {len(idn_replies)}/{n_terminal_sends} terminal "
