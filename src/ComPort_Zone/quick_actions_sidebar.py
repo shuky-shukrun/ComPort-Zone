@@ -10,13 +10,13 @@ from PySide6.QtWidgets import QMenu, QPushButton, QStyle, QToolButton, QWidget
 from .icons import set_action_icon, set_button_icon
 from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES
 from .quick_actions_panel import (
-    FAVORITE_DASHBOARD_EMPTY_HINT,
+    FAVORITE_CONTROL_PANEL_EMPTY_HINT,
     ROLE_FAVORITE,
     ROLE_ID,
     QuickActionsDrawer,
     QuickActionsPanel,
     QuickActionsRailMode,
-    create_dashboard_list,
+    create_control_panel_list,
     create_quick_command_list,
     create_quick_file_list,
     create_quick_history_list,
@@ -56,15 +56,16 @@ class QuickActionsSidebarActions:
     history_save: Callable[[str], None] | None = None             # add history text to saved
     history_remove: Callable[[str], None] | None = None           # remove history text
     run_file: Callable[[], None] | None = None                    # run an ad-hoc file (not saved)
-    # Dashboard actions (wired by the shared drawer host; None hides the page).
-    dashboard_open_by_id: Callable[[str], None] | None = None
-    dashboard_favorite_toggle: Callable[[str, bool], None] | None = None
-    dashboard_rename_by_id: Callable[[str], None] | None = None
-    dashboard_delete_by_id: Callable[[str], None] | None = None
-    new_dashboard: Callable[[], None] | None = None
-    import_dashboards: Callable[[], None] | None = None
-    export_dashboards: Callable[[], None] | None = None
-    manage_dashboards: Callable[[], None] | None = None
+    # ControlPanel actions (wired by the shared drawer host; None hides the page).
+    control_panel_open_by_id: Callable[[str], None] | None = None
+    control_panel_favorite_toggle: Callable[[str, bool], None] | None = None
+    control_panel_rename_by_id: Callable[[str], None] | None = None
+    control_panel_duplicate_by_id: Callable[[str], None] | None = None
+    control_panel_delete_by_id: Callable[[str], None] | None = None
+    new_control_panel: Callable[[], None] | None = None
+    import_control_panels: Callable[[], None] | None = None
+    export_control_panels: Callable[[], None] | None = None
+    manage_control_panels: Callable[[], None] | None = None
 
 
 def set_button_role(button: QPushButton, role: str) -> None:
@@ -111,7 +112,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
         command_selection_changed: Callable[[], None] | None = None,
         file_selection_changed: Callable[[], None] | None = None,
         include_history: bool = False,
-        include_dashboards: bool = False,
+        include_control_panels: bool = False,
         history_primary: Callable[[str], None] | None = None,
         history_context_menu_requested: Callable | None = None,
         settings_callback: Callable[[], None] | None = None,
@@ -191,32 +192,32 @@ class QuickActionsSidebar(QuickActionsDrawer):
             tooltip="Send · remove from history · add to favorites · add to saved.",
             context_menu_requested=history_context_menu_requested,
         )
-        # Dashboards: the saved-dashboard library plus its starred subset.
-        self.dashboard_list = create_dashboard_list(
+        # ControlPanels: the saved-control_panel library plus its starred subset.
+        self.control_panel_list = create_control_panel_list(
             parent,
-            tooltip="Click ▶ to open a dashboard. Star to add it to favorites.",
+            tooltip="Click ▶ to open a control panel. Star to add it to favorites.",
         )
-        self.favorite_dashboard_list = create_dashboard_list(
+        self.favorite_control_panel_list = create_control_panel_list(
             parent,
-            tooltip="Open · star removes from favorites · ✕ deletes the dashboard.",
-            placeholder_text=FAVORITE_DASHBOARD_EMPTY_HINT,
+            tooltip="Open · star removes from favorites · ✕ deletes the control panel.",
+            placeholder_text=FAVORITE_CONTROL_PANEL_EMPTY_HINT,
         )
-        self.favorite_dashboard_list.is_favorites = True
-        for dashboard_list in (self.dashboard_list, self.favorite_dashboard_list):
-            dashboard_list.actionTriggered.connect(
-                lambda item, key, lst=dashboard_list: self._on_dashboard_action(lst, item, key)
+        self.favorite_control_panel_list.is_favorites = True
+        for control_panel_list in (self.control_panel_list, self.favorite_control_panel_list):
+            control_panel_list.actionTriggered.connect(
+                lambda item, key, lst=control_panel_list: self._on_control_panel_action(lst, item, key)
             )
-            dashboard_list.itemDoubleClicked.connect(
-                lambda item, lst=dashboard_list: self._on_dashboard_action(lst, item, "play")
+            control_panel_list.itemDoubleClicked.connect(
+                lambda item, lst=control_panel_list: self._on_control_panel_action(lst, item, "play")
             )
         self._enable_context_menu(
-            self.dashboard_list,
-            lambda pos: self._show_dashboard_menu(self.dashboard_list, pos, is_favorites=False),
+            self.control_panel_list,
+            lambda pos: self._show_control_panel_menu(self.control_panel_list, pos, is_favorites=False),
         )
         self._enable_context_menu(
-            self.favorite_dashboard_list,
-            lambda pos: self._show_dashboard_menu(
-                self.favorite_dashboard_list, pos, is_favorites=True
+            self.favorite_control_panel_list,
+            lambda pos: self._show_control_panel_menu(
+                self.favorite_control_panel_list, pos, is_favorites=True
             ),
         )
 
@@ -331,28 +332,28 @@ class QuickActionsSidebar(QuickActionsDrawer):
             parent=parent,
         )
 
-        # Dashboards rail: the saved-dashboard library with open/star/rename/
+        # Control Panels rail: the saved-panel library with open/star/rename/
         # delete row actions; the ⋯ menu carries the library-wide operations.
-        dashboard_page = QuickActionsPanel(
-            title="Dashboards",
-            quick_list=self.dashboard_list,
+        control_panel_page = QuickActionsPanel(
+            title="Control Panels",
+            quick_list=self.control_panel_list,
             header_icon="list",
             header_buttons=(
                 self._header_button(
-                    "+", "New dashboard", lambda: self._dashboard_action(actions.new_dashboard), parent
+                    "+", "New control panel", lambda: self._control_panel_action(actions.new_control_panel), parent
                 ),
                 self._overflow_button(parent, [
-                    ("Manage…", actions.manage_dashboards),
+                    ("Manage…", actions.manage_control_panels),
                     None,
-                    ("Import JSON…", actions.import_dashboards),
-                    ("Export JSON…", actions.export_dashboards),
+                    ("Import JSON…", actions.import_control_panels),
+                    ("Export JSON…", actions.export_control_panels),
                 ]),
             ),
             parent=parent,
         )
 
         # Favorites rail surfaces three curated panels: favourite commands,
-        # files and dashboards. They are collapsible and share a draggable
+        # files and control_panels. They are collapsible and share a draggable
         # splitter (see splitter_groups).
         self.favorites_panel = QuickActionsPanel(
             title="Favorite Commands",
@@ -370,9 +371,9 @@ class QuickActionsSidebar(QuickActionsDrawer):
             collapsible=True,
             parent=parent,
         )
-        self.favorite_dashboards_panel = QuickActionsPanel(
-            title="Favorite Dashboards",
-            quick_list=self.favorite_dashboard_list,
+        self.favorite_control_panels_panel = QuickActionsPanel(
+            title="Favorite Control Panels",
+            quick_list=self.favorite_control_panel_list,
             header_icon="star",
             collapsible=True,
             parent=parent,
@@ -385,9 +386,9 @@ class QuickActionsSidebar(QuickActionsDrawer):
             header_icon=QStyle.StandardPixmap.SP_FileDialogInfoView,
             parent=parent,
         )
-        # The Dashboards page only belongs to the shared app drawer — the
+        # The ControlPanels page only belongs to the shared app drawer — the
         # editor's embedded drawer keeps its insert/open-focused pages and
-        # leaves the (unwired) dashboard actions out entirely.
+        # leaves the (unwired) control_panel actions out entirely.
         favorites_sections: tuple[str, ...] = ("favorites", "favorite_file")
         sections = {
             "favorites": favorites_page,
@@ -396,24 +397,26 @@ class QuickActionsSidebar(QuickActionsDrawer):
             "file": file_page,
             "history": history_page,
         }
-        if include_dashboards:
-            sections["favorite_dashboard"] = self.favorite_dashboards_panel
-            sections["dashboard"] = dashboard_page
-            favorites_sections = ("favorites", "favorite_file", "favorite_dashboard")
+        if include_control_panels:
+            sections["favorite_control_panel"] = self.favorite_control_panels_panel
+            sections["control_panel"] = control_panel_page
+            favorites_sections = ("favorites", "favorite_file", "favorite_control_panel")
         else:
-            self.favorite_dashboards_panel.setVisible(False)
-            dashboard_page.setVisible(False)
-        # Favorites surfaces starred commands + files (+ dashboards in the
+            self.favorite_control_panels_panel.setVisible(False)
+            control_panel_page.setVisible(False)
+        # Favorites surfaces starred commands + files (+ control_panels in the
         # shared drawer); the other rails hold the full Saved Commands /
-        # Files / Dashboards lists (where you star items).
+        # Files / ControlPanels lists (where you star items).
         rail_modes = [
             QuickActionsRailMode("all", "star", "Favorites", favorites_sections),
             QuickActionsRailMode("commands", "term", "Saved Commands", ("command",)),
             QuickActionsRailMode("files", "file", "Files", ("file",)),
         ]
-        if include_dashboards:
+        if include_control_panels:
             rail_modes.append(
-                QuickActionsRailMode("dashboards", "list", "Dashboards", ("dashboard",))
+                QuickActionsRailMode(
+                    "control_panels", "list", "Control Panels", ("control_panel",)
+                )
             )
         if include_history:
             rail_modes.append(
@@ -450,8 +453,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.favorite_command_list,
             self.quick_file_list,
             self.favorite_file_list,
-            self.dashboard_list,
-            self.favorite_dashboard_list,
+            self.control_panel_list,
+            self.favorite_control_panel_list,
             self.quick_history_list,
         ):
             quick_list.apply_theme_palette(palette)
@@ -523,32 +526,36 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self._file_double_clicked()
 
     @staticmethod
-    def _dashboard_action(callback: Callable[[], None] | None) -> None:
+    def _control_panel_action(callback: Callable[[], None] | None) -> None:
         if callback is not None:
             callback()
 
-    def _on_dashboard_action(self, quick_list, item, key: str) -> None:
+    def _on_control_panel_action(self, quick_list, item, key: str) -> None:
         if item is None:
             return
         quick_list.setCurrentItem(item)
-        dashboard_id = str(item.data(ROLE_ID) or "")
-        if not dashboard_id:
+        control_panel_id = str(item.data(ROLE_ID) or "")
+        if not control_panel_id:
             return
         if key == "star":
-            toggle = self.actions.dashboard_favorite_toggle
+            toggle = self.actions.control_panel_favorite_toggle
             if toggle is not None:
-                toggle(dashboard_id, not bool(item.data(ROLE_FAVORITE)))
+                toggle(control_panel_id, not bool(item.data(ROLE_FAVORITE)))
             return
         if key == "edit":
-            if self.actions.dashboard_rename_by_id is not None:
-                self.actions.dashboard_rename_by_id(dashboard_id)
+            if self.actions.control_panel_rename_by_id is not None:
+                self.actions.control_panel_rename_by_id(control_panel_id)
+            return
+        if key == "duplicate":
+            if self.actions.control_panel_duplicate_by_id is not None:
+                self.actions.control_panel_duplicate_by_id(control_panel_id)
             return
         if key == "remove":
-            if self.actions.dashboard_delete_by_id is not None:
-                self.actions.dashboard_delete_by_id(dashboard_id)
+            if self.actions.control_panel_delete_by_id is not None:
+                self.actions.control_panel_delete_by_id(control_panel_id)
             return
-        if self.actions.dashboard_open_by_id is not None:
-            self.actions.dashboard_open_by_id(dashboard_id)
+        if self.actions.control_panel_open_by_id is not None:
+            self.actions.control_panel_open_by_id(control_panel_id)
 
     def _on_history_action(self, item, key: str) -> None:
         text = item.text()
@@ -645,38 +652,43 @@ class QuickActionsSidebar(QuickActionsDrawer):
         )
         return menu
 
-    def _show_dashboard_menu(self, quick_list, pos, *, is_favorites: bool) -> None:
+    def _show_control_panel_menu(self, quick_list, pos, *, is_favorites: bool) -> None:
         item = quick_list.itemAt(pos)
         if item is None:
             return
         quick_list.setCurrentItem(item)
-        self._build_dashboard_menu(quick_list, item, is_favorites=is_favorites).exec(
+        self._build_control_panel_menu(quick_list, item, is_favorites=is_favorites).exec(
             quick_list.mapToGlobal(pos)
         )
 
-    def _build_dashboard_menu(self, quick_list, item, *, is_favorites: bool) -> QMenu:
-        dashboard_id = str(item.data(ROLE_ID) or "")
+    def _build_control_panel_menu(self, quick_list, item, *, is_favorites: bool) -> QMenu:
+        control_panel_id = str(item.data(ROLE_ID) or "")
         starred = bool(item.data(ROLE_FAVORITE)) or is_favorites
         menu = QMenu(quick_list)
         self._menu_action(
             menu, "Open", "play",
-            lambda it=item: self._on_dashboard_action(quick_list, it, "play"),
+            lambda it=item: self._on_control_panel_action(quick_list, it, "play"),
         )
         menu.addSeparator()
-        if self.actions.dashboard_favorite_toggle is not None and dashboard_id:
+        if self.actions.control_panel_favorite_toggle is not None and control_panel_id:
             self._menu_action(
                 menu,
                 "Remove from Favorites" if starred else "Add to Favorites",
                 "star-fill" if starred else "star",
-                lambda it=item: self._on_dashboard_action(quick_list, it, "star"),
+                lambda it=item: self._on_control_panel_action(quick_list, it, "star"),
             )
         self._menu_action(
             menu, "Rename", "edit",
-            lambda it=item: self._on_dashboard_action(quick_list, it, "edit"),
+            lambda it=item: self._on_control_panel_action(quick_list, it, "edit"),
         )
+        if self.actions.control_panel_duplicate_by_id is not None:
+            self._menu_action(
+                menu, "Duplicate", "copy",
+                lambda it=item: self._on_control_panel_action(quick_list, it, "duplicate"),
+            )
         self._menu_action(
-            menu, "Delete Dashboard", "x",
-            lambda it=item: self._on_dashboard_action(quick_list, it, "remove"),
+            menu, "Delete Control Panel", "x",
+            lambda it=item: self._on_control_panel_action(quick_list, it, "remove"),
         )
         return menu
 

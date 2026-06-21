@@ -12,7 +12,7 @@ from ..command_registry import (
     SUBMENU_CONVERT_SELECTION,
     SUBMENU_IMPORT_EXPORT,
     SUBMENU_LINE_ENDING,
-    SUBMENU_OPEN_DASHBOARD,
+    SUBMENU_OPEN_CONTROL_PANEL,
     SUBMENU_OPEN_RECENT,
     SUBMENU_RUN_IN_TERMINAL,
     SUBMENU_RX_DISPLAY,
@@ -40,7 +40,7 @@ class MainMenuHandles:
     tools_menu: QMenu
     help_menu: QMenu
     open_recent_menu: QMenu
-    open_dashboard_menu: QMenu
+    open_control_panel_menu: QMenu
     import_export_menu: QMenu
     theme_menu: QMenu
     theme_group: QActionGroup
@@ -135,7 +135,7 @@ class MainWindowMenuBuilder:
             tools_menu=tools_menu,
             help_menu=help_menu,
             open_recent_menu=self._sub["open_recent"],
-            open_dashboard_menu=self._sub["open_dashboard"],
+            open_control_panel_menu=self._sub["open_control_panel"],
             import_export_menu=self._sub["import_export"],
             theme_menu=self._sub["theme_menu"],
             theme_group=self._sub["theme_group"],
@@ -176,7 +176,7 @@ class MainWindowMenuBuilder:
     def _add_submenu(self, menu: QMenu, token: str) -> None:
         {
             SUBMENU_OPEN_RECENT: self._build_open_recent,
-            SUBMENU_OPEN_DASHBOARD: self._build_open_dashboard,
+            SUBMENU_OPEN_CONTROL_PANEL: self._build_open_control_panel,
             SUBMENU_IMPORT_EXPORT: self._build_import_export,
             SUBMENU_THEME: self._build_theme,
             SUBMENU_TERMINAL_FONT: self._build_terminal_font,
@@ -197,13 +197,13 @@ class MainWindowMenuBuilder:
         )
         self._sub["open_recent"] = submenu
 
-    def _build_open_dashboard(self, parent: QMenu) -> None:
-        submenu = parent.addMenu("Open Dashboard")
+    def _build_open_control_panel(self, parent: QMenu) -> None:
+        submenu = parent.addMenu("Open Control Panel")
         set_action_icon(submenu, QStyle.StandardPixmap.SP_FileDialogListView)
         submenu.aboutToShow.connect(
-            lambda menu=submenu: self.host.populate_open_dashboard_menu(menu)
+            lambda menu=submenu: self.host.populate_open_control_panel_menu(menu)
         )
-        self._sub["open_dashboard"] = submenu
+        self._sub["open_control_panel"] = submenu
 
     def _build_import_export(self, parent: QMenu) -> None:
         submenu = parent.addMenu("Import / Export")

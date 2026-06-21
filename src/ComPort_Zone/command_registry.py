@@ -54,7 +54,7 @@ SEPARATOR: None = None
 # Submenu placeholders consumed by MainWindowMenuBuilder; each "@..." token in a
 # MENU_SECTIONS tuple is replaced by the matching dynamically-built submenu.
 SUBMENU_OPEN_RECENT = "@open_recent"
-SUBMENU_OPEN_DASHBOARD = "@open_dashboard"
+SUBMENU_OPEN_CONTROL_PANEL = "@open_control_panel"
 SUBMENU_IMPORT_EXPORT = "@import_export"
 SUBMENU_THEME = "@theme"
 SUBMENU_TERMINAL_FONT = "@terminal_font"
@@ -557,43 +557,48 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         palette_subtitle="Show the keyboard shortcut reference",
         palette_keywords="keyboard shortcuts keys reference cheat sheet",
     ),
-    # --- Dashboard view -----------------------------------------------------
+    # --- Control panel (formerly ControlPanel view; the command ids stay) ----
     CommandSpec(
-        "dashboard.new",
-        lambda host: host.new_dashboard_tab,
-        menu_text="New Dashboard",
+        "control_panel.new",
+        lambda host: host.new_control_panel_tab,
+        menu_text="New Control Panel",
         icon=QStyle.StandardPixmap.SP_FileDialogListView,
-        palette_title="New Dashboard",
-        palette_subtitle="Create a dashboard of background-polled commands",
-        palette_keywords="dashboard tiles poll monitor values gauges background",
+        palette_title="New Control Panel",
+        palette_subtitle="Create a control panel of background-polled commands and controls",
+        palette_keywords=(
+            "control panel control_panel tiles poll monitor values gauges background "
+            "setpoint enum hmi"
+        ),
     ),
     CommandSpec(
-        "dashboard.manage",
-        lambda host: host.show_dashboard_manager,
-        menu_text="Dashboards...",
+        "control_panel.manage",
+        lambda host: host.show_control_panel_manager,
+        menu_text="Control Panels...",
         shortcut="Ctrl+Shift+D",
         icon=QStyle.StandardPixmap.SP_FileDialogListView,
-        palette_title="Manage Dashboards",
-        palette_subtitle="Open, rename, duplicate, import or export saved dashboards",
-        palette_keywords="dashboard manage library open rename duplicate delete",
+        palette_title="Manage Control Panels",
+        palette_subtitle="Open, rename, duplicate, import or export saved control panels",
+        palette_keywords=(
+            "control panel control_panel manage library open rename duplicate delete"
+        ),
     ),
     CommandSpec(
-        "dashboard.import_json",
-        lambda host: host.import_dashboards_json,
-        menu_text="Import Dashboards (JSON)...",
+        "control_panel.import_json",
+        lambda host: host.import_control_panels_json,
+        menu_text="Import Control Panels (JSON)...",
         icon=QStyle.StandardPixmap.SP_DialogOpenButton,
-        palette_title="Import Dashboards from JSON",
-        palette_subtitle="Merge dashboards from a ComPort Zone dashboard file",
-        palette_keywords="dashboard json import merge transfer",
+        palette_title="Import Control Panels from JSON",
+        palette_subtitle="Merge control panels from a ComPort Zone control panel file",
+        palette_keywords="control panel control_panel json import merge transfer",
     ),
     CommandSpec(
-        "dashboard.export_json",
-        lambda host: host.export_dashboards_json,
-        menu_text="Export Dashboards (JSON)...",
+        "control_panel.export_json",
+        lambda host: host.export_control_panels_json,
+        menu_text="Export Control Panels (JSON)...",
         icon=QStyle.StandardPixmap.SP_DialogSaveButton,
-        palette_title="Export Dashboards to JSON",
-        palette_subtitle="Save all dashboards to a transferable JSON file",
-        palette_keywords="dashboard json export share transfer backup",
+        palette_title="Export Control Panels to JSON",
+        palette_subtitle="Save all control panels to a transferable JSON file",
+        palette_keywords="control panel control_panel json export share transfer backup",
     ),
     CommandSpec(
         "help.documentation",
@@ -626,8 +631,8 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         "command_file.open_editor",
         SUBMENU_OPEN_RECENT,
         SEPARATOR,
-        "dashboard.new",
-        SUBMENU_OPEN_DASHBOARD,
+        "control_panel.new",
+        SUBMENU_OPEN_CONTROL_PANEL,
         SEPARATOR,
         "command_file.save",
         "command_file.save_as",
@@ -699,7 +704,7 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         "command_file.stop",
         SUBMENU_RUN_IN_TERMINAL,
         SEPARATOR,
-        "dashboard.manage",
+        "control_panel.manage",
         SEPARATOR,
         "quick_commands.add",
         "quick_files.add",
@@ -728,8 +733,8 @@ MENU_SECTIONS: dict[str, tuple[str | None, ...]] = {
         "quick_files.import_csv",
         "quick_files.export_csv",
         SEPARATOR,
-        "dashboard.import_json",
-        "dashboard.export_json",
+        "control_panel.import_json",
+        "control_panel.export_json",
     ),
 }
 
@@ -761,10 +766,10 @@ PALETTE_COMMAND_IDS: tuple[str, ...] = (
     "quick_files.import_csv",
     "quick_files.export_csv",
     "quick_files.delete_all",
-    "dashboard.new",
-    "dashboard.manage",
-    "dashboard.import_json",
-    "dashboard.export_json",
+    "control_panel.new",
+    "control_panel.manage",
+    "control_panel.import_json",
+    "control_panel.export_json",
     "help.check_for_updates",
 )
 

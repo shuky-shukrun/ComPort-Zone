@@ -1,10 +1,24 @@
 from __future__ import annotations
 
 import socket
+import time
 from copy import deepcopy
 from queue import Queue
-from threading import Event, Lock, Thread, current_thread
+from contextlib import contextmanager
+from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Callable, Protocol
+
+# When the dispatcher acquires :meth:`LanClient.hold_wire` after a
+# different sender (typically the bound terminal) just released it,
+# any in-flight reply to that previous send is still sitting in the
+# socket buffer / between recv() and event emission. Sleep this long
+# under the lock so the reader thread has time to push those events
+# into rx_queue, where the dispatcher's drain can clean them up
+# before our send goes out. Without this we get the "tile A receives
+# tile B's value" cross-talk symptom on every concurrent send.
+# 30 ms covers localhost (<1 ms RTT) and real LAN (1–20 ms RTT)
+# comfortably without making polled tiles feel sluggish.
+POST_ACQUIRE_SETTLE_S = 0.030
 
 from .models import LanProfile, apply_line_ending
 from .serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
@@ -37,6 +51,14 @@ class LanClient:
     def __init__(self, socket_factory: SocketFactory | None = None) -> None:
         self.events: Queue[SerialEvent] = Queue()
         self._lock = Lock()
+        # Wire-transaction lock. Mirrors :attr:`SerialClient._wire_lock`
+        # — held end-to-end through each ``_write`` (so two threads can
+        # never bisect a TCP ``sendall``) AND held by callers across
+        # multi-step transactions via :meth:`hold_wire` (so the
+        # dispatcher's RX window can't be polluted by a racing terminal
+        # send). Reentrant so a holder can call ``send_text`` inside
+        # the held region without deadlocking on its own write path.
+        self._wire_lock = RLock()
         self._event_subscribers: list[Queue[SerialEvent]] = []
         self._socket_factory = socket_factory or _default_socket_factory
         self._socket: SocketLike | None = None
@@ -107,17 +129,48 @@ class LanClient:
         self._write(data, display, source=source)
 
     def _write(self, data: bytes, display_text: str, *, source: str = "") -> None:
-        with self._lock:
-            connection = self._socket
-        if connection is None:
-            raise RuntimeError("LAN endpoint is not connected.")
-        try:
-            connection.sendall(data)
-        except OSError as exc:
-            self._emit("error", f"Write failed: {exc}")
-            self._handle_connection_loss(str(exc))
-            raise RuntimeError(str(exc)) from exc
-        self._emit("tx", display_text, source=source)
+        # Hold the wire lock through the WHOLE send: two threads can
+        # never bisect ``sendall`` (which on Windows / TCP doesn't
+        # interleave the bytes of a single call, but DOES race for
+        # ordering with another sendall — meaning the panel's MEAS?
+        # could end up arriving after the terminal's *IDN?, and the
+        # dispatcher's parse window would then capture the terminal's
+        # reply). The hold also extends to anyone above us who entered
+        # :meth:`hold_wire` for a multi-step transaction.
+        with self._wire_lock:
+            with self._lock:
+                connection = self._socket
+            if connection is None:
+                raise RuntimeError("LAN endpoint is not connected.")
+            try:
+                connection.sendall(data)
+            except OSError as exc:
+                self._emit("error", f"Write failed: {exc}")
+                self._handle_connection_loss(str(exc))
+                raise RuntimeError(str(exc)) from exc
+            self._emit("tx", display_text, source=source)
+
+    @contextmanager
+    def hold_wire(self):
+        """Reserve the wire for a multi-step transaction.
+
+        Same contract as :meth:`SerialClient.hold_wire`. Without this
+        the control-panel dispatcher's RX window would absorb the
+        device's reply to a racing terminal send (visible as "tile shows
+        a different tile's value"). Reentrant so the holder can call
+        ``send_text`` inside.
+
+        After acquiring the lock we wait briefly (``POST_ACQUIRE_SETTLE_S``)
+        so any in-flight reply to the *previous* holder's send lands in
+        the subscriber queues before our drain runs. Without this the
+        dispatcher's drain races the reader thread — TCP delivers bytes
+        asynchronously, and the GIL can delay the reader thread by
+        milliseconds, leaving stale bytes that only show up after our
+        send. Settling here means the dispatcher's drain catches them.
+        """
+        with self._wire_lock:
+            time.sleep(POST_ACQUIRE_SETTLE_S)
+            yield
 
     def _attempt_connect(self, profile: LanProfile, reconnect_attempt: bool) -> bool:
         if not profile.host.strip() or not 1 <= int(profile.port) <= 65535:

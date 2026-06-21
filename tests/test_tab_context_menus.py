@@ -56,7 +56,7 @@ class FakeEditor:
         self.calls.append("save_as")
 
 
-class FakeDashboardTab:
+class FakeControlPanelTab:
     def __init__(self, *, user_paused: bool = False) -> None:
         self.calls: list[object] = []
         reasons = frozenset({"user"}) if user_paused else frozenset()
@@ -87,17 +87,17 @@ class FakeContextMenuHost(QMainWindow):
         self.menu_builder = MainWindowMenuBuilder(self, self.command_registry)
         self.session = FakeSession()
         self.editor: FakeEditor | None = None
-        self.dashboard: FakeDashboardTab | None = None
+        self.control_panel: FakeControlPanelTab | None = None
         self.calls: list[object] = []
 
     def session_at(self, _index: int):
-        return None if self.editor or self.dashboard else self.session
+        return None if self.editor or self.control_panel else self.session
 
     def command_file_editor_at(self, _index: int):
         return self.editor
 
-    def dashboard_at(self, _index: int):
-        return self.dashboard
+    def control_panel_at(self, _index: int):
+        return self.control_panel
 
     def _add_context_action(self, *args, **kwargs):
         return self.menu_builder.add_context_action(*args, **kwargs)
@@ -220,14 +220,19 @@ class TabContextMenuBuilderTests(unittest.TestCase):
 
             self.assertEqual(
                 action_titles(menu),
-                ["New Terminal", "New Command File", "New Dashboard", "Dashboards..."],
+                [
+                    "New Terminal",
+                    "New Command File",
+                    "New Control Panel",
+                    "Control Panels...",
+                ],
             )
         finally:
             host.deleteLater()
 
-    def test_builds_dashboard_tab_context_menu(self) -> None:
+    def test_builds_control_panel_tab_context_menu(self) -> None:
         host = FakeContextMenuHost()
-        host.dashboard = FakeDashboardTab()
+        host.control_panel = FakeControlPanelTab()
         try:
             menu = TabContextMenuBuilder(host).build(1)
 
@@ -235,13 +240,14 @@ class TabContextMenuBuilderTests(unittest.TestCase):
             self.assertEqual(
                 action_titles(menu),
                 [
-                    "New Dashboard",
-                    "Rename Dashboard",
+                    "New Control Panel",
+                    "Rename Control Panel",
+                    "Duplicate Control Panel",
                     "Bind to Terminal",
                     "Pause Polling",
                     "Add Entry...",
                     "Edit Layout",
-                    "Dashboards...",
+                    "Control Panels...",
                     "Move to Other Pane",
                     "Split Right",
                     "Split Down",
@@ -253,20 +259,20 @@ class TabContextMenuBuilderTests(unittest.TestCase):
             )
 
             next(action for action in menu.actions() if action.text() == "Pause Polling").trigger()
-            self.assertIn(("set_polling_enabled", False), host.dashboard.calls)
+            self.assertIn(("set_polling_enabled", False), host.control_panel.calls)
         finally:
             host.deleteLater()
 
-    def test_dashboard_menu_offers_resume_when_user_paused(self) -> None:
+    def test_control_panel_menu_offers_resume_when_user_paused(self) -> None:
         host = FakeContextMenuHost()
-        host.dashboard = FakeDashboardTab(user_paused=True)
+        host.control_panel = FakeControlPanelTab(user_paused=True)
         try:
             menu = TabContextMenuBuilder(host).build(1)
             titles = action_titles(menu)
             self.assertIn("Resume Polling", titles)
             self.assertNotIn("Pause Polling", titles)
             next(action for action in menu.actions() if action.text() == "Resume Polling").trigger()
-            self.assertIn(("set_polling_enabled", True), host.dashboard.calls)
+            self.assertIn(("set_polling_enabled", True), host.control_panel.calls)
         finally:
             host.deleteLater()
 

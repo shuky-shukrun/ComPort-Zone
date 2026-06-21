@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from ComPort_Zone.dashboard_models import DashboardTabState
+from ComPort_Zone.control_panel_models import ControlPanelTabState
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
@@ -37,11 +37,11 @@ class FakeCommandFileEditor:
         return self._dirty
 
 
-class FakeDashboardTab:
-    def __init__(self, state: DashboardTabState) -> None:
+class FakeControlPanelTab:
+    def __init__(self, state: ControlPanelTabState) -> None:
         self._state = state
 
-    def to_tab_state(self) -> DashboardTabState:
+    def to_tab_state(self) -> ControlPanelTabState:
         return self._state
 
 
@@ -50,7 +50,7 @@ class FakeRestoreTarget:
         self.count_additions = count_additions
         self.sessions: list[tuple[TerminalSessionState | None, bool]] = []
         self.command_files: list[tuple[Path | None, CommandFileTabState | None]] = []
-        self.dashboards: list[DashboardTabState] = []
+        self.control_panels: list[ControlPanelTabState] = []
         self.prompt_count = 0
         self.configured_layouts: list[WorkspaceLayoutState] = []
         self.selected_panes: list[int] = []
@@ -73,8 +73,8 @@ class FakeRestoreTarget:
         self.command_files.append((path, state))
         return object()
 
-    def add_dashboard_tab(self, state: DashboardTabState) -> object:
-        self.dashboards.append(state)
+    def add_control_panel_tab(self, state: ControlPanelTabState) -> object:
+        self.control_panels.append(state)
         return object()
 
     def prompt_current_session_settings(self) -> None:
@@ -83,7 +83,7 @@ class FakeRestoreTarget:
     def workspace_tab_count(self) -> int:
         if not self.count_additions:
             return 0
-        return len(self.sessions) + len(self.command_files) + len(self.dashboards)
+        return len(self.sessions) + len(self.command_files) + len(self.control_panels)
 
     def configure_workspace_layout(self, layout: WorkspaceLayoutState) -> None:
         self.configured_layouts.append(layout)
@@ -343,12 +343,12 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual(target.sessions[-1], (None, False))
 
 
-class DashboardWorkspaceStateTests(unittest.TestCase):
-    def test_capture_persists_dashboard_tabs(self) -> None:
+class ControlPanelWorkspaceStateTests(unittest.TestCase):
+    def test_capture_persists_control_panel_tabs(self) -> None:
         service = WorkspaceStateService()
         settings = AppSettings()
-        dashboard = FakeDashboardTab(
-            DashboardTabState(dashboard_id="dash-1", target_endpoint="COM7", polling_enabled=False)
+        control_panel = FakeControlPanelTab(
+            ControlPanelTabState(control_panel_id="dash-1", target_endpoint="COM7", polling_enabled=False)
         )
 
         service.capture_into_settings(
@@ -356,23 +356,23 @@ class DashboardWorkspaceStateTests(unittest.TestCase):
             active_session=None,
             terminal_sessions=[],
             command_file_editors=[],
-            dashboard_tabs=[dashboard],
+            control_panel_tabs=[control_panel],
             command_history=[],
             window_width=1000,
             window_height=700,
         )
 
-        self.assertEqual(len(settings.restored_dashboards), 1)
-        self.assertEqual(settings.restored_dashboards[0].dashboard_id, "dash-1")
-        self.assertEqual(settings.restored_dashboards[0].target_endpoint, "COM7")
-        self.assertFalse(settings.restored_dashboards[0].polling_enabled)
-        # The fallback flat layout includes the dashboard tab too.
+        self.assertEqual(len(settings.restored_control_panels), 1)
+        self.assertEqual(settings.restored_control_panels[0].control_panel_id, "dash-1")
+        self.assertEqual(settings.restored_control_panels[0].target_endpoint, "COM7")
+        self.assertFalse(settings.restored_control_panels[0].polling_enabled)
+        # The fallback flat layout includes the control_panel tab too.
         kinds = [tab.kind for pane in settings.workspace_layout.panes for tab in pane.tabs]
-        self.assertIn("dashboard", kinds)
+        self.assertIn("control_panel", kinds)
 
-    def test_restore_layout_recreates_dashboard_tabs_in_pane_order(self) -> None:
+    def test_restore_layout_recreates_control_panel_tabs_in_pane_order(self) -> None:
         service = WorkspaceStateService()
-        dashboard_state = DashboardTabState(dashboard_id="dash-1", target_endpoint="COM7")
+        control_panel_state = ControlPanelTabState(control_panel_id="dash-1", target_endpoint="COM7")
         layout = WorkspaceLayoutState(
             panes=[
                 WorkspacePaneState(
@@ -381,7 +381,7 @@ class DashboardWorkspaceStateTests(unittest.TestCase):
                             kind="terminal",
                             terminal=TerminalSessionState(title="DUT", serial=SerialProfile(port="COM7")),
                         ),
-                        WorkspaceTabState(kind="dashboard", dashboard=dashboard_state),
+                        WorkspaceTabState(kind="control_panel", control_panel=control_panel_state),
                     ],
                     active_tab=1,
                 )
@@ -393,22 +393,22 @@ class DashboardWorkspaceStateTests(unittest.TestCase):
             AppSettings(workspace_layout=layout), target, prompt_first_settings=False
         )
 
-        self.assertEqual(len(target.dashboards), 1)
-        self.assertIs(target.dashboards[0], dashboard_state)
+        self.assertEqual(len(target.control_panels), 1)
+        self.assertIs(target.control_panels[0], control_panel_state)
         self.assertEqual(len(target.sessions), 1)
 
-    def test_restore_flat_fallback_recreates_dashboard_tabs(self) -> None:
+    def test_restore_flat_fallback_recreates_control_panel_tabs(self) -> None:
         service = WorkspaceStateService()
-        dashboard_state = DashboardTabState(dashboard_id="dash-2")
+        control_panel_state = ControlPanelTabState(control_panel_id="dash-2")
         settings = AppSettings(
             restored_tabs=[TerminalSessionState(title="DUT")],
-            restored_dashboards=[dashboard_state],
+            restored_control_panels=[control_panel_state],
         )
         target = FakeRestoreTarget()
 
         service.restore_from_settings(settings, target, prompt_first_settings=False)
 
-        self.assertEqual(target.dashboards, [dashboard_state])
+        self.assertEqual(target.control_panels, [control_panel_state])
 
 
 if __name__ == "__main__":

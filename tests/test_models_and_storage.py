@@ -2,18 +2,18 @@ import json
 from pathlib import Path
 import unittest
 
-from ComPort_Zone.dashboard_models import (
+from ComPort_Zone.control_panel_models import (
     ColorRule,
-    DashboardConfig,
-    DashboardEntry,
-    DashboardTabState,
+    ControlPanelConfig,
+    ControlPanelEntry,
+    ControlPanelTabState,
     TilePlacement,
 )
 from ComPort_Zone.models import (
     AppSettings,
     CommandFileTabState,
-    DASHBOARD_SCHEMA_FLOOR,
-    DASHBOARD_V2_SCHEMA_FLOOR,
+    CONTROL_PANEL_SCHEMA_FLOOR,
+    CONTROL_PANEL_V2_SCHEMA_FLOOR,
     LAN_SCHEMA_FLOOR,
     LanProfile,
     MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
@@ -121,7 +121,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings(
             serial=SerialProfile(port="COM7", baudrate=57600, line_ending="LF"),
             command_history=["status", "reset"],
-            dashboards=[],  # keep the base min-compat floor in focus here
+            control_panels=[],  # keep the base min-compat floor in focus here
             quick_commands=[
                 QuickCommand(
                     id="cmd-1",
@@ -369,7 +369,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         settings = AppSettings(
             transport_kind="lan",
             lan=LanProfile(host="192.168.1.50", port=5025, line_ending="LF"),
-            dashboards=[],  # isolate the LAN floor from the seeded example
+            control_panels=[],  # isolate the LAN floor from the seeded example
         )
 
         payload = settings.to_dict()
@@ -501,83 +501,88 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(restored.serial.port, "COM4")
 
 
-class DashboardSchemaTests(unittest.TestCase):
-    """Schema v5: dashboard persistence and minimum-compatible floors."""
+class ControlPanelSchemaTests(unittest.TestCase):
+    """Schema v5: control_panel persistence and minimum-compatible floors."""
 
     @staticmethod
-    def make_dashboard() -> DashboardConfig:
-        return DashboardConfig(
+    def make_control_panel() -> ControlPanelConfig:
+        return ControlPanelConfig(
             name="PSU Bench",
-            entries=[DashboardEntry(label="Volts", command="MEAS:VOLT?")],
+            entries=[ControlPanelEntry(label="Volts", command="MEAS:VOLT?")],
         )
 
     def test_plain_settings_keep_base_min_compat(self) -> None:
-        payload = AppSettings(dashboards=[]).to_dict()
+        payload = AppSettings(control_panels=[]).to_dict()
         self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
         self.assertEqual(
             payload["minimum_compatible_schema_version"],
             MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
         )
 
-    def test_first_run_seeds_the_example_dashboard(self) -> None:
+    def test_first_run_seeds_the_example_control_panel(self) -> None:
         settings = AppSettings()
-        self.assertEqual([config.name for config in settings.dashboards], ["Example Dashboard"])
-        example = settings.dashboards[0]
-        self.assertTrue(example.favorite)
         self.assertEqual(
-            [entry.command for entry in example.entries],
-            ["*IDN?", "OUTP?", "SYST:FIRM?"],
+            [config.name for config in settings.control_panels],
+            ["Example Control Panel"],
+        )
+        example = settings.control_panels[0]
+        self.assertTrue(example.favorite)
+        # Setpoint + enum entries have no poll command; filter to the
+        # polled subset for this ordering check.
+        self.assertEqual(
+            [entry.command for entry in example.entries if entry.command],
+            ["*IDN?", "SYST:FIRM?", "OUTP?", "SOUR:FUNC:MODE?"],
         )
 
-    def test_emptied_dashboard_library_stays_empty(self) -> None:
+    def test_emptied_control_panel_library_stays_empty(self) -> None:
         # Deleting the example must stick: a present-but-empty key does not
         # re-seed (mirrors quick-command behavior).
-        restored = AppSettings.from_dict(AppSettings(dashboards=[]).to_dict())
-        self.assertEqual(restored.dashboards, [])
+        restored = AppSettings.from_dict(AppSettings(control_panels=[]).to_dict())
+        self.assertEqual(restored.control_panels, [])
 
-    def test_app_settings_import_preserves_dashboards(self) -> None:
+    def test_app_settings_import_preserves_control_panels(self) -> None:
         service = SettingsService()
-        current = AppSettings(dashboards=[self.make_dashboard()])
+        current = AppSettings(control_panels=[self.make_control_panel()])
         # App-settings payloads exclude the libraries section, so the parsed
         # import seeds defaults; preservation must restore the user's library.
         imported = AppSettings.from_dict(AppSettings().to_app_settings_dict())
         merged = service.preserve_quick_actions(imported, current)
         self.assertEqual(
-            [config.name for config in merged.dashboards],
+            [config.name for config in merged.control_panels],
             ["PSU Bench"],
         )
 
-    def test_dashboards_raise_min_compat_to_dashboard_floor(self) -> None:
-        payload = AppSettings(dashboards=[self.make_dashboard()]).to_dict()
-        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+    def test_control_panels_raise_min_compat_to_control_panel_floor(self) -> None:
+        payload = AppSettings(control_panels=[self.make_control_panel()]).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], CONTROL_PANEL_SCHEMA_FLOOR)
 
-    def test_restored_dashboard_tab_raises_min_compat(self) -> None:
+    def test_restored_control_panel_tab_raises_min_compat(self) -> None:
         payload = AppSettings(
-            dashboards=[],  # isolate the restored-tab floor from the seeded example
-            restored_dashboards=[DashboardTabState(dashboard_id="abc")],
+            control_panels=[],  # isolate the restored-tab floor from the seeded example
+            restored_control_panels=[ControlPanelTabState(control_panel_id="abc")],
         ).to_dict()
-        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+        self.assertEqual(payload["minimum_compatible_schema_version"], CONTROL_PANEL_SCHEMA_FLOOR)
 
-    def test_dashboard_workspace_tab_raises_min_compat(self) -> None:
+    def test_control_panel_workspace_tab_raises_min_compat(self) -> None:
         layout = WorkspaceLayoutState(
             panes=[
                 WorkspacePaneState(
                     tabs=[
                         WorkspaceTabState(
-                            kind="dashboard", dashboard=DashboardTabState(dashboard_id="abc")
+                            kind="control_panel", control_panel=ControlPanelTabState(control_panel_id="abc")
                         )
                     ]
                 )
             ]
         )
-        payload = AppSettings(dashboards=[], workspace_layout=layout).to_dict()
-        self.assertEqual(payload["minimum_compatible_schema_version"], DASHBOARD_SCHEMA_FLOOR)
+        payload = AppSettings(control_panels=[], workspace_layout=layout).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], CONTROL_PANEL_SCHEMA_FLOOR)
 
     def test_v2_feature_raises_min_compat_to_v2_floor(self) -> None:
-        base = self.make_dashboard()  # v1-shaped -> floor 5
+        base = self.make_control_panel()  # v1-shaped -> floor 5
         self.assertEqual(
-            AppSettings(dashboards=[base]).to_dict()["minimum_compatible_schema_version"],
-            DASHBOARD_SCHEMA_FLOOR,
+            AppSettings(control_panels=[base]).to_dict()["minimum_compatible_schema_version"],
+            CONTROL_PANEL_SCHEMA_FLOOR,
         )
         v2_variants = {
             "poll_mode": lambda c: setattr(c.entries[0], "poll_mode", "on_connect"),
@@ -590,74 +595,121 @@ class DashboardSchemaTests(unittest.TestCase):
         }
         for name, mutate in v2_variants.items():
             with self.subTest(feature=name):
-                config = self.make_dashboard()
+                config = self.make_control_panel()
                 mutate(config)
-                payload = AppSettings(dashboards=[config]).to_dict()
+                payload = AppSettings(control_panels=[config]).to_dict()
                 self.assertEqual(
-                    payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+                    payload["minimum_compatible_schema_version"], CONTROL_PANEL_V2_SCHEMA_FLOOR
                 )
 
-    def test_seeded_example_declares_v2_floor(self) -> None:
-        # The shipped example uses on_connect (FR-52), so a fresh install's
-        # library declares the v2 floor — accepted in the v2 plan.
+    def test_seeded_example_declares_v3_floor(self) -> None:
+        # The shipped example now bundles a setpoint and an enum tile
+        # (v3 features), so a fresh install's library declares the v3
+        # floor — accepted in the v3 plan.
+        from ComPort_Zone.models import CONTROL_PANEL_V3_SCHEMA_FLOOR
+
         payload = AppSettings().to_dict()
         self.assertEqual(
-            payload["minimum_compatible_schema_version"], DASHBOARD_V2_SCHEMA_FLOOR
+            payload["minimum_compatible_schema_version"],
+            CONTROL_PANEL_V3_SCHEMA_FLOOR,
         )
 
-    def test_lan_and_dashboards_take_highest_floor(self) -> None:
+    def test_v3_feature_raises_min_compat_to_v3_floor(self) -> None:
+        # A v3-only feature pushes a v2-shaped library to floor v7.
+        from ComPort_Zone.control_panel_models import (
+            EnumOption,
+            EnumSpec,
+            SetpointSpec,
+            TilePlacement,
+        )
+        from ComPort_Zone.models import CONTROL_PANEL_V3_SCHEMA_FLOOR
+
+        v3_variants = {
+            "setpoint kind": lambda c: setattr(c.entries[0].tile, "kind", "setpoint"),
+            "enum kind": lambda c: setattr(c.entries[0].tile, "kind", "enum"),
+            "setpoint spec": lambda c: setattr(
+                c.entries[0],
+                "setpoint",
+                SetpointSpec(command_template="V {value}"),
+            ),
+            "enum spec": lambda c: setattr(
+                c.entries[0],
+                "enum_spec",
+                EnumSpec(options=[EnumOption(label="A", command="A")]),
+            ),
+        }
+        for name, mutate in v3_variants.items():
+            with self.subTest(feature=name):
+                config = self.make_control_panel()
+                mutate(config)
+                payload = AppSettings(control_panels=[config]).to_dict()
+                self.assertEqual(
+                    payload["minimum_compatible_schema_version"],
+                    CONTROL_PANEL_V3_SCHEMA_FLOOR,
+                )
+
+    def test_v1_shaped_library_keeps_v1_floor_on_v3_build(self) -> None:
+        # The whole point of sparse v3: untouched libraries don't move.
+        config = self.make_control_panel()  # v1-shaped
+        payload = AppSettings(control_panels=[config]).to_dict()
+        self.assertEqual(payload["minimum_compatible_schema_version"], CONTROL_PANEL_SCHEMA_FLOOR)
+
+    def test_lan_and_control_panels_take_highest_floor(self) -> None:
         settings = AppSettings(
             transport_kind="lan",
             lan=LanProfile(host="dut.local"),
-            dashboards=[self.make_dashboard()],
+            control_panels=[self.make_control_panel()],
         )
         payload = settings.to_dict()
         self.assertEqual(
             payload["minimum_compatible_schema_version"],
-            max(LAN_SCHEMA_FLOOR, DASHBOARD_SCHEMA_FLOOR),
+            max(LAN_SCHEMA_FLOOR, CONTROL_PANEL_SCHEMA_FLOOR),
         )
 
-    def test_dashboards_round_trip_through_settings(self) -> None:
+    def test_control_panels_round_trip_through_settings(self) -> None:
         settings = AppSettings(
-            dashboards=[self.make_dashboard()],
-            restored_dashboards=[DashboardTabState(dashboard_id="abc", target_endpoint="COM7")],
+            control_panels=[self.make_control_panel()],
+            restored_control_panels=[ControlPanelTabState(control_panel_id="abc", target_endpoint="COM7")],
         )
         restored = AppSettings.from_dict(settings.to_dict())
-        self.assertEqual(len(restored.dashboards), 1)
-        self.assertEqual(restored.dashboards[0].name, "PSU Bench")
-        self.assertEqual(restored.dashboards[0].entries[0].command, "MEAS:VOLT?")
-        self.assertEqual(restored.restored_dashboards[0].target_endpoint, "COM7")
+        self.assertEqual(len(restored.control_panels), 1)
+        self.assertEqual(restored.control_panels[0].name, "PSU Bench")
+        self.assertEqual(restored.control_panels[0].entries[0].command, "MEAS:VOLT?")
+        self.assertEqual(restored.restored_control_panels[0].target_endpoint, "COM7")
 
-    def test_v4_payload_loads_and_seeds_example_dashboard(self) -> None:
+    def test_v4_payload_loads_and_seeds_example_control_panel(self) -> None:
         payload = AppSettings(serial=SerialProfile(port="COM9")).to_dict()
         payload["schema_version"] = 4
         payload["minimum_compatible_schema_version"] = 2
-        payload["libraries"].pop("dashboards", None)
-        payload["workspace"].pop("dashboard_tabs", None)
+        payload["libraries"].pop("control_panels", None)
+        payload["workspace"].pop("control_panel_tabs", None)
 
         loaded = SettingsService().settings_from_payload(payload)
 
         self.assertEqual(loaded.serial.port, "COM9")
-        # A pre-dashboard file has no "dashboards" key, so the upgrade seeds
+        # A pre-control_panel file has no "control_panels" key, so the upgrade seeds
         # the shipped example — same as a first run.
-        self.assertEqual([config.name for config in loaded.dashboards], ["Example Dashboard"])
-        self.assertEqual(loaded.restored_dashboards, [])
+        self.assertEqual(
+            [config.name for config in loaded.control_panels],
+            ["Example Control Panel"],
+        )
+        self.assertEqual(loaded.restored_control_panels, [])
 
-    def test_dashboard_workspace_tab_state_round_trips(self) -> None:
+    def test_control_panel_workspace_tab_state_round_trips(self) -> None:
         tab = WorkspaceTabState(
-            kind="dashboard",
-            dashboard=DashboardTabState(
-                dashboard_id="abc",
+            kind="control_panel",
+            control_panel=ControlPanelTabState(
+                control_panel_id="abc",
                 target_endpoint="COM7",
                 target_title="Terminal 1",
                 polling_enabled=False,
             ),
         )
         restored = WorkspaceTabState.from_dict(json.loads(json.dumps(tab.to_dict())))
-        self.assertEqual(restored.kind, "dashboard")
-        assert restored.dashboard is not None
-        self.assertEqual(restored.dashboard.dashboard_id, "abc")
-        self.assertFalse(restored.dashboard.polling_enabled)
+        self.assertEqual(restored.kind, "control_panel")
+        assert restored.control_panel is not None
+        self.assertEqual(restored.control_panel.control_panel_id, "abc")
+        self.assertFalse(restored.control_panel.polling_enabled)
         self.assertIsNone(restored.terminal)
 
 

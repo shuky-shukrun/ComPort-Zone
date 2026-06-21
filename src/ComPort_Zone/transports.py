@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from queue import Queue
@@ -8,6 +9,19 @@ from typing import Any, Protocol, runtime_checkable
 from .lan_core import LanClient
 from .models import LanProfile, SerialProfile
 from .serial_core import SerialClient, SerialEvent
+
+
+def _client_hold_wire(client):
+    """Adapter helper: forward to ``client.hold_wire()`` when present.
+
+    Hand-rolled test stubs and older clients won't have the method, so
+    fall back to a no-op context manager — the dispatcher still works
+    against them, just without the cross-thread wire serialisation.
+    """
+    hold = getattr(client, "hold_wire", None)
+    if hold is None:
+        return nullcontext()
+    return hold()
 
 
 @dataclass(slots=True)
@@ -173,6 +187,14 @@ class SerialTransportAdapter:
         else:
             self.client.send_bytes(data)
 
+    def hold_wire(self):
+        """Pass-through to the underlying client's wire-transaction lock
+        so the control-panel dispatcher can serialise its full
+        transaction against any other sender on this transport. Falls
+        back to a no-op context manager when the client predates the
+        API (e.g. a hand-rolled test stub)."""
+        return _client_hold_wire(self.client)
+
     def set_dtr(self, value: bool) -> bool:
         return self.client.set_dtr(value)
 
@@ -243,6 +265,12 @@ class LanTransportAdapter:
             self.client.send_bytes(data, source=source)
         else:
             self.client.send_bytes(data)
+
+    def hold_wire(self):
+        """Pass-through to the underlying LAN client's wire lock so the
+        dispatcher serialises across full transactions on TCP just like
+        it does on serial."""
+        return _client_hold_wire(self.client)
 
     def set_dtr(self, value: bool) -> bool:
         return False

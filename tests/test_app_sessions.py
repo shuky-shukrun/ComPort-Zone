@@ -1,4 +1,5 @@
 import json
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -637,34 +638,34 @@ class AppSessionTests(unittest.TestCase):
             old_prompt_current = app_module.MainWindow.prompt_current_session_settings
             old_prompt_session = app_module.MainWindow.prompt_session_settings
             window = None
+            # The check now runs on a worker thread through urllib (off Qt's
+            # OpenSSL path). Hold the worker inside fetch so the synchronous
+            # "Checking…" status is observable before it resolves.
+            release_gate = threading.Event()
 
-            class FakeSignal:
-                def connect(self, _callback) -> None:
-                    return None
-
-            class FakeReply:
-                finished = FakeSignal()
-
-            class FakeNetwork:
-                def __init__(self) -> None:
-                    self.reply = FakeReply()
-
-                def get(self, _request):
-                    return self.reply
+            def blocking_fetch(**_kwargs):
+                release_gate.wait(2.0)
+                raise RuntimeError("stopped for test")
 
             app_module.default_config_path = lambda: settings_path
             app_module.MainWindow.prompt_current_session_settings = lambda self: None
             app_module.MainWindow.prompt_session_settings = lambda self, session: None
             try:
-                window = app_module.MainWindow()
-                fake_network = FakeNetwork()
-                window.version_check_network = fake_network
+                with mock.patch.object(
+                    main_window_module, "fetch_latest_release", blocking_fetch
+                ):
+                    window = app_module.MainWindow()
+                    window.check_for_updates(automatic=True)
 
-                window.check_for_updates(automatic=True)
-
-                self.assertEqual(window.footer.text(), "Checking for updates...")
-                self.assertIs(window._version_check_reply, fake_network.reply)
+                    self.assertEqual(window.footer.text(), "Checking for updates...")
+                    self.assertTrue(window._version_check_running)
+                    # Let the worker resolve (error path, automatic → no dialog)
+                    # while the window is still alive.
+                    release_gate.set()
+                    QTest.qWait(100)
+                    self.qt.processEvents()
             finally:
+                release_gate.set()
                 app_module.default_config_path = old_config_path
                 app_module.MainWindow.prompt_current_session_settings = old_prompt_current
                 app_module.MainWindow.prompt_session_settings = old_prompt_session
@@ -1253,7 +1254,12 @@ class AppSessionTests(unittest.TestCase):
             titles = [action.text() for action in menu.actions() if not action.isSeparator()]
             self.assertEqual(
                 titles,
-                ["New Terminal", "New Command File", "New Dashboard", "Dashboards..."],
+                [
+                    "New Terminal",
+                    "New Command File",
+                    "New Control Panel",
+                    "Control Panels...",
+                ],
             )
         finally:
             app_module.default_config_path = old_config_path
@@ -1560,8 +1566,8 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("Export CSV…", overflow_actions)
             # The legacy 8-button grid is gone; primary actions are inline now.
             self.assertEqual(drawer_action_rows(quick_page), [])
-            # The per-tab terminal drawer stays dashboard-free (the visible
-            # shared drawer carries the Dashboards page).
+            # The per-tab terminal drawer stays control_panel-free (the visible
+            # shared drawer carries the ControlPanels page).
             self.assertEqual(session.drawer_pages.count(), 4)
             self.assertEqual(
                 [button.toolTip() for button in session.drawer.rail_buttons],

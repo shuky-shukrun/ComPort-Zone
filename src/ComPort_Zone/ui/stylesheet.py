@@ -535,12 +535,16 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QToolButton#editorToolButton:hover {{ background: {hover}; }}
     QFrame#editorToolbarRule {{ background: {bd_soft}; border: none; max-height: 1px; min-height: 1px; }}
     QLabel#editorSendLabel {{ color: {tx3}; font-size: {MICRO_FS}px; padding: 0 2px; }}
-    QPushButton#editorRunButton {{
+    QPushButton#editorRunButton, QPushButton#controlPanelAddButton {{
         background: {run_btn}; color: {on_accent}; border: none; border-radius: {RADIUS_SM}px;
         padding: 4px 14px; font-weight: 700; min-height: 24px;
     }}
-    QPushButton#editorRunButton:hover {{ background: {run_btn_hover}; }}
-    QPushButton#editorRunButton:pressed {{ background: {run_btn_press}; }}
+    QPushButton#editorRunButton:hover, QPushButton#controlPanelAddButton:hover {{
+        background: {run_btn_hover};
+    }}
+    QPushButton#editorRunButton:pressed, QPushButton#controlPanelAddButton:pressed {{
+        background: {run_btn_press};
+    }}
     /* Grayed-out while no terminal is connected to run into. The #id selector
        outweighs the generic QPushButton:disabled rule, so it needs its own. */
     QPushButton#editorRunButton:disabled {{ background: {elevated}; color: {tx_faint}; }}
@@ -714,43 +718,81 @@ def build_stylesheet(theme: ThemePalette) -> str:
     """)
 
     # =====================================================================
-    # Dashboard view — tiles, grid, binding chip
+    # ControlPanel view — tiles, grid, binding chip
     # =====================================================================
-    # State colors mirror ui/dashboard_tiles.tile_state_color: ok=tx green,
+    # State colors mirror ui/control_panel_tiles.tile_state_color: ok=tx green,
     # warn=status amber, fail/error=error red, stale/neutral=muted.
     stale_ink = mix_hex(tx2, bg, 0.75)
     parts.append(f"""
-    QWidget#dashboardGrid {{ background: {bg}; }}
-    QWidget#dashboardHeader {{
+    QWidget#controlPanelGrid {{ background: {bg}; }}
+    QWidget#controlPanelHeader {{
         background: {panel};
         border-bottom: 1px solid {bd_soft};
     }}
-    QToolButton#dashboardHeaderButton {{
+    QToolButton#controlPanelHeaderButton {{
         background: transparent; border: none; border-radius: {RADIUS_SM}px;
         color: {tx2}; padding: 2px 7px; min-height: 24px;
     }}
-    QToolButton#dashboardHeaderButton:hover {{ background: {hover}; color: {tx}; }}
-    QToolButton#dashboardHeaderButton:pressed {{ background: {press_bg}; }}
-    QToolButton#dashboardHeaderButton:checked {{ background: {ghost_on_bg}; color: {accent}; }}
-    QToolButton#dashboardHeaderButton:checked:hover {{ background: {press_bg}; }}
-    QLabel#dashboardSaveState {{
+    QToolButton#controlPanelHeaderButton:hover {{ background: {hover}; color: {tx}; }}
+    QToolButton#controlPanelHeaderButton:pressed {{ background: {press_bg}; }}
+    QToolButton#controlPanelHeaderButton:checked {{ background: {ghost_on_bg}; color: {accent}; }}
+    QToolButton#controlPanelHeaderButton:checked:hover {{ background: {press_bg}; }}
+    /* Master arm (v3, FR-74): amber accent disarmed, red accent armed.
+       The armed state is also `checked`, so the [panelArmed] selectors
+       win on the cascade by raising specificity. */
+    QToolButton#controlPanelHeaderButton[panelArmed="false"] {{ color: {amber}; }}
+    QToolButton#controlPanelHeaderButton[panelArmed="true"] {{
+        color: {red}; background: {err_bg};
+    }}
+    QToolButton#controlPanelHeaderButton[panelArmed="true"]:hover {{ background: {press_bg}; }}
+    QLabel#controlPanelSaveState {{
         color: {tx_faint}; font-size: {MICRO_FS}px; font-family: {MONO}; padding: 0 4px;
     }}
-    QFrame#dashboardTile {{
+    QFrame#controlPanelTile {{
         background: {elevated};
         border: 1px solid {bd_soft};
-        border-radius: {RADIUS_LG}px;
+        border-radius: {RADIUS_MD}px;
     }}
-    QFrame#dashboardTile[tileState="ok"] {{ border: 1px solid {ok_bd}; }}
-    QFrame#dashboardTile[tileState="warn"] {{ border: 1px solid {mix_hex(amber, bg, 0.5)}; }}
-    QFrame#dashboardTile[tileState="fail"],
-    QFrame#dashboardTile[tileState="error"] {{ border: 1px solid {danger_bd}; }}
-    QFrame#dashboardTile[editMode="true"] {{ border: 1px dashed {accent}; }}
-    QFrame#dashboardTile[entryEnabled="false"] {{ border: 1px dashed {bd}; }}
-    QFrame#dashboardTile QLabel {{ background: transparent; }}
-    QFrame#dashboardTile[entryEnabled="false"] QLabel {{ color: {tx_faint}; }}
+    QFrame#controlPanelTile[tileState="ok"] {{ border: 1px solid {ok_bd}; }}
+    QFrame#controlPanelTile[tileState="warn"] {{ border: 1px solid {mix_hex(amber, bg, 0.5)}; }}
+    QFrame#controlPanelTile[tileState="fail"],
+    QFrame#controlPanelTile[tileState="error"] {{ border: 1px solid {danger_bd}; }}
+    QFrame#controlPanelTile[editMode="true"] {{ border: 1px dashed {accent}; }}
+    QFrame#controlPanelTile[entryEnabled="false"] {{ border: 1px dashed {bd}; }}
+    /* Brief flash when a writing tile's value just refreshed (3 s). */
+    QFrame#controlPanelTile[recentlyUpdated="true"] {{
+        border: 2px solid {accent};
+        background: {mix_hex(accent, elevated, 0.22)};
+    }}
+    /* Ctrl-click multi-select highlight (for copying several tiles). Last
+       so it wins over the other border states when a tile is selected. */
+    QFrame#controlPanelTile[selected="true"] {{
+        border: 2px solid {accent};
+        background: {mix_hex(accent, elevated, 0.32)};
+    }}
+    QFrame#controlPanelTile QLabel {{ background: transparent; }}
+    QFrame#controlPanelTile[entryEnabled="false"] QLabel {{ color: {tx_faint}; }}
 
     QLabel#tileTitle {{
+        color: {tx2};
+        font-size: {LABEL_FS}px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+    }}
+    /* Static "text" tile: a flatter surface than data tiles + a readable,
+       slightly muted body so notes read as documentation, not readings. */
+    QFrame#controlPanelTile[tileRole="text"] {{
+        background: {mix_hex(elevated, bg, 0.5)};
+        border: 1px solid {bd_soft};
+    }}
+    QLabel#tileBody {{ color: {tx2}; font-size: {LABEL_FS}px; }}
+    /* Static "separator" tile: no chrome, just a rule (+ optional caption). */
+    QFrame#controlPanelTile[tileRole="separator"] {{
+        background: transparent;
+        border: none;
+    }}
+    QFrame#tileSeparatorLine {{ background: {bd_strong}; border: none; }}
+    QLabel#tileSeparatorCaption {{
         color: {tx2};
         font-size: {LABEL_FS}px;
         font-weight: 600;
@@ -760,7 +802,6 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLabel#tileValue {{
         color: {tx};
         font-family: {MONO};
-        font-size: 21px;
         font-weight: 600;
     }}
     QLabel#tileValue[tileState="ok"] {{ color: {green}; }}
@@ -777,17 +818,30 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QLabel#tileLamp[tileState="warn"] {{ background: {amber}; border-color: {mix_hex(amber, bg, 0.5)}; }}
     QLabel#tileLamp[tileState="fail"], QLabel#tileLamp[tileState="error"]
         {{ background: {red}; border-color: {danger_bd}; }}
-    QLabel#tileStateCaption {{ color: {tx}; font-weight: 700; font-size: 15px; }}
+    QLabel#tileStateCaption {{ color: {tx}; font-weight: 700; }}
     QLabel#tileStateCaption[tileState="ok"] {{ color: {green}; }}
     QLabel#tileStateCaption[tileState="warn"] {{ color: {amber}; }}
     QLabel#tileStateCaption[tileState="fail"], QLabel#tileStateCaption[tileState="error"]
         {{ color: {red}; }}
     QLabel#tileStateCaption[tileState="stale"] {{ color: {stale_ink}; }}
 
+    QLabel#tileBitsLamp {{
+        border-radius: 6px;
+        background: {stale_ink};
+        border: 1px solid {bd_strong};
+    }}
+    QLabel#tileBitsLamp[tileState="ok"] {{ background: {green}; border-color: {ok_bd}; }}
+    QLabel#tileBitsLamp[tileState="warn"] {{ background: {amber}; border-color: {mix_hex(amber, bg, 0.5)}; }}
+    QLabel#tileBitsLamp[tileState="fail"] {{ background: {red}; border-color: {danger_bd}; }}
+    QLabel#tileBitsLamp[tileState="neutral"] {{ background: {stale_ink}; border-color: {bd_strong}; }}
+    QLabel#tileBitsLabel {{ color: {tx2}; font-weight: 500; }}
+    QLabel#tileBitsLabel[bitActive="true"] {{ color: {tx}; font-weight: 700; }}
+    QLabel#tileBitsEmpty {{ color: {tx_faint}; font-style: italic; }}
+
     QPushButton#tileControlButton {{
         background: {hover}; color: {tx};
         border: 1px solid {bd_strong}; border-radius: {RADIUS_MD}px;
-        font-weight: 700; padding: 6px 18px; min-height: 26px;
+        font-weight: 700; padding: 3px 12px; min-height: 20px;
     }}
     QPushButton#tileControlButton:hover {{ background: {press_bg}; border-color: {accent}; }}
     QPushButton#tileControlButton:pressed {{ background: {press_bg}; }}
@@ -795,67 +849,117 @@ def build_stylesheet(theme: ThemePalette) -> str:
     QPushButton#tileControlButton[controlState="on"] {{
         background: {ok_bg}; color: {green}; border-color: {ok_bd};
     }}
+    /* Mismatch: the device's reported state disagrees with the last
+       commanded direction (FR-59). Amber border wins over the on/off
+       surface so the warning reads regardless of ON/OFF. */
+    QPushButton#tileControlButton[mismatch="true"] {{ border-color: {amber}; }}
 
-    QLabel#dashboardBindChip {{
+    /* No step buttons (NoButtons) — numeric validation/clamping stays in
+       the widget; tight padding keeps the value close to the border. */
+    QDoubleSpinBox#tileSetpointSpin {{
+        background: {field}; color: {tx};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 1px 6px; min-height: 18px;
+        font-family: {MONO};
+    }}
+    QDoubleSpinBox#tileSetpointSpin:focus {{ border-color: {accent}; }}
+    QDoubleSpinBox#tileSetpointSpin:disabled {{ color: {tx_faint}; }}
+    /* Mismatch: the readback differs from the commanded value (the
+       device clamped/rejected the setpoint) — FR-66. */
+    QDoubleSpinBox#tileSetpointSpin[mismatch="true"] {{
+        color: {amber}; border-color: {amber};
+    }}
+    QPushButton#tileSetpointSend {{
+        background: {hover}; color: {tx};
+        border: 1px solid {bd_strong}; border-radius: {RADIUS_SM}px;
+        font-weight: 700; min-height: 18px;
+    }}
+    QPushButton#tileSetpointSend:hover {{ background: {press_bg}; border-color: {accent}; }}
+    QPushButton#tileSetpointSend:pressed {{ background: {press_bg}; }}
+    QPushButton#tileSetpointSend:disabled {{ color: {tx_faint}; background: transparent; }}
+
+    QComboBox#tileEnumCombo {{
+        background: {field}; color: {tx};
+        border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
+        padding: 1px 6px; min-height: 18px;
+    }}
+    QComboBox#tileEnumCombo:focus {{ border-color: {accent}; }}
+    QComboBox#tileEnumCombo:disabled {{ color: {tx_faint}; }}
+    /* Mismatch: the readback option differs from the commanded one
+       (FR-70). */
+    QComboBox#tileEnumCombo[mismatch="true"] {{
+        color: {amber}; border-color: {amber};
+    }}
+    QComboBox#tileEnumCombo::drop-down {{ width: 18px; border: none; }}
+    QPushButton#tileEnumSend {{
+        background: {hover}; color: {tx};
+        border: 1px solid {bd_strong}; border-radius: {RADIUS_SM}px;
+        font-weight: 700; min-height: 18px;
+    }}
+    QPushButton#tileEnumSend:hover {{ background: {press_bg}; border-color: {accent}; }}
+    QPushButton#tileEnumSend:pressed {{ background: {press_bg}; }}
+    QPushButton#tileEnumSend:disabled {{ color: {tx_faint}; background: transparent; }}
+
+    QLabel#controlPanelBindChip {{
         background: {elevated}; color: {tx2};
         border: 1px solid {bd}; border-radius: {RADIUS_MD}px;
         padding: 2px 8px; font-size: {MICRO_FS}px;
     }}
-    QLabel#dashboardBindChip[state="polling"] {{
+    QLabel#controlPanelBindChip[state="polling"] {{
         background: {ok_bg}; color: {green}; border-color: {ok_bd};
     }}
-    QLabel#dashboardBindChip[state="paused"] {{
+    QLabel#controlPanelBindChip[state="paused"] {{
         background: {warn_bg}; color: {amber}; border-color: {mix_hex(amber, bg, 0.5)};
     }}
-    QLabel#dashboardBindChip[state="unbound"] {{
+    QLabel#controlPanelBindChip[state="unbound"] {{
         background: {err_bg}; color: {red}; border-color: {danger_bd};
     }}
-    QLabel#dashboardEmptyTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
-    QLabel#dashboardEmptyHint {{ color: {tx2}; }}
-    QWidget#dashboardPreviewStrip {{
+    QLabel#controlPanelEmptyTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
+    QLabel#controlPanelEmptyHint {{ color: {tx2}; }}
+    QWidget#controlPanelPreviewStrip {{
         background: {bg};
         border: 1px solid {bd_soft};
         border-radius: {RADIUS_MD}px;
     }}
-    QWidget#dashboardChartPage {{ background: {bg}; }}
-    QWidget#dashboardChartView {{
+    QWidget#controlPanelChartPage {{ background: {bg}; }}
+    QWidget#controlPanelChartView {{
         background: {elevated};
         border: 1px solid {bd_soft};
         border-radius: {RADIUS_LG}px;
     }}
-    QPushButton#dashboardChartBack {{
+    QPushButton#controlPanelChartBack {{
         background: transparent; color: {tx2};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
         padding: 4px 10px; font-weight: 600;
     }}
-    QPushButton#dashboardChartBack:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
-    QLabel#dashboardChartTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
-    QLabel#dashboardChartReadout {{ color: {tx_faint}; font-family: {MONO}; font-size: {MICRO_FS}px; }}
+    QPushButton#controlPanelChartBack:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
+    QLabel#controlPanelChartTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
+    QLabel#controlPanelChartReadout {{ color: {tx_faint}; font-family: {MONO}; font-size: {MICRO_FS}px; }}
 
-    QLabel#dashboardBellBadge {{
+    QLabel#controlPanelBellBadge {{
         background: {red}; color: {on_accent};
         border: 1px solid {danger_bd}; border-radius: 6px;
         min-width: 12px; max-height: 12px; padding: 0 2px;
         font-size: 9px; font-weight: 700;
     }}
-    QFrame#dashboardAlertPanel {{
+    QFrame#controlPanelAlertPanel {{
         background: {panel}; color: {tx};
         border: 1px solid {bd}; border-radius: {RADIUS_LG}px;
     }}
-    QLabel#dashboardAlertPanelTitle {{ color: {tx}; font-size: 14px; font-weight: 700; }}
-    QLabel#dashboardAlertPanelSubtitle {{ color: {tx_faint}; font-size: {MICRO_FS}px; }}
-    QToolButton#dashboardAlertPanelButton {{
+    QLabel#controlPanelAlertPanelTitle {{ color: {tx}; font-size: 14px; font-weight: 700; }}
+    QLabel#controlPanelAlertPanelSubtitle {{ color: {tx_faint}; font-size: {MICRO_FS}px; }}
+    QToolButton#controlPanelAlertPanelButton {{
         background: transparent; color: {tx2};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_SM}px;
         padding: 2px 8px; min-height: 22px;
     }}
-    QToolButton#dashboardAlertPanelButton:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
-    QListWidget#dashboardAlertList {{
+    QToolButton#controlPanelAlertPanelButton:hover {{ background: {hover}; color: {tx}; border-color: {accent}; }}
+    QListWidget#controlPanelAlertList {{
         background: {elevated}; color: {tx2};
         border: 1px solid {bd_soft}; border-radius: {RADIUS_MD}px;
         font-family: {MONO}; font-size: {MICRO_FS}px;
     }}
-    QListWidget#dashboardAlertList::item {{ padding: 3px 6px; }}
+    QListWidget#controlPanelAlertList::item {{ padding: 3px 6px; }}
     """)
 
     return "\n".join(parts)

@@ -1,0 +1,194 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://comport-zone/schemas/control-panel-3.json",
+  "title": "ComPort Zone Control Panel File",
+  "description": "Top-level envelope for one or more importable control panels. Schema version 3 (app >= 0.5.0).",
+  "type": "object",
+  "required": ["comport_zone_control_panels", "control_panels"],
+  "properties": {
+    "comport_zone_control_panels": {
+      "description": "Schema version. The current app writes 3.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "control_panels": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/panel" }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "panel": {
+      "type": "object",
+      "required": ["entries"],
+      "properties": {
+        "id":          { "type": "string" },
+        "name":        { "type": "string" },
+        "description": { "type": "string" },
+        "columns":     { "type": "integer", "minimum": 1, "maximum": 12 },
+        "rows":        { "type": "integer", "minimum": 1, "maximum": 24 },
+        "favorite":    { "type": "boolean" },
+        "csv_log_enabled": { "type": "boolean" },
+        "csv_log_path":    { "type": "string" },
+        "created_at":  { "type": "string" },
+        "updated_at":  { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/entry" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "properties": {
+        "id":          { "type": "string" },
+        "label":       { "type": "string" },
+        "unit":        { "type": "string" },
+        "command":     { "type": "string" },
+        "send_mode":   { "enum": ["Text", "Hex Bytes"] },
+        "line_ending_override": { "enum": ["", "None", "CR", "LF", "CRLF"] },
+        "interval_ms": { "type": "integer", "minimum": 100,  "maximum": 3600000 },
+        "timeout_ms":  { "type": "integer", "minimum": 50,   "maximum": 30000 },
+        "stale_after_ms": { "type": "integer", "minimum": 0, "maximum": 14400000 },
+        "parse":       { "$ref": "#/definitions/parseRule" },
+        "tile":        { "$ref": "#/definitions/tile" },
+        "rules":       {
+          "type": "array",
+          "items": { "$ref": "#/definitions/colorRule" }
+        },
+        "enabled":     { "type": "boolean" },
+        "poll_mode":   { "enum": ["interval", "on_connect"] },
+        "target_endpoint": { "type": "string" },
+        "source":      { "enum": ["poll", "derived"] },
+        "expression":  { "type": "string", "maxLength": 256 },
+        "show_sparkline":  { "type": "boolean" },
+        "alerts_enabled":  { "type": "boolean" },
+        "control":     { "$ref": "#/definitions/controlSpec" },
+        "setpoint":    { "$ref": "#/definitions/setpointSpec" },
+        "enum_spec":   { "$ref": "#/definitions/enumSpec" },
+        "bits_spec":   { "$ref": "#/definitions/bitsSpec" },
+        "readback":    { "$ref": "#/definitions/readbackSpec" },
+        "created_at":  { "type": "string" },
+        "updated_at":  { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "tile": {
+      "type": "object",
+      "properties": {
+        "col":    { "type": "integer", "minimum": 0, "maximum": 11 },
+        "row":    { "type": "integer", "minimum": 0 },
+        "span_w": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "span_h": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "kind":   { "enum": ["value", "led", "control", "setpoint", "enum", "bits"] }
+      },
+      "additionalProperties": false
+    },
+    "parseRule": {
+      "type": "object",
+      "properties": {
+        "kind":    { "enum": ["line", "regex"] },
+        "pattern": { "type": "string" },
+        "group":   { "type": ["integer", "string"] },
+        "value_type": { "enum": ["text", "number"] }
+      },
+      "additionalProperties": false
+    },
+    "colorRule": {
+      "type": "object",
+      "properties": {
+        "op":       { "enum": ["lt","le","gt","ge","eq_num","ne_num","between","eq_text","contains","matches"] },
+        "operand":  { "type": "string" },
+        "operand2": { "type": "string" },
+        "state":    { "enum": ["ok","warn","fail"] },
+        "label":    { "type": "string" },
+        "color":    { "type": "string", "pattern": "^(#[0-9a-fA-F]{6})?$" }
+      },
+      "additionalProperties": false
+    },
+    "controlSpec": {
+      "type": "object",
+      "properties": {
+        "mode":           { "enum": ["button", "toggle"] },
+        "on_command":     { "type": "string" },
+        "off_command":    { "type": "string" },
+        "confirm":        { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "setpointSpec": {
+      "type": "object",
+      "properties": {
+        "min_value":        { "type": "number" },
+        "max_value":        { "type": "number" },
+        "step":             { "type": "number", "exclusiveMinimum": 0 },
+        "decimals":         { "type": "integer", "minimum": 0, "maximum": 6 },
+        "unit":             { "type": "string" },
+        "command_template": { "type": "string" },
+        "confirm":          { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "enumSpec": {
+      "type": "object",
+      "properties": {
+        "options": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/enumOption" }
+        },
+        "confirm":        { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "enumOption": {
+      "type": "object",
+      "properties": {
+        "label":       { "type": "string" },
+        "command":     { "type": "string" },
+        "match_value": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "readbackSpec": {
+      "type": "object",
+      "properties": {
+        "source":         { "enum": ["none", "entry", "command"] },
+        "watch_entry_id": { "type": "string" },
+        "command":        { "type": "string" },
+        "mode":           { "enum": ["once", "interval"] },
+        "delay_ms":       { "type": "integer", "minimum": 0, "maximum": 60000 },
+        "interval_ms":    { "type": "integer", "minimum": 20, "maximum": 3600000 },
+        "timeout_ms":     { "type": "integer", "minimum": 50, "maximum": 30000 },
+        "parse":          { "$ref": "#/definitions/parseRule" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/colorRule" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bitsSpec": {
+      "type": "object",
+      "properties": {
+        "bits": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/bitDefinition" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bitDefinition": {
+      "type": "object",
+      "properties": {
+        "bit":         { "type": "integer", "minimum": 0, "maximum": 31 },
+        "label":       { "type": "string" },
+        "state":       { "enum": ["ok","warn","fail","neutral"] },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

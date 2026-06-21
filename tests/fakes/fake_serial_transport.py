@@ -8,7 +8,9 @@ which makes the CLI's RX timing deterministic under test.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from queue import Queue
+from threading import RLock
 from typing import Any
 
 from ComPort_Zone.core.serial_core import SerialEvent
@@ -21,6 +23,7 @@ class FakeSerialTransport:
     def __init__(self) -> None:
         self.events: Queue[SerialEvent] = Queue()
         self._subscribers: list[Queue[SerialEvent]] = []
+        self._wire_lock = RLock()
         self._connected: bool = False
         self._ports: list[dict[str, Any]] = []
         self._endpoints: list[EndpointInfo] = []
@@ -37,7 +40,7 @@ class FakeSerialTransport:
         self.disconnect_calls: int = 0
         self.sent_text: list[tuple[str, str | None]] = []
         self.sent_bytes: list[bytes] = []
-        # TX origin per send, in call order ("" = user/batch, "dashboard" = poll).
+        # TX origin per send, in call order ("" = user/batch, "control_panel" = poll).
         self.sent_sources: list[str] = []
         # Control-line state (mirrors pyserial defaults) + break counter.
         self.dtr: bool = True
@@ -83,14 +86,23 @@ class FakeSerialTransport:
     def send_text(
         self, text: str, line_ending_override: str | None = None, *, source: str = ""
     ) -> None:
-        self.sent_text.append((text, line_ending_override))
-        self.sent_sources.append(source)
-        self._deliver_next_response()
+        with self._wire_lock:
+            self.sent_text.append((text, line_ending_override))
+            self.sent_sources.append(source)
+            self._deliver_next_response()
 
     def send_bytes(self, data: bytes, *, source: str = "") -> None:
-        self.sent_bytes.append(data)
-        self.sent_sources.append(source)
-        self._deliver_next_response()
+        with self._wire_lock:
+            self.sent_bytes.append(data)
+            self.sent_sources.append(source)
+            self._deliver_next_response()
+
+    @contextmanager
+    def hold_wire(self):
+        """Mirror :meth:`SerialClient.hold_wire` so the dispatcher's
+        wire-reservation flow works against this fake too."""
+        with self._wire_lock:
+            yield
 
     def set_dtr(self, value: bool) -> bool:
         if not self._connected:

@@ -237,18 +237,18 @@ class TabWorkspaceController:
         add_session: Callable[..., object],
         confirm_close_command_file_tab: Callable[[QWidget], bool],
         save_settings: Callable[[], None],
-        dashboard_type: type[QWidget] | None = None,
+        control_panel_type: type[QWidget] | None = None,
     ) -> None:
         self.tabs = tabs
         self.terminal_type = terminal_type
         self.command_file_type = command_file_type
-        self.dashboard_type = dashboard_type
+        self.control_panel_type = control_panel_type
         self._add_session = add_session
         self._confirm_close_command_file_tab = confirm_close_command_file_tab
         self._save_settings = save_settings
 
-    def _is_dashboard(self, widget: QWidget | None) -> bool:
-        return self.dashboard_type is not None and isinstance(widget, self.dashboard_type)
+    def _is_control_panel(self, widget: QWidget | None) -> bool:
+        return self.control_panel_type is not None and isinstance(widget, self.control_panel_type)
 
     def attach_tab_close_button(self, index: int, widget: QWidget) -> None:
         tab_ref = getattr(self.tabs, "tab_ref", lambda _index: None)(index)
@@ -284,9 +284,9 @@ class TabWorkspaceController:
         widget = self.tabs.currentWidget()
         return widget if isinstance(widget, self.command_file_type) else None
 
-    def current_dashboard(self) -> QWidget | None:
+    def current_control_panel(self) -> QWidget | None:
         widget = self.tabs.currentWidget()
-        return widget if self._is_dashboard(widget) else None
+        return widget if self._is_control_panel(widget) else None
 
     def session_at(self, index: int) -> QWidget | None:
         widget = self.tabs.widget(index)
@@ -296,9 +296,9 @@ class TabWorkspaceController:
         widget = self.tabs.widget(index)
         return widget if isinstance(widget, self.command_file_type) else None
 
-    def dashboard_at(self, index: int) -> QWidget | None:
+    def control_panel_at(self, index: int) -> QWidget | None:
         widget = self.tabs.widget(index)
-        return widget if self._is_dashboard(widget) else None
+        return widget if self._is_control_panel(widget) else None
 
     def iter_sessions(self) -> list[QWidget]:
         return [
@@ -314,8 +314,8 @@ class TabWorkspaceController:
             if isinstance(widget, self.command_file_type)
         ]
 
-    def iter_dashboards(self) -> list[QWidget]:
-        return [widget for widget in self._widgets() if self._is_dashboard(widget)]
+    def iter_control_panels(self) -> list[QWidget]:
+        return [widget for widget in self._widgets() if self._is_control_panel(widget)]
 
     def workspace_tab_count(self) -> int:
         return self.tabs.count()
@@ -356,9 +356,9 @@ class TabWorkspaceController:
         widget = self.tabs.widget(index)
         if isinstance(widget, self.command_file_type) and not self._confirm_close_command_file_tab(widget):
             return False
-        # Terminals and dashboards own background resources (reader threads,
-        # poll dispatchers); dashboards live-save so no confirmation is needed.
-        if isinstance(widget, self.terminal_type) or self._is_dashboard(widget):
+        # Terminals and control_panels own background resources (reader threads,
+        # poll dispatchers); control_panels live-save so no confirmation is needed.
+        if isinstance(widget, self.terminal_type) or self._is_control_panel(widget):
             widget.shutdown()
         self.tabs.removeTab(index)
         if widget is not None:

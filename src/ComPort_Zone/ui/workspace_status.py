@@ -42,7 +42,7 @@ class CommandFileStatusTab(Protocol):
         ...
 
 
-class DashboardStatusTab(Protocol):
+class ControlPanelStatusTab(Protocol):
     def tab_title(self) -> str:
         ...
 
@@ -74,18 +74,18 @@ class WorkspaceStatusPresenter:
         connection_status_label: QLabel,
         connection_action_button: QPushButton,
         footer: QLabel,
-        dashboard_type: type[QWidget] | None = None,
+        control_panel_type: type[QWidget] | None = None,
     ) -> None:
         self.tabs = tabs
         self.terminal_type = terminal_type
         self.command_file_type = command_file_type
-        self.dashboard_type = dashboard_type
+        self.control_panel_type = control_panel_type
         self.connection_status_label = connection_status_label
         self.connection_action_button = connection_action_button
         self.footer = footer
 
-    def _is_dashboard(self, widget: object) -> bool:
-        return self.dashboard_type is not None and isinstance(widget, self.dashboard_type)
+    def _is_control_panel(self, widget: object) -> bool:
+        return self.control_panel_type is not None and isinstance(widget, self.control_panel_type)
 
     def set_status(self, text: str) -> None:
         self.footer.setText(text)
@@ -98,8 +98,8 @@ class WorkspaceStatusPresenter:
                     self._update_terminal_tab(ref.global_index, ref.widget, theme)
                 elif isinstance(ref.widget, self.command_file_type):
                     self._update_command_file_tab(ref.global_index, ref.widget, theme)
-                elif self._is_dashboard(ref.widget):
-                    self._update_dashboard_tab(ref.global_index, ref.widget, theme)
+                elif self._is_control_panel(ref.widget):
+                    self._update_control_panel_tab(ref.global_index, ref.widget, theme)
             return
         for index in range(self.tabs.count()):
             widget = self.tabs.widget(index)
@@ -107,8 +107,8 @@ class WorkspaceStatusPresenter:
                 self._update_terminal_tab(index, widget, theme)
             elif isinstance(widget, self.command_file_type):
                 self._update_command_file_tab(index, widget, theme)
-            elif self._is_dashboard(widget):
-                self._update_dashboard_tab(index, widget, theme)
+            elif self._is_control_panel(widget):
+                self._update_control_panel_tab(index, widget, theme)
 
     def sync_from_current(self, theme: ThemePalette) -> None:
         widget = self.tabs.currentWidget()
@@ -118,8 +118,8 @@ class WorkspaceStatusPresenter:
         if isinstance(widget, self.command_file_type):
             self._show_command_file_status(widget)
             return
-        if self._is_dashboard(widget):
-            # Like editor tabs, dashboards carry their status in the footer;
+        if self._is_control_panel(widget):
+            # Like editor tabs, control_panels carry their status in the footer;
             # the shared connection chip is hidden for them.
             self.set_status(widget.status_summary())
             return
@@ -161,7 +161,7 @@ class WorkspaceStatusPresenter:
         self.tabs.setTabToolTip(index, tab.status_summary())
         self._tab_bar_for(index).setTabTextColor(self._local_index_for(index), QColor(color))
 
-    def _update_dashboard_tab(self, index: int, tab: DashboardStatusTab, theme: ThemePalette) -> None:
+    def _update_control_panel_tab(self, index: int, tab: ControlPanelStatusTab, theme: ThemePalette) -> None:
         self.tabs.setTabText(index, tab.tab_title())
         self.tabs.setTabIcon(
             index, standard_icon(QStyle.StandardPixmap.SP_FileDialogListView, 18, theme.text)
