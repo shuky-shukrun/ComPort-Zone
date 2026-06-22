@@ -4,6 +4,10 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Fixed
+
+- **Crash on launch in the packaged (installer) build** — v0.5.0 failed to start with `RuntimeError: sys.stderr is None`. The freeze watchdog called `faulthandler.enable()`, which defaults to writing to `sys.stderr`; a windowed (no-console) PyInstaller build has no `sys.stderr`, so it raised before the window appeared. The watchdog now points faulthandler at its own dump file and can never block startup. (Running from source has a console, so dev/CI never hit it.)
+
 ## 0.5.0 - 2026-06-10
 
 ### Added
