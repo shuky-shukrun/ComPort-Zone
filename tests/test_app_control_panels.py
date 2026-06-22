@@ -180,6 +180,50 @@ class ControlPanelAppTests(unittest.TestCase):
         self.assertIsNone(window.open_control_panel_tab("ghost"))
         self.assertIn("no longer exists", window.footer.text())
 
+    # ------------------------------------------------------- sort / reorder
+
+    @staticmethod
+    def _panel_names(quick_list) -> list[str]:
+        return [quick_list.item(i).text() for i in range(quick_list.count())]
+
+    def test_control_panel_sort_mode_and_drag_order_persist(self) -> None:
+        zeta = make_control_panel(name="Zeta", entry_id="z")
+        alpha = make_control_panel(name="Alpha", entry_id="a")
+        window, _path = self.launch_window(
+            AppSettings(control_panels=[zeta, alpha], control_panel_sort_mode="Name"), "sort"
+        )
+        lst = window.shared_drawer.control_panel_list
+        # Name mode shows alphabetical; Custom shows the stored (insertion) order.
+        self.assertEqual(self._panel_names(lst), ["Alpha", "Zeta"])
+        window.set_control_panel_sort_mode("Custom")
+        self.assertEqual(self._panel_names(lst), ["Zeta", "Alpha"])
+
+        # Simulate a drag moving "Zeta" below "Alpha", then persist via the host.
+        lst.addItem(lst.takeItem(0))
+        window._shared_persist_control_panel_order()
+        self.assertEqual([c.name for c in window.settings.control_panels], ["Alpha", "Zeta"])
+        self.assertEqual(window.settings.control_panel_sort_mode, "Custom")
+        # The new order + mode survive a settings round-trip.
+        reloaded = AppSettings.from_dict(window.settings.to_dict())
+        self.assertEqual([c.name for c in reloaded.control_panels], ["Alpha", "Zeta"])
+        self.assertEqual(reloaded.control_panel_sort_mode, "Custom")
+
+    def test_favorite_control_panel_drag_order_persists(self) -> None:
+        a = make_control_panel(name="A", entry_id="a")
+        b = make_control_panel(name="B", entry_id="b")
+        window, _path = self.launch_window(AppSettings(control_panels=[a, b]), "favsort")
+        window.set_control_panel_favorite(a.id, True)
+        window.set_control_panel_favorite(b.id, True)
+        fav = window.shared_drawer.favorite_control_panel_list
+        self.assertEqual(self._panel_names(fav), ["A", "B"])  # default favourite sort = Name
+
+        # Simulate a favourites drag moving "A" below "B", then persist.
+        fav.addItem(fav.takeItem(0))
+        window._shared_persist_favorite_control_panel_order()
+        self.assertEqual(window.settings.favorite_control_panel_order, [b.id, a.id])
+        self.assertEqual(window.settings.favorite_control_panel_sort_mode, "Custom")
+        self.assertEqual(self._panel_names(fav), ["B", "A"])
+
     # ------------------------------------------------------------- polling
 
     def test_full_poll_loop_updates_tile_and_terminal_traffic(self) -> None:

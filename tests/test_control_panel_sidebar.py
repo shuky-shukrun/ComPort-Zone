@@ -176,6 +176,38 @@ class ControlPanelSidebarTests(unittest.TestCase):
         self.assertIsNotNone(splitter)
         self.assertEqual(splitter.count(), 3)
 
+    def test_control_panel_lists_are_draggable_with_sort_controls(self) -> None:
+        # Both the saved and favourite control-panel lists reorder by drag.
+        self.assertTrue(self.sidebar.control_panel_list.dragEnabled())
+        self.assertTrue(self.sidebar.favorite_control_panel_list.dragEnabled())
+        # A sort button + (hidden) combo back each list, like the file panels.
+        for combo in (
+            self.sidebar.control_panel_sort_combo,
+            self.sidebar.favorite_control_panel_sort_combo,
+        ):
+            self.assertEqual(
+                [combo.itemData(i) for i in range(combo.count())], ["Custom", "Name"]
+            )
+        self.assertIsNotNone(self.sidebar.control_panel_sort_button.menu())
+        self.assertIsNotNone(self.sidebar.favorite_control_panel_sort_button.menu())
+
+    def test_control_panel_sort_change_fires_callback(self) -> None:
+        changes: list[str] = []
+        sidebar = QuickActionsSidebar(
+            actions=make_actions([]),
+            command_primary_label="Send",
+            file_primary_label="Run",
+            include_control_panels=True,
+            control_panel_sort_changed=lambda: changes.append("sort"),
+            parent=self.parent,
+        )
+        try:
+            combo = sidebar.control_panel_sort_combo
+            combo.setCurrentIndex(combo.findData("Name"))
+            self.assertEqual(changes, ["sort"])
+        finally:
+            sidebar.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

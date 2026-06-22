@@ -47,6 +47,46 @@ class ControlPanelCatalog:
         """Configs sorted by display name (case-insensitive)."""
         return sorted(self._control_panels, key=lambda config: config.name.casefold())
 
+    def ordered(self, sort_mode: str = "Custom") -> list[ControlPanelConfig]:
+        """Configs in display order for ``sort_mode``: "Name" sorts case-insensitively,
+        anything else ("Custom") keeps the stored, drag-reorderable order."""
+        if sort_mode == "Name":
+            return self.all()
+        return list(self._control_panels)
+
+    def favorites(
+        self, *, order: list[str] | None = None, sort_mode: str = "Custom"
+    ) -> list[ControlPanelConfig]:
+        """The starred subset. "Name" sorts by name; otherwise follow ``order`` (the
+        saved favourites arrangement), keeping any unlisted favourites in stored order."""
+        starred = [config for config in self._control_panels if config.favorite]
+        if sort_mode == "Name":
+            return sorted(starred, key=lambda config: config.name.casefold())
+        if order:
+            rank = {control_panel_id: index for index, control_panel_id in enumerate(order)}
+            return sorted(starred, key=lambda config: rank.get(config.id, len(rank)))
+        return starred
+
+    def reorder(self, control_panel_ids: list[str]) -> bool:
+        """Reorder the backing list to match ``control_panel_ids`` (the visible drag
+        order); ids not listed keep their relative tail order. Returns True if changed."""
+        rank = {control_panel_id: index for index, control_panel_id in enumerate(control_panel_ids)}
+        reordered = sorted(self._control_panels, key=lambda config: rank.get(config.id, len(rank)))
+        if [config.id for config in reordered] == [config.id for config in self._control_panels]:
+            return False
+        self._control_panels[:] = reordered
+        return True
+
+    def sync_favorite_order(self, order: list[str]) -> None:
+        """Prune ``order`` to the current favourites and append newly-starred ones (in
+        stored order), mutating it in place — mirrors the quick-file favourites order."""
+        favorite_ids = [config.id for config in self._control_panels if config.favorite]
+        favorite_set = set(favorite_ids)
+        order[:] = [control_panel_id for control_panel_id in order if control_panel_id in favorite_set]
+        for control_panel_id in favorite_ids:
+            if control_panel_id not in order:
+                order.append(control_panel_id)
+
     def __len__(self) -> int:
         return len(self._control_panels)
 

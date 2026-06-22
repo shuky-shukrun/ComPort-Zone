@@ -34,6 +34,7 @@ THEME_OPTIONS = (
 RECEIVE_DISPLAY_MODES = ("Text", "Hex", "Text + Hex")
 QUICK_COMMAND_SORT_MODES = ("Custom", "Title", "Group")
 QUICK_FILE_SORT_MODES = ("Custom", "Title", "Path")
+CONTROL_PANEL_SORT_MODES = ("Custom", "Name")
 DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
 # Example command files shipped alongside the package (installation folder).
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
@@ -504,6 +505,12 @@ class AppSettings:
     favorite_file_order: list[str] = field(default_factory=list)
     favorite_command_sort_mode: str = "Custom"
     favorite_file_sort_mode: str = "Custom"
+    # Control Panels keep their own sort mode + favourites order, mirroring files.
+    # Default "Name" preserves the historical alphabetical display; dragging a row
+    # (or picking "Custom order") switches to the saved manual order.
+    control_panel_sort_mode: str = "Name"
+    favorite_control_panel_order: list[str] = field(default_factory=list)
+    favorite_control_panel_sort_mode: str = "Name"
     # Favorites page layout: per-panel collapse + the resize splitter sizes.
     favorite_command_collapsed: bool = False
     favorite_file_collapsed: bool = False
@@ -634,6 +641,9 @@ class AppSettings:
                 "favorite_command_sort_mode": self.favorite_command_sort_mode,
                 "favorite_file_sort_mode": self.favorite_file_sort_mode,
                 "control_panels": [control_panel.to_dict() for control_panel in self.control_panels],
+                "control_panel_sort_mode": self.control_panel_sort_mode,
+                "favorite_control_panel_order": list(self.favorite_control_panel_order),
+                "favorite_control_panel_sort_mode": self.favorite_control_panel_sort_mode,
             },
             "workspace": {
                 "terminal_tabs": [session.to_dict() for session in self.restored_tabs],
@@ -710,6 +720,12 @@ class AppSettings:
         favorite_file_sort_mode = str(libraries.get("favorite_file_sort_mode", "Custom"))
         if favorite_file_sort_mode not in QUICK_FILE_SORT_MODES:
             favorite_file_sort_mode = "Custom"
+        control_panel_sort_mode = str(libraries.get("control_panel_sort_mode", "Name"))
+        if control_panel_sort_mode not in CONTROL_PANEL_SORT_MODES:
+            control_panel_sort_mode = "Name"
+        favorite_control_panel_sort_mode = str(libraries.get("favorite_control_panel_sort_mode", "Name"))
+        if favorite_control_panel_sort_mode not in CONTROL_PANEL_SORT_MODES:
+            favorite_control_panel_sort_mode = "Name"
         settings = cls(
             transport_kind=transport_kind,
             transport_profile=dict(
@@ -740,6 +756,13 @@ class AppSettings:
             ],
             favorite_command_sort_mode=favorite_command_sort_mode,
             favorite_file_sort_mode=favorite_file_sort_mode,
+            control_panel_sort_mode=control_panel_sort_mode,
+            favorite_control_panel_sort_mode=favorite_control_panel_sort_mode,
+            favorite_control_panel_order=[
+                str(item).strip()
+                for item in _list_value(libraries.get("favorite_control_panel_order"))
+                if str(item).strip()
+            ],
             favorite_command_collapsed=bool(favorites_layout.get("command_collapsed", False)),
             favorite_file_collapsed=bool(favorites_layout.get("file_collapsed", False)),
             favorites_splitter_sizes=[

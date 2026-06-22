@@ -8,7 +8,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPushButton, QStyle, QToolButton, QWidget
 
 from .icons import set_action_icon, set_button_icon
-from .models import QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES
+from .models import CONTROL_PANEL_SORT_MODES, QUICK_COMMAND_SORT_MODES, QUICK_FILE_SORT_MODES
 from .quick_actions_panel import (
     FAVORITE_CONTROL_PANEL_EMPTY_HINT,
     ROLE_FAVORITE,
@@ -109,6 +109,10 @@ class QuickActionsSidebar(QuickActionsDrawer):
         favorite_file_sort_changed: Callable[[], None] | None = None,
         favorite_command_order_changed: Callable[[], None] | None = None,
         favorite_file_order_changed: Callable[[], None] | None = None,
+        control_panel_sort_changed: Callable[[], None] | None = None,
+        favorite_control_panel_sort_changed: Callable[[], None] | None = None,
+        control_panel_order_changed: Callable[[], None] | None = None,
+        favorite_control_panel_order_changed: Callable[[], None] | None = None,
         command_selection_changed: Callable[[], None] | None = None,
         file_selection_changed: Callable[[], None] | None = None,
         include_history: bool = False,
@@ -195,12 +199,14 @@ class QuickActionsSidebar(QuickActionsDrawer):
         # ControlPanels: the saved-control_panel library plus its starred subset.
         self.control_panel_list = create_control_panel_list(
             parent,
-            tooltip="Click ▶ to open a control panel. Star to add it to favorites.",
+            tooltip="Click ▶ to open. Star to favorite. Drag to reorder.",
+            drag_drop=True,
         )
         self.favorite_control_panel_list = create_control_panel_list(
             parent,
-            tooltip="Open · star removes from favorites · ✕ deletes the control panel.",
+            tooltip="Open · star removes from favorites · ✕ deletes · drag to reorder.",
             placeholder_text=FAVORITE_CONTROL_PANEL_EMPTY_HINT,
+            drag_drop=True,
         )
         self.favorite_control_panel_list.is_favorites = True
         for control_panel_list in (self.control_panel_list, self.favorite_control_panel_list):
@@ -267,6 +273,25 @@ class QuickActionsSidebar(QuickActionsDrawer):
         self.favorite_sort_button = self._sort_button(self.favorite_sort_combo, "Sort favorites", parent)
         self.favorite_file_sort_button = self._sort_button(self.favorite_file_sort_combo, "Sort favorite files", parent)
         self.favorite_group_button = self._group_button(parent, "Show or hide favourite command groups")
+
+        # Control Panels carry their own sort (Custom order / Name) for the saved
+        # list and its favourites, mirroring the file panels.
+        self.control_panel_sort_combo = self._control_panel_sort_combo(parent)
+        self.control_panel_sort_combo.setVisible(False)
+        if control_panel_sort_changed is not None:
+            self.control_panel_sort_combo.currentIndexChanged.connect(control_panel_sort_changed)
+        self.favorite_control_panel_sort_combo = self._control_panel_sort_combo(parent)
+        self.favorite_control_panel_sort_combo.setVisible(False)
+        if favorite_control_panel_sort_changed is not None:
+            self.favorite_control_panel_sort_combo.currentIndexChanged.connect(
+                favorite_control_panel_sort_changed
+            )
+        self.control_panel_sort_button = self._sort_button(
+            self.control_panel_sort_combo, "Sort control panels", parent
+        )
+        self.favorite_control_panel_sort_button = self._sort_button(
+            self.favorite_control_panel_sort_combo, "Sort favorite control panels", parent
+        )
 
         # Legacy action buttons — kept (hidden) for existing enable-state wiring.
         self.command_primary_button = self._drawer_action(command_primary_label, command_primary_icon, actions.command_primary, parent, role="drawerPrimary")
@@ -338,6 +363,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             title="Control Panels",
             quick_list=self.control_panel_list,
             header_icon="list",
+            collapsible_buttons=(self.control_panel_sort_button,),
             header_buttons=(
                 self._header_button(
                     "+", "New control panel", lambda: self._control_panel_action(actions.new_control_panel), parent
@@ -375,6 +401,7 @@ class QuickActionsSidebar(QuickActionsDrawer):
             title="Favorite Control Panels",
             quick_list=self.favorite_control_panel_list,
             header_icon="star",
+            collapsible_buttons=(self.favorite_control_panel_sort_button,),
             collapsible=True,
             parent=parent,
         )
@@ -428,6 +455,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
             file_order_changed=file_order_changed,
             favorite_command_order_changed=favorite_command_order_changed,
             favorite_file_order_changed=favorite_file_order_changed,
+            control_panel_order_changed=control_panel_order_changed,
+            favorite_control_panel_order_changed=favorite_control_panel_order_changed,
             command_selection_changed=command_selection_changed,
             file_selection_changed=file_selection_changed,
         )
@@ -798,6 +827,15 @@ class QuickActionsSidebar(QuickActionsDrawer):
         combo.setToolTip("Sort quick files")
         return combo
 
+    def _control_panel_sort_combo(self, parent: QWidget | None) -> ChevronComboBox:
+        combo = ChevronComboBox(parent)
+        combo.setObjectName("controlPanelSortCombo")
+        for mode in CONTROL_PANEL_SORT_MODES:
+            label = "Custom order" if mode == "Custom" else mode
+            combo.addItem(label, mode)
+        combo.setToolTip("Sort control panels")
+        return combo
+
     def _group_button(self, parent: QWidget | None, tooltip: str = "Show or hide quick command groups") -> QToolButton:
         button = QToolButton(parent)
         button.setObjectName("quickPanelHeaderButton")
@@ -839,6 +877,8 @@ class QuickActionsSidebar(QuickActionsDrawer):
         file_order_changed: Callable[[], None] | None,
         favorite_command_order_changed: Callable[[], None] | None,
         favorite_file_order_changed: Callable[[], None] | None,
+        control_panel_order_changed: Callable[[], None] | None,
+        favorite_control_panel_order_changed: Callable[[], None] | None,
         command_selection_changed: Callable[[], None] | None,
         file_selection_changed: Callable[[], None] | None,
     ) -> None:
@@ -861,4 +901,12 @@ class QuickActionsSidebar(QuickActionsDrawer):
         if favorite_file_order_changed is not None:
             self.favorite_file_list.model().rowsMoved.connect(
                 lambda *_: QTimer.singleShot(0, favorite_file_order_changed)
+            )
+        if control_panel_order_changed is not None:
+            self.control_panel_list.model().rowsMoved.connect(
+                lambda *_: QTimer.singleShot(0, control_panel_order_changed)
+            )
+        if favorite_control_panel_order_changed is not None:
+            self.favorite_control_panel_list.model().rowsMoved.connect(
+                lambda *_: QTimer.singleShot(0, favorite_control_panel_order_changed)
             )
