@@ -1298,6 +1298,66 @@ class TileSelectionTests(unittest.TestCase):
         self.assertEqual(fired, ["copy", "cut", "dup", "paste"])
         grid.deleteLater()
 
+    def _drag_band(self, grid, start, end, ctrl: bool = False) -> None:
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        mods = (
+            Qt.KeyboardModifier.ControlModifier
+            if ctrl
+            else Qt.KeyboardModifier.NoModifier
+        )
+        grid.mousePressEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonPress, QPointF(*start),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, mods,
+            )
+        )
+        grid.mouseMoveEvent(
+            QMouseEvent(
+                QEvent.Type.MouseMove, QPointF(*end),
+                Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, mods,
+            )
+        )
+        grid.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease, QPointF(*end),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, mods,
+            )
+        )
+
+    def test_marquee_selects_intersecting_tiles(self) -> None:
+        grid = self._grid(make_entry("a", col=0), make_entry("b", col=3))
+        a = grid.tile("a").geometry()
+        self._drag_band(grid, (a.left() + 2, a.top() + 2), (a.right() - 2, a.bottom() - 2))
+        self.assertEqual(grid.selected_ids(), {"a"})
+        grid.deleteLater()
+
+    def test_marquee_over_both_selects_both(self) -> None:
+        grid = self._grid(make_entry("a", col=0), make_entry("b", col=3))
+        a = grid.tile("a").geometry()
+        b = grid.tile("b").geometry()
+        self._drag_band(grid, (a.left() + 2, a.top() + 2), (b.right() - 2, b.bottom() - 2))
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_marquee_ctrl_adds_to_selection(self) -> None:
+        grid = self._grid(make_entry("a", col=0), make_entry("b", col=3))
+        grid.set_selection({"a"})
+        b = grid.tile("b").geometry()
+        self._drag_band(
+            grid, (b.left() + 2, b.top() + 2), (b.right() - 2, b.bottom() - 2), ctrl=True
+        )
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_plain_empty_click_clears_selection(self) -> None:
+        grid = self._grid(make_entry("a", col=0))
+        grid.set_selection({"a"})
+        self._drag_band(grid, (600, 400), (600, 400))  # press+release, no drag
+        self.assertEqual(grid.selected_ids(), set())
+        grid.deleteLater()
+
     def test_ctrl_click_emits_toggle_and_skips_long_press(self) -> None:
         tile = ValueTileWidget(make_entry("a"))
         seen: list[str] = []

@@ -9,7 +9,7 @@ emits ``layoutChanged`` so the host live-saves (FR-9, FR-33..FR-36).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QDragEnterEvent,
@@ -22,7 +22,7 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
 )
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from ..control_panel_models import (
     DEFAULT_GRID_COLUMNS,
@@ -86,6 +86,10 @@ class ControlPanelGridWidget(QWidget):
         # Drop-preview rects (col, row, span_w, span_h) — one per tile so a
         # multi-selection drag previews the whole moving group.
         self._drop_rects: list[tuple[int, int, int, int]] = []
+        # Marquee (rubber-band) box-select state.
+        self._band_origin: QPoint | None = None
+        self._band_rect: QRect | None = None
+        self._band_additive = False
         self._theme: ThemePalette = THEMES["ComPort Zone Dark"]
 
     # -------------------------------------------------------------- config
@@ -193,15 +197,48 @@ class ControlPanelGridWidget(QWidget):
             tile.set_selected(False)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        # A plain click on empty grid space clears the selection (tiles
-        # handle their own clicks, so this only fires off-tile).
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        ):
+        # Press on empty grid space (tiles handle their own clicks) begins a
+        # marquee. A no-drag click clears the selection on release; a drag
+        # box-selects. Ctrl makes the marquee additive.
+        if event.button() == Qt.MouseButton.LeftButton:
             self.setFocus()
-            self.clear_selection()
+            self._band_origin = event.position().toPoint()
+            self._band_rect = None
+            self._band_additive = bool(
+                event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            )
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._band_origin is not None and (
+            event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            self._band_rect = QRect(
+                self._band_origin, event.position().toPoint()
+            ).normalized()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._band_origin is not None:
+            origin = self._band_origin
+            rect = self._band_rect
+            self._band_origin = None
+            self._band_rect = None
+            self.update()
+            dragged = (
+                event.position().toPoint() - origin
+            ).manhattanLength() >= QApplication.startDragDistance()
+            if dragged and rect is not None:
+                hit = {
+                    entry_id
+                    for entry_id, tile in self._tiles.items()
+                    if tile.geometry().intersects(rect)
+                }
+                self.set_selection((self._selected_ids | hit) if self._band_additive else hit)
+            elif not self._band_additive:
+                self.clear_selection()  # a plain click clears
+        super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         # Only fires when the grid itself has focus (see setFocusPolicy), so
@@ -408,6 +445,15 @@ class ControlPanelGridWidget(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         super().paintEvent(event)
+        if self._band_rect is not None:
+            painter = QPainter(self)
+            accent = QColor(self._theme.accent)
+            fill = QColor(accent)
+            fill.setAlpha(40)
+            painter.setBrush(fill)
+            painter.setPen(QPen(accent, 1))
+            painter.drawRect(self._band_rect)
+            painter.end()
         if not self._drop_rects:
             return
         cell_w, row_h, _columns = self._cell_metrics()
