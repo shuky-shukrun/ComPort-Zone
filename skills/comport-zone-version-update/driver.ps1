@@ -133,7 +133,9 @@ function Invoke-Preflight {
     $rdm    = Get-ReadmeVersion
     $branch = ((& git rev-parse --abbrev-ref HEAD) | Select-Object -First 1).Trim()
     $prev   = Get-PrevTag
-    $range  = Get-ChangeLines $prev
+    # @(...) guards the single-commit case: PowerShell unwraps a one-element
+    # array on return, and $scalar.Count then throws under StrictMode.
+    $range  = @(Get-ChangeLines $prev)
 
     Say "Preflight for release $tag"
     Say "  repo             : $RepoSlug"
@@ -179,7 +181,7 @@ function Invoke-Preflight {
 
 function Invoke-Changes {
     $prev  = Get-PrevTag
-    $lines = Get-ChangeLines $prev
+    $lines = @(Get-ChangeLines $prev)
     if ($prev) { $src = $prev } else { $src = 'the beginning' }
     Say "Raw change list since $src ($($lines.Count) non-merge commits):"
     if ($lines.Count -eq 0) { Say "  (none)" } else { $lines | ForEach-Object { Say $_ } }
