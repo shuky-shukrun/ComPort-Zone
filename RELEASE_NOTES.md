@@ -1,3 +1,19 @@
+# ComPort Zone v0.5.1 Release Notes
+
+Release date: 2026-06-10
+
+ComPort Zone v0.5.1 is a hot-fix for a launch crash in the packaged (installer) build of v0.5.0.
+
+## Fixed
+
+- **Crash on launch in the packaged build** — v0.5.0 installed from the Windows installer could fail to start with `RuntimeError: sys.stderr is None`. The UI-freeze watchdog enabled `faulthandler` against `sys.stderr`, which a windowed (no-console) build doesn't have, so it raised before the window appeared. The watchdog now writes to its own dump file and can never block startup. (Running from source has a console, so this only affected the packaged app.)
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, and saved Control Panels under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+---
+
 # ComPort Zone v0.5.0 Release Notes
 
 Release date: 2026-06-10
