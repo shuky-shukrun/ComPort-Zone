@@ -1,16 +1,32 @@
-import json
+import io
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from ComPort_Zone.version_check import (
-    GITHUB_LATEST_RELEASE_API_URL,
+    GITHUB_RELEASES_ATOM_URL,
     GITHUB_RELEASES_URL,
     build_version_check_result,
     compare_versions,
+    describe_check_error,
     fetch_latest_release,
     is_newer_version,
+    release_info_from_atom,
     release_info_from_payload,
 )
+
+
+def _atom_feed(*entries: tuple[str, str, str]) -> bytes:
+    """Build a minimal releases Atom feed from (tag, name, url) tuples."""
+    body = ['<?xml version="1.0" encoding="UTF-8"?>', '<feed xmlns="http://www.w3.org/2005/Atom">']
+    for tag, name, url in entries:
+        body.append(
+            f"<entry><id>tag:github.com,2008:Repository/1/{tag}</id>"
+            f'<link rel="alternate" type="text/html" href="{url}"/>'
+            f"<title>{name}</title></entry>"
+        )
+    body.append("</feed>")
+    return "".join(body).encode("utf-8")
 
 
 class VersionCheckTests(unittest.TestCase):
@@ -43,13 +59,25 @@ class VersionCheckTests(unittest.TestCase):
         self.assertFalse(result.update_available)
         self.assertEqual(result.release_url, GITHUB_RELEASES_URL)
 
-    def test_fetch_latest_release_uses_urllib_not_qt(self) -> None:
-        # The fix routes the update check through Python's urllib/SSL stack
-        # (off Qt's OpenSSL path). Verify it requests the right URL/headers
-        # and parses the response into a ReleaseInfo.
-        body = json.dumps(
-            {"tag_name": "v9.9.9", "name": "Big Release", "html_url": "https://x/9"}
-        ).encode("utf-8")
+    def test_release_info_from_atom_uses_the_first_entry(self) -> None:
+        feed = _atom_feed(
+            ("v9.9.9", "Big Release", "https://github.com/o/r/releases/tag/v9.9.9"),
+            ("v9.9.8", "Older Release", "https://github.com/o/r/releases/tag/v9.9.8"),
+        )
+        info = release_info_from_atom(feed)
+        self.assertEqual(info.tag_name, "v9.9.9")
+        self.assertEqual(info.name, "Big Release")
+        self.assertEqual(info.version, "9.9.9")
+        self.assertEqual(info.html_url, "https://github.com/o/r/releases/tag/v9.9.9")
+
+    def test_release_info_from_atom_rejects_an_empty_feed(self) -> None:
+        with self.assertRaises(ValueError):
+            release_info_from_atom(b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+
+    def test_fetch_latest_release_uses_atom_feed_over_urllib(self) -> None:
+        # The check goes through Python's urllib/SSL stack (off Qt's OpenSSL
+        # path) AND through the releases Atom feed, which has no API rate limit.
+        body = _atom_feed(("v9.9.9", "Big Release", "https://github.com/o/r/releases/tag/v9.9.9"))
         captured: dict[str, object] = {}
 
         class FakeResponse:
@@ -73,11 +101,24 @@ class VersionCheckTests(unittest.TestCase):
             info = fetch_latest_release(user_agent="ComPort-Zone/1.2.3")
 
         self.assertEqual(info.version, "9.9.9")
-        self.assertEqual(info.html_url, "https://x/9")
-        self.assertEqual(captured["url"], GITHUB_LATEST_RELEASE_API_URL)
+        self.assertEqual(info.html_url, "https://github.com/o/r/releases/tag/v9.9.9")
+        self.assertEqual(captured["url"], GITHUB_RELEASES_ATOM_URL)
         self.assertEqual(captured["user_agent"], "ComPort-Zone/1.2.3")
-        self.assertEqual(captured["accept"], "application/vnd.github+json")
+        self.assertEqual(captured["accept"], "application/atom+xml")
         self.assertIsNotNone(captured["timeout"])
+
+    def test_describe_check_error_explains_rate_limit_and_others(self) -> None:
+        rate_limited = urllib.error.HTTPError(
+            "https://x", 403, "rate limit exceeded", {}, io.BytesIO(b"")
+        )
+        message = describe_check_error(rate_limited)
+        self.assertIn("limited update checks", message)
+        self.assertNotIn("403", message)
+
+        offline = urllib.error.URLError("getaddrinfo failed")
+        self.assertIn("Could not reach GitHub", describe_check_error(offline))
+
+        self.assertEqual(describe_check_error(ValueError("boom")), "boom")
 
 
 if __name__ == "__main__":
