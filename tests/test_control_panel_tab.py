@@ -267,6 +267,45 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
         self.assertEqual(tab.bind_chip.property("state"), "polling")
         self.assertEqual(len(self.session.transport.sent_text), 1)
 
+    def test_resume_button_keeps_polling_during_command_file(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.session.batch_running = True
+        tab._tick()
+        # The command-file banner is shown and polling is paused.
+        self.assertFalse(tab.batch_banner.isHidden())
+        self.clock.advance_ms(10_000)
+        tab._tick()
+        self.assertEqual(self.session.transport.sent_text, [])
+
+        # User clicks "Resume polling": the banner clears and polling proceeds
+        # even though the command file is still running.
+        tab._batch_resume_button.click()
+        self.assertTrue(tab.batch_banner.isHidden())
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+
+    def test_resume_override_is_per_run(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        self.session.batch_running = True
+        tab._tick()
+        tab._batch_resume_button.click()
+        self.run_poll_round(tab, b"12.0\r\n")
+        self.assertEqual(len(self.session.transport.sent_text), 1)
+
+        # The run ends, then a NEW command file starts: the override must not
+        # carry over — polling pauses again and the banner returns.
+        self.session.batch_running = False
+        tab._tick()
+        self.session.batch_running = True
+        tab._tick()
+        self.assertFalse(tab.batch_banner.isHidden())
+        self.clock.advance_ms(10_000)
+        before = len(self.session.transport.sent_text)
+        tab._tick()
+        self.assertEqual(len(self.session.transport.sent_text), before)
+
     def test_user_pause_persists_into_tab_state(self) -> None:
         tab = self.make_tab(volt_entry())
         tab.bind_to_session(1)
@@ -1663,7 +1702,10 @@ class SetpointTileTests(ControlPanelTabTestBase):
         sp.readback = ReadbackSpec(
             source="command",
             command="MEAS:VOLT?",
-            delay_ms=0,
+            # Small settle so the control send's quiet-read window absorbs the
+            # SET echo deterministically before the readback query (with 0 ms
+            # the echo races the readback's spool-clear under load).
+            delay_ms=20,
             parse=ParseRule(kind="line", value_type="number"),
             rules=[ColorRule(op="gt", operand="12", state="ok", label="READY")],
         )

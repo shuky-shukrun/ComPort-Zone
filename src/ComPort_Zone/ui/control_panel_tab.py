@@ -200,6 +200,12 @@ class ControlPanelTabWidget(QWidget):
         self._gates: dict[int, "SessionHealthLike"] = {}
         self._gate_connected_prev: dict[int, bool] = {}
         self._gate_healthy_prev: dict[int, bool] = {}
+        # Sessions where the user clicked "Resume polling" on the command-file
+        # banner: while a command file runs there, this panel keeps polling and
+        # running control actions. Transient — cleared when that run ends, so
+        # the next command file pauses again ("just this run").
+        self._batch_resume_sessions: set[int] = set()
+        self._gate_batch_prev: dict[int, bool] = {}
         self._entry_session: dict[str, int | None] = {}
         self._has_entry_overrides = False
         self._compiled: dict[str, CompiledParseRule] = {}
@@ -485,10 +491,29 @@ class ControlPanelTabWidget(QWidget):
         self.alert_panel.clearRequested.connect(self._clear_alerts)
         self.alert_panel.closeRequested.connect(self._refresh_bell_badge)
 
+        # Command-file banner: shown only while a bound session is running a
+        # command file and the user hasn't resumed polling for that run.
+        self.batch_banner = QWidget(self)
+        self.batch_banner.setObjectName("controlPanelBatchBanner")
+        banner_layout = QHBoxLayout(self.batch_banner)
+        banner_layout.setContentsMargins(12, 8, 12, 8)
+        banner_layout.setSpacing(12)
+        self._batch_banner_label = QLabel("", self.batch_banner)
+        self._batch_banner_label.setObjectName("controlPanelBatchBannerLabel")
+        self._batch_banner_label.setWordWrap(True)
+        self._batch_resume_button = QPushButton("Resume polling", self.batch_banner)
+        self._batch_resume_button.setObjectName("controlPanelBatchResumeButton")
+        self._batch_resume_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._batch_resume_button.clicked.connect(self._resume_during_batch)
+        banner_layout.addWidget(self._batch_banner_label, 1)
+        banner_layout.addWidget(self._batch_resume_button, 0, Qt.AlignmentFlag.AlignTop)
+        self.batch_banner.setVisible(False)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(header)
+        root.addWidget(self.batch_banner)
         root.addWidget(self.stack, 1)
         self._refresh_empty_state()
 
@@ -702,6 +727,8 @@ class ControlPanelTabWidget(QWidget):
                 self._gates.pop(session_id, None)
                 self._gate_connected_prev.pop(session_id, None)
                 self._gate_healthy_prev.pop(session_id, None)
+                self._gate_batch_prev.pop(session_id, None)
+                self._batch_resume_sessions.discard(session_id)
                 if session_id == self._bound_session_id:
                     self.unbind(notice="The bound terminal tab was closed.")
                 continue
@@ -720,10 +747,64 @@ class ControlPanelTabWidget(QWidget):
             if health.connected and not connected_prev:
                 self._trigger_on_connect(session_id)
             self._gate_connected_prev[session_id] = health.connected
-            healthy = health.connected and not health.batch_running
+            # A command-file run ending drops the per-run resume override, so
+            # the next run pauses again ("just this run").
+            batch_now = bool(getattr(health, "batch_running", False))
+            if self._gate_batch_prev.get(session_id, False) and not batch_now:
+                self._batch_resume_sessions.discard(session_id)
+            self._gate_batch_prev[session_id] = batch_now
+            healthy = health.connected and not self._batch_blocks(session_id, health)
             if healthy and not self._gate_healthy_prev.get(session_id, False):
                 self.scheduler.restagger(self._session_entry_ids(session_id))
             self._gate_healthy_prev[session_id] = healthy
+
+    def _batch_blocks(self, session_id: int | None, gate) -> bool:
+        """True when ``session_id`` is running a command file AND the user has
+        not resumed polling for this run via the command-file banner."""
+        return bool(getattr(gate, "batch_running", False)) and (
+            session_id not in self._batch_resume_sessions
+        )
+
+    def _sessions_blocked_by_batch(self) -> list[int]:
+        """Bound sessions currently paused for a command file (not resumed)."""
+        return [
+            session_id
+            for session_id, gate in self._gates.items()
+            if self._batch_blocks(session_id, gate)
+        ]
+
+    def _resume_during_batch(self) -> None:
+        """User clicked "Resume polling" on the command-file banner: keep
+        polling and running control actions on every session that's currently
+        executing a command file, for the rest of that run."""
+        for session_id, gate in self._gates.items():
+            if getattr(gate, "batch_running", False):
+                self._batch_resume_sessions.add(session_id)
+                self.scheduler.restagger(self._session_entry_ids(session_id))
+        self._refresh_batch_banner()
+        self.refresh_binding_state()
+
+    def _session_label(self, session_id: int) -> str:
+        session = self.coordinator.session_by_id(session_id)
+        for attr in ("tab_title", "title"):
+            value = getattr(session, attr, "") if session is not None else ""
+            if value:
+                return str(value)
+        return "the bound terminal"
+
+    def _refresh_batch_banner(self) -> None:
+        blocked = self._sessions_blocked_by_batch()
+        if not blocked:
+            self.batch_banner.setVisible(False)
+            return
+        where = self._session_label(blocked[0]) if len(blocked) == 1 else "a bound terminal"
+        self._batch_banner_label.setText(
+            f"Polling paused — a command file is running on {where}. "
+            "Resume to run this panel's queries and control actions during the "
+            "command file; they share the device and can read or change it "
+            "between the script's steps."
+        )
+        self.batch_banner.setVisible(True)
 
     def _session_entry_ids(self, session_id: int) -> list[str]:
         return [
@@ -966,7 +1047,7 @@ class ControlPanelTabWidget(QWidget):
                 continue
             request, session_id = built
             gate = self._gates.get(session_id)
-            if gate is None or not gate.connected or gate.batch_running:
+            if gate is None or not gate.connected or self._batch_blocks(session_id, gate):
                 continue
             dispatcher = self._dispatchers.get(session_id)
             if dispatcher is None:
@@ -1292,9 +1373,10 @@ class ControlPanelTabWidget(QWidget):
         if not gate.connected:
             self.coordinator.notify(f"{label}: the target terminal is not connected.")
             return False
-        if gate.batch_running:
+        if self._batch_blocks(session_id, gate):
             self.coordinator.notify(
-                f"{label}: a command file is running on the target terminal."
+                f"{label}: a command file is running on the target terminal "
+                "(resume polling on the panel to allow control actions)."
             )
             return False
         intent: bool | None = None
@@ -1575,8 +1657,10 @@ class ControlPanelTabWidget(QWidget):
             gate = self._gates.get(session_id)
             if gate is None or not gate.connected:
                 lines.append((label, "disconnected", False))
-            elif gate.batch_running:
+            elif self._batch_blocks(session_id, gate):
                 lines.append((label, "command file running", False))
+            elif gate.batch_running:
+                lines.append((label, "polling (command file running)", True))
             else:
                 lines.append((label, "polling", True))
         return lines
@@ -1679,6 +1763,7 @@ class ControlPanelTabWidget(QWidget):
         self._tick_count += 1
         self._drain_results()
         self._check_session_health()
+        self._refresh_batch_banner()
         if self._tick_count % STALENESS_SWEEP_EVERY_TICKS == 0:
             self._sweep_staleness()
         self._submit_due()
@@ -1718,7 +1803,7 @@ class ControlPanelTabWidget(QWidget):
             # Per-entry gating (FR-55): an unhealthy target's entries are
             # skipped (they stay due and retry next tick) without touching
             # entries on healthy sessions.
-            if gate is None or not gate.connected or gate.batch_running:
+            if gate is None or not gate.connected or self._batch_blocks(session_id, gate):
                 self.scheduler.skip(entry.id)
                 continue
             dispatcher = self._dispatchers.get(session_id)

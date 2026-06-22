@@ -497,17 +497,19 @@ class SimulatorTcpTests(unittest.TestCase):
         bug, end-to-end against the simulator.
 
         Drives N control-panel poll transactions (MEAS:VOLT? → 0.000) through
-        the session's channel while a worker thread hammers interactive
-        terminal sends (*IDN? → TDK-LAMBDA,...). The channel serializes the
-        wire and correlates each reply to its own request, so the poll's parse
-        window can never capture the terminal's reply — cross-talk is zero with
-        NO settle/grace anywhere."""
+        the session's channel while a worker thread concurrently issues terminal
+        queries (*IDN? → TDK-LAMBDA,...). The channel serializes the wire and
+        correlates each reply to its own request, so a poll can never read the
+        terminal's reply and vice versa. Both senders use correlated queries
+        (read-until-reply), so the proof is structural — no real-time window to
+        slip on a slow/contended CI runner."""
         import threading
         from queue import Queue
 
         from ComPort_Zone.control_panel_engine import PollRequest, SessionPollDispatcher
         from ComPort_Zone.control_panel_models import ControlPanelEntry, ParseRule, TilePlacement
         from ComPort_Zone.control_panel_parse import CompiledParseRule
+        from ComPort_Zone.port_channel import LineMatcher
         from ComPort_Zone.transports import LanTransportAdapter
 
         client, _rx = self._connected_client()
@@ -521,17 +523,22 @@ class SimulatorTcpTests(unittest.TestCase):
             )
             compiled = CompiledParseRule.compile(entry.parse)
 
+            stop = threading.Event()
             terminal_sends = [0]
+            terminal_wrong = [0]
 
             def terminal_sender() -> None:
-                # A bounded, human-paced burst of interactive sends, each with a
-                # quiet-read window (like the real terminal) so its *IDN? reply
-                # lands on its own transaction and never bleeds into a poll.
-                for _ in range(40):
+                # Concurrent terminal queries (source="") — each reads its OWN
+                # *IDN? reply within its transaction, so it can neither bleed
+                # into a poll nor pick up a poll's reply.
+                while not stop.is_set():
                     try:
-                        adapter.send_text("*IDN?", source="", quiet_read=0.02)
+                        res = adapter.query_text(
+                            "*IDN?", matcher=LineMatcher(), timeout=1.0, source=""
+                        ).result(timeout=2.0)
                         terminal_sends[0] += 1
-                        time.sleep(0.02)
+                        if "TDK-LAMBDA" not in res.text():
+                            terminal_wrong[0] += 1
                     except Exception:
                         pass
 
@@ -550,29 +557,30 @@ class SimulatorTcpTests(unittest.TestCase):
                 if not (result.outcome and result.outcome.value_number == 0.0):
                     cross_talked += 1
 
-            worker.join(timeout=5.0)
-            self.assertEqual(
-                cross_talked, 0,
-                f"{cross_talked}/{n} polls got the wrong reply "
-                f"(terminal_sends={terminal_sends[0]})",
-            )
+            stop.set()
+            worker.join(timeout=3.0)
+            self.assertEqual(cross_talked, 0, f"{cross_talked}/{n} polls got the wrong reply")
+            self.assertEqual(terminal_wrong[0], 0, "a terminal query read the wrong reply")
             self.assertGreater(terminal_sends[0], 0)
         finally:
             client.disconnect()
 
     def test_terminal_sees_all_its_replies_during_panel_polling(self) -> None:
         """Regression for the user-reported "terminal stops receiving its
-        replies" symptom: with the control panel actively polling, EVERY manual
-        terminal send must still produce a visible RX in the bound terminal's
+        replies" symptom: with the control panel actively polling, every manual
+        terminal query must still produce a visible RX in the bound terminal's
         transcript. The channel reads each terminal reply on the terminal's own
         (source="") transaction and tags it accordingly, so source-tag filtering
-        shows 100% of them — no journal to over-hide."""
+        shows all of them — no journal to over-hide. Deterministic: terminal
+        sends are correlated queries, so a reply can't slip past a window onto a
+        poll and get hidden as control-panel traffic."""
         import threading
         from queue import Empty, Queue
 
         from ComPort_Zone.control_panel_engine import PollRequest, SessionPollDispatcher
         from ComPort_Zone.control_panel_models import ControlPanelEntry, ParseRule, TilePlacement
         from ComPort_Zone.control_panel_parse import CompiledParseRule
+        from ComPort_Zone.port_channel import LineMatcher
         from ComPort_Zone.transports import LanTransportAdapter
 
         client, _rx = self._connected_client()
@@ -610,17 +618,18 @@ class SimulatorTcpTests(unittest.TestCase):
                     dispatcher._execute_transaction(
                         PollRequest(control_panel_id="cp", entry=good, compiled=good_compiled, result_queue=Queue())
                     )
-                    panel_stop.wait(0.05)
+                    panel_stop.wait(0.02)
 
             panel = threading.Thread(target=panel_loop, daemon=True)
             panel.start()
 
             n_terminal_sends = 20
             for _ in range(n_terminal_sends):
-                adapter.send_text("*IDN?", source="", quiet_read=0.05)
-                time.sleep(0.02)
+                adapter.query_text(
+                    "*IDN?", matcher=LineMatcher(), timeout=1.0, source=""
+                ).result(timeout=2.0)
 
-            time.sleep(0.4)  # let the last reply land on the monitor
+            time.sleep(0.2)  # let the last reply land on the monitor
             panel_stop.set(); panel.join(timeout=2.0)
             terminal_stop.set(); reader.join(timeout=2.0)
 

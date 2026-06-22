@@ -177,6 +177,34 @@ class BatchParserTests(unittest.TestCase):
         self.assertIn("EXPECT matched on line 2: ComPort Zone", messages)
         self.assertIn("Batch run completed.", messages)
 
+    def test_expect_ignores_control_panel_poll_rx(self) -> None:
+        # A resumed control panel may poll during a command file; its replies
+        # (source="control_panel") must never satisfy/pollute an EXPECT.
+        output_events: Queue = Queue()
+        rx_events: Queue = Queue()
+
+        def send_text(text: str, **kw) -> None:
+            rx_events.put_nowait(
+                SerialEvent(kind="rx", message="ComPort Zone", source="control_panel")
+            )
+            rx_events.put_nowait(SerialEvent(kind="rx", message="unrelated"))
+
+        runner = BatchRunner(
+            emit_event=output_events.put_nowait,
+            send_text=send_text,
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+            expect_timeout_ms=80,
+        )
+        runner._rx_event_queue = rx_events
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("SEND *IDN?\nEXPECT ComPort Zone"))
+
+        messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
+        self.assertTrue(any(m.startswith("EXPECT timed out") for m in messages))
+        self.assertNotIn("EXPECT matched on line 2: ComPort Zone", messages)
+
     def test_expect_times_out_when_response_is_missing(self) -> None:
         output_events: Queue = Queue()
         runner = BatchRunner(
