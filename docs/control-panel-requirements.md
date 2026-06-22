@@ -108,6 +108,8 @@ Decided with the product owner; v1/v2 decisions stand except where amended:
 - **FR-34** An explicit edit-layout mode enables drag-and-drop repositioning with a visible drop-target highlight, and span changes via the tile context menu. Outside edit mode, tiles are static (no accidental drags).
 - **FR-35** Layout changes normalize deterministically (overlaps resolved by pushing tiles down; out-of-range positions clamped; same input always yields the same layout) and are live-saved.
 - **FR-36** Entry create/edit/remove is available from the control_panel header (Add Entry) and per-tile context menus. Removing an entry frees its cells without disturbing other tiles' coordinates.
+- **FR-78** Tiles can be multi-selected: Ctrl-click toggles a tile, dragging a marquee box over empty grid space selects every tile it touches (Ctrl+drag adds), Ctrl+A selects all, and Esc or a plain empty-space click clears. The selection is shown with an accent highlight.
+- **FR-79** Bulk operations act on the whole selection: drag-move the group together in edit mode (relative layout preserved, with a per-tile drop preview); Copy / Cut / Paste (Cut copies then removes the originals immediately, Paste re-adds them in this or another panel); Duplicate as a block; Delete (with a confirmation when more than one tile is selected); and apply a Size to all. These are available from the per-tile context menu (labelled with the count) and from the keyboard (Ctrl+C/X/V, Ctrl+D, Delete) while the grid has focus — so editing a tile's input field keeps the normal text shortcuts.
 
 ### 4.8 Persistence and restore
 
