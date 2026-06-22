@@ -43,7 +43,7 @@ from ..control_panel_models import (
     format_setpoint_value,
 )
 from ..themes import ThemePalette
-from .control_panel_sparkline import SparklineWidget
+from .control_panel_sparkline import SPARKLINE_HEIGHT, SparklineWidget
 from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS
 
 CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
@@ -139,14 +139,23 @@ SPAN_CHOICES = tuple(
     (w, h) for h in range(1, 6) for w in range(1, 6)
 )  # 1×1 through 5×5
 
-# Responsive font sizing: the measure (tileValue) and the LED caption
-# (tileStateCaption) scale with the grid's per-cell width so the panel
-# stays readable on split-screen / narrow layouts as well as fullscreen.
-# Ratios are tuned so the legacy default cell width (~180px) reproduces
-# the previous fixed sizes (21px / 15px).
-VALUE_FONT_RATIO = 0.12
+# Responsive font sizing. The LED caption (tileStateCaption) and the
+# bits/register text scale with the grid's per-cell width so the panel stays
+# readable on split-screen / narrow layouts as well as fullscreen; their
+# ratio is tuned so the legacy default cell width (~180px) reproduces the
+# previous fixed size (~15px).
+# The value readout (tileValue) instead scales with the whole TILE, not a
+# single cell, so a bigger tile shows a bigger number. Width and height each
+# bound it: height keeps the reading on one line; width keeps it from
+# overflowing. A single-row tile stays compact (~20px at the row-height
+# floor); a tall 2x2 grows to a bold readout up to the cap.
+VALUE_FONT_W_RATIO = 0.32
+VALUE_FONT_H_RATIO = 0.85
 VALUE_FONT_MIN_PX = 12
-VALUE_FONT_MAX_PX = 40
+VALUE_FONT_MAX_PX = 52
+# Vertical space the tile chrome (title + timestamp + margins/spacing) takes
+# out of the value area, before the (optional) sparkline strip.
+VALUE_TILE_CHROME_PX = 44
 
 LED_CAPTION_FONT_RATIO = 0.085
 LED_CAPTION_FONT_MIN_PX = 11
@@ -158,6 +167,16 @@ def _scale_font_px(cell_w: float, ratio: float, lo: int, hi: int) -> int:
     if cell_w <= 0:
         return lo
     return max(lo, min(hi, round(cell_w * ratio)))
+
+
+def _scale_font_to_box(
+    width: float, height: float, w_ratio: float, h_ratio: float, lo: int, hi: int
+) -> int:
+    """Largest bounded font px that fits a ``width`` x ``height`` box on one
+    line: height caps the line height, width caps the run length."""
+    if width <= 0 or height <= 0:
+        return lo
+    return int(max(lo, min(hi, min(width * w_ratio, height * h_ratio))))
 
 
 def tile_state_color(state: str, theme: ThemePalette) -> str:
@@ -593,6 +612,12 @@ class ValueTileWidget(TileFrame):
         self.value_label.setObjectName("tileValue")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.value_label.setWordWrap(True)
+        # The size-relative font and any custom rule color are both carried on
+        # the value label's *inline* stylesheet so they survive the
+        # unpolish/polish a tileState change triggers on every poll (a plain
+        # setFont is wiped by that QSS re-resolution).
+        self._value_px = 0
+        self._value_color = ""
         self.sparkline = SparklineWidget(self)
         self.body_layout.addWidget(self.value_label, 1)
         self.body_layout.addWidget(self.sparkline)
@@ -619,13 +644,41 @@ class ValueTileWidget(TileFrame):
         self.sparkline.apply_theme_palette(theme)
 
     def apply_cell_width(self, cell_w: float) -> None:
-        px = _scale_font_px(
-            cell_w, VALUE_FONT_RATIO, VALUE_FONT_MIN_PX, VALUE_FONT_MAX_PX
+        # Scale the reading with the whole tile (its geometry is already set by
+        # the grid's relayout), not a single cell, so a larger tile shows a
+        # larger number. cell_w is the fallback width before first layout.
+        width = self.width() or int(cell_w)
+        avail_w = width - 2 * SPACE_MD
+        reserved = VALUE_TILE_CHROME_PX
+        if self._sparkline_visible:
+            reserved += SPARKLINE_HEIGHT + SPACE_SM
+        avail_h = self.height() - reserved
+        px = _scale_font_to_box(
+            avail_w,
+            avail_h,
+            VALUE_FONT_W_RATIO,
+            VALUE_FONT_H_RATIO,
+            VALUE_FONT_MIN_PX,
+            VALUE_FONT_MAX_PX,
         )
-        font = self.value_label.font()
-        if font.pixelSize() != px:
-            font.setPixelSize(px)
-            self.value_label.setFont(font)
+        if px != self._value_px:
+            self._value_px = px
+            self._restyle_value()
+
+    def _restyle_value(self) -> bool:
+        """Recompose the value label's inline stylesheet from the size-scaled
+        font and the active custom rule color. Returns True when it changed
+        (so callers can fold it into their repaint-coalescing flag)."""
+        parts = []
+        if self._value_px:
+            parts.append(f"font-size: {self._value_px}px;")
+        if self._value_color:
+            parts.append(f"color: {self._value_color};")
+        sheet = "".join(parts)
+        if self.value_label.styleSheet() == sheet:
+            return False
+        self.value_label.setStyleSheet(sheet)
+        return True
 
     def set_history(self, samples: list[Sample], color: str, *, now: float) -> bool:
         """Feed the sparkline; ignored when hidden (the data stays in the
@@ -642,8 +695,10 @@ class ValueTileWidget(TileFrame):
         if self.value_label.property("tileState") != runtime.state:
             _set_state_property(self.value_label, runtime.state)
             changed = True
-        if _apply_custom_style(self.value_label, "color: {color};", runtime.color):
-            changed = True
+        if self._value_color != runtime.color:
+            self._value_color = runtime.color
+            if self._restyle_value():
+                changed = True
         return changed
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt naming)

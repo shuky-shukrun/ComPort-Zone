@@ -15,6 +15,7 @@ All notable changes to ComPort Zone are documented here.
 
 ### Fixed
 
+- **Control Panel value reading now scales with tile size** — a *value* tile's number is sized to the whole tile (its width and height), so a large 2×2 measurement tile shows a big, glanceable readout while a 1×1 tile stays compact, instead of every tile rendering the value at the same fixed size regardless of how big you make it. The scaled size also now survives live polling: it previously rode a plain `setFont`, which the per-poll state refresh silently reset (every poll re-resolves the tile's QSS font, which has no `font-size`), so the readout always snapped back to the default — it now travels on the label's own inline stylesheet and persists.
 - **Crash when splitting a pane that holds a live Control Panel** — moving a tab between split panes (Split Right/Down, drag, or Join) briefly leaves it parentless, and a live panel keeps a repaint timer running; a paint delivered to the widget mid-reparent hit a paint device with no engine (`QPainter::begin … engine == 0`) and could crash. Updates are now suppressed on the moved widget for the duration of the reparent, then restored. The tile drag-preview also no longer grabs a zero-size tile.
 
 ## 0.5.1 - 2026-06-10
