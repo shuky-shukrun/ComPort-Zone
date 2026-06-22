@@ -22,6 +22,10 @@ DEFAULT_EXPECT_TIMEOUT_MS = 1000
 # TX origin tag for batch sends (SerialEvent.source) — distinguishes
 # command-file traffic from manual terminal input in the transcript/log.
 BATCH_TX_SOURCE = "batch"
+# Source tag carried by control-panel poll traffic; EXPECT skips it so a
+# resumed panel's polls can't satisfy/pollute a running command file. Kept as a
+# literal (not imported from control_panel_engine) to avoid a circular import.
+CONTROL_PANEL_RX_SOURCE = "control_panel"
 
 
 class BatchParseError(ValueError):
@@ -497,7 +501,10 @@ class BatchRunner:
                 remaining_timeout -= perf_counter() - started_wait
                 continue
             remaining_timeout -= perf_counter() - started_wait
-            if event.kind == "rx":
+            # Ignore background control-panel poll replies: if the user resumed
+            # a panel during this command-file run, its poll RX must not satisfy
+            # or pollute our EXPECT window.
+            if event.kind == "rx" and getattr(event, "source", "") != CONTROL_PANEL_RX_SOURCE:
                 self._rx_buffer += event.message
                 if self._expected_text_available(expected):
                     self._emit("status", f"EXPECT matched on line {line_number}: {expected}")

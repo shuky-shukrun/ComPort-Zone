@@ -916,6 +916,17 @@ def build_stylesheet(theme: ThemePalette) -> str:
     }}
     QLabel#controlPanelEmptyTitle {{ color: {tx}; font-size: 15px; font-weight: 700; }}
     QLabel#controlPanelEmptyHint {{ color: {tx2}; }}
+    QWidget#controlPanelBatchBanner {{
+        background: {mix_hex(amber, bg, 0.84)};
+        border-bottom: 1px solid {mix_hex(amber, bg, 0.55)};
+    }}
+    QLabel#controlPanelBatchBannerLabel {{ color: {tx}; font-weight: 600; }}
+    QPushButton#controlPanelBatchResumeButton {{
+        background: {run_btn}; color: {on_accent}; border: none;
+        border-radius: {RADIUS_SM}px; padding: 5px 16px; font-weight: 700; min-height: 26px;
+    }}
+    QPushButton#controlPanelBatchResumeButton:hover {{ background: {run_btn_hover}; }}
+    QPushButton#controlPanelBatchResumeButton:pressed {{ background: {run_btn_press}; }}
     QWidget#controlPanelPreviewStrip {{
         background: {bg};
         border: 1px solid {bd_soft};
