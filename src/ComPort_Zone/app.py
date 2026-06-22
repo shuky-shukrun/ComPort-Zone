@@ -85,9 +85,14 @@ def install_freeze_watchdog(window) -> QTimer | None:
         # Append so a captured dump survives a relaunch (the user can send
         # the file after force-killing the frozen app).
         _freeze_dump_file = open(path, "a", encoding="utf-8")
+        # Point faulthandler at the dump file explicitly. A windowed
+        # PyInstaller build has no console, so sys.stderr is None and a
+        # bare faulthandler.enable() raises "sys.stderr is None" — which
+        # crashed the packaged app on launch. Inside the try so the
+        # diagnostic watchdog can never prevent the app from starting.
+        faulthandler.enable(file=_freeze_dump_file)
     except Exception:
         return None
-    faulthandler.enable()
 
     def _heartbeat() -> None:
         faulthandler.cancel_dump_traceback_later()
