@@ -433,6 +433,10 @@ class ControlPanelTabWidget(QWidget):
         self.grid.tileCopyRequested.connect(self.copy_entry)
         self.grid.tileCutRequested.connect(self.cut_entry)
         self.grid.pasteRequested.connect(self.paste_entry)
+        self.grid.copySelectionRequested.connect(self.copy_selection)
+        self.grid.cutSelectionRequested.connect(self.cut_selection)
+        self.grid.deleteSelectionRequested.connect(self.delete_selection)
+        self.grid.duplicateSelectionRequested.connect(self.duplicate_selection)
         self.grid.addEntryRequested.connect(self.add_entry_via_dialog)
         self.grid.tileRemoveRequested.connect(self.remove_entry)
         self.grid.tileEnableToggled.connect(self.set_entry_enabled)
@@ -447,9 +451,7 @@ class ControlPanelTabWidget(QWidget):
         # handler (chart-close fires first when that page is current).
         self._disarm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.grid)
         self._disarm_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._disarm_shortcut.activated.connect(
-            lambda: self._force_disarm("Esc pressed")
-        )
+        self._disarm_shortcut.activated.connect(self._on_escape)
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidget(self.grid)
@@ -1603,6 +1605,14 @@ class ControlPanelTabWidget(QWidget):
         """Header button → state. Goes through set_armed so the property
         sync and signal fan-out happen in one place."""
         self.set_armed(checked)
+
+    def _on_escape(self) -> None:
+        """Esc clears a tile selection first; only when nothing is selected
+        does it fall through to disarming the panel (FR-75)."""
+        if self.grid.selected_ids():
+            self.grid.clear_selection()
+            return
+        self._force_disarm("Esc pressed")
 
     def _force_disarm(self, reason: str) -> None:
         """Auto-disarm hook for unbind / session-close / shutdown /

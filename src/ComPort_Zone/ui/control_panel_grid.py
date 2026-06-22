@@ -16,6 +16,7 @@ from PySide6.QtGui import (
     QDragLeaveEvent,
     QDragMoveEvent,
     QDropEvent,
+    QKeyEvent,
     QMouseEvent,
     QPaintEvent,
     QPainter,
@@ -63,11 +64,20 @@ class ControlPanelGridWidget(QWidget):
     tileControlActivated = Signal(str)
     tileChartRequested = Signal(str)
     editModeRequested = Signal()  # a tile long-press asks to enter edit mode
+    # Keyboard shortcuts on the focused grid act on the whole selection.
+    copySelectionRequested = Signal()
+    cutSelectionRequested = Signal()
+    deleteSelectionRequested = Signal()
+    duplicateSelectionRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("controlPanelGrid")
         self.setAcceptDrops(True)
+        # Focusable so keyboard shortcuts (copy/cut/paste/delete/select-all)
+        # only fire while the user is working with tiles — not when a tile's
+        # spinbox/input has focus (there Ctrl+C still copies text).
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._config: ControlPanelConfig | None = None
         self._tiles: dict[str, TileFrame] = {}
         self._selected_ids: set[str] = set()
@@ -157,6 +167,7 @@ class ControlPanelGridWidget(QWidget):
         return set(self._selected_ids)
 
     def _toggle_selection(self, entry_id: str) -> None:
+        self.setFocus()  # own keyboard focus while the user selects tiles
         if entry_id in self._selected_ids:
             self._selected_ids.discard(entry_id)
         else:
@@ -164,6 +175,9 @@ class ControlPanelGridWidget(QWidget):
         tile = self._tiles.get(entry_id)
         if tile is not None:
             tile.set_selected(entry_id in self._selected_ids)
+
+    def select_all(self) -> None:
+        self.set_selection(set(self._tiles))
 
     def set_selection(self, ids: set[str]) -> None:
         """Replace the selection with ``ids`` (intersected with live tiles)."""
@@ -185,8 +199,32 @@ class ControlPanelGridWidget(QWidget):
             event.button() == Qt.MouseButton.LeftButton
             and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier)
         ):
+            self.setFocus()
             self.clear_selection()
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # Only fires when the grid itself has focus (see setFocusPolicy), so
+        # these never hijack copy/paste from a focused spinbox or search box.
+        key = event.key()
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        has_selection = bool(self._selected_ids)
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and has_selection:
+            self.deleteSelectionRequested.emit()
+        elif ctrl and key == Qt.Key.Key_A:
+            self.select_all()
+        elif ctrl and key == Qt.Key.Key_C and has_selection:
+            self.copySelectionRequested.emit()
+        elif ctrl and key == Qt.Key.Key_X and has_selection:
+            self.cutSelectionRequested.emit()
+        elif ctrl and key == Qt.Key.Key_V:
+            self.pasteRequested.emit()
+        elif ctrl and key == Qt.Key.Key_D and has_selection:
+            self.duplicateSelectionRequested.emit()
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme

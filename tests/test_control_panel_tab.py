@@ -2548,6 +2548,23 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         tab.duplicate_entry_via_dialog("volts")  # multi -> block clone, no dialog
         self.assertEqual(len(tab.config.entries), 4)
 
+    def test_escape_clears_selection_before_disarming(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts"})
+        with patch.object(tab, "_force_disarm") as disarm:
+            tab._on_escape()  # first Esc: clears the selection
+            self.assertEqual(tab.grid.selected_ids(), set())
+            disarm.assert_not_called()
+            tab._on_escape()  # second Esc: nothing selected -> disarm
+            disarm.assert_called_once()
+
+    def test_grid_delete_signal_removes_selection(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts", "trip"})
+        with patch.object(tab, "_confirm_multi_delete", return_value=True):
+            tab.grid.deleteSelectionRequested.emit()  # end-to-end wiring
+        self.assertEqual(len(tab.config.entries), 0)
+
     def test_apply_entry_edit_replaces(self) -> None:
         tab = self.make_tab(volt_entry())
         edited = volt_entry()

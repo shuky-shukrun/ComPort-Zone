@@ -1248,6 +1248,56 @@ class TileSelectionTests(unittest.TestCase):
         grid.relayout()
         return grid
 
+    @staticmethod
+    def _key(key, ctrl: bool = False):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        mods = (
+            Qt.KeyboardModifier.ControlModifier
+            if ctrl
+            else Qt.KeyboardModifier.NoModifier
+        )
+        return QKeyEvent(QEvent.Type.KeyPress, key, mods)
+
+    def test_ctrl_a_selects_all(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid.keyPressEvent(self._key(Qt.Key.Key_A, ctrl=True))
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_delete_key_emits_when_selection(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid.set_selection({"a"})
+        seen: list[bool] = []
+        grid.deleteSelectionRequested.connect(lambda: seen.append(True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_Delete))
+        self.assertEqual(seen, [True])
+        grid.deleteLater()
+
+    def test_delete_key_ignored_without_selection(self) -> None:
+        grid = self._grid(make_entry("a"))
+        seen: list[bool] = []
+        grid.deleteSelectionRequested.connect(lambda: seen.append(True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_Delete))
+        self.assertEqual(seen, [])
+        grid.deleteLater()
+
+    def test_clipboard_shortcuts_emit(self) -> None:
+        grid = self._grid(make_entry("a"))
+        grid.set_selection({"a"})
+        fired: list[str] = []
+        grid.copySelectionRequested.connect(lambda: fired.append("copy"))
+        grid.cutSelectionRequested.connect(lambda: fired.append("cut"))
+        grid.duplicateSelectionRequested.connect(lambda: fired.append("dup"))
+        grid.pasteRequested.connect(lambda: fired.append("paste"))
+        grid.keyPressEvent(self._key(Qt.Key.Key_C, ctrl=True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_X, ctrl=True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_D, ctrl=True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_V, ctrl=True))
+        self.assertEqual(fired, ["copy", "cut", "dup", "paste"])
+        grid.deleteLater()
+
     def test_ctrl_click_emits_toggle_and_skips_long_press(self) -> None:
         tile = ValueTileWidget(make_entry("a"))
         seen: list[str] = []
