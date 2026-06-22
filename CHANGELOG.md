@@ -16,6 +16,7 @@ All notable changes to ComPort Zone are documented here.
 ### Fixed
 
 - **Crash when splitting a pane that holds a live Control Panel** — moving a tab between split panes (Split Right/Down, drag, or Join) briefly leaves it parentless, and a live panel keeps a repaint timer running; a paint delivered to the widget mid-reparent hit a paint device with no engine (`QPainter::begin … engine == 0`) and could crash. Updates are now suppressed on the moved widget for the duration of the reparent, then restored. The tile drag-preview also no longer grabs a zero-size tile.
+- **Check for Updates no longer fails with "HTTP 403: rate limit exceeded"** — the check queried GitHub's REST API, which caps unauthenticated requests at 60/hour per IP (easily hit with check-on-launch, or on a shared office network). It now reads the releases Atom feed, which has no per-IP cap, so update checks work every time; a failed check also shows a clear message instead of a raw HTTP error.
 
 ## 0.5.1 - 2026-06-10
 

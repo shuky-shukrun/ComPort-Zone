@@ -2,7 +2,7 @@
 
 The command always exits 0 (per spec), so coverage focuses on what gets
 printed under each outcome: newer release available, no update needed,
-and network failure.
+and network / feed failure. The check reads the releases Atom feed.
 """
 
 from __future__ import annotations
@@ -18,12 +18,18 @@ from ComPort_Zone.cli.main import cli
 
 
 def _fake_release_body(tag: str, *, name: str | None = None, url: str | None = None) -> bytes:
-    payload = {
-        "tag_name": tag,
-        "name": name or f"Release {tag}",
-        "html_url": url or f"https://example.com/{tag}",
-    }
-    return json.dumps(payload).encode("utf-8")
+    """A minimal one-entry releases Atom feed for the given tag."""
+    name = name or f"Release {tag}"
+    url = url or f"https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/{tag}"
+    feed = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom">'
+        f"<entry><id>tag:github.com,2008:Repository/1/{tag}</id>"
+        f'<link rel="alternate" type="text/html" href="{url}"/>'
+        f"<title>{name}</title></entry>"
+        "</feed>"
+    )
+    return feed.encode("utf-8")
 
 
 def _bump_version_segment(version: str) -> str:
@@ -93,10 +99,10 @@ class UpdateCheckErrorTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         self.assertIn("Could not reach GitHub", result.output)
 
-    def test_invalid_json_response_exits_zero(self) -> None:
+    def test_unparseable_feed_exits_zero(self) -> None:
         with patch(
             "ComPort_Zone.cli.commands.update._fetch_latest_release_body",
-            return_value=b"<html>not json</html>",
+            return_value=b"<html>not a release feed</html>",
         ):
             result = self.runner.invoke(cli, ["update", "check"])
         self.assertEqual(result.exit_code, 0, msg=result.output)

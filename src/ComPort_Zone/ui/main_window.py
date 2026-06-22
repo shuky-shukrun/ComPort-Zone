@@ -76,6 +76,7 @@ from ..version_check import (
     ReleaseInfo,
     VersionCheckResult,
     build_version_check_result,
+    describe_check_error,
     fetch_latest_release,
 )
 from ..workspace_settings_controller import WorkspaceSettingsController
@@ -2403,7 +2404,7 @@ class MainWindow(QMainWindow):
             result = build_version_check_result(__version__, payload)
             self._show_version_check_result(result, automatic=automatic)
         else:
-            detail = str(payload) if payload else "Unknown error."
+            detail = describe_check_error(payload)
             self._show_version_check_error(detail, automatic=automatic)
 
     def _show_version_check_error(self, detail: str, *, automatic: bool) -> None:
