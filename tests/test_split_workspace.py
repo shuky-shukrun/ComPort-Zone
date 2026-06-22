@@ -51,6 +51,10 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
         self.assertIs(workspace.currentWidget(), second)
         self.assertEqual(workspace.indexOf(first), 0)
         self.assertEqual(workspace.indexOf(second), 1)
+        # Updates are suppressed only during the reparent and restored after
+        # (a live control panel paints on a timer; a paint mid-reparent
+        # crashes Qt) — the moved widget must be paintable again.
+        self.assertTrue(second.updatesEnabled())
 
         workspace.deleteLater()
         first.deleteLater()

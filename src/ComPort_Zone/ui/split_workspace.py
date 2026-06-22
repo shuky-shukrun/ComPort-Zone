@@ -184,8 +184,12 @@ class SplitWorkspaceWidget(QWidget):
                 text = pane.tabText(0)
                 icon = pane.tabIcon(0)
                 tooltip = pane.tabToolTip(0)
-                pane.removeTab(0)
-                index = primary.addTab(widget, icon, text)
+                widget.setUpdatesEnabled(False)
+                try:
+                    pane.removeTab(0)
+                    index = primary.addTab(widget, icon, text)
+                finally:
+                    widget.setUpdatesEnabled(True)
                 primary.setTabToolTip(index, tooltip)
                 self.tabMovedBetweenPanes.emit(widget, self._global_index(primary, index))
             self._remove_pane(pane)
@@ -381,8 +385,17 @@ class SplitWorkspaceWidget(QWidget):
         text = ref.pane.tabText(ref.local_index)
         icon = ref.pane.tabIcon(ref.local_index)
         tooltip = ref.pane.tabToolTip(ref.local_index)
-        ref.pane.removeTab(ref.local_index)
-        new_index = target.addTab(widget, icon, text)
+        # Suppress paints on the tab (and its children) while it is briefly
+        # parentless between panes. A live control panel keeps a repaint timer
+        # running, and a paint delivered to a widget mid-reparent hits a
+        # device with no engine ("QPainter::begin … engine == 0"); re-enabling
+        # after the move triggers one clean repaint in the new pane.
+        widget.setUpdatesEnabled(False)
+        try:
+            ref.pane.removeTab(ref.local_index)
+            new_index = target.addTab(widget, icon, text)
+        finally:
+            widget.setUpdatesEnabled(True)
         self._watch_tab_content(widget)
         target.setTabToolTip(new_index, tooltip)
         self.tabMovedBetweenPanes.emit(widget, self._global_index(target, new_index))
