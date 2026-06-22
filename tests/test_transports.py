@@ -53,12 +53,12 @@ class FakeSerialClient:
     def send_bytes(self, data: bytes, *, source: str = "") -> None:
         self.sent_bytes.append(data)
 
-    def subscribe_events(self) -> Queue[SerialEvent]:
+    def subscribe_monitor(self) -> Queue[SerialEvent]:
         queue: Queue[SerialEvent] = Queue()
         self.subscribers.append(queue)
         return queue
 
-    def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
+    def unsubscribe_monitor(self, queue: Queue[SerialEvent]) -> None:
         self.subscribers = [subscriber for subscriber in self.subscribers if subscriber is not queue]
 
 
@@ -100,12 +100,12 @@ class FakeLanClient:
     def send_bytes(self, data: bytes, *, source: str = "") -> None:
         self.sent_bytes.append(data)
 
-    def subscribe_events(self) -> Queue[SerialEvent]:
+    def subscribe_monitor(self) -> Queue[SerialEvent]:
         queue: Queue[SerialEvent] = Queue()
         self.subscribers.append(queue)
         return queue
 
-    def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
+    def unsubscribe_monitor(self, queue: Queue[SerialEvent]) -> None:
         self.subscribers = [subscriber for subscriber in self.subscribers if subscriber is not queue]
 
 
@@ -129,9 +129,9 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(client.sent_text, [("status", "LF")])
         self.assertEqual(client.sent_bytes, [b"\x55\xaa"])
 
-        subscriber = adapter.subscribe_events()
+        subscriber = adapter.subscribe_monitor()
         self.assertEqual(client.subscribers, [subscriber])
-        adapter.unsubscribe_events(subscriber)
+        adapter.unsubscribe_monitor(subscriber)
         self.assertEqual(client.subscribers, [])
 
         adapter.disconnect()
@@ -160,9 +160,9 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(client.sent_text, [("status", "LF")])
         self.assertEqual(client.sent_bytes, [b"\x55\xaa"])
 
-        subscriber = adapter.subscribe_events()
+        subscriber = adapter.subscribe_monitor()
         self.assertEqual(client.subscribers, [subscriber])
-        adapter.unsubscribe_events(subscriber)
+        adapter.unsubscribe_monitor(subscriber)
         self.assertEqual(client.subscribers, [])
 
         adapter.disconnect()

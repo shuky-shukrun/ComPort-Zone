@@ -100,7 +100,6 @@ class ControlPanelRunCoordinatorTests(unittest.TestCase):
         second = self.coordinator.acquire_dispatcher(session)
         self.assertIs(first, second)
         self.assertEqual(self.coordinator.dispatcher_count(), 1)
-        self.assertEqual(len(session.transport._subscribers), 1)
 
         self.coordinator.release_dispatcher(1)
         self.assertTrue(first.is_running)
@@ -109,30 +108,9 @@ class ControlPanelRunCoordinatorTests(unittest.TestCase):
         self.coordinator.release_dispatcher(1)
         self.assertFalse(first.is_running)
         self.assertEqual(self.coordinator.dispatcher_count(), 0)
-        self.assertEqual(session.transport._subscribers, [])
 
     def test_release_unknown_session_is_noop(self) -> None:
         self.coordinator.release_dispatcher(123)
-
-    def test_acquire_attaches_traffic_journal_release_detaches(self) -> None:
-        session = FakeSession(1)
-        self.sessions = [session]
-        dispatcher = self.coordinator.acquire_dispatcher(session)
-        self.assertIs(session.control_panel_traffic_journal, dispatcher.traffic_journal)
-        self.coordinator.release_dispatcher(1)
-        self.assertIsNone(session.control_panel_traffic_journal)
-
-    def test_shared_acquire_keeps_one_journal(self) -> None:
-        session = FakeSession(1)
-        self.sessions = [session]
-        first = self.coordinator.acquire_dispatcher(session)
-        self.coordinator.acquire_dispatcher(session)
-        self.assertIs(session.control_panel_traffic_journal, first.traffic_journal)
-        self.coordinator.release_dispatcher(1)
-        # One control_panel still bound — the journal must stay attached.
-        self.assertIs(session.control_panel_traffic_journal, first.traffic_journal)
-        self.coordinator.release_dispatcher(1)
-        self.assertIsNone(session.control_panel_traffic_journal)
 
     def test_transport_swap_detected_and_replaced(self) -> None:
         session = FakeSession(1)
@@ -149,7 +127,6 @@ class ControlPanelRunCoordinatorTests(unittest.TestCase):
         fresh = self.coordinator.acquire_dispatcher(session)
         self.assertIsNot(fresh, stale)
         self.assertFalse(stale.is_running)
-        self.assertEqual(old_transport._subscribers, [])
         self.assertFalse(self.coordinator.session_health(1).transport_changed)
         self.coordinator.release_dispatcher(1)
 

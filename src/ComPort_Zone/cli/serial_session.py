@@ -16,7 +16,6 @@ that the command layer translates to ``ctx.exit(...)``.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..core.models import SerialProfile
@@ -134,10 +133,3 @@ def port_details(transport: SerialTransportAdapter, port_name: str) -> dict[str,
     return None
 
 
-# ----------------------------------------------------------- event-loop helper
-
-def drain_events(transport: SerialTransportAdapter) -> Iterable:
-    """Yield every event currently queued on the transport without blocking."""
-    queue = transport.events
-    while not queue.empty():
-        yield queue.get_nowait()

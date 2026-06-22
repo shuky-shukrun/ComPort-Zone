@@ -553,6 +553,60 @@ def serve_in_thread(
 
 
 # ----------------------------------------------------------------------
+# Serial responder (for manual serial-port testing via a com0com pair)
+# ----------------------------------------------------------------------
+
+def run_serial(port_name: str, baud: int, psu: Psu, handler: Handler) -> None:
+    """Serve the same SCPI behaviour over a serial port instead of TCP.
+
+    Point ComPort Zone at one end of a com0com virtual pair (or a real
+    crossover) and run this on the other end. Frames on CR/LF/CRLF like the
+    TCP handler and replies with ``<reply>\\r\\n``.
+    """
+    import serial  # local import: the TCP path doesn't need pyserial
+
+    ser = serial.Serial(port_name, baudrate=baud, timeout=0.1)
+    log("BOOT", f"GEN+ simulator on serial {port_name} @ {baud} baud", C.GREEN)
+    log("BOOT", "Press Ctrl+C to stop.", C.DIM)
+    buf = bytearray()
+    try:
+        while True:
+            try:
+                chunk = ser.read(ser.in_waiting or 1)
+            except serial.SerialException as exc:
+                log("ERR", f"{port_name}  read failed: {exc}", C.RED)
+                break
+            if not chunk:
+                continue
+            buf.extend(chunk)
+            while True:
+                nl = -1
+                seplen = 1
+                for sep in (b"\r\n", b"\n", b"\r"):
+                    idx = buf.find(sep)
+                    if idx >= 0 and (nl == -1 or idx < nl):
+                        nl = idx
+                        seplen = len(sep)
+                if nl < 0:
+                    break
+                line = bytes(buf[:nl])
+                del buf[:nl + seplen]
+                text = line.decode("ascii", errors="replace").strip()
+                if not text:
+                    continue
+                log("RX", f"{port_name}  {text}", C.CYAN)
+                reply = handler.dispatch(text)
+                if reply is not None:
+                    ser.write((reply + "\r\n").encode("ascii"))
+                    ser.flush()
+                    log("TX", f"{port_name}  {reply}", C.YELLOW)
+    except KeyboardInterrupt:
+        log("BOOT", "Shutting down (Ctrl+C)", C.YELLOW)
+    finally:
+        ser.close()
+
+
+# ----------------------------------------------------------------------
 # CLI / entry point
 # ----------------------------------------------------------------------
 
@@ -564,6 +618,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="bind address (default: 0.0.0.0, all interfaces)")
     p.add_argument("--port", type=int, default=8003,
                    help="TCP port (default: 8003, matches firmware default)")
+    p.add_argument("--serial", metavar="COMx",
+                   help="serve over this serial port instead of TCP "
+                        "(e.g. COM21, one end of a com0com pair)")
+    p.add_argument("--baud", type=int, default=9600,
+                   help="serial baud rate when --serial is used (default: 9600)")
     p.add_argument("--no-color", action="store_true",
                    help="disable ANSI colours in console output")
     p.add_argument("--inject-ov", action="store_true",
@@ -580,6 +639,14 @@ def main(argv: list[str] | None = None) -> int:
         psu.inject_fault(Psu.Q_OV)
     if args.inject_ot:
         psu.inject_fault(Psu.Q_OT)
+
+    if args.serial:
+        if args.inject_ov:
+            log("BOOT", "Injected: OV fault bit asserted", C.RED)
+        if args.inject_ot:
+            log("BOOT", "Injected: OT fault bit asserted", C.RED)
+        run_serial(args.serial, args.baud, psu, Handler(psu))
+        return 0
 
     server = build_server(host=args.host, port=args.port, psu=psu)
 

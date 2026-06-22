@@ -45,6 +45,21 @@ def drawer_action_rows(page) -> list[list[str]]:
     return rows
 
 
+def fake_connect_client(client) -> None:
+    """Put a SerialClient/LanClient into a connected state for tests without a
+    real port: a started PortChannel over an in-memory raw transport, so
+    ``is_connected`` is True and ``disconnect()`` tears it down cleanly."""
+    from ComPort_Zone.port_channel import PortChannel
+
+    from tests.fakes.fake_raw_transport import FakeRawTransport
+
+    raw = FakeRawTransport()
+    raw.open()
+    client._raw = raw
+    client._channel = PortChannel(raw, hub=client._hub)
+    client._channel.start()
+
+
 def cleanup_tmp_settings_artifacts() -> None:
     tests_dir = Path(__file__).parent
     for pattern in ("_tmp_settings*.json", "_tmp_settings*.json.bak", "._tmp_settings*.json.*.tmp"):
@@ -379,7 +394,7 @@ class AppSessionTests(unittest.TestCase):
                 connect_calls.append(profile.endpoint())
                 client._desired_profile = profile
                 client._profile = profile
-                client._socket = FakeSocket()
+                fake_connect_client(client)
                 return True
 
             LanClient.connect = fake_lan_connect
@@ -896,7 +911,7 @@ class AppSessionTests(unittest.TestCase):
         try:
             window = app_module.MainWindow()
             session = window.current_session()
-            session.serial_client._serial = FakePort()
+            fake_connect_client(session.serial_client)
             session._update_connection_ui(True)
 
             self.assertTrue(session.script_pause_button.isHidden())
@@ -1102,7 +1117,7 @@ class AppSessionTests(unittest.TestCase):
             window.settings.timestamps_enabled = False
             session = window.current_session()
             sent: list[str] = []
-            session.serial_client.send_text = lambda text, *_: sent.append(text)
+            session.serial_client.send_text = lambda text, *a, **k: sent.append(text)
 
             session.command_input.setText("status")
             session.send_from_input()
@@ -1140,11 +1155,10 @@ class AppSessionTests(unittest.TestCase):
             session = window.current_session()
             sent: list[str] = []
 
-            def fake_send_text(text: str, *_args) -> None:
+            def fake_send_text(text: str, *_args, **_kw) -> None:
                 sent.append(text)
                 if text == "bad":
                     raise RuntimeError("write failed")
-                session.serial_client.events.put(app_module.SerialEvent(kind="tx", message=text))
 
             session.serial_client.send_text = fake_send_text
             session.command_input.setText("ok\nbad\nlater")
@@ -1290,7 +1304,7 @@ class AppSessionTests(unittest.TestCase):
             window.settings.quick_commands = [quick_command]
             session.refresh_quick_commands(quick_command.id)
             session.quick_list.setCurrentRow(0)
-            session.serial_client.send_text = lambda text, ending=None: sent.append((text, ending))
+            session.serial_client.send_text = lambda text, ending=None, **k: sent.append((text, ending))
 
             session.command_input.setText("draft")
             session.send_selected_quick_command()
@@ -1931,7 +1945,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertFalse(duplicate.transport.is_connected)
 
             window.tabs.setCurrentWidget(session)
-            session.serial_client._socket = FakeSocket()
+            fake_connect_client(session.serial_client)
             session._update_connection_ui(True)
             started: list[tuple[str, object, object]] = []
             session.run_script_text = lambda text, source_label="Editor buffer", source_path=None: (
@@ -2105,7 +2119,7 @@ class AppSessionTests(unittest.TestCase):
             window = app_module.MainWindow()
             session = window.current_session()
             session.profile.port = "COM88"
-            session.serial_client._serial = FakePort()
+            fake_connect_client(session.serial_client)
             started: list[tuple[str, object, object]] = []
             session.run_script_text = lambda text, source_label="Editor buffer", source_path=None: (
                 started.append((text, source_label, source_path)) or True

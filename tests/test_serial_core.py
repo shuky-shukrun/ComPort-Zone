@@ -1,34 +1,34 @@
 import unittest
 
+from ComPort_Zone.port_channel import SerialEvent
 from ComPort_Zone.serial_core import SerialClient, decode_serial_bytes, format_hex_bytes
 
 
 class SerialCoreTests(unittest.TestCase):
-    def test_rx_events_preserve_raw_bytes(self) -> None:
-        client = SerialClient()
-
-        client._emit("rx", decode_serial_bytes(b"\xffOK"), raw=b"\xffOK")
-        event = client.events.get_nowait()
-
-        self.assertEqual(event.message, "\ufffdOK")
-        self.assertEqual(event.raw, b"\xffOK")
-
     def test_format_hex_bytes(self) -> None:
         self.assertEqual(format_hex_bytes(b"\x00\x7f\xff"), "00 7F FF")
 
-    def test_event_subscribers_receive_copy_without_stealing_main_queue(self) -> None:
+    def test_monitor_subscribers_receive_events_with_raw_bytes(self) -> None:
         client = SerialClient()
-        subscriber = client.subscribe_events()
+        subscriber = client.subscribe_monitor()
 
-        client._emit("rx", "OK", raw=b"OK")
+        client.emit_event(
+            SerialEvent(kind="rx", message=decode_serial_bytes(b"\xffOK"), raw=b"\xffOK")
+        )
 
-        self.assertEqual(client.events.get_nowait().message, "OK")
+        event = subscriber.get_nowait()
+        self.assertEqual(event.message, "�OK")
+        self.assertEqual(event.raw, b"\xffOK")
+
+    def test_unsubscribe_stops_delivery(self) -> None:
+        client = SerialClient()
+        subscriber = client.subscribe_monitor()
+
+        client.emit_event(SerialEvent(kind="rx", message="OK"))
         self.assertEqual(subscriber.get_nowait().message, "OK")
 
-        client.unsubscribe_events(subscriber)
-        client._emit("rx", "NEXT", raw=b"NEXT")
-
-        self.assertEqual(client.events.get_nowait().message, "NEXT")
+        client.unsubscribe_monitor(subscriber)
+        client.emit_event(SerialEvent(kind="rx", message="NEXT"))
         self.assertTrue(subscriber.empty())
 
     def test_reconnect_state_reports_live_thread(self) -> None:

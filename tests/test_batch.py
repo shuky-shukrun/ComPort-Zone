@@ -139,9 +139,9 @@ class BatchParserTests(unittest.TestCase):
 
     def test_wait_uses_requested_short_delay_without_fixed_minimum(self) -> None:
         runner = BatchRunner(
-            event_queue=Queue(),
-            send_text=lambda text: None,
-            send_bytes=lambda data: None,
+            emit_event=lambda event: None,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: True,
         )
         stop_event = RecordingStopEvent()
@@ -156,15 +156,15 @@ class BatchParserTests(unittest.TestCase):
         rx_events: Queue = Queue()
         sent: list[str] = []
 
-        def send_text(text: str) -> None:
+        def send_text(text: str, **kw) -> None:
             sent.append(text)
             rx_events.put_nowait(SerialEvent(kind="rx", message="Com"))
             rx_events.put_nowait(SerialEvent(kind="rx", message="Port Zone"))
 
         runner = BatchRunner(
-            event_queue=output_events,
+            emit_event=output_events.put_nowait,
             send_text=send_text,
-            send_bytes=lambda data: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: True,
         )
         runner._rx_event_queue = rx_events
@@ -180,9 +180,9 @@ class BatchParserTests(unittest.TestCase):
     def test_expect_times_out_when_response_is_missing(self) -> None:
         output_events: Queue = Queue()
         runner = BatchRunner(
-            event_queue=output_events,
-            send_text=lambda text: None,
-            send_bytes=lambda data: None,
+            emit_event=output_events.put_nowait,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: True,
             expect_timeout_ms=1,
         )
@@ -201,16 +201,16 @@ class BatchParserTests(unittest.TestCase):
         release_first_send = Event()
         sent: list[str] = []
 
-        def send_text(text: str) -> None:
+        def send_text(text: str, **kw) -> None:
             sent.append(text)
             if text == "one":
                 first_sent.set()
                 release_first_send.wait(1)
 
         runner = BatchRunner(
-            event_queue=output_events,
+            emit_event=output_events.put_nowait,
             send_text=send_text,
-            send_bytes=lambda data: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: True,
         )
         runner.start(parse_batch_script("SEND one\nSEND two"))
@@ -239,16 +239,16 @@ class BatchParserTests(unittest.TestCase):
         def is_connected() -> bool:
             return connected
 
-        def send_text(text: str) -> None:
+        def send_text(text: str, **kw) -> None:
             sent.append(text)
             if text == "one":
                 first_sent.set()
                 release_first_send.wait(1)
 
         runner = BatchRunner(
-            event_queue=output_events,
+            emit_event=output_events.put_nowait,
             send_text=send_text,
-            send_bytes=lambda data: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=is_connected,
         )
         runner.start(parse_batch_script("SEND one\nSEND two"))
@@ -274,9 +274,9 @@ class BatchParserTests(unittest.TestCase):
     def test_stop_works_while_connection_paused(self) -> None:
         output_events: Queue = Queue()
         runner = BatchRunner(
-            event_queue=output_events,
-            send_text=lambda text: None,
-            send_bytes=lambda data: None,
+            emit_event=output_events.put_nowait,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: False,
         )
 
@@ -293,9 +293,9 @@ class BatchParserTests(unittest.TestCase):
         output_events: Queue = Queue()
         sent: list[str] = []
         runner = BatchRunner(
-            event_queue=output_events,
-            send_text=sent.append,
-            send_bytes=lambda data: None,
+            emit_event=output_events.put_nowait,
+            send_text=lambda text, **kw: sent.append(text),
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: True,
         )
 
@@ -314,9 +314,9 @@ class BatchParserTests(unittest.TestCase):
         output_events: Queue = Queue()
         rx_events: Queue = Queue()
         runner = BatchRunner(
-            event_queue=output_events,
-            send_text=lambda text: None,
-            send_bytes=lambda data: None,
+            emit_event=output_events.put_nowait,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
             connected_supplier=lambda: True,
             event_queue_factory=lambda: rx_events,
             expect_timeout_ms=80,

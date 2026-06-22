@@ -1,9 +1,11 @@
 import socket
 import time
 import unittest
+from queue import Queue
 
 from ComPort_Zone.lan_core import LanClient
 from ComPort_Zone.models import LanProfile
+from ComPort_Zone.port_channel import SerialEvent
 
 
 class FakeSocket:
@@ -25,15 +27,18 @@ class FakeSocket:
     def close(self) -> None:
         self.closed = True
 
+    def shutdown(self, _how: int) -> None:
+        pass
+
     def settimeout(self, value: float | None) -> None:
         self.timeout = value
 
 
-def wait_for_event(client: LanClient, kind: str, timeout: float = 1.0):
+def wait_for_event(queue: "Queue[SerialEvent]", kind: str, timeout: float = 1.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        while not client.events.empty():
-            event = client.events.get_nowait()
+        while not queue.empty():
+            event = queue.get_nowait()
             if event.kind == kind:
                 return event
         time.sleep(0.01)
@@ -52,19 +57,22 @@ class LanCoreTests(unittest.TestCase):
             return connection
 
         client = LanClient(factory)
+        monitor = client.subscribe_monitor()
         profile = LanProfile(host="192.168.1.50", port=5025, line_ending="CRLF", auto_reconnect=False)
 
         self.assertTrue(client.connect(profile))
         self.assertTrue(client.is_connected)
         self.assertEqual(calls, [(("192.168.1.50", 5025), 0.1)])
-        wait_for_event(client, "connection")
+        wait_for_event(monitor, "connection")
 
         client.send_text("PING")
         client.send_bytes(b"\x55\xaa")
 
+        # Sends are serialized through the channel; once both TX echoes land
+        # the writes have reached the socket in order.
+        self.assertEqual(wait_for_event(monitor, "tx").message, "PING")
+        self.assertEqual(wait_for_event(monitor, "tx").message, "HEX 55 AA")
         self.assertEqual(sockets[0].sent, [b"PING\r\n", b"\x55\xaa"])
-        self.assertEqual(wait_for_event(client, "tx").message, "PING")
-        self.assertEqual(wait_for_event(client, "tx").message, "HEX 55 AA")
 
         client.disconnect()
         self.assertFalse(client.is_connected)
@@ -72,18 +80,22 @@ class LanCoreTests(unittest.TestCase):
 
     def test_rx_events_preserve_raw_bytes_and_remote_close_disconnects(self) -> None:
         client = LanClient(lambda _address, _timeout: FakeSocket([b"\xffOK", b""]))
+        monitor = client.subscribe_monitor()
 
         self.assertTrue(
             client.connect(LanProfile(host="dut.local", port=9000, auto_reconnect=False))
         )
 
-        event = wait_for_event(client, "rx")
-        self.assertEqual(event.message, "\ufffdOK")
+        event = wait_for_event(monitor, "rx")
+        self.assertEqual(event.message, "�OK")
         self.assertEqual(event.raw, b"\xffOK")
         self.assertEqual(
-            wait_for_event(client, "error").message,
+            wait_for_event(monitor, "error").message,
             "Connection lost: Remote host closed the connection.",
         )
+        deadline = time.time() + 1.0
+        while time.time() < deadline and client.is_connected:
+            time.sleep(0.01)
         self.assertFalse(client.is_connected)
 
     def test_failed_connect_can_enter_and_stop_reconnect(self) -> None:
@@ -91,9 +103,10 @@ class LanCoreTests(unittest.TestCase):
             raise OSError("refused")
 
         client = LanClient(factory)
+        monitor = client.subscribe_monitor()
 
         self.assertFalse(client.connect(LanProfile(host="192.168.1.70", port=23)))
-        wait_for_event(client, "error")
+        wait_for_event(monitor, "error")
 
         deadline = time.time() + 1.0
         while time.time() < deadline and not client.is_reconnecting:
