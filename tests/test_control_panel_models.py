@@ -32,6 +32,7 @@ from ComPort_Zone.control_panel_models import (
     normalize_layout,
     place_tile,
     set_tile_span,
+    set_tiles_span,
 )
 from ComPort_Zone.control_panel_parse import CompiledParseRule, ParseOutcome, evaluate_rules
 
@@ -1181,6 +1182,17 @@ class LayoutMathTests(unittest.TestCase):
         spots = placements(entries)
         self.assertEqual(spots["a"], (0, 0, 2, 1))
         self.assertEqual(spots["b"][:2], (1, 1))
+
+    def test_set_tiles_span_resizes_whole_group(self) -> None:
+        entries = [make_entry("a", col=0, row=0), make_entry("b", col=2, row=0)]
+        changed = set_tiles_span(entries, 4, {"a", "b"}, 2, 2)
+        self.assertTrue(changed)
+        spots = placements(entries)
+        self.assertEqual(spots["a"][2:], (2, 2))
+        self.assertEqual(spots["b"][2:], (2, 2))
+
+    def test_set_tiles_span_unknown_ids_noop(self) -> None:
+        self.assertFalse(set_tiles_span([make_entry("a")], 4, {"ghost"}, 2, 2))
 
     def test_set_tile_span_clamps(self) -> None:
         # span_w is clamped by min(MAX_TILE_SPAN, columns), span_h by

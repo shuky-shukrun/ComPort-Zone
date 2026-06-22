@@ -671,6 +671,25 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual((entry.tile.span_w, entry.tile.span_h), (2, 2))
         grid.deleteLater()
 
+    def test_span_request_applies_to_selection(self) -> None:
+        config = make_config(make_entry("a", col=0), make_entry("b", col=2))
+        grid = self.make_grid(config)
+        grid.set_selection({"a", "b"})
+        grid._handle_span_request("a", 2, 2)  # 'a' is selected -> resize both
+        for entry_id in ("a", "b"):
+            entry = config.entry_by_id(entry_id)
+            self.assertEqual((entry.tile.span_w, entry.tile.span_h), (2, 2))
+        grid.deleteLater()
+
+    def test_span_request_single_when_target_not_selected(self) -> None:
+        config = make_config(make_entry("a", col=0), make_entry("b", col=2))
+        grid = self.make_grid(config)
+        grid.set_selection({"b"})  # 'a' is not selected
+        grid._handle_span_request("a", 2, 2)
+        self.assertEqual(config.entry_by_id("a").tile.span_w, 2)
+        self.assertEqual(config.entry_by_id("b").tile.span_w, 1)  # unchanged
+        grid.deleteLater()
+
     def test_cell_at_clamps_for_span(self) -> None:
         grid = self.make_grid(make_config(make_entry("a"), columns=4), width=800)
         far_right_col, _row = grid.cell_at(795, 10, span_w=2)

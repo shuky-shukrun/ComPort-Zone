@@ -30,6 +30,7 @@ from ..control_panel_models import (
     move_tiles,
     place_tile,
     set_tile_span,
+    set_tiles_span,
     visible_row_count,
 )
 from ..themes import THEMES, ThemePalette
@@ -433,11 +434,24 @@ class ControlPanelGridWidget(QWidget):
     def _handle_span_request(self, entry_id: str, span_w: int, span_h: int) -> None:
         if self._config is None:
             return
-        if set_tile_span(self._config.entries, self._config.columns, entry_id, span_w, span_h):
-            entry = self._config.entry_by_id(entry_id)
-            tile = self._tiles.get(entry_id)
-            if entry is not None and tile is not None:
-                tile.update_entry(entry)
+        # The "Size" menu on a tile that is part of a multi-selection resizes
+        # every selected tile to the same footprint (corner-drag stays single).
+        if entry_id in self._selected_ids and len(self._selected_ids) > 1:
+            affected = set(self._selected_ids)
+            changed = set_tiles_span(
+                self._config.entries, self._config.columns, affected, span_w, span_h
+            )
+        else:
+            affected = {entry_id}
+            changed = set_tile_span(
+                self._config.entries, self._config.columns, entry_id, span_w, span_h
+            )
+        if changed:
+            for affected_id in affected:
+                entry = self._config.entry_by_id(affected_id)
+                tile = self._tiles.get(affected_id)
+                if entry is not None and tile is not None:
+                    tile.update_entry(entry)
             self.relayout()
             self.layoutChanged.emit()
 

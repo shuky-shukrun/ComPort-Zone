@@ -1302,6 +1302,26 @@ def set_tile_span(
     return True
 
 
+def set_tiles_span(
+    entries: list[ControlPanelEntry],
+    columns: int,
+    ids: set[str],
+    span_w: int,
+    span_h: int,
+) -> bool:
+    """Resize every tile in ``ids`` to the same footprint, then normalize
+    with the resized group winning its cells. Returns False when no id
+    matched."""
+    group = [entry for entry in entries if entry.id in ids]
+    if not group:
+        return False
+    for entry in group:
+        entry.tile.span_w = span_w
+        entry.tile.span_h = span_h
+    _normalize(entries, columns, priority_ids={entry.id for entry in group})
+    return True
+
+
 def grid_row_count(entries: list[ControlPanelEntry]) -> int:
     """Number of grid rows needed to show every tile."""
     if not entries:
