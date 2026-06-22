@@ -13,6 +13,10 @@ All notable changes to ComPort Zone are documented here.
   - **Keyboard shortcuts** (when the grid is focused, so they never hijack copy in an input field): Ctrl+C / Ctrl+X / Ctrl+V, Delete, Ctrl+A (select all), Ctrl+D (duplicate), and Esc (clear the selection, then disarm).
   - **Marquee box-select**: drag a rectangle on empty grid space to select every tile it touches; Ctrl+drag adds to the current selection.
 
+### Fixed
+
+- **Crash when splitting a pane that holds a live Control Panel** — moving a tab between split panes (Split Right/Down, drag, or Join) briefly leaves it parentless, and a live panel keeps a repaint timer running; a paint delivered to the widget mid-reparent hit a paint device with no engine (`QPainter::begin … engine == 0`) and could crash. Updates are now suppressed on the moved widget for the duration of the reparent, then restored. The tile drag-preview also no longer grabs a zero-size tile.
+
 ## 0.5.1 - 2026-06-10
 
 ### Fixed

@@ -436,7 +436,11 @@ class TileFrame(QFrame):
         mime = QMimeData()
         mime.setData(CONTROL_PANEL_TILE_MIME_TYPE, self.entry_id.encode("utf-8"))
         drag.setMimeData(mime)
-        drag.setPixmap(self.grab())
+        # Grabbing a zero-size tile (mid-relayout/reparent) paints into a null
+        # pixmap — "QPainter::begin: Paint device returned engine == 0" — so
+        # only attach a drag pixmap when the tile has a real size.
+        if not self.size().isEmpty():
+            drag.setPixmap(self.grab())
         drag.exec(Qt.DropAction.MoveAction)
 
     def _begin_resize(self, event: QMouseEvent) -> None:
