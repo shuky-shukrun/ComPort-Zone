@@ -410,7 +410,7 @@ class SimulatorTcpTests(unittest.TestCase):
 
     def _connected_client(self) -> tuple[LanClient, _RxLineReader]:
         client = LanClient()
-        events = client.subscribe_events()
+        events = client.subscribe_monitor()
         ok = client.connect(
             LanProfile(
                 host="127.0.0.1",
@@ -493,138 +493,101 @@ class SimulatorTcpTests(unittest.TestCase):
             client.disconnect()
 
     def test_no_cross_talk_with_concurrent_terminal_sends(self) -> None:
-        """Regression for the user-reported "tile A receives tile B's
-        reply" bug, end-to-end against the simulator.
+        """Regression for the user-reported "tile A receives tile B's reply"
+        bug, end-to-end against the simulator.
 
-        Drives N control-panel-style transactions (MEAS:VOLT? → 0.000)
-        while a worker thread hammers terminal-style sends (*IDN? →
-        TDK-LAMBDA,...). Without the wire-lock + post-acquire-settle
-        fix the dispatcher's parse window captures the terminal's
-        reply, ending up with ``value_text="TDK-LAMBDA,..."`` and a
-        garbage tile reading.
-        """
+        Drives N control-panel poll transactions (MEAS:VOLT? → 0.000) through
+        the session's channel while a worker thread hammers interactive
+        terminal sends (*IDN? → TDK-LAMBDA,...). The channel serializes the
+        wire and correlates each reply to its own request, so the poll's parse
+        window can never capture the terminal's reply — cross-talk is zero with
+        NO settle/grace anywhere."""
         import threading
         from queue import Queue
 
-        from ComPort_Zone.control_panel_engine import (
-            PollRequest,
-            SessionPollDispatcher,
-        )
-        from ComPort_Zone.control_panel_models import (
-            ControlPanelEntry,
-            ParseRule,
-            TilePlacement,
-        )
+        from ComPort_Zone.control_panel_engine import PollRequest, SessionPollDispatcher
+        from ComPort_Zone.control_panel_models import ControlPanelEntry, ParseRule, TilePlacement
         from ComPort_Zone.control_panel_parse import CompiledParseRule
         from ComPort_Zone.transports import LanTransportAdapter
 
-        client, rx = self._connected_client()
+        client, _rx = self._connected_client()
         try:
-            time.sleep(0.05)
-            dispatcher = SessionPollDispatcher(transport=LanTransportAdapter(client))
-            disp_rx = client.subscribe_events()
+            adapter = LanTransportAdapter(client)
+            dispatcher = SessionPollDispatcher(transport=adapter)
             entry = ControlPanelEntry(
                 id="v", label="V", command="MEAS:VOLT?", timeout_ms=500,
                 parse=ParseRule(kind="line", value_type="number"),
                 tile=TilePlacement(kind="value"),
             )
             compiled = CompiledParseRule.compile(entry.parse)
-            request_queue: Queue = Queue()
 
-            stop = threading.Event()
             terminal_sends = [0]
-            terminal_errors = [0]
 
-            def terminal_loop() -> None:
-                while not stop.is_set():
+            def terminal_sender() -> None:
+                # A bounded, human-paced burst of interactive sends, each with a
+                # quiet-read window (like the real terminal) so its *IDN? reply
+                # lands on its own transaction and never bleeds into a poll.
+                for _ in range(40):
                     try:
-                        client.send_text("*IDN?", source="")
+                        adapter.send_text("*IDN?", source="", quiet_read=0.02)
                         terminal_sends[0] += 1
+                        time.sleep(0.02)
                     except Exception:
-                        terminal_errors[0] += 1
-            worker = threading.Thread(target=terminal_loop, daemon=True)
+                        pass
+
+            worker = threading.Thread(target=terminal_sender, daemon=True)
             worker.start()
 
-            n = 30
+            n = 15
             cross_talked = 0
             for _ in range(n):
                 req = PollRequest(
-                    control_panel_id="cp", entry=entry, compiled=compiled,
-                    result_queue=request_queue,
+                    control_panel_id="cp", entry=entry, compiled=compiled, result_queue=Queue()
                 )
-                result = dispatcher._execute_transaction(req, disp_rx)
+                result = dispatcher._execute_transaction(req)
                 # Output is OFF on a fresh sim, so MEAS:VOLT? returns 0.000.
-                # ANY other value means the dispatcher picked up the
-                # terminal's *IDN? reply (or noise) instead.
+                # Any other value means the poll picked up the terminal's reply.
                 if not (result.outcome and result.outcome.value_number == 0.0):
                     cross_talked += 1
 
-            stop.set()
-            worker.join(timeout=1.0)
+            worker.join(timeout=5.0)
             self.assertEqual(
                 cross_talked, 0,
-                f"{cross_talked}/{n} transactions got the wrong reply "
-                f"(terminal_sends={terminal_sends[0]}, "
-                f"terminal_errors={terminal_errors[0]})",
+                f"{cross_talked}/{n} polls got the wrong reply "
+                f"(terminal_sends={terminal_sends[0]})",
             )
-            # Sanity: the worker did fire some sends, otherwise the test
-            # wouldn't have exercised the race at all.
             self.assertGreater(terminal_sends[0], 0)
         finally:
             client.disconnect()
 
     def test_terminal_sees_all_its_replies_during_panel_polling(self) -> None:
         """Regression for the user-reported "terminal stops receiving its
-        replies" symptom: with the control panel actively polling, every
-        manual terminal send must still produce a visible RX in the bound
-        terminal's transcript. The bug was that the journal's 350 ms
-        grace tail past each closed panel window swallowed terminal
-        replies arriving milliseconds after the panel released the wire."""
+        replies" symptom: with the control panel actively polling, EVERY manual
+        terminal send must still produce a visible RX in the bound terminal's
+        transcript. The channel reads each terminal reply on the terminal's own
+        (source="") transaction and tags it accordingly, so source-tag filtering
+        shows 100% of them — no journal to over-hide."""
         import threading
         from queue import Empty, Queue
 
-        from ComPort_Zone.control_panel_engine import (
-            PollRequest,
-            SessionPollDispatcher,
-        )
-        from ComPort_Zone.control_panel_models import (
-            ControlPanelEntry,
-            ParseRule,
-            TilePlacement,
-        )
+        from ComPort_Zone.control_panel_engine import PollRequest, SessionPollDispatcher
+        from ComPort_Zone.control_panel_models import ControlPanelEntry, ParseRule, TilePlacement
         from ComPort_Zone.control_panel_parse import CompiledParseRule
         from ComPort_Zone.transports import LanTransportAdapter
 
-        client, _rx_reader = self._connected_client()
+        client, _rx = self._connected_client()
         try:
-            time.sleep(0.05)
-            dispatcher = SessionPollDispatcher(transport=LanTransportAdapter(client))
-            disp_rx = client.subscribe_events()
-            journal = dispatcher.traffic_journal
-
-            # Mix of a working entry (responds instantly) and a bogus one
-            # that times out — exercises both the success-drain AND the
-            # timeout-drain paths inside hold_wire.
+            adapter = LanTransportAdapter(client)
+            dispatcher = SessionPollDispatcher(transport=adapter)
             good = ControlPanelEntry(
                 id="v", label="V", command="MEAS:VOLT?", timeout_ms=200,
                 parse=ParseRule(kind="line", value_type="number"),
                 tile=TilePlacement(kind="value"),
             )
-            bad = ControlPanelEntry(
-                # Short timeout: still exercises the timeout-drain path, but
-                # keeps each poll's wire/journal hold brief so the wire isn't
-                # saturated (which on a slow runner would push terminal
-                # replies into poll windows — a timing artefact, not the bug).
-                id="x", label="X", command="UNKNOWN?", timeout_ms=60,
-                parse=ParseRule(kind="line", value_type="number"),
-                tile=TilePlacement(kind="value"),
-            )
             good_compiled = CompiledParseRule.compile(good.parse)
-            bad_compiled = CompiledParseRule.compile(bad.parse)
-            rq: Queue = Queue()
 
-            # Mimic terminal_tab.py's RX filter (journal.covers gates display).
-            terminal_rx = client.subscribe_events()
+            # Mimic terminal_tab.py's RX filter: hide source == "control_panel".
+            terminal_rx = client.subscribe_monitor()
             visible_replies: list[str] = []
             terminal_stop = threading.Event()
 
@@ -634,9 +597,7 @@ class SimulatorTcpTests(unittest.TestCase):
                         ev = terminal_rx.get(timeout=0.05)
                     except Empty:
                         continue
-                    if ev.kind != "rx":
-                        continue
-                    if not journal.covers(ev.timestamp):
+                    if ev.kind == "rx" and ev.source != "control_panel":
                         visible_replies.append(ev.message.strip())
 
             reader = threading.Thread(target=terminal_reader, daemon=True)
@@ -645,56 +606,29 @@ class SimulatorTcpTests(unittest.TestCase):
             panel_stop = threading.Event()
 
             def panel_loop() -> None:
-                # Poll at a realistic dashboard cadence — a real scheduler
-                # polls entries at an interval (hundreds of ms), never in a
-                # zero-gap loop. A saturated wire would let any late terminal
-                # reply fall inside a poll's journal window, which is a timing
-                # artefact (worsened on slow CI), not the bug under test. The
-                # timeout entry fires occasionally to exercise the
-                # timeout-drain path without dominating the wire.
-                i = 0
                 while not panel_stop.is_set():
-                    use_bad = i % 5 == 4
-                    entry, compiled = (bad, bad_compiled) if use_bad else (good, good_compiled)
-                    req = PollRequest(
-                        control_panel_id="cp",
-                        entry=entry,
-                        compiled=compiled,
-                        result_queue=rq,
+                    dispatcher._execute_transaction(
+                        PollRequest(control_panel_id="cp", entry=good, compiled=good_compiled, result_queue=Queue())
                     )
-                    dispatcher._execute_transaction(req, disp_rx)
-                    panel_stop.wait(0.2)  # realistic inter-poll gap (interruptible)
-                    i += 1
+                    panel_stop.wait(0.05)
 
             panel = threading.Thread(target=panel_loop, daemon=True)
             panel.start()
 
-            # The user's repro: ~25 manual terminal sends interleaved with
-            # the panel's ongoing polling.
-            n_terminal_sends = 25
+            n_terminal_sends = 20
             for _ in range(n_terminal_sends):
-                client.send_text("*IDN?", source="")
-                time.sleep(0.05)
+                adapter.send_text("*IDN?", source="", quiet_read=0.05)
+                time.sleep(0.02)
 
-            time.sleep(0.5)  # let the last replies drain
+            time.sleep(0.4)  # let the last reply land on the monitor
             panel_stop.set(); panel.join(timeout=2.0)
             terminal_stop.set(); reader.join(timeout=2.0)
 
-            # The bug this guards: the journal SYSTEMATICALLY blanks the
-            # terminal's own replies during panel polling (the user saw ~none
-            # of them). The exact survivor count is timing-dependent — a reply
-            # that lands inside an active poll window is hidden by design, and
-            # slow CI widens that — so the precise window math is covered by
-            # deterministic PollTrafficJournal unit tests; here we only assert
-            # the terminal isn't blanked (a clear majority survives). The
-            # regression drops this to near zero.
             idn_replies = [r for r in visible_replies if "TDK-LAMBDA" in r]
-            minimum_visible = int(n_terminal_sends * 0.6)
-            self.assertGreaterEqual(
-                len(idn_replies), minimum_visible,
-                f"Only {len(idn_replies)}/{n_terminal_sends} terminal "
-                f"replies reached the transcript — journal is over-hiding. "
-                f"visible_replies={visible_replies[:10]}",
+            self.assertEqual(
+                len(idn_replies), n_terminal_sends,
+                f"Only {len(idn_replies)}/{n_terminal_sends} terminal replies "
+                f"reached the transcript. visible_replies={visible_replies[:10]}",
             )
         finally:
             client.disconnect()

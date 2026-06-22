@@ -284,33 +284,22 @@ class ControlPanelAppTests(unittest.TestCase):
         control_panel = window.open_control_panel_tab(config.id)
         self.stop_tick_timer(control_panel)
         control_panel.bind_to_session(session.session_id)
-        journal = session._control_panel_traffic_journal
-        self.assertIsNotNone(journal)
 
-        # A control_panel poll TX and its in-window RX never reach the transcript.
-        journal.open_window()
+        # Control_panel poll TX and RX (tagged source="control_panel" by the
+        # channel) never reach the transcript — a single source-tag check, no
+        # time-window journal.
         session._handle_event(SerialEvent(kind="tx", message="MEAS:VOLT?", source="control_panel"))
-        session._handle_event(SerialEvent(kind="rx", message="13.2\r\n"))
-        journal.close_window()
+        session._handle_event(SerialEvent(kind="rx", message="13.2\r\n", source="control_panel"))
         transcript = session.terminal.toPlainText()
         self.assertNotIn("MEAS:VOLT?", transcript)
         self.assertNotIn("13.2", transcript)
 
-        # User traffic outside a poll window still renders normally.
-        from datetime import datetime, timedelta, timezone
-
-        later = datetime.now(timezone.utc).astimezone() + timedelta(seconds=5)
-        session._handle_event(SerialEvent(kind="tx", message="*IDN?"))
-        session._handle_event(
-            SerialEvent(kind="rx", message="ACME,PSU,1.0\r\n", timestamp=later)
-        )
+        # User / unsolicited RX (no control_panel tag) still renders normally.
+        session._handle_event(SerialEvent(kind="rx", message="ACME,PSU,1.0\r\n"))
         transcript = session.terminal.toPlainText()
-        self.assertIn("*IDN?", transcript)
         self.assertIn("ACME,PSU,1.0", transcript)
 
-        # Closing the control_panel detaches the journal from the terminal.
         self.assertTrue(window.close_session(window.tabs.indexOf(control_panel)))
-        self.assertIsNone(session._control_panel_traffic_journal)
         del fake
 
     def test_send_error_renders_error_tile(self) -> None:
@@ -322,10 +311,12 @@ class ControlPanelAppTests(unittest.TestCase):
         self.stop_tick_timer(control_panel)
         control_panel.bind_to_session(session.session_id)
 
-        def explode(text: str, line_ending_override=None, *, source: str = "") -> None:
+        def explode(*args, **kwargs) -> None:
             raise RuntimeError("port vanished")
 
-        fake.send_text = explode  # type: ignore[method-assign]
+        # Polls go out via query_text/query_bytes now; make those fail.
+        fake.query_text = explode  # type: ignore[method-assign]
+        fake.query_bytes = explode  # type: ignore[method-assign]
         control_panel._tick()
         self.assertTrue(wait_for(lambda: not control_panel.result_queue.empty()))
         control_panel._tick()

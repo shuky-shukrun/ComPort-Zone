@@ -70,10 +70,15 @@ def make_window(tmp_name: str, settings: AppSettings | None = None):
 
 class SerialSignalTests(unittest.TestCase):
     def test_set_dtr_rts_and_send_break_drive_the_live_port(self) -> None:
+        from ComPort_Zone.raw_transport import SerialRawTransport
+
         client = SerialClient()
         port = FakePort()
-        client._serial = port
+        raw = SerialRawTransport(SerialProfile())
+        raw._port = port  # stand in for the live pyserial handle
+        client._raw = raw
         client._profile = SerialProfile()
+        client._desired_profile = client._profile
 
         self.assertEqual(client.current_signal_state(), (True, True))
         self.assertTrue(client.set_dtr(False))
@@ -96,13 +101,14 @@ class SerialSignalTests(unittest.TestCase):
         from threading import Event
 
         client = SerialClient()
+        monitor = client.subscribe_monitor()
         client._desired_profile = SerialProfile(reconnect_initial_delay_ms=250)
         stop = Event()
         stop.set()  # exit the loop right after the initial "armed" status emit
         client._reconnect_loop(stop)
         messages = []
-        while not client.events.empty():
-            messages.append(client.events.get_nowait().message)
+        while not monitor.empty():
+            messages.append(monitor.get_nowait().message)
         self.assertTrue(any("250 ms" in message for message in messages))
 
 

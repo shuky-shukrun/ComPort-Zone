@@ -10,12 +10,12 @@ Two cooperating pieces, mirroring the proven BatchRunner topology
   No Qt, no threads, injectable clock — deterministic under test.
 
 - :class:`SessionPollDispatcher` — per-bound-session worker thread that
-  executes poll transactions strictly one at a time (FIFO). It owns its
-  own RX subscriber queue from ``transport.subscribe_events()`` so it
-  never races the terminal's own event drain, and it is the *only* place
-  control_panel traffic touches the transport (NFR-1). All control_panels bound
-  to one session share one dispatcher (via the run coordinator), which
-  is what serializes their commands on the wire (FR-21).
+  submits poll transactions to the session's
+  :class:`~ComPort_Zone.port_channel.PortChannel` one at a time (FIFO). The
+  channel serializes the wire and correlates each reply to its request, so
+  the dispatcher no longer owns an RX queue or races the terminal's drain.
+  All control_panels bound to one session share one dispatcher (via the run
+  coordinator), which orders their commands on the wire (FR-21).
 
 Requirements: docs/control_panel-view-requirements.md (FR-20..FR-23, FR-27,
 NFR-1..NFR-5).
@@ -26,29 +26,28 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable, Iterable
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
-from datetime import datetime, timezone
-
-
-def _wall_now() -> datetime:
-    """Wall-clock matching :attr:`SerialEvent.timestamp`. Used to
-    timestamp-filter RX events against the moment our own send went
-    out (stale RX from a previous sender is discarded, see
-    :meth:`SessionPollDispatcher._execute_transaction`)."""
-    return datetime.now(timezone.utc).astimezone()
 from queue import Empty, Full, Queue
-from contextlib import nullcontext as _nullcontext
 from threading import Event, Lock, Thread
 
 from .batch import parse_hex_payload
 from .control_panel_models import ControlPanelEntry
 from .control_panel_parse import (
+    MAX_RX_WINDOW_CHARS,
     CompiledParseRule,
     ParseOutcome,
-    append_to_window,
     parse_response,
 )
-from .serial_core import SerialEvent
+from .port_channel import (
+    CANCELLED,
+    CLOSED,
+    OK,
+    TIMEOUT,
+    LineMatcher,
+    RegexMatcher,
+    decode_serial_bytes,
+)
 
 PAUSE_REASONS = ("user", "connection", "unbound", "batch")
 
@@ -64,26 +63,12 @@ RESUME_STAGGER_S = 0.025
 # one-outstanding-per-entry the queue depth is naturally <= entry count;
 # the cap is a backstop, not a tuning knob (NFR-3).
 REQUEST_QUEUE_LIMIT = 64
-# Chunked RX waits keep stop() responsive while a transaction is open.
+# Granularity for awaiting a transaction's result future, so stop() stays
+# responsive while a poll is open and for the readback pre-delay sleep.
 RX_POLL_CHUNK_S = 0.05
-# Idle wait on the request queue; doubles as the cadence for discarding
-# unsolicited RX so the subscriber queue stays bounded between polls.
+# Idle wait on the request queue; just bounds how fast the worker notices
+# stop() / a newly submitted request.
 IDLE_DRAIN_TIMEOUT_S = 0.1
-# When a poll transaction times out, the device may still produce its
-# delayed reply moments later. We're still holding the wire lock here,
-# so we briefly absorb anything that arrives before releasing — otherwise
-# those late bytes interleave with the NEXT sender's reply on the wire,
-# polluting the bound terminal or the next tile. 50 ms covers slow LAN
-# devices comfortably while not delaying the next scheduled poll
-# noticeably.
-POST_TIMEOUT_DRAIN_S = 0.050
-# Even on parse success, the device may still push trailing CR/LF or
-# echo fragments after we've consumed enough bytes to satisfy our
-# parse rule. Held under the wire lock so those fragments can't leak
-# into the next sender's transcript. Kept much shorter than the
-# timeout drain — successful transactions are the common case and
-# 10 ms is enough to absorb typical TCP-fragment latency.
-POST_SUCCESS_DRAIN_S = 0.010
 
 DISPATCHER_THREAD_NAME = "control_panel-dispatch"
 
@@ -92,64 +77,6 @@ DISPATCHER_THREAD_NAME = "control_panel-dispatch"
 CONTROL_PANEL_TX_SOURCE = "control_panel"
 
 Clock = Callable[[], float]
-
-
-class PollTrafficJournal:
-    """Wall-clock windows of this session's poll transactions.
-
-    The bound terminal consults it to keep background-poll RX out of its
-    transcript: an RX event whose timestamp falls inside an open window
-    (plus a short grace for late reply fragments) belongs to a control_panel
-    poll, not to the user. TX needs no window — control_panel TX events carry
-    ``source == CONTROL_PANEL_TX_SOURCE``. Thread-safe: the dispatcher thread
-    writes, the GUI thread reads.
-    """
-
-    # Grace tail past close_window(). Pre-wire-lock this was 350 ms to
-    # absorb device-reply fragments that arrived after the dispatcher
-    # gave up on its parse. With the wire lock serializing senders AND
-    # the dispatcher draining residual bytes inside the held region
-    # before release, no late fragment can outlive close_window() — so
-    # grace is 0. Any positive value hides the bound terminal's OWN
-    # replies on fast (localhost / LAN) links: the terminal acquires
-    # the wire the instant we release it, the device replies within
-    # 1-5 ms, and that timestamp lands inside the grace tail.
-    GRACE_S = 0.000
-    _KEEP_CLOSED = 16
-
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._windows: list[list[datetime | None]] = []
-
-    @staticmethod
-    def _now() -> datetime:
-        return datetime.now(timezone.utc).astimezone()
-
-    def open_window(self) -> None:
-        with self._lock:
-            self._windows.append([self._now(), None])
-            if len(self._windows) > self._KEEP_CLOSED:
-                self._windows = self._windows[-self._KEEP_CLOSED:]
-
-    def close_window(self) -> None:
-        with self._lock:
-            for window in reversed(self._windows):
-                if window[1] is None:
-                    window[1] = self._now()
-                    return
-
-    def covers(self, timestamp: datetime) -> bool:
-        """True when ``timestamp`` falls inside any poll window (open
-        windows extend to now; closed ones keep a grace tail)."""
-        with self._lock:
-            for start, end in self._windows:
-                if start is None or timestamp < start:
-                    continue
-                if end is None:
-                    return True
-                if (timestamp - end).total_seconds() <= self.GRACE_S:
-                    return True
-        return False
 
 
 @dataclass(slots=True)
@@ -383,11 +310,19 @@ class ControlPanelPollScheduler:
 
 
 class SessionPollDispatcher:
-    """Serializes control_panel poll transactions on one terminal session.
+    """Serializes control_panel transactions on one terminal session.
+
+    Each poll/control/readback is submitted to the session's
+    :class:`~ComPort_Zone.port_channel.PortChannel` as a single transaction
+    (``query``/``send``) at NORMAL priority. The channel guarantees one
+    request on the wire at a time and correlates each reply to its request,
+    so this class no longer owns an RX subscriber, a stale-RX drain, a
+    wall-clock filter, or a traffic journal — all of that collapsed into the
+    channel. A manual terminal send pre-empts queued polls via the channel's
+    INTERACTIVE priority, but never interrupts a transaction mid-wire (FR-21).
 
     ``transport`` is any :class:`~ComPort_Zone.transports.TransportAdapter`
-    (duck-typed: ``send_text``/``send_bytes``/``subscribe_events``/
-    ``unsubscribe_events``).
+    (duck-typed: ``send_text``/``send_bytes``/``query_text``/``query_bytes``).
     """
 
     def __init__(self, *, transport, clock: Clock = time.monotonic) -> None:
@@ -396,14 +331,10 @@ class SessionPollDispatcher:
         self._requests: Queue[PollRequest | ReadbackRequest | ControlRequest] = Queue(
             maxsize=REQUEST_QUEUE_LIMIT
         )
-        self._rx_queue: Queue[SerialEvent] | None = None
         self._thread: Thread | None = None
         self._stop_event = Event()
         self._lock = Lock()
         self._cancelled: set[str] = set()
-        # Shared with the bound terminal so it can filter poll traffic out
-        # of its transcript (the coordinator wires it up on bind).
-        self.traffic_journal = PollTrafficJournal()
 
     @property
     def is_running(self) -> bool:
@@ -416,7 +347,6 @@ class SessionPollDispatcher:
         self._stop_event = Event()
         with self._lock:
             self._cancelled.clear()
-        self._rx_queue = self._transport.subscribe_events()
         self._thread = Thread(target=self._run, daemon=True, name=DISPATCHER_THREAD_NAME)
         self._thread.start()
 
@@ -453,21 +383,13 @@ class SessionPollDispatcher:
             self._cancelled.add(control_panel_id)
 
     def stop(self, timeout: float = 1.5) -> None:
-        """Stop the worker, answer queued requests with "cancelled", and
-        unsubscribe from the transport's events."""
+        """Stop the worker and answer queued requests with "cancelled"."""
         self._stop_event.set()
         thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=timeout)
         self._thread = None
         self._flush_requests_cancelled()
-        rx_queue = self._rx_queue
-        self._rx_queue = None
-        if rx_queue is not None:
-            try:
-                self._transport.unsubscribe_events(rx_queue)
-            except Exception:
-                pass
 
     def _is_cancelled(self, control_panel_id: str) -> bool:
         with self._lock:
@@ -517,90 +439,77 @@ class SessionPollDispatcher:
         )
 
     def _run(self) -> None:
-        rx_queue = self._rx_queue
-        if rx_queue is None:
-            return
         while not self._stop_event.is_set():
             try:
                 request = self._requests.get(timeout=IDLE_DRAIN_TIMEOUT_S)
             except Empty:
-                self._drain(rx_queue)
                 continue
             if self._is_cancelled(request.control_panel_id):
                 self._answer_cancelled(request)
                 continue
             if isinstance(request, ControlRequest):
-                request.result_queue.put(self._execute_control(request, rx_queue))
+                request.result_queue.put(self._execute_control(request))
                 continue
             if isinstance(request, ReadbackRequest):
-                request.result_queue.put(self._execute_readback(request, rx_queue))
+                request.result_queue.put(self._execute_readback(request))
                 continue
-            result = self._execute_transaction(request, rx_queue)
+            result = self._execute_transaction(request)
             request.result_queue.put(result)
 
-    def _execute_control(
-        self, request: ControlRequest, rx_queue: Queue[SerialEvent] | None = None
-    ) -> ControlResult:
-        """Fire one control command: send only, no RX collection. The
-        journal window covers the send so the device's ack/echo stays out
-        of the bound terminal's transcript (FR-60).
+    def _execute_control(self, request: ControlRequest) -> ControlResult:
+        """Fire one control command (fire-and-forget). An inline readback runs
+        as a follow-up query after an optional delay — each is its own channel
+        transaction, so the readback's reply correlates to its own READ command
+        rather than the control write's echo. Both are submitted back-to-back by
+        this one dispatcher thread, so this session's own traffic stays ordered.
 
-        When an inline readback is attached we hold the wire across BOTH
-        the send and the readback's RX window — otherwise a terminal
-        send could land between our write and the readback's query,
-        either polluting the readback's parse window or pushing the
-        write farther down the wire than the user expects."""
-        hold_wire = getattr(self._transport, "hold_wire", None)
-        wire_ctx = hold_wire() if hold_wire is not None else _nullcontext()
-        with wire_ctx:
-            self.traffic_journal.open_window()
-            try:
-                if request.send_mode == "Hex Bytes":
-                    self._transport.send_bytes(
-                        parse_hex_payload(request.command), source=CONTROL_PANEL_TX_SOURCE
-                    )
-                else:
-                    self._transport.send_text(
-                        request.command,
-                        request.line_ending_override or None,
-                        source=CONTROL_PANEL_TX_SOURCE,
-                    )
-            except Exception as exc:
-                return ControlResult(
-                    control_panel_id=request.control_panel_id,
-                    entry_id=request.entry_id,
-                    status=POLL_SEND_ERROR,
-                    error=str(exc),
-                    finished_at=self._clock(),
-                )
-            finally:
-                self.traffic_journal.close_window()
-            result = ControlResult(
+        When a readback follows, the control send opens a quiet-read window equal
+        to the readback's settle delay: it doubles as the settle AND consumes any
+        ack/echo the SET produced, so the readback query reads its own reply."""
+        readback = request.readback
+        quiet_read = readback.delay_ms / 1000 if readback is not None else 0.0
+        try:
+            future = self._send(
+                request.command,
+                request.send_mode,
+                request.line_ending_override,
+                quiet_read=quiet_read,
+            )
+        except Exception as exc:
+            if readback is not None:
+                request.result_queue.put(self._cancelled_readback(readback, POLL_SEND_ERROR, str(exc)))
+            return ControlResult(
                 control_panel_id=request.control_panel_id,
                 entry_id=request.entry_id,
-                status=POLL_OK,
+                status=POLL_SEND_ERROR,
+                error=str(exc),
                 finished_at=self._clock(),
             )
-            readback = request.readback
-            if readback is not None and rx_queue is not None:
-                if self._wait_delay(readback.delay_ms):
-                    request.result_queue.put(
-                        self._execute_readback(readback, rx_queue, already_delayed=True)
-                    )
-                else:
-                    now = self._clock()
-                    request.result_queue.put(
-                        ReadbackResult(
-                            control_panel_id=readback.control_panel_id,
-                            owner_entry_id=readback.owner_entry_id,
-                            entry_id=readback.entry.id,
-                            status=POLL_CANCELLED,
-                            seed_setpoint_value=readback.seed_setpoint_value,
-                            started_at=now,
-                            finished_at=now,
-                        )
-                    )
-            return result
+        control_result = self._control_result_from_tx(request, self._await(future))
+        if readback is None:
+            return control_result
+        if control_result.status != POLL_OK:
+            request.result_queue.put(
+                self._cancelled_readback(readback, control_result.status, control_result.error)
+            )
+            return control_result
+        request.result_queue.put(self._execute_readback(readback, already_delayed=True))
+        return control_result
+
+    def _cancelled_readback(
+        self, readback: ReadbackRequest, status: str, error: str = ""
+    ) -> ReadbackResult:
+        now = self._clock()
+        return ReadbackResult(
+            control_panel_id=readback.control_panel_id,
+            owner_entry_id=readback.owner_entry_id,
+            entry_id=readback.entry.id,
+            status=status,
+            error=error,
+            seed_setpoint_value=readback.seed_setpoint_value,
+            started_at=now,
+            finished_at=now,
+        )
 
     def _wait_delay(self, delay_ms: int) -> bool:
         """Sleep for a readback delay, waking early if the worker stops."""
@@ -615,12 +524,11 @@ class SessionPollDispatcher:
         return False
 
     def _execute_readback(
-        self,
-        request: ReadbackRequest,
-        rx_queue: Queue[SerialEvent],
-        *,
-        already_delayed: bool = False,
+        self, request: ReadbackRequest, *, already_delayed: bool = False
     ) -> ReadbackResult:
+        # Standalone (periodic/connect) readback: the inter-poll delay runs
+        # off the wire here, unlike an inline readback whose delay is part of
+        # the held transaction via pre_read_delay.
         if not already_delayed and not self._wait_delay(request.delay_ms):
             now = self._clock()
             return ReadbackResult(
@@ -632,160 +540,216 @@ class SessionPollDispatcher:
                 started_at=now,
                 finished_at=now,
             )
-        result = self._execute_transaction(request, rx_queue)
-        return ReadbackResult(
-            control_panel_id=result.control_panel_id,
-            owner_entry_id=request.owner_entry_id,
-            entry_id=result.entry_id,
-            status=result.status,
-            outcome=result.outcome,
-            raw_window=result.raw_window,
-            error=result.error,
-            seed_setpoint_value=request.seed_setpoint_value,
-            started_at=result.started_at,
-            finished_at=result.finished_at,
-        )
+        try:
+            future = self._query(
+                request.entry.command,
+                request.entry.send_mode,
+                request.entry.line_ending_override,
+                matcher=self._matcher_for(request.compiled),
+                timeout=request.entry.timeout_ms / 1000,
+            )
+        except Exception as exc:
+            now = self._clock()
+            return ReadbackResult(
+                control_panel_id=request.control_panel_id,
+                owner_entry_id=request.owner_entry_id,
+                entry_id=request.entry.id,
+                status=POLL_SEND_ERROR,
+                error=str(exc),
+                seed_setpoint_value=request.seed_setpoint_value,
+                started_at=now,
+                finished_at=now,
+            )
+        return self._readback_result_from_tx(request, self._await(future))
+
+    # -- channel plumbing ---------------------------------------------------
 
     @staticmethod
-    def _drain(rx_queue: Queue[SerialEvent]) -> None:
-        while True:
+    def _matcher_for(compiled: CompiledParseRule):
+        if compiled.rule.kind == "regex" and compiled.pattern is not None:
+            return RegexMatcher(compiled.pattern)
+        return LineMatcher()
+
+    def _send(
+        self,
+        command: str,
+        send_mode: str,
+        line_ending_override: str,
+        *,
+        quiet_read: float = 0.0,
+    ):
+        if send_mode == "Hex Bytes":
+            return self._transport.send_bytes(
+                parse_hex_payload(command),
+                source=CONTROL_PANEL_TX_SOURCE,
+                quiet_read=quiet_read,
+            )
+        return self._transport.send_text(
+            command,
+            line_ending_override or None,
+            source=CONTROL_PANEL_TX_SOURCE,
+            quiet_read=quiet_read,
+        )
+
+    def _query(
+        self,
+        command: str,
+        send_mode: str,
+        line_ending_override: str,
+        *,
+        matcher,
+        timeout: float,
+        pre_read_delay: float = 0.0,
+    ):
+        if send_mode == "Hex Bytes":
+            return self._transport.query_bytes(
+                parse_hex_payload(command),
+                matcher=matcher,
+                timeout=timeout,
+                source=CONTROL_PANEL_TX_SOURCE,
+                pre_read_delay=pre_read_delay,
+            )
+        return self._transport.query_text(
+            command,
+            line_ending_override or None,
+            matcher=matcher,
+            timeout=timeout,
+            source=CONTROL_PANEL_TX_SOURCE,
+            pre_read_delay=pre_read_delay,
+        )
+
+    def _await(self, future):
+        """Block until the channel resolves ``future`` (bounded by the query
+        timeout) or the worker is stopped (returns None)."""
+        while not self._stop_event.is_set():
             try:
-                rx_queue.get_nowait()
-            except Empty:
-                return
+                return future.result(timeout=RX_POLL_CHUNK_S)
+            except FutureTimeout:
+                continue
+        return None
 
-    def _drain_residual(self, rx_queue: Queue[SerialEvent], duration_s: float) -> None:
-        """Block for ``duration_s`` while continuously draining ``rx_queue``.
+    def _interpret(self, compiled: CompiledParseRule, tx):
+        """Map a finished TxResult to (poll-status, outcome, raw window)."""
+        window = decode_serial_bytes(tx.response)
+        # Bound regex input / memory on a flood (NFR-3); the meaningful reply
+        # for line and regex rules is at the tail of the window.
+        if len(window) > MAX_RX_WINDOW_CHARS:
+            window = window[-MAX_RX_WINDOW_CHARS:]
+        if tx.status == OK:
+            outcome = parse_response(compiled, window)
+            return (POLL_OK if outcome is not None else POLL_TIMEOUT, outcome, window)
+        if tx.status == TIMEOUT:
+            return (POLL_TIMEOUT, None, window)
+        if tx.status == CANCELLED:
+            return (POLL_CANCELLED, None, window)
+        return (POLL_SEND_ERROR, None, window)  # CLOSED / send error
 
-        Used at the end of a timed-out transaction (still holding the wire
-        lock) so a late device reply lands in our drain rather than in the
-        next sender's window. We're idle here by design — the wire is ours
-        and the device is the only other party that could produce bytes."""
-        deadline = self._clock() + duration_s
-        while True:
-            remaining = deadline - self._clock()
-            if remaining <= 0:
-                self._drain(rx_queue)
-                return
-            try:
-                rx_queue.get(timeout=remaining)
-            except Empty:
-                return
+    def _poll_result_from_tx(self, request: "PollRequest | ReadbackRequest", tx) -> PollResult:
+        entry = request.entry
+        if tx is None:
+            now = self._clock()
+            return PollResult(
+                control_panel_id=request.control_panel_id,
+                entry_id=entry.id,
+                status=POLL_CANCELLED,
+                started_at=now,
+                finished_at=now,
+            )
+        status, outcome, window = self._interpret(request.compiled, tx)
+        return PollResult(
+            control_panel_id=request.control_panel_id,
+            entry_id=entry.id,
+            status=status,
+            outcome=outcome,
+            raw_window=window,
+            error=tx.error,
+            started_at=tx.started_at,
+            finished_at=tx.finished_at,
+        )
 
-    def _execute_transaction(
-        self, request: PollRequest | ReadbackRequest, rx_queue: Queue[SerialEvent]
-    ) -> PollResult:
-        """One poll: discard stale RX, send, collect RX until the parse
-        rule decides or the entry timeout elapses. Factored out of the
-        thread loop so tests can drive it synchronously.
+    def _readback_result_from_tx(self, request: ReadbackRequest, tx) -> ReadbackResult:
+        if tx is None:
+            now = self._clock()
+            return ReadbackResult(
+                control_panel_id=request.control_panel_id,
+                owner_entry_id=request.owner_entry_id,
+                entry_id=request.entry.id,
+                status=POLL_CANCELLED,
+                seed_setpoint_value=request.seed_setpoint_value,
+                started_at=now,
+                finished_at=now,
+            )
+        status, outcome, window = self._interpret(request.compiled, tx)
+        return ReadbackResult(
+            control_panel_id=request.control_panel_id,
+            owner_entry_id=request.owner_entry_id,
+            entry_id=request.entry.id,
+            status=status,
+            outcome=outcome,
+            raw_window=window,
+            error=tx.error,
+            seed_setpoint_value=request.seed_setpoint_value,
+            started_at=tx.started_at,
+            finished_at=tx.finished_at,
+        )
 
-        The whole transaction (send + RX window) runs under
-        ``transport.hold_wire()`` so a manual terminal send can't
-        sneak a second query onto the wire while we're waiting for our
-        reply — that race used to make one tile's parse window catch
-        another tile's response. Inside the held region we re-drain the
-        rx_queue so any RX that arrived during the brief lock-wait (a
-        late reply to the previous transaction, or to a terminal send
-        that won the race for the lock just before us) doesn't bleed
-        into our parse window.
+    def _control_result_from_tx(self, request: ControlRequest, tx) -> ControlResult:
+        now = self._clock()
+        if tx is None:
+            return ControlResult(
+                control_panel_id=request.control_panel_id,
+                entry_id=request.entry_id,
+                status=POLL_CANCELLED,
+                finished_at=now,
+            )
+        if tx.status == CLOSED:
+            return ControlResult(
+                control_panel_id=request.control_panel_id,
+                entry_id=request.entry_id,
+                status=POLL_SEND_ERROR,
+                error=tx.error,
+                finished_at=tx.finished_at or now,
+            )
+        if tx.status == CANCELLED:
+            return ControlResult(
+                control_panel_id=request.control_panel_id,
+                entry_id=request.entry_id,
+                status=POLL_CANCELLED,
+                finished_at=tx.finished_at or now,
+            )
+        # OK or TIMEOUT: the write itself reached the wire.
+        return ControlResult(
+            control_panel_id=request.control_panel_id,
+            entry_id=request.entry_id,
+            status=POLL_OK,
+            finished_at=tx.finished_at or now,
+        )
+
+    def _execute_transaction(self, request: "PollRequest | ReadbackRequest") -> PollResult:
+        """One poll: submit a single query to the channel and map its result.
+
+        The channel serializes the send + reply window and hands back exactly
+        the bytes that arrived for this request, so there is no stale-RX drain,
+        wall-clock filter, or wire lock here anymore — correlation is
+        structural. Factored out so tests can drive it synchronously.
         """
         entry = request.entry
-        started = self._clock()
-        deadline = started + entry.timeout_ms / 1000
-        hold_wire = getattr(self._transport, "hold_wire", None)
-        wire_ctx = hold_wire() if hold_wire is not None else _nullcontext()
-        with wire_ctx:
-            self._drain(rx_queue)
-            self.traffic_journal.open_window()
-            try:
-                # Record our send's wall-clock NOW, before the
-                # transport's reader thread has any chance to push a
-                # late reply from the *previous* sender into the queue.
-                # Any RX event whose timestamp is older than this is by
-                # definition not the reply to our query, and would
-                # otherwise hit our parse window and produce the
-                # "tile A shows tile B's value" cross-talk bug.
-                send_wall_time = _wall_now()
-                try:
-                    if entry.send_mode == "Hex Bytes":
-                        self._transport.send_bytes(
-                            parse_hex_payload(entry.command), source=CONTROL_PANEL_TX_SOURCE
-                        )
-                    else:
-                        self._transport.send_text(
-                            entry.command,
-                            entry.line_ending_override or None,
-                            source=CONTROL_PANEL_TX_SOURCE,
-                        )
-                except Exception as exc:
-                    now = self._clock()
-                    return PollResult(
-                        control_panel_id=request.control_panel_id,
-                        entry_id=entry.id,
-                        status=POLL_SEND_ERROR,
-                        error=str(exc),
-                        started_at=started,
-                        finished_at=now,
-                    )
-                window = ""
-                while True:
-                    if self._stop_event.is_set():
-                        return PollResult(
-                            control_panel_id=request.control_panel_id,
-                            entry_id=entry.id,
-                            status=POLL_CANCELLED,
-                            raw_window=window,
-                            started_at=started,
-                            finished_at=self._clock(),
-                        )
-                    remaining = deadline - self._clock()
-                    if remaining <= 0:
-                        # Drain residual bytes inside the held wire so a
-                        # late device reply can't bleed into the next
-                        # sender's RX window or transcript.
-                        self._drain_residual(rx_queue, POST_TIMEOUT_DRAIN_S)
-                        return PollResult(
-                            control_panel_id=request.control_panel_id,
-                            entry_id=entry.id,
-                            status=POLL_TIMEOUT,
-                            raw_window=window,
-                            started_at=started,
-                            finished_at=self._clock(),
-                        )
-                    try:
-                        event = rx_queue.get(timeout=min(remaining, RX_POLL_CHUNK_S))
-                    except Empty:
-                        continue
-                    if event.kind != "rx":
-                        continue
-                    # Skip RX that landed before our send went out — it
-                    # belongs to a previous sender's transaction
-                    # (typically the bound terminal that just sent a
-                    # query and got back a reply before our drain ran).
-                    # Without this guard the device's reply to *IDN?
-                    # gets consumed by our MEAS:VOLT? parse window,
-                    # populating the tile with the wrong value.
-                    if event.timestamp < send_wall_time:
-                        continue
-                    window = append_to_window(window, event.message)
-                    outcome = parse_response(request.compiled, window)
-                    if outcome is not None:
-                        # Brief residual drain even on success: the device
-                        # may still push trailing CR/LF or echo fragments
-                        # right after our parse matched. If those land
-                        # after we release the wire, the bound terminal
-                        # treats them as stray RX between the user's own
-                        # send and its reply. 10 ms covers TCP fragment
-                        # latency without noticeably slowing polling.
-                        self._drain_residual(rx_queue, POST_SUCCESS_DRAIN_S)
-                        return PollResult(
-                            control_panel_id=request.control_panel_id,
-                            entry_id=entry.id,
-                            status=POLL_OK,
-                            outcome=outcome,
-                            raw_window=window,
-                            started_at=started,
-                            finished_at=self._clock(),
-                        )
-            finally:
-                self.traffic_journal.close_window()
+        try:
+            future = self._query(
+                entry.command,
+                entry.send_mode,
+                entry.line_ending_override,
+                matcher=self._matcher_for(request.compiled),
+                timeout=entry.timeout_ms / 1000,
+            )
+        except Exception as exc:
+            now = self._clock()
+            return PollResult(
+                control_panel_id=request.control_panel_id,
+                entry_id=entry.id,
+                status=POLL_SEND_ERROR,
+                error=str(exc),
+                started_at=now,
+                finished_at=now,
+            )
+        return self._poll_result_from_tx(request, self._await(future))

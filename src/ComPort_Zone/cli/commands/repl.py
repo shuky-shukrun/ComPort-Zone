@@ -137,7 +137,7 @@ def repl_command(ctx: click.Context, **serial_flag_values: Any) -> None:
         output.error(str(exc), code=exc.exit_code)
         output.status("Type /set <key> <value> to change settings, then /connect.")
 
-    event_queue = transport.subscribe_events()
+    event_queue = transport.subscribe_monitor()
     stop_event = threading.Event()
     printer = threading.Thread(
         target=_printer_loop,
@@ -170,7 +170,7 @@ def repl_command(ctx: click.Context, **serial_flag_values: Any) -> None:
                     break
     finally:
         stop_event.set()
-        transport.unsubscribe_events(event_queue)
+        transport.unsubscribe_monitor(event_queue)
         if state.log_handle is not None:
             state.log_handle.close()
             state.log_handle = None

@@ -177,14 +177,10 @@ class ControlPanelRunCoordinator:
         else:
             slot.refcount += 1
             dispatcher = slot.dispatcher
-        # Hand the terminal the poll-traffic journal so it can keep
-        # background-poll TX/RX out of its transcript.
-        self._set_session_journal(session, dispatcher.traffic_journal)
         return dispatcher
 
     def release_dispatcher(self, session_id: int) -> None:
-        """Drop one reference; the last release stops the worker thread
-        and unsubscribes its event queue (NFR-4)."""
+        """Drop one reference; the last release stops the worker thread."""
         slot = self._slots.get(session_id)
         if slot is None:
             return
@@ -193,15 +189,6 @@ class ControlPanelRunCoordinator:
             return
         self._slots.pop(session_id, None)
         slot.dispatcher.stop()
-        session = self.session_by_id(session_id)
-        if session is not None:
-            self._set_session_journal(session, None)
-
-    @staticmethod
-    def _set_session_journal(session: TerminalSessionLike, journal) -> None:
-        attach = getattr(session, "attach_control_panel_traffic_journal", None)
-        if callable(attach):
-            attach(journal)
 
     def dispatcher_count(self) -> int:
         return len(self._slots)

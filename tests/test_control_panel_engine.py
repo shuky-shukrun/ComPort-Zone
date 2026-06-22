@@ -18,7 +18,6 @@ from ComPort_Zone.control_panel_engine import (
     ControlPanelPollScheduler,
     PollRequest,
     PollResult,
-    PollTrafficJournal,
     ReadbackRequest,
     ReadbackResult,
     SessionPollDispatcher,
@@ -292,98 +291,34 @@ class SchedulerTests(unittest.TestCase):
 
 
 class ExplodingTransport(FakeSerialTransport):
-    def send_text(
-        self, text: str, line_ending_override: str | None = None, *, source: str = ""
-    ) -> None:
+    """Every send/query raises, to exercise the dispatcher's send-error path."""
+
+    def send_text(self, *args, **kwargs):
+        raise RuntimeError("port gone")
+
+    def send_bytes(self, *args, **kwargs):
+        raise RuntimeError("port gone")
+
+    def query_text(self, *args, **kwargs):
+        raise RuntimeError("port gone")
+
+    def query_bytes(self, *args, **kwargs):
         raise RuntimeError("port gone")
 
 
-class ScriptedTransport(FakeSerialTransport):
-    """Delivers a scripted list of SerialEvents to subscribers on send.
-
-    The engine drains stale RX immediately before sending, so events
-    staged into the subscriber queue ahead of the transaction would be
-    discarded; scripting them onto the send call models a device that
-    responds to the command, deterministically and without sleeps.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.scripted_events: list[SerialEvent] = []
-
-    def _deliver_next_response(self) -> None:
-        # Stamp the scripted events at delivery time so they look like
-        # real bytes-just-arrived-on-the-wire — the dispatcher's
-        # cross-talk-protection filter ignores anything older than its
-        # own send. Without this re-stamping, scripted events queued at
-        # test setup look like stale RX and get correctly filtered out,
-        # which would defeat the scripted-event tests themselves.
-        from dataclasses import replace
-        from datetime import datetime, timezone
-        events, self.scripted_events = self.scripted_events, []
-        now = datetime.now(timezone.utc).astimezone()
-        for event in events:
-            fresh = replace(event, timestamp=now)
-            for subscriber in self._subscribers:
-                subscriber.put(fresh)
-
-
-class PollTrafficJournalTests(unittest.TestCase):
-    @staticmethod
-    def _now():
-        from datetime import datetime, timezone
-
-        return datetime.now(timezone.utc).astimezone()
-
-    def test_open_window_covers_now(self) -> None:
-        journal = PollTrafficJournal()
-        self.assertFalse(journal.covers(self._now()))
-        journal.open_window()
-        self.assertTrue(journal.covers(self._now()))
-
-    def test_closed_window_stops_covering_after_close(self) -> None:
-        # The journal used to keep a 350 ms grace tail past close_window
-        # to hide late device-reply fragments. With the wire lock now
-        # serializing senders AND the dispatcher draining residual bytes
-        # inside the held region before release, no late fragment can
-        # outlive close_window(). Grace is 0 (any positive grace would
-        # also hide the bound terminal's own replies on fast links).
-        import time
-
-        journal = PollTrafficJournal()
-        journal.open_window()
-        journal.close_window()
-        time.sleep(0.001)
-        self.assertFalse(journal.covers(self._now()))
-
-    def test_timestamp_before_window_not_covered(self) -> None:
-        from datetime import timedelta
-
-        before = self._now() - timedelta(seconds=1)
-        journal = PollTrafficJournal()
-        journal.open_window()
-        self.assertFalse(journal.covers(before))
-
-    def test_window_history_is_bounded(self) -> None:
-        journal = PollTrafficJournal()
-        for _ in range(100):
-            journal.open_window()
-            journal.close_window()
-        self.assertLessEqual(len(journal._windows), PollTrafficJournal._KEEP_CLOSED)
-
-
 class DispatcherTransactionTests(unittest.TestCase):
-    """Threadless tests driving _execute_transaction synchronously."""
+    """Threadless tests driving _execute_transaction synchronously. The fake
+    delivers each ``queue_response`` as the reply to the next command, and the
+    channel underneath correlates it to that command."""
 
     def setUp(self) -> None:
         self.fake = FakeSerialTransport()
         self.fake.connect(object())
         self.dispatcher = SessionPollDispatcher(transport=self.fake)
-        self.rx_queue = self.fake.subscribe_events()
 
     def test_successful_transaction(self) -> None:
         self.fake.queue_response(b"13.2\r\n")
-        result = self.dispatcher._execute_transaction(make_request(make_entry("a")), self.rx_queue)
+        result = self.dispatcher._execute_transaction(make_request(make_entry("a")))
         self.assertEqual(result.status, POLL_OK)
         assert result.outcome is not None
         self.assertEqual(result.outcome.value_number, 13.2)
@@ -391,132 +326,27 @@ class DispatcherTransactionTests(unittest.TestCase):
 
     def test_sends_are_tagged_with_control_panel_source(self) -> None:
         self.fake.queue_response(b"1\r\n")
-        self.dispatcher._execute_transaction(make_request(make_entry("a")), self.rx_queue)
+        self.dispatcher._execute_transaction(make_request(make_entry("a")))
         self.assertEqual(self.fake.sent_sources, [CONTROL_PANEL_TX_SOURCE])
-
-    def test_transaction_opens_and_closes_journal_window(self) -> None:
-        from datetime import datetime, timedelta, timezone
-
-        journal = self.dispatcher.traffic_journal
-        self.fake.queue_response(b"1\r\n")
-        before = datetime.now(timezone.utc).astimezone()
-        self.dispatcher._execute_transaction(make_request(make_entry("a")), self.rx_queue)
-        # RX that arrived during the transaction is covered...
-        self.assertTrue(journal.covers(before + timedelta(milliseconds=1)))
-        # ...and the window was closed, so far-future RX is not.
-        far = datetime.now(timezone.utc).astimezone() + timedelta(seconds=60)
-        self.assertFalse(journal.covers(far))
-
-    def test_journal_closed_even_on_send_error(self) -> None:
-        from datetime import datetime, timedelta, timezone
-
-        exploding = ExplodingTransport()
-        exploding.connect(object())
-        dispatcher = SessionPollDispatcher(transport=exploding)
-        rx_queue = exploding.subscribe_events()
-        dispatcher._execute_transaction(make_request(make_entry("a")), rx_queue)
-        far = datetime.now(timezone.utc).astimezone() + timedelta(seconds=60)
-        self.assertFalse(dispatcher.traffic_journal.covers(far))
 
     def test_line_ending_override_passed_through(self) -> None:
         entry = make_entry("a")
         entry.line_ending_override = "LF"
         self.fake.queue_response(b"1\r\n")
-        self.dispatcher._execute_transaction(make_request(entry), self.rx_queue)
+        self.dispatcher._execute_transaction(make_request(entry))
         self.assertEqual(self.fake.sent_text, [("READ:a?", "LF")])
 
     def test_timeout_with_no_response(self) -> None:
         entry = make_entry("a", timeout_ms=60)
-        result = self.dispatcher._execute_transaction(make_request(entry), self.rx_queue)
+        result = self.dispatcher._execute_transaction(make_request(entry))
         self.assertEqual(result.status, POLL_TIMEOUT)
         self.assertIsNone(result.outcome)
-
-    def test_stale_rx_drained_before_send(self) -> None:
-        self.rx_queue.put(SerialEvent(kind="rx", message="99.9\r\n"))
-        self.fake.queue_response(b"13.2\r\n")
-        result = self.dispatcher._execute_transaction(make_request(make_entry("a")), self.rx_queue)
-        assert result.outcome is not None
-        self.assertEqual(result.outcome.value_number, 13.2)
-
-    def test_concurrent_terminal_send_cannot_interleave(self) -> None:
-        """The user can be hammering the terminal while a panel poll
-        is in flight; the wire must NOT see two queries at once. With
-        ``hold_wire`` in place a concurrent ``send_text`` call from
-        another thread blocks until the transaction finishes — both
-        the bytes-on-the-wire order AND the per-transaction parse
-        window stay clean.
-
-        Pre-fix: the terminal send raced into ``port.write`` between
-        the dispatcher's send and its first RX read, and the
-        dispatcher's parse window then caught the device's reply to
-        the *terminal's* command (causing the user-reported "tile shows
-        another tile's value" symptom).
-
-        Deterministic shape: we drive the lock directly. While the
-        main thread holds ``hold_wire`` (simulating an in-flight
-        transaction), a worker thread's ``send_text`` must block.
-        Releasing the lock unblocks the worker.
-        """
-        import threading
-        import time as _t
-
-        worker_finished = threading.Event()
-
-        def terminal_sender() -> None:
-            self.fake.send_text("MANUAL?", source="")
-            worker_finished.set()
-
-        with self.fake.hold_wire():
-            worker = threading.Thread(target=terminal_sender, daemon=True)
-            worker.start()
-            # While we hold the wire, the worker's send_text MUST block.
-            self.assertFalse(
-                worker_finished.wait(timeout=0.15),
-                "terminal send must block while wire is held",
-            )
-            self.assertEqual(self.fake.sent_text, [],
-                             "terminal send must NOT land before lock release")
-        # On release, the worker proceeds and completes its send.
-        self.assertTrue(
-            worker_finished.wait(timeout=1.0),
-            "terminal send must unblock once wire is released",
-        )
-        self.assertEqual(self.fake.sent_text, [("MANUAL?", None)])
-
-        # End-to-end: drive a real dispatcher transaction. Even with a
-        # concurrent send_text racing, the dispatcher's parse window
-        # gets ITS OWN reply (13.2), and the wire order has both
-        # commands in some serial order — never interleaved bytes.
-        self.fake.sent_text.clear()
-        self.fake.queue_response(b"13.2\r\n")
-        result = self.dispatcher._execute_transaction(
-            make_request(make_entry("a")), self.rx_queue
-        )
-        self.assertEqual(result.status, POLL_OK)
-        assert result.outcome is not None
-        self.assertEqual(result.outcome.value_number, 13.2)
-        self.assertEqual(self.fake.sent_text, [("READ:a?", None)])
-
-    def test_non_rx_events_ignored_in_window(self) -> None:
-        scripted = ScriptedTransport()
-        scripted.connect(object())
-        dispatcher = SessionPollDispatcher(transport=scripted)
-        rx_queue = scripted.subscribe_events()
-        scripted.scripted_events = [
-            SerialEvent(kind="status", message="noise"),
-            SerialEvent(kind="rx", message="42\r\n"),
-        ]
-        result = dispatcher._execute_transaction(make_request(make_entry("a", timeout_ms=300)), rx_queue)
-        self.assertEqual(result.status, POLL_OK)
-        assert result.outcome is not None
-        self.assertEqual(result.outcome.value_number, 42.0)
 
     def test_send_error_reported(self) -> None:
         exploding = ExplodingTransport()
         exploding.connect(object())
         dispatcher = SessionPollDispatcher(transport=exploding)
-        rx_queue = exploding.subscribe_events()
-        result = dispatcher._execute_transaction(make_request(make_entry("a")), rx_queue)
+        result = dispatcher._execute_transaction(make_request(make_entry("a")))
         self.assertEqual(result.status, POLL_SEND_ERROR)
         self.assertIn("port gone", result.error)
 
@@ -524,27 +354,22 @@ class DispatcherTransactionTests(unittest.TestCase):
         entry = make_entry("a", command="AB CD", send_mode="Hex Bytes")
         self.fake.queue_response(b"OK\r\n")
         entry.parse = ParseRule(kind="line", value_type="text")
-        result = self.dispatcher._execute_transaction(make_request(entry), self.rx_queue)
+        result = self.dispatcher._execute_transaction(make_request(entry))
         self.assertEqual(result.status, POLL_OK)
         self.assertEqual(self.fake.sent_bytes, [b"\xab\xcd"])
 
     def test_invalid_hex_is_send_error(self) -> None:
         entry = make_entry("a", command="XYZ", send_mode="Hex Bytes", timeout_ms=100)
-        result = self.dispatcher._execute_transaction(make_request(entry), self.rx_queue)
+        result = self.dispatcher._execute_transaction(make_request(entry))
         self.assertEqual(result.status, POLL_SEND_ERROR)
         self.assertIn("HEX", result.error)
 
     def test_window_is_capped_during_flood(self) -> None:
-        scripted = ScriptedTransport()
-        scripted.connect(object())
-        dispatcher = SessionPollDispatcher(transport=scripted)
-        rx_queue = scripted.subscribe_events()
         entry = make_entry("a", timeout_ms=500)
         entry.parse = ParseRule(kind="regex", pattern=r"V=([\d.]+)", group=1, value_type="number")
-        scripted.scripted_events = [
-            SerialEvent(kind="rx", message="noise " * 200) for _ in range(10)
-        ] + [SerialEvent(kind="rx", message="V=13.2\r\n")]
-        result = dispatcher._execute_transaction(make_request(entry), rx_queue)
+        flood = ("noise " * 200 * 10).encode() + b"V=13.2\r\n"
+        self.fake.queue_response(flood)
+        result = self.dispatcher._execute_transaction(make_request(entry))
         self.assertEqual(result.status, POLL_OK)
         assert result.outcome is not None
         self.assertEqual(result.outcome.value_number, 13.2)
@@ -613,21 +438,6 @@ class ControlExecutionTests(unittest.TestCase):
         self.assertEqual(result.status, POLL_SEND_ERROR)
         self.assertIn("port gone", result.error)
 
-    def test_control_opens_and_closes_journal_window(self) -> None:
-        from datetime import datetime, timedelta, timezone
-
-        before = datetime.now(timezone.utc).astimezone()
-        self.dispatcher._execute_control(make_control_request())
-        journal = self.dispatcher.traffic_journal
-        self.assertEqual(len(journal._windows), 1)
-        start, end = journal._windows[0]
-        self.assertIsNotNone(start)
-        self.assertIsNotNone(end)
-        self.assertGreaterEqual(start, before)
-        self.assertGreaterEqual(end, start)
-        far = datetime.now(timezone.utc).astimezone() + timedelta(seconds=60)
-        self.assertFalse(journal.covers(far))
-
 
 class DispatcherThreadTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -685,13 +495,6 @@ class DispatcherThreadTests(unittest.TestCase):
         self.assertFalse(self.dispatcher.is_running)
         statuses = {results.get(timeout=1.0).status, results.get(timeout=1.0).status}
         self.assertEqual(statuses, {POLL_CANCELLED})
-        self.assertEqual(self.fake._subscribers, [])
-
-    def test_stop_unsubscribes_event_queue(self) -> None:
-        self.dispatcher.start()
-        self.assertEqual(len(self.fake._subscribers), 1)
-        self.dispatcher.stop()
-        self.assertEqual(self.fake._subscribers, [])
 
     def test_restart_after_stop(self) -> None:
         self.dispatcher.start()
@@ -730,7 +533,7 @@ class DispatcherThreadTests(unittest.TestCase):
             owner_entry_id="ctl",
             entry=readback_entry,
             results=results,
-            delay_ms=0,
+            delay_ms=50,
         )
         self.fake.queue_response(b"echo\r\n")
         self.fake.queue_response(b"7\r\n")

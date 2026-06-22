@@ -167,7 +167,7 @@ def run_command_file(
       - ``on_event`` routes events to whichever output sink fits
         (typically :class:`CliOutput`).
     """
-    event_queue = transport.subscribe_events()
+    event_queue = transport.subscribe_monitor()
     rx_buffer = bytearray()
     expect_failures = 0
     steps_run = 0
@@ -323,7 +323,7 @@ def run_command_file(
             expect_failures=expect_failures,
         )
     finally:
-        transport.unsubscribe_events(event_queue)
+        transport.unsubscribe_monitor(event_queue)
 
 
 def _interruptible_sleep(

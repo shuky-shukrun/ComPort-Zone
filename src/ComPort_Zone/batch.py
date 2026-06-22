@@ -19,6 +19,10 @@ HIGH_RES_WAIT_THRESHOLD_SECONDS = 0.020
 COARSE_WAIT_CHUNK_SECONDS = 0.050
 DEFAULT_EXPECT_TIMEOUT_MS = 1000
 
+# TX origin tag for batch sends (SerialEvent.source) — distinguishes
+# command-file traffic from manual terminal input in the transcript/log.
+BATCH_TX_SOURCE = "batch"
+
 
 class BatchParseError(ValueError):
     def __init__(self, message: str, line_number: int) -> None:
@@ -213,7 +217,7 @@ class BatchRunner:
     def __init__(
         self,
         *,
-        event_queue: Queue[SerialEvent],
+        emit_event: Callable[[SerialEvent], None],
         send_text,
         send_bytes,
         connected_supplier,
@@ -221,7 +225,7 @@ class BatchRunner:
         event_queue_disposer: EventQueueDisposer | None = None,
         expect_timeout_ms: int = DEFAULT_EXPECT_TIMEOUT_MS,
     ) -> None:
-        self._event_queue = event_queue
+        self._emit_event = emit_event
         self._send_text = send_text
         self._send_bytes = send_bytes
         self._connected_supplier = connected_supplier
@@ -458,10 +462,10 @@ class BatchRunner:
         try:
             if step.kind == "send":
                 self._reset_expectation_buffer()
-                self._send_text(step.payload)
+                self._send_text(step.payload, source=BATCH_TX_SOURCE)
             elif step.kind == "hex":
                 self._reset_expectation_buffer()
-                self._send_bytes(step.payload)
+                self._send_bytes(step.payload, source=BATCH_TX_SOURCE)
         except Exception as exc:
             self._emit("error", f"Batch step on line {step.line_number} failed: {exc}")
             return False
@@ -558,4 +562,4 @@ class BatchRunner:
                 return True
 
     def _emit(self, kind: str, message: str) -> None:
-        self._event_queue.put(SerialEvent(kind=kind, message=message))
+        self._emit_event(SerialEvent(kind=kind, message=message, source=BATCH_TX_SOURCE))

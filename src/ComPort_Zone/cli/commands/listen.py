@@ -121,7 +121,7 @@ def listen_command(
     log_handle: TextIO | None = None
     if log_path is not None:
         log_handle = open(log_path, "a", encoding="utf-8")
-    event_queue = transport.subscribe_events()
+    event_queue = transport.subscribe_monitor()
     deadline = (
         time.monotonic() + duration_seconds
         if duration_seconds is not None
@@ -175,7 +175,7 @@ def listen_command(
         if log_handle is not None:
             log_handle.close()
         try:
-            transport.unsubscribe_events(event_queue)
+            transport.unsubscribe_monitor(event_queue)
         finally:
             transport.disconnect()
             output.status("Disconnected.")

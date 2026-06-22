@@ -103,7 +103,7 @@ def run_send_once(
         ctx.exit(int(exc.exit_code))
         return  # for mypy
 
-    event_queue = transport.subscribe_events()
+    event_queue = transport.subscribe_monitor()
     try:
         output.status(
             f"Connected to {profile.port} @ {profile.baudrate} "
@@ -171,7 +171,7 @@ def run_send_once(
 
     finally:
         try:
-            transport.unsubscribe_events(event_queue)
+            transport.unsubscribe_monitor(event_queue)
         finally:
             transport.disconnect()
             output.status("Disconnected.")

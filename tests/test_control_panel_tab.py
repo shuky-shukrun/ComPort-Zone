@@ -344,10 +344,12 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
         tab = self.make_tab(volt_entry())
         tab.bind_to_session(1)
 
-        def explode(text: str, line_ending_override=None, *, source: str = "") -> None:
+        def explode(*args, **kwargs) -> None:
             raise RuntimeError("port vanished")
 
-        self.session.transport.send_text = explode  # type: ignore[method-assign]
+        # Polls go out via query_text/query_bytes now.
+        self.session.transport.query_text = explode  # type: ignore[method-assign]
+        self.session.transport.query_bytes = explode  # type: ignore[method-assign]
         self.clock.advance_ms(50)
         tab._tick()
         self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
@@ -595,21 +597,24 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
         tab = self.make_tab(entry)
         tab.bind_to_session(1)
 
-        def explode(text: str, line_ending_override=None, *, source: str = "") -> None:
+        orig_query_text = self.session.transport.query_text
+        orig_query_bytes = self.session.transport.query_bytes
+
+        def explode(*args, **kwargs) -> None:
             raise RuntimeError("port vanished")
 
-        self.session.transport.send_text = explode  # type: ignore[method-assign]
+        self.session.transport.query_text = explode  # type: ignore[method-assign]
+        self.session.transport.query_bytes = explode  # type: ignore[method-assign]
         self.clock.advance_ms(50)
         tab._tick()
         self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
         tab._tick()
         self.assertEqual(tab.alerts.unseen_count, 1)
 
-        # Restore send (so the next poll tries), but stage no response —
+        # Restore querying (so the next poll tries), but stage no response —
         # the entry will time out; that must NOT add a second alert.
-        self.session.transport.send_text = (
-            lambda text, line_ending_override=None, *, source="": None
-        )  # type: ignore[method-assign]
+        self.session.transport.query_text = orig_query_text  # type: ignore[method-assign]
+        self.session.transport.query_bytes = orig_query_bytes  # type: ignore[method-assign]
         self.clock.advance_ms(entry.interval_ms + 100)
         tab._tick()
         self.assertTrue(wait_for(lambda: not tab.result_queue.empty()))
@@ -1387,7 +1392,7 @@ class ControlTileTests(ControlPanelTabTestBase):
         tab = self.make_tab(control_entry())
         tab.bind_to_session(1)
 
-        def explode(text: str, line_ending_override=None, *, source: str = "") -> None:
+        def explode(*args, **kwargs) -> None:
             raise RuntimeError("port vanished")
 
         self.session.transport.send_text = explode  # type: ignore[method-assign]
@@ -1451,7 +1456,7 @@ class ControlTileTests(ControlPanelTabTestBase):
         tab.csv_log_button.setChecked(True)
         self.addCleanup(tab.value_logger.close)
 
-        def explode(text, line_ending_override=None, *, source=""):
+        def explode(*args, **kwargs):
             raise RuntimeError("port lost")
 
         self.session.transport.send_text = explode  # type: ignore[method-assign]
@@ -1748,7 +1753,7 @@ class SetpointTileTests(ControlPanelTabTestBase):
         tab = self.make_tab(setpoint_entry())
         tab.bind_to_session(1)
 
-        def explode(text, line_ending_override=None, *, source: str = ""):
+        def explode(*args, **kwargs):
             raise RuntimeError("device offline")
 
         self.session.transport.send_text = explode  # type: ignore[method-assign]
@@ -2274,8 +2279,6 @@ class ControlPanelTabBindingTests(ControlPanelTabTestBase):
         self.session.serial_client = self.session.transport
         tab._tick()
         self.assertEqual(tab.bound_session_id, 1)
-        self.assertEqual(old_transport._subscribers, [])
-        self.assertEqual(len(self.session.transport._subscribers), 1)
 
     def test_resolve_persisted_binding_unique_endpoint(self) -> None:
         state = ControlPanelTabState(control_panel_id="x", target_endpoint="COM7")

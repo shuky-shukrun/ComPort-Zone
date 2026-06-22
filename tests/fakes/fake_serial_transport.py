@@ -1,40 +1,57 @@
-"""In-memory ``SerialTransportAdapter`` stand-in used by CLI tests.
+"""In-memory ``SerialTransportAdapter`` stand-in used by CLI and control-panel
+tests.
 
-Implements the same surface as :class:`ComPort_Zone.core.transports.SerialTransportAdapter`
-without touching pyserial. RX events are seeded on construction (or via
-:meth:`push_rx`) and delivered to subscribers as soon as they subscribe,
-which makes the CLI's RX timing deterministic under test.
+Backed by a real :class:`~ComPort_Zone.port_channel.PortChannel` over a
+:class:`tests.fakes.fake_raw_transport.FakeRawTransport`, so ``query_text`` /
+``query_bytes`` / ``send_text`` / ``subscribe_monitor`` behave exactly like the
+production adapter — structural request/response correlation included — while
+still recording high-level calls and letting tests stage device replies.
+
+* ``queue_response(raw)`` — delivered as the reply to the next write (use for
+  send/query-with-reply tests where the device answers a command).
+* ``stage_rx(raw)`` — delivered to a subscriber as soon as it subscribes (use
+  for listen-style tests where the device is already chattering).
+* ``push_rx_now(raw)`` — delivered to current subscribers immediately.
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from collections import deque
 from queue import Queue
-from threading import RLock
+from threading import Lock
 from typing import Any
 
-from ComPort_Zone.core.serial_core import SerialEvent
+from ComPort_Zone.core.models import apply_line_ending
+from ComPort_Zone.core.port_channel import (
+    NORMAL,
+    MonitorHub,
+    PortChannel,
+    SerialEvent,
+    decode_serial_bytes,
+    format_hex_bytes,
+)
 from ComPort_Zone.core.transports import EndpointInfo
+
+from tests.fakes.fake_raw_transport import FakeRawTransport
 
 
 class FakeSerialTransport:
     kind = "serial"
 
     def __init__(self) -> None:
-        self.events: Queue[SerialEvent] = Queue()
-        self._subscribers: list[Queue[SerialEvent]] = []
-        self._wire_lock = RLock()
-        self._connected: bool = False
+        self._raw = FakeRawTransport(read_timeout=0.005)
+        self._raw.open()
+        self._raw.set_responder(self._respond)
+        self._hub = MonitorHub()
+        self._channel = PortChannel(self._raw, hub=self._hub)
+        self._channel.start()
+        self._lock = Lock()
+        self._response_queue: deque[bytes] = deque()
+        self._pending_rx: list[bytes] = []
+        self._connected = False
+        self.connect_returns = True
         self._ports: list[dict[str, Any]] = []
         self._endpoints: list[EndpointInfo] = []
-        # ``_pending_rx`` is delivered to every NEW subscriber on subscribe —
-        # use for listen-style tests where the device is already chattering.
-        # ``_response_queue`` is delivered to CURRENT subscribers AFTER the
-        # next send call — use for run/send-with-expect tests where the
-        # device responds to commands.
-        self._pending_rx: list[bytes] = []
-        self._response_queue: list[bytes] = []
-        self.connect_returns: bool = True
         # Recording surfaces for assertions:
         self.connect_calls: list[Any] = []
         self.disconnect_calls: int = 0
@@ -42,10 +59,15 @@ class FakeSerialTransport:
         self.sent_bytes: list[bytes] = []
         # TX origin per send, in call order ("" = user/batch, "control_panel" = poll).
         self.sent_sources: list[str] = []
-        # Control-line state (mirrors pyserial defaults) + break counter.
         self.dtr: bool = True
         self.rts: bool = True
         self.break_count: int = 0
+
+    def _respond(self, payload: bytes) -> bytes | None:
+        with self._lock:
+            if self._response_queue:
+                return self._response_queue.popleft()
+        return None
 
     # ----------------------------------- TransportAdapter Protocol surface
 
@@ -56,6 +78,10 @@ class FakeSerialTransport:
     @property
     def is_reconnecting(self) -> bool:
         return False
+
+    @property
+    def channel(self) -> PortChannel:
+        return self._channel
 
     def list_endpoints(self) -> list[EndpointInfo]:
         if self._endpoints:
@@ -84,25 +110,84 @@ class FakeSerialTransport:
         self._connected = False
 
     def send_text(
-        self, text: str, line_ending_override: str | None = None, *, source: str = ""
-    ) -> None:
-        with self._wire_lock:
-            self.sent_text.append((text, line_ending_override))
-            self.sent_sources.append(source)
-            self._deliver_next_response()
+        self,
+        text: str,
+        line_ending_override: str | None = None,
+        *,
+        source: str = "",
+        priority: int = NORMAL,
+        quiet_read: float = 0.0,
+    ):
+        self.sent_text.append((text, line_ending_override))
+        self.sent_sources.append(source)
+        payload = apply_line_ending(text, line_ending_override or "CRLF")
+        return self._channel.write(
+            payload, source=source, display=text, priority=priority, quiet_read=quiet_read
+        )
 
-    def send_bytes(self, data: bytes, *, source: str = "") -> None:
-        with self._wire_lock:
-            self.sent_bytes.append(data)
-            self.sent_sources.append(source)
-            self._deliver_next_response()
+    def send_bytes(
+        self,
+        data: bytes,
+        *,
+        source: str = "",
+        priority: int = NORMAL,
+        quiet_read: float = 0.0,
+    ):
+        self.sent_bytes.append(data)
+        self.sent_sources.append(source)
+        return self._channel.write(
+            data,
+            source=source,
+            display="HEX " + format_hex_bytes(data),
+            priority=priority,
+            quiet_read=quiet_read,
+        )
 
-    @contextmanager
-    def hold_wire(self):
-        """Mirror :meth:`SerialClient.hold_wire` so the dispatcher's
-        wire-reservation flow works against this fake too."""
-        with self._wire_lock:
-            yield
+    def query_text(
+        self,
+        text: str,
+        line_ending_override: str | None = None,
+        *,
+        matcher,
+        timeout: float,
+        source: str = "",
+        priority: int = NORMAL,
+        pre_read_delay: float = 0.0,
+    ):
+        self.sent_text.append((text, line_ending_override))
+        self.sent_sources.append(source)
+        payload = apply_line_ending(text, line_ending_override or "CRLF")
+        return self._channel.query(
+            payload,
+            matcher=matcher,
+            timeout=timeout,
+            source=source,
+            display=text,
+            priority=priority,
+            pre_read_delay=pre_read_delay,
+        )
+
+    def query_bytes(
+        self,
+        data: bytes,
+        *,
+        matcher,
+        timeout: float,
+        source: str = "",
+        priority: int = NORMAL,
+        pre_read_delay: float = 0.0,
+    ):
+        self.sent_bytes.append(data)
+        self.sent_sources.append(source)
+        return self._channel.query(
+            data,
+            matcher=matcher,
+            timeout=timeout,
+            source=source,
+            display="HEX " + format_hex_bytes(data),
+            priority=priority,
+            pre_read_delay=pre_read_delay,
+        )
 
     def set_dtr(self, value: bool) -> bool:
         if not self._connected:
@@ -130,24 +215,19 @@ class FakeSerialTransport:
     def supports_signals(self) -> bool:
         return True
 
-    def _deliver_next_response(self) -> None:
-        if not self._response_queue:
-            return
-        raw = self._response_queue.pop(0)
-        event = SerialEvent(kind="rx", message=raw.decode("utf-8", "replace"), raw=raw)
-        for subscriber in self._subscribers:
-            subscriber.put(event)
-
-    def subscribe_events(self) -> Queue[SerialEvent]:
-        queue: Queue[SerialEvent] = Queue()
-        self._subscribers.append(queue)
+    def subscribe_monitor(self) -> Queue[SerialEvent]:
+        queue = self._hub.subscribe()
+        # Replay any staged "already chattering" RX as discrete events (so a
+        # per-line filter sees each one separately, matching real framing).
         for raw in self._pending_rx:
-            queue.put(SerialEvent(kind="rx", message=raw.decode("utf-8", "replace"), raw=raw))
+            self._hub.publish(SerialEvent(kind="rx", message=decode_serial_bytes(raw), raw=raw))
         return queue
 
-    def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
+    def unsubscribe_monitor(self, queue: Queue[SerialEvent]) -> None:
+        self._hub.unsubscribe(queue)
+
+    def emit_event(self, event: SerialEvent) -> None:
+        self._hub.publish(event)
 
     # --------------------------------------------- test-fixture helpers
 
@@ -158,19 +238,17 @@ class FakeSerialTransport:
         self._endpoints = list(endpoints)
 
     def stage_rx(self, raw: bytes) -> None:
-        """Queue an RX payload that every future subscriber will receive."""
+        """Queue an RX payload delivered as soon as a subscriber subscribes."""
         self._pending_rx.append(raw)
 
     def queue_response(self, raw: bytes) -> None:
-        """Queue an RX payload delivered to current subscribers after the
-        next ``send_text``/``send_bytes`` call. Use this for run/send tests
-        where the device responds to a command rather than chattering on
-        its own.
-        """
-        self._response_queue.append(raw)
+        """Queue an RX payload delivered as the reply to the next send/query."""
+        with self._lock:
+            self._response_queue.append(raw)
 
     def push_rx_now(self, raw: bytes) -> None:
-        """Deliver an RX event to all current subscribers immediately."""
-        event = SerialEvent(kind="rx", message=raw.decode("utf-8", "replace"), raw=raw)
-        for subscriber in self._subscribers:
-            subscriber.put(event)
+        """Deliver an RX payload to current subscribers immediately."""
+        self._hub.publish(SerialEvent(kind="rx", message=decode_serial_bytes(raw), raw=raw))
+
+    def shutdown(self) -> None:
+        self._channel.stop()

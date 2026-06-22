@@ -41,19 +41,24 @@ class FakeTransport:
         self.reconnecting = False
         self.disconnected = True
 
-    def send_text(self, text: str, line_ending_override: str | None = None) -> None:
+    def send_text(self, text: str, line_ending_override: str | None = None, **kwargs) -> None:
         self.sent_text.append((text, line_ending_override))
 
-    def send_bytes(self, data: bytes) -> None:
+    def send_bytes(self, data: bytes, **kwargs) -> None:
         self.sent_bytes.append(data)
 
-    def subscribe_events(self) -> Queue[SerialEvent]:
+    def subscribe_monitor(self) -> Queue[SerialEvent]:
         queue: Queue[SerialEvent] = Queue()
         self.subscribers.append(queue)
         return queue
 
-    def unsubscribe_events(self, queue: Queue[SerialEvent]) -> None:
+    def unsubscribe_monitor(self, queue: Queue[SerialEvent]) -> None:
         self.subscribers = [subscriber for subscriber in self.subscribers if subscriber is not queue]
+
+    def emit_event(self, event: SerialEvent) -> None:
+        self.events.put(event)
+        for subscriber in list(self.subscribers):
+            subscriber.put(event)
 
 
 def make_controller(transport: FakeTransport | None = None) -> TerminalSessionController:

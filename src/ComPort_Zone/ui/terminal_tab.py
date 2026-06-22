@@ -51,8 +51,14 @@ from ..quick_actions_panel import (
     selected_item_id,
 )
 from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
+from ..port_channel import INTERACTIVE
 from ..serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
-from ..terminal_session_controller import ConnectionProfile, TerminalRenderPlan, TerminalSessionController
+from ..terminal_session_controller import (
+    TERMINAL_QUIET_READ_S,
+    ConnectionProfile,
+    TerminalRenderPlan,
+    TerminalSessionController,
+)
 from ..terminal_view import TerminalView, prompt_leader_text
 from ..themes import mix_hex
 from ..transports import SerialTransportAdapter
@@ -129,15 +135,11 @@ class TerminalSessionWidget(QWidget):
         self.history_store = self.controller.history_store
         self.logger = self.controller.logger
         self.batch_runner = self.controller.batch_runner
+        self.monitor_queue = self.controller.monitor_queue
         self._connected = False
         self._status_text = "Disconnected"
         self._quick_list_refreshing = False
         self._quick_file_list_refreshing = False
-        self._suppressed_tx_echoes: list[str] = []
-        # Poll-traffic journal of the control_panel bound to this session (None
-        # when no control_panel is bound). Background-poll TX/RX is kept out of
-        # the transcript so polling never floods the terminal.
-        self._control_panel_traffic_journal = None
         # Stored transcript entries so timestamp/hex toggles re-render all history.
         self._transcript: list[tuple] = []
         self._replaying = False
@@ -1230,6 +1232,7 @@ class TerminalSessionWidget(QWidget):
     def _replace_controller(self, profile: ConnectionProfile, transport_kind: str) -> None:
         logger = self.logger
         self.batch_runner.stop(emit_message=False)
+        old_controller = self.controller
         self.profile = profile
         self.transport_kind = transport_kind
         self.controller = TerminalSessionController(
@@ -1239,11 +1242,13 @@ class TerminalSessionWidget(QWidget):
             transport_kind=self.transport_kind,
         )
         self.controller.logger = logger
+        old_controller.close()
         self.transport = self.controller.transport
         self.serial_client = self.controller.serial_client
         self.history_store = self.controller.history_store
         self.logger = self.controller.logger
         self.batch_runner = self.controller.batch_runner
+        self.monitor_queue = self.controller.monitor_queue
 
     def send_from_input(self) -> None:
         raw = self.command_input.text()
@@ -1256,6 +1261,13 @@ class TerminalSessionWidget(QWidget):
         self.controller.send_payload(raw, mode)
 
     def _send_integrated_input(self, raw: str, mode: str) -> bool:
+        # Manual sends go out at INTERACTIVE priority (jump ahead of queued
+        # background polls) with a brief quiet-read window so the device's
+        # reply is captured in-order on this send's own transaction. The typed
+        # line is echoed optimistically here for instant feedback; the monitor
+        # stream's matching tx event (source="") is then skipped in
+        # _render_event so the echo isn't doubled (a source-tag dedup, not the
+        # old timing-based suppression).
         if mode == "Hex Bytes":
             try:
                 payload = parse_hex_payload(raw)
@@ -1265,12 +1277,13 @@ class TerminalSessionWidget(QWidget):
                 return True
             display = "HEX " + format_hex_bytes(payload)
             try:
-                self.transport.send_bytes(payload)
+                self.transport.send_bytes(
+                    payload, priority=INTERACTIVE, quiet_read=TERMINAL_QUIET_READ_S
+                )
             except Exception as exc:
                 self._render_user_send(display, color_role="error")
                 self.host.set_status(str(exc))
                 return True
-            self._suppress_tx_echo(display)
             self._render_user_send(display, color_role="tx")
             self.host.record_command(raw.strip())
             return True
@@ -1283,14 +1296,18 @@ class TerminalSessionWidget(QWidget):
         failed_index: int | None = None
         for index, line in enumerate(sendable_lines):
             try:
-                self.transport.send_text(line, self.profile.line_ending)
+                self.transport.send_text(
+                    line,
+                    self.profile.line_ending,
+                    priority=INTERACTIVE,
+                    quiet_read=TERMINAL_QUIET_READ_S,
+                )
             except Exception as exc:
                 failed_index = index
                 self._render_user_send(line, color_role="error")
                 self.host.set_status(str(exc))
                 sent_all = False
                 break
-            self._suppress_tx_echo(line)
             self._render_user_send(line, color_role="tx")
         if failed_index is not None:
             for line in sendable_lines[failed_index + 1 :]:
@@ -1313,24 +1330,6 @@ class TerminalSessionWidget(QWidget):
         self._emit_plan(plan)
         self._store_transcript(("plan", plan))
 
-    def _suppress_tx_echo(self, message: str) -> None:
-        self._suppressed_tx_echoes.append(message)
-        QTimer.singleShot(1000, self._clear_stale_suppressed_tx_echoes)
-
-    def _clear_stale_suppressed_tx_echoes(self) -> None:
-        self._suppressed_tx_echoes.clear()
-
-    def _consume_suppressed_tx_echo(self, message: str) -> bool:
-        if not self._suppressed_tx_echoes:
-            return False
-        if self._suppressed_tx_echoes[0] == message:
-            self._suppressed_tx_echoes.pop(0)
-            return True
-        if message in self._suppressed_tx_echoes:
-            self._suppressed_tx_echoes.remove(message)
-            return True
-        return False
-
     def send_selected_quick_command(self) -> None:
         command = self.host.quick_command_by_id(self.selected_quick_command_id())
         if not command:
@@ -1343,6 +1342,15 @@ class TerminalSessionWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Quick Send", str(exc))
             return
+        # Echo optimistically (the monitor's source="" tx event is skipped).
+        if command.send_mode == "Hex Bytes":
+            try:
+                display = "HEX " + format_hex_bytes(parse_hex_payload(command.command))
+            except ValueError:
+                display = command.command
+        else:
+            display = command.command
+        self._render_user_send(display, color_role="tx")
         self._clear_command_input_after_send()
 
     def _clear_command_input_after_send(self) -> None:
@@ -1738,21 +1746,24 @@ class TerminalSessionWidget(QWidget):
     def _drain_events(self) -> None:
         while True:
             try:
-                event = self.transport.events.get_nowait()
+                event = self.monitor_queue.get_nowait()
             except Empty:
                 break
             self._handle_event(event)
         self._refresh_script_controls()
 
     def _handle_event(self, event: SerialEvent) -> None:
-        if event.kind == "tx" and self._consume_suppressed_tx_echo(event.message):
-            return
         decision = self.controller.handle_event(event)
         if decision.paused_count is not None:
             self.pause_label.setText(f"RX paused ({decision.paused_count})")
             return
         if decision.event_to_render is not None:
-            self._render_event(decision.event_to_render)
+            render = decision.event_to_render
+            # Dedup the terminal's own optimistic echo: a tx event tagged
+            # source="" was already rendered at send time. (Logging still
+            # happened in the controller above.) Batch/CLI tx and all RX render.
+            if not (render.kind == "tx" and getattr(render, "source", "") == ""):
+                self._render_event(render)
         if decision.status_message and self.host.tabs.currentWidget() is self:
             self.host.set_status(decision.status_message)
         if decision.connection_state is not None:
@@ -1761,23 +1772,16 @@ class TerminalSessionWidget(QWidget):
                 update_footer=decision.connection_update_footer,
             )
 
-    def attach_control_panel_traffic_journal(self, journal) -> None:
-        """Called by the control_panel run coordinator when a control_panel binds to
-        (or unbinds from) this session; ``None`` detaches."""
-        self._control_panel_traffic_journal = journal
-
     def _is_control_panel_traffic(self, event: SerialEvent) -> bool:
-        if event.kind == "tx":
-            return getattr(event, "source", "") == "control_panel"
-        if event.kind == "rx":
-            journal = self._control_panel_traffic_journal
-            return journal is not None and journal.covers(event.timestamp)
-        return False
+        # Both TX and RX of a background poll carry source == "control_panel"
+        # (the channel tags the reply with the in-flight transaction's source),
+        # so a single tag check replaces the old time-window traffic journal.
+        return getattr(event, "source", "") == "control_panel"
 
     def _render_event(self, event: SerialEvent) -> None:
         # Background control_panel polls stay out of the transcript — they would
         # otherwise flood it and bury manual interaction. The traffic still
-        # reaches the session log and every event subscriber unchanged.
+        # reaches the session log and every monitor subscriber unchanged.
         if self._is_control_panel_traffic(event):
             return
         self._emit_plan(self.controller.render_plan(event, self.host.settings.receive_display_mode))
@@ -2078,4 +2082,5 @@ class TerminalSessionWidget(QWidget):
         self.event_timer.stop()
         self.batch_runner.stop(emit_message=False)
         self.transport.disconnect()
+        self.controller.close()
         self.logger.close()

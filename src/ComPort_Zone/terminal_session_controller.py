@@ -16,9 +16,15 @@ from .batch import (
 )
 from .history import HistoryStore
 from .models import LanProfile, QuickCommand, SerialProfile
-from .serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
+from .port_channel import INTERACTIVE, SerialEvent, decode_serial_bytes, format_hex_bytes
 from .session_log import SessionLogger
 from .transports import TransportAdapter, create_transport_adapter
+
+# Quiet read window held after a manual send so an immediate device reply is
+# captured in-order on the terminal's own (source="") transaction and can't be
+# swallowed by the next background poll. ~150 ms is snappy yet covers a slow
+# LAN/serial round-trip.
+TERMINAL_QUIET_READ_S = 0.15
 
 
 ParameterSheet = tuple[dict[str, str], set[str]]
@@ -74,14 +80,24 @@ class TerminalSessionController:
         self.logger = SessionLogger()
         self.paused = False
         self.pending_events: list[SerialEvent] = []
+        # The terminal drains this monitor subscription for display; the batch
+        # runner gets its own private subscription via the factory below.
+        self.monitor_queue = self.transport.subscribe_monitor()
         self.batch_runner = BatchRunner(
-            event_queue=self.transport.events,
+            emit_event=self.transport.emit_event,
             send_text=self.transport.send_text,
             send_bytes=self.transport.send_bytes,
             connected_supplier=lambda: self.transport.is_connected,
-            event_queue_factory=self.transport.subscribe_events,
-            event_queue_disposer=self.transport.unsubscribe_events,
+            event_queue_factory=self.transport.subscribe_monitor,
+            event_queue_disposer=self.transport.unsubscribe_monitor,
         )
+
+    def close(self) -> None:
+        """Release the terminal's monitor subscription (call on tab close)."""
+        try:
+            self.transport.unsubscribe_monitor(self.monitor_queue)
+        except Exception:
+            pass
 
     def replace_history(self, commands: Iterable[str]) -> None:
         self.history_store = HistoryStore(commands)
@@ -196,12 +212,20 @@ class TerminalSessionController:
 
     def send_payload(self, raw: str, mode: str) -> None:
         if mode == "Hex Bytes":
-            self.transport.send_bytes(parse_hex_payload(raw))
+            self.transport.send_bytes(
+                parse_hex_payload(raw),
+                priority=INTERACTIVE,
+                quiet_read=TERMINAL_QUIET_READ_S,
+            )
             return
         lines = raw.splitlines() if "\n" in raw or "\r" in raw else [raw]
         for line in lines:
             if line.strip():
-                self.transport.send_text(line.strip())
+                self.transport.send_text(
+                    line.strip(),
+                    priority=INTERACTIVE,
+                    quiet_read=TERMINAL_QUIET_READ_S,
+                )
 
     def send_input(
         self,
@@ -224,11 +248,17 @@ class TerminalSessionController:
         record_command: Callable[[str], None],
     ) -> None:
         if command.send_mode == "Hex Bytes":
-            self.transport.send_bytes(parse_hex_payload(command.command))
+            self.transport.send_bytes(
+                parse_hex_payload(command.command),
+                priority=INTERACTIVE,
+                quiet_read=TERMINAL_QUIET_READ_S,
+            )
         else:
             self.transport.send_text(
                 command.command,
                 command.line_ending_override or None,
+                priority=INTERACTIVE,
+                quiet_read=TERMINAL_QUIET_READ_S,
             )
         record_command(command.command)
 
