@@ -621,6 +621,36 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual((displaced.tile.col, displaced.tile.row), (1, 1))
         grid.deleteLater()
 
+    def test_drop_moves_whole_selected_group(self) -> None:
+        # Dragging a selected tile moves every selected tile by the same
+        # delta, preserving their relative layout.
+        config = make_config(
+            make_entry("a", col=0, row=0),
+            make_entry("b", col=1, row=0),
+            make_entry("c", col=2, row=0),
+        )
+        grid = self.make_grid(config)
+        grid.set_selection({"a", "b"})
+        changes: list[bool] = []
+        grid.layoutChanged.connect(lambda: changes.append(True))
+        # Drop the anchor 'a' onto row 1 -> both a and b shift down one row.
+        grid._handle_tile_drop("a", 0, 1)
+        self.assertEqual(changes, [True])
+        self.assertEqual(config.entry_by_id("a").tile.row, 1)
+        self.assertEqual(config.entry_by_id("b").tile.row, 1)
+        self.assertEqual(config.entry_by_id("b").tile.col, 1)  # offset kept
+        # Selection survives the move.
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_drop_of_unselected_tile_moves_only_it(self) -> None:
+        config = make_config(make_entry("a", col=0), make_entry("b", col=1))
+        grid = self.make_grid(config)
+        grid.set_selection({"b"})  # selection excludes the dragged tile
+        grid._handle_tile_drop("a", 1, 0)
+        self.assertEqual((config.entry_by_id("a").tile.col, config.entry_by_id("a").tile.row), (1, 0))
+        grid.deleteLater()
+
     def test_span_request_updates_config(self) -> None:
         config = make_config(make_entry("a"))
         grid = self.make_grid(config)

@@ -28,6 +28,7 @@ from ComPort_Zone.control_panel_models import (
     example_control_panel,
     grid_row_count,
     hex_payload_error,
+    move_tiles,
     normalize_layout,
     place_tile,
     set_tile_span,
@@ -1099,6 +1100,50 @@ class LayoutMathTests(unittest.TestCase):
 
     def test_place_tile_unknown_id(self) -> None:
         self.assertFalse(place_tile([], 4, "ghost", 0, 0))
+
+    def test_move_tiles_shifts_group_preserving_layout(self) -> None:
+        # A 2-tile group on row 0 (cols 0,1) dragged down two rows keeps its
+        # relative arrangement.
+        entries = [make_entry("a", col=0, row=0), make_entry("b", col=1, row=0)]
+        moved = move_tiles(entries, 4, {"a", "b"}, dcol=0, drow=2)
+        self.assertTrue(moved)
+        spots = placements(entries)
+        self.assertEqual(spots["a"][:2], (0, 2))
+        self.assertEqual(spots["b"][:2], (1, 2))
+
+    def test_move_tiles_clamps_delta_to_grid_edge(self) -> None:
+        # Group spans cols 8-9 of a 10-wide grid; a big rightward delta is
+        # clamped so the block stays on-grid (shape preserved, not distorted).
+        entries = [make_entry("a", col=8, row=0), make_entry("b", col=9, row=0)]
+        moved = move_tiles(entries, 10, {"a", "b"}, dcol=5, drow=0)
+        self.assertFalse(moved)  # already flush right -> no room -> no move
+        spots = placements(entries)
+        self.assertEqual(spots["a"][:2], (8, 0))
+        self.assertEqual(spots["b"][:2], (9, 0))
+
+    def test_move_tiles_clamps_negative_to_zero(self) -> None:
+        entries = [make_entry("a", col=1, row=1), make_entry("b", col=2, row=1)]
+        moved = move_tiles(entries, 10, {"a", "b"}, dcol=-5, drow=-5)
+        self.assertTrue(moved)
+        spots = placements(entries)
+        # min col was 1, min row was 1 -> clamped to (0,0); offset preserved.
+        self.assertEqual(spots["a"][:2], (0, 0))
+        self.assertEqual(spots["b"][:2], (1, 0))
+
+    def test_move_tiles_displaces_non_selected(self) -> None:
+        # Move 'a' onto 'c'; the group wins, the unselected tile reflows.
+        entries = [
+            make_entry("a", col=0, row=0),
+            make_entry("c", col=0, row=1),
+        ]
+        moved = move_tiles(entries, 4, {"a"}, dcol=0, drow=1)
+        self.assertTrue(moved)
+        spots = placements(entries)
+        self.assertEqual(spots["a"][:2], (0, 1))
+        self.assertEqual(spots["c"][:2], (0, 2))  # pushed down
+
+    def test_move_tiles_unknown_ids_noop(self) -> None:
+        self.assertFalse(move_tiles([make_entry("a")], 4, {"ghost"}, 1, 1))
 
     def test_append_placement_empty_panel(self) -> None:
         self.assertEqual(append_placement([], 10, 1, 1), (0, 0))
