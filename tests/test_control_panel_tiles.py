@@ -536,6 +536,14 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual(seen, ["a"])
         grid.deleteLater()
 
+    def test_grid_relays_cut_request(self) -> None:
+        grid = self.make_grid(make_config(make_entry("a")))
+        seen: list[str] = []
+        grid.tileCutRequested.connect(seen.append)
+        grid.tile("a").cutRequested.emit("a")
+        self.assertEqual(seen, ["a"])
+        grid.deleteLater()
+
     def test_grid_injects_cell_stride_provider(self) -> None:
         # Tiles need the grid's per-cell stride for corner-drag resize.
         grid = self.make_grid(make_config(make_entry("a")), width=800)
@@ -621,6 +629,36 @@ class GridGeometryTests(unittest.TestCase):
         self.assertEqual((displaced.tile.col, displaced.tile.row), (1, 1))
         grid.deleteLater()
 
+    def test_drop_moves_whole_selected_group(self) -> None:
+        # Dragging a selected tile moves every selected tile by the same
+        # delta, preserving their relative layout.
+        config = make_config(
+            make_entry("a", col=0, row=0),
+            make_entry("b", col=1, row=0),
+            make_entry("c", col=2, row=0),
+        )
+        grid = self.make_grid(config)
+        grid.set_selection({"a", "b"})
+        changes: list[bool] = []
+        grid.layoutChanged.connect(lambda: changes.append(True))
+        # Drop the anchor 'a' onto row 1 -> both a and b shift down one row.
+        grid._handle_tile_drop("a", 0, 1)
+        self.assertEqual(changes, [True])
+        self.assertEqual(config.entry_by_id("a").tile.row, 1)
+        self.assertEqual(config.entry_by_id("b").tile.row, 1)
+        self.assertEqual(config.entry_by_id("b").tile.col, 1)  # offset kept
+        # Selection survives the move.
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_drop_of_unselected_tile_moves_only_it(self) -> None:
+        config = make_config(make_entry("a", col=0), make_entry("b", col=1))
+        grid = self.make_grid(config)
+        grid.set_selection({"b"})  # selection excludes the dragged tile
+        grid._handle_tile_drop("a", 1, 0)
+        self.assertEqual((config.entry_by_id("a").tile.col, config.entry_by_id("a").tile.row), (1, 0))
+        grid.deleteLater()
+
     def test_span_request_updates_config(self) -> None:
         config = make_config(make_entry("a"))
         grid = self.make_grid(config)
@@ -631,6 +669,25 @@ class GridGeometryTests(unittest.TestCase):
         entry = config.entry_by_id("a")
         assert entry is not None
         self.assertEqual((entry.tile.span_w, entry.tile.span_h), (2, 2))
+        grid.deleteLater()
+
+    def test_span_request_applies_to_selection(self) -> None:
+        config = make_config(make_entry("a", col=0), make_entry("b", col=2))
+        grid = self.make_grid(config)
+        grid.set_selection({"a", "b"})
+        grid._handle_span_request("a", 2, 2)  # 'a' is selected -> resize both
+        for entry_id in ("a", "b"):
+            entry = config.entry_by_id(entry_id)
+            self.assertEqual((entry.tile.span_w, entry.tile.span_h), (2, 2))
+        grid.deleteLater()
+
+    def test_span_request_single_when_target_not_selected(self) -> None:
+        config = make_config(make_entry("a", col=0), make_entry("b", col=2))
+        grid = self.make_grid(config)
+        grid.set_selection({"b"})  # 'a' is not selected
+        grid._handle_span_request("a", 2, 2)
+        self.assertEqual(config.entry_by_id("a").tile.span_w, 2)
+        self.assertEqual(config.entry_by_id("b").tile.span_w, 1)  # unchanged
         grid.deleteLater()
 
     def test_cell_at_clamps_for_span(self) -> None:
@@ -1209,6 +1266,116 @@ class TileSelectionTests(unittest.TestCase):
         grid.set_config(make_config(*entries))
         grid.relayout()
         return grid
+
+    @staticmethod
+    def _key(key, ctrl: bool = False):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        mods = (
+            Qt.KeyboardModifier.ControlModifier
+            if ctrl
+            else Qt.KeyboardModifier.NoModifier
+        )
+        return QKeyEvent(QEvent.Type.KeyPress, key, mods)
+
+    def test_ctrl_a_selects_all(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid.keyPressEvent(self._key(Qt.Key.Key_A, ctrl=True))
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_delete_key_emits_when_selection(self) -> None:
+        grid = self._grid(make_entry("a"), make_entry("b", col=1))
+        grid.set_selection({"a"})
+        seen: list[bool] = []
+        grid.deleteSelectionRequested.connect(lambda: seen.append(True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_Delete))
+        self.assertEqual(seen, [True])
+        grid.deleteLater()
+
+    def test_delete_key_ignored_without_selection(self) -> None:
+        grid = self._grid(make_entry("a"))
+        seen: list[bool] = []
+        grid.deleteSelectionRequested.connect(lambda: seen.append(True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_Delete))
+        self.assertEqual(seen, [])
+        grid.deleteLater()
+
+    def test_clipboard_shortcuts_emit(self) -> None:
+        grid = self._grid(make_entry("a"))
+        grid.set_selection({"a"})
+        fired: list[str] = []
+        grid.copySelectionRequested.connect(lambda: fired.append("copy"))
+        grid.cutSelectionRequested.connect(lambda: fired.append("cut"))
+        grid.duplicateSelectionRequested.connect(lambda: fired.append("dup"))
+        grid.pasteRequested.connect(lambda: fired.append("paste"))
+        grid.keyPressEvent(self._key(Qt.Key.Key_C, ctrl=True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_X, ctrl=True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_D, ctrl=True))
+        grid.keyPressEvent(self._key(Qt.Key.Key_V, ctrl=True))
+        self.assertEqual(fired, ["copy", "cut", "dup", "paste"])
+        grid.deleteLater()
+
+    def _drag_band(self, grid, start, end, ctrl: bool = False) -> None:
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        mods = (
+            Qt.KeyboardModifier.ControlModifier
+            if ctrl
+            else Qt.KeyboardModifier.NoModifier
+        )
+        grid.mousePressEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonPress, QPointF(*start),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, mods,
+            )
+        )
+        grid.mouseMoveEvent(
+            QMouseEvent(
+                QEvent.Type.MouseMove, QPointF(*end),
+                Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, mods,
+            )
+        )
+        grid.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease, QPointF(*end),
+                Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, mods,
+            )
+        )
+
+    def test_marquee_selects_intersecting_tiles(self) -> None:
+        grid = self._grid(make_entry("a", col=0), make_entry("b", col=3))
+        a = grid.tile("a").geometry()
+        self._drag_band(grid, (a.left() + 2, a.top() + 2), (a.right() - 2, a.bottom() - 2))
+        self.assertEqual(grid.selected_ids(), {"a"})
+        grid.deleteLater()
+
+    def test_marquee_over_both_selects_both(self) -> None:
+        grid = self._grid(make_entry("a", col=0), make_entry("b", col=3))
+        a = grid.tile("a").geometry()
+        b = grid.tile("b").geometry()
+        self._drag_band(grid, (a.left() + 2, a.top() + 2), (b.right() - 2, b.bottom() - 2))
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_marquee_ctrl_adds_to_selection(self) -> None:
+        grid = self._grid(make_entry("a", col=0), make_entry("b", col=3))
+        grid.set_selection({"a"})
+        b = grid.tile("b").geometry()
+        self._drag_band(
+            grid, (b.left() + 2, b.top() + 2), (b.right() - 2, b.bottom() - 2), ctrl=True
+        )
+        self.assertEqual(grid.selected_ids(), {"a", "b"})
+        grid.deleteLater()
+
+    def test_plain_empty_click_clears_selection(self) -> None:
+        grid = self._grid(make_entry("a", col=0))
+        grid.set_selection({"a"})
+        self._drag_band(grid, (600, 400), (600, 400))  # press+release, no drag
+        self.assertEqual(grid.selected_ids(), set())
+        grid.deleteLater()
 
     def test_ctrl_click_emits_toggle_and_skips_long_press(self) -> None:
         tile = ValueTileWidget(make_entry("a"))

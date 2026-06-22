@@ -4,6 +4,15 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Added
+
+- **Multi-tile editing on the Control Panel canvas** — select several tiles (Ctrl-click, or drag a marquee box over them) and operate on them as a group:
+  - **Drag-move the group**: dragging any selected tile in edit mode moves the whole selection together, preserving their relative layout; a dashed preview shows every tile's destination.
+  - **Delete / Cut / Copy / Duplicate** the selection from the right-click menu (labelled with the count, e.g. "Remove 3 Tiles") or the keyboard. Cut is editor-style — it copies to the clipboard and removes the originals immediately (Paste re-adds them, here or in another panel). Multi-delete asks to confirm; duplicate clones the selection as a block.
+  - **Apply Size to all selected** at once from the tile's Size submenu.
+  - **Keyboard shortcuts** (when the grid is focused, so they never hijack copy in an input field): Ctrl+C / Ctrl+X / Ctrl+V, Delete, Ctrl+A (select all), Ctrl+D (duplicate), and Esc (clear the selection, then disarm).
+  - **Marquee box-select**: drag a rectangle on empty grid space to select every tile it touches; Ctrl+drag adds to the current selection.
+
 ## 0.5.1 - 2026-06-10
 
 ### Fixed

@@ -9,25 +9,28 @@ emits ``layoutChanged`` so the host live-saves (FR-9, FR-33..FR-36).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDragMoveEvent,
     QDropEvent,
+    QKeyEvent,
     QMouseEvent,
     QPaintEvent,
     QPainter,
     QPen,
 )
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from ..control_panel_models import (
     DEFAULT_GRID_COLUMNS,
     ControlPanelConfig,
+    move_tiles,
     place_tile,
     set_tile_span,
+    set_tiles_span,
     visible_row_count,
 )
 from ..themes import THEMES, ThemePalette
@@ -53,6 +56,7 @@ class ControlPanelGridWidget(QWidget):
     tileEditRequested = Signal(str)
     tileDuplicateRequested = Signal(str)
     tileCopyRequested = Signal(str)
+    tileCutRequested = Signal(str)
     pasteRequested = Signal()
     addEntryRequested = Signal()
     tileRemoveRequested = Signal(str)
@@ -61,17 +65,32 @@ class ControlPanelGridWidget(QWidget):
     tileControlActivated = Signal(str)
     tileChartRequested = Signal(str)
     editModeRequested = Signal()  # a tile long-press asks to enter edit mode
+    # Keyboard shortcuts on the focused grid act on the whole selection.
+    copySelectionRequested = Signal()
+    cutSelectionRequested = Signal()
+    deleteSelectionRequested = Signal()
+    duplicateSelectionRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("controlPanelGrid")
         self.setAcceptDrops(True)
+        # Focusable so keyboard shortcuts (copy/cut/paste/delete/select-all)
+        # only fire while the user is working with tiles — not when a tile's
+        # spinbox/input has focus (there Ctrl+C still copies text).
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._config: ControlPanelConfig | None = None
         self._tiles: dict[str, TileFrame] = {}
         self._selected_ids: set[str] = set()
         self._edit_mode = False
         self._drop_cell: tuple[int, int] | None = None
-        self._drop_span: tuple[int, int] = (1, 1)
+        # Drop-preview rects (col, row, span_w, span_h) — one per tile so a
+        # multi-selection drag previews the whole moving group.
+        self._drop_rects: list[tuple[int, int, int, int]] = []
+        # Marquee (rubber-band) box-select state.
+        self._band_origin: QPoint | None = None
+        self._band_rect: QRect | None = None
+        self._band_additive = False
         self._theme: ThemePalette = THEMES["ComPort Zone Dark"]
 
     # -------------------------------------------------------------- config
@@ -98,6 +117,7 @@ class ControlPanelGridWidget(QWidget):
                 tile.editRequested.connect(self.tileEditRequested)
                 tile.duplicateRequested.connect(self.tileDuplicateRequested)
                 tile.copyRequested.connect(self.tileCopyRequested)
+                tile.cutRequested.connect(self.tileCutRequested)
                 tile.pasteRequested.connect(self.pasteRequested)
                 tile.removeRequested.connect(self.tileRemoveRequested)
                 tile.enableToggled.connect(self.tileEnableToggled)
@@ -152,6 +172,7 @@ class ControlPanelGridWidget(QWidget):
         return set(self._selected_ids)
 
     def _toggle_selection(self, entry_id: str) -> None:
+        self.setFocus()  # own keyboard focus while the user selects tiles
         if entry_id in self._selected_ids:
             self._selected_ids.discard(entry_id)
         else:
@@ -159,6 +180,9 @@ class ControlPanelGridWidget(QWidget):
         tile = self._tiles.get(entry_id)
         if tile is not None:
             tile.set_selected(entry_id in self._selected_ids)
+
+    def select_all(self) -> None:
+        self.set_selection(set(self._tiles))
 
     def set_selection(self, ids: set[str]) -> None:
         """Replace the selection with ``ids`` (intersected with live tiles)."""
@@ -174,14 +198,71 @@ class ControlPanelGridWidget(QWidget):
             tile.set_selected(False)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        # A plain click on empty grid space clears the selection (tiles
-        # handle their own clicks, so this only fires off-tile).
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        ):
-            self.clear_selection()
+        # Press on empty grid space (tiles handle their own clicks) begins a
+        # marquee. A no-drag click clears the selection on release; a drag
+        # box-selects. Ctrl makes the marquee additive.
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus()
+            self._band_origin = event.position().toPoint()
+            self._band_rect = None
+            self._band_additive = bool(
+                event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            )
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._band_origin is not None and (
+            event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            self._band_rect = QRect(
+                self._band_origin, event.position().toPoint()
+            ).normalized()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._band_origin is not None:
+            origin = self._band_origin
+            rect = self._band_rect
+            self._band_origin = None
+            self._band_rect = None
+            self.update()
+            dragged = (
+                event.position().toPoint() - origin
+            ).manhattanLength() >= QApplication.startDragDistance()
+            if dragged and rect is not None:
+                hit = {
+                    entry_id
+                    for entry_id, tile in self._tiles.items()
+                    if tile.geometry().intersects(rect)
+                }
+                self.set_selection((self._selected_ids | hit) if self._band_additive else hit)
+            elif not self._band_additive:
+                self.clear_selection()  # a plain click clears
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # Only fires when the grid itself has focus (see setFocusPolicy), so
+        # these never hijack copy/paste from a focused spinbox or search box.
+        key = event.key()
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        has_selection = bool(self._selected_ids)
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and has_selection:
+            self.deleteSelectionRequested.emit()
+        elif ctrl and key == Qt.Key.Key_A:
+            self.select_all()
+        elif ctrl and key == Qt.Key.Key_C and has_selection:
+            self.copySelectionRequested.emit()
+        elif ctrl and key == Qt.Key.Key_X and has_selection:
+            self.cutSelectionRequested.emit()
+        elif ctrl and key == Qt.Key.Key_V:
+            self.pasteRequested.emit()
+        elif ctrl and key == Qt.Key.Key_D and has_selection:
+            self.duplicateSelectionRequested.emit()
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
 
     def apply_theme_palette(self, theme: ThemePalette) -> None:
         self._theme = theme
@@ -272,16 +353,18 @@ class ControlPanelGridWidget(QWidget):
         if not self._edit_mode or self._config is None:
             event.ignore()
             return
-        entry = self._config.entry_by_id(self._drag_entry_id(event))
-        span = (entry.tile.span_w, entry.tile.span_h) if entry else (1, 1)
         position = event.position().toPoint()
-        self._drop_cell = self.cell_at(position.x(), position.y(), span[0])
-        self._drop_span = span
+        preview = self._compute_drop(self._drag_entry_id(event), position.x(), position.y())
+        if preview is None:
+            event.ignore()
+            return
+        self._drop_cell, self._drop_rects = preview
         self.update()
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802
         self._drop_cell = None
+        self._drop_rects = []
         self.update()
         event.accept()
 
@@ -289,6 +372,7 @@ class ControlPanelGridWidget(QWidget):
         entry_id = self._drag_entry_id(event)
         cell = self._drop_cell
         self._drop_cell = None
+        self._drop_rects = []
         self.update()
         if not entry_id or cell is None:
             event.ignore()
@@ -296,21 +380,78 @@ class ControlPanelGridWidget(QWidget):
         self._handle_tile_drop(entry_id, cell[0], cell[1])
         event.acceptProposedAction()
 
+    def _compute_drop(
+        self, anchor_id: str, x: int, y: int
+    ) -> tuple[tuple[int, int], list[tuple[int, int, int, int]]] | None:
+        """Resolve a drag into the anchor's target cell + preview rects.
+
+        A single tile previews one rect at its clamped target. A drag of a
+        tile that is part of a multi-selection moves the whole group by one
+        clamped delta (mirrors ``move_tiles``), previewing every member."""
+        if self._config is None:
+            return None
+        anchor = self._config.entry_by_id(anchor_id)
+        if anchor is None:
+            return None
+        col, row = self.cell_at(x, y, anchor.tile.span_w)
+        if anchor_id in self._selected_ids and len(self._selected_ids) > 1:
+            group = [e for e in self._config.entries if e.id in self._selected_ids]
+            columns = self._config.columns
+            dcol = col - anchor.tile.col
+            drow = row - anchor.tile.row
+            min_col = min(e.tile.col for e in group)
+            min_row = min(e.tile.row for e in group)
+            max_right = max(e.tile.col + e.tile.span_w for e in group)
+            dcol = max(-min_col, min(dcol, columns - max_right))
+            drow = max(-min_row, drow)
+            rects = [
+                (e.tile.col + dcol, e.tile.row + drow, e.tile.span_w, e.tile.span_h)
+                for e in group
+            ]
+            return (anchor.tile.col + dcol, anchor.tile.row + drow), rects
+        return (col, row), [(col, row, anchor.tile.span_w, anchor.tile.span_h)]
+
     def _handle_tile_drop(self, entry_id: str, col: int, row: int) -> None:
         if self._config is None:
             return
-        if place_tile(self._config.entries, self._config.columns, entry_id, col, row):
+        if entry_id in self._selected_ids and len(self._selected_ids) > 1:
+            anchor = self._config.entry_by_id(entry_id)
+            if anchor is None:
+                return
+            moved = move_tiles(
+                self._config.entries,
+                self._config.columns,
+                set(self._selected_ids),
+                col - anchor.tile.col,
+                row - anchor.tile.row,
+            )
+        else:
+            moved = place_tile(self._config.entries, self._config.columns, entry_id, col, row)
+        if moved:
             self.relayout()
             self.layoutChanged.emit()
 
     def _handle_span_request(self, entry_id: str, span_w: int, span_h: int) -> None:
         if self._config is None:
             return
-        if set_tile_span(self._config.entries, self._config.columns, entry_id, span_w, span_h):
-            entry = self._config.entry_by_id(entry_id)
-            tile = self._tiles.get(entry_id)
-            if entry is not None and tile is not None:
-                tile.update_entry(entry)
+        # The "Size" menu on a tile that is part of a multi-selection resizes
+        # every selected tile to the same footprint (corner-drag stays single).
+        if entry_id in self._selected_ids and len(self._selected_ids) > 1:
+            affected = set(self._selected_ids)
+            changed = set_tiles_span(
+                self._config.entries, self._config.columns, affected, span_w, span_h
+            )
+        else:
+            affected = {entry_id}
+            changed = set_tile_span(
+                self._config.entries, self._config.columns, entry_id, span_w, span_h
+            )
+        if changed:
+            for affected_id in affected:
+                entry = self._config.entry_by_id(affected_id)
+                tile = self._tiles.get(affected_id)
+                if entry is not None and tile is not None:
+                    tile.update_entry(entry)
             self.relayout()
             self.layoutChanged.emit()
 
@@ -318,21 +459,29 @@ class ControlPanelGridWidget(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         super().paintEvent(event)
-        if self._drop_cell is None:
+        if self._band_rect is not None:
+            painter = QPainter(self)
+            accent = QColor(self._theme.accent)
+            fill = QColor(accent)
+            fill.setAlpha(40)
+            painter.setBrush(fill)
+            painter.setPen(QPen(accent, 1))
+            painter.drawRect(self._band_rect)
+            painter.end()
+        if not self._drop_rects:
             return
         cell_w, row_h, _columns = self._cell_metrics()
-        col, row = self._drop_cell
-        span_w, span_h = self._drop_span
-        rect = QRect(
-            round(GRID_GUTTER + col * (cell_w + GRID_GUTTER)),
-            GRID_GUTTER + row * (row_h + GRID_GUTTER),
-            round(span_w * cell_w + (span_w - 1) * GRID_GUTTER),
-            span_h * row_h + (span_h - 1) * GRID_GUTTER,
-        )
         painter = QPainter(self)
         pen = QPen(QColor(self._theme.accent))
         pen.setWidth(2)
         pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
-        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 6, 6)
+        for col, row, span_w, span_h in self._drop_rects:
+            rect = QRect(
+                round(GRID_GUTTER + col * (cell_w + GRID_GUTTER)),
+                GRID_GUTTER + row * (row_h + GRID_GUTTER),
+                round(span_w * cell_w + (span_w - 1) * GRID_GUTTER),
+                span_h * row_h + (span_h - 1) * GRID_GUTTER,
+            )
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 6, 6)
         painter.end()

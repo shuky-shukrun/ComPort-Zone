@@ -431,7 +431,12 @@ class ControlPanelTabWidget(QWidget):
         self.grid.tileEditRequested.connect(self.edit_entry_via_dialog)
         self.grid.tileDuplicateRequested.connect(self.duplicate_entry_via_dialog)
         self.grid.tileCopyRequested.connect(self.copy_entry)
+        self.grid.tileCutRequested.connect(self.cut_entry)
         self.grid.pasteRequested.connect(self.paste_entry)
+        self.grid.copySelectionRequested.connect(self.copy_selection)
+        self.grid.cutSelectionRequested.connect(self.cut_selection)
+        self.grid.deleteSelectionRequested.connect(self.delete_selection)
+        self.grid.duplicateSelectionRequested.connect(self.duplicate_selection)
         self.grid.addEntryRequested.connect(self.add_entry_via_dialog)
         self.grid.tileRemoveRequested.connect(self.remove_entry)
         self.grid.tileEnableToggled.connect(self.set_entry_enabled)
@@ -446,9 +451,7 @@ class ControlPanelTabWidget(QWidget):
         # handler (chart-close fires first when that page is current).
         self._disarm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.grid)
         self._disarm_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._disarm_shortcut.activated.connect(
-            lambda: self._force_disarm("Esc pressed")
-        )
+        self._disarm_shortcut.activated.connect(self._on_escape)
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidget(self.grid)
@@ -1603,6 +1606,14 @@ class ControlPanelTabWidget(QWidget):
         sync and signal fan-out happen in one place."""
         self.set_armed(checked)
 
+    def _on_escape(self) -> None:
+        """Esc clears a tile selection first; only when nothing is selected
+        does it fall through to disarming the panel (FR-75)."""
+        if self.grid.selected_ids():
+            self.grid.clear_selection()
+            return
+        self._force_disarm("Esc pressed")
+
     def _force_disarm(self, reason: str) -> None:
         """Auto-disarm hook for unbind / session-close / shutdown /
         apply_imported_settings. Idempotent + notify (FR-75)."""
@@ -2378,10 +2389,43 @@ class ControlPanelTabWidget(QWidget):
         self._histories.pop(entry.id, None)
         self._configure_entries()
 
-    def remove_entry(self, entry_id: str) -> None:
-        self.config.entries = [entry for entry in self.config.entries if entry.id != entry_id]
-        self._runtimes.pop(entry_id, None)
+    def _remove_ids(self, ids: set[str]) -> None:
+        if not ids:
+            return
+        self.config.entries = [e for e in self.config.entries if e.id not in ids]
+        for entry_id in ids:
+            self._runtimes.pop(entry_id, None)
         self._configure_entries()
+
+    def _confirm_multi_delete(self, count: int) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Remove tiles",
+            f"Remove {count} tiles from this control panel?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def remove_entry(self, entry_id: str) -> None:
+        """Context-menu remove. If the tile is part of a multi-selection,
+        remove the whole selection (with a confirm); else remove just it."""
+        selected = self.grid.selected_ids()
+        if entry_id in selected and len(selected) > 1:
+            if self._confirm_multi_delete(len(selected)):
+                self._remove_ids(set(selected))
+        else:
+            self._remove_ids({entry_id})
+
+    def delete_selection(self) -> None:
+        """Keyboard (Delete) path — remove the current selection, confirming
+        when more than one tile is selected."""
+        ids = set(self.grid.selected_ids())
+        if not ids:
+            return
+        if len(ids) > 1 and not self._confirm_multi_delete(len(ids)):
+            return
+        self._remove_ids(ids)
 
     def set_entry_enabled(self, entry_id: str, enabled: bool) -> None:
         entry = self.config.entry_by_id(entry_id)
@@ -2540,8 +2584,14 @@ class ControlPanelTabWidget(QWidget):
 
         The copy gets a fresh id and a "(copy)" label so it is added as a
         new tile (via the normal add flow) rather than replacing the
-        original; the user can tweak anything before accepting.
+        original; the user can tweak anything before accepting. When the
+        tile is part of a multi-selection, the whole selection is cloned as
+        a block instead (no dialog).
         """
+        selected = self.grid.selected_ids()
+        if entry_id in selected and len(selected) > 1:
+            self.duplicate_selection()
+            return
         entry = self.config.entry_by_id(entry_id)
         if entry is None:
             return
@@ -2555,31 +2605,60 @@ class ControlPanelTabWidget(QWidget):
             self.add_entry(dialog.values())
         dialog.deleteLater()
 
-    def copy_entry(self, entry_id: str) -> None:
-        """Put one or more tiles on the clipboard so they can be pasted into
-        this or another control panel.
-
-        Right-clicking a tile that is part of a ctrl-click selection copies
-        the whole selection; right-clicking outside the selection copies
-        just that tile (matching file-manager conventions)."""
-        selected = self.grid.selected_ids()
-        ids = selected if entry_id in selected else {entry_id}
-        # Preserve a stable, readable order (top-to-bottom, left-to-right)
-        # so a pasted block keeps its on-screen arrangement.
+    def _copy_ids(self, ids: set[str]) -> list[ControlPanelEntry]:
+        """Serialize the given tiles to the clipboard in a stable top-to-bottom,
+        left-to-right order (so a pasted block keeps its arrangement).
+        Returns the copied entries (empty if none matched)."""
         entries = sorted(
             (e for e in self.config.entries if e.id in ids),
             key=lambda e: (e.tile.row, e.tile.col),
         )
         if not entries:
-            return
+            return []
         set_clipboard_tiles(
             [entry.to_dict() for entry in entries],
             ", ".join(entry.display_label() for entry in entries),
         )
+        return entries
+
+    def _selection_or(self, entry_id: str) -> set[str]:
+        """The ids an action targets: the whole selection when ``entry_id`` is
+        part of it, else just that one tile (file-manager convention)."""
+        selected = self.grid.selected_ids()
+        return set(selected) if entry_id in selected else {entry_id}
+
+    def copy_entry(self, entry_id: str) -> None:
+        """Copy a tile (or the whole selection it belongs to) to the clipboard."""
+        entries = self._copy_ids(self._selection_or(entry_id))
+        self._notify_clip("Copied", entries)
+
+    def copy_selection(self) -> None:
+        """Keyboard (Ctrl+C) path — copy the current selection."""
+        self._notify_clip("Copied", self._copy_ids(set(self.grid.selected_ids())))
+
+    def cut_entry(self, entry_id: str) -> None:
+        """Cut a tile (or its selection): copy to the clipboard, then remove
+        the originals immediately (editor-style — Paste re-adds them)."""
+        self._cut_ids(self._selection_or(entry_id))
+
+    def cut_selection(self) -> None:
+        """Keyboard (Ctrl+X) path — cut the current selection."""
+        self._cut_ids(set(self.grid.selected_ids()))
+
+    def _cut_ids(self, ids: set[str]) -> None:
+        entries = self._copy_ids(ids)
+        if not entries:
+            return
+        self._remove_ids({e.id for e in entries})
+        self._notify_clip("Cut", entries)
+
+    def _notify_clip(self, verb: str, entries: list[ControlPanelEntry]) -> None:
+        if not entries:
+            return
         if len(entries) == 1:
-            self.coordinator.notify(f"Copied tile '{entries[0].display_label()}'.")
+            self.coordinator.notify(f"{verb} tile '{entries[0].display_label()}'.")
         else:
-            self.coordinator.notify(f"Copied {len(entries)} tiles.")
+            self.coordinator.notify(f"{verb} {len(entries)} tiles.")
 
     def paste_entry(self) -> None:
         """Add copied tile(s) from the clipboard as new entries (fresh ids).
@@ -2617,8 +2696,12 @@ class ControlPanelTabWidget(QWidget):
             self.coordinator.notify(f"Pasted {len(entries)} tiles.")
 
     def _paste_entry_block(self, entries: list[ControlPanelEntry]) -> None:
-        """Append a block of pasted tiles below the existing content,
-        preserving their relative columns/rows."""
+        self._add_entry_block(entries)
+
+    def _add_entry_block(self, entries: list[ControlPanelEntry]) -> None:
+        """Append a block of tiles below the existing content, preserving
+        their relative columns/rows. Shared by multi-paste and
+        multi-duplicate."""
         min_col = min(entry.tile.col for entry in entries)
         min_row = min(entry.tile.row for entry in entries)
         anchor_row = grid_row_count(self.config.entries)
@@ -2628,3 +2711,28 @@ class ControlPanelTabWidget(QWidget):
         self.config.entries.extend(entries)
         normalize_layout(self.config.entries, self.config.columns)
         self._configure_entries()
+
+    def duplicate_selection(self) -> None:
+        """Clone the current selection as a block in this panel (no dialog,
+        no clipboard); follow refs between the clones are remapped, and the
+        clones become the new selection. Used by 'Duplicate N Tiles' and
+        Ctrl+D (works for one or many)."""
+        ids = self.grid.selected_ids()
+        source = sorted(
+            (e for e in self.config.entries if e.id in ids),
+            key=lambda e: (e.tile.row, e.tile.col),
+        )
+        if not source:
+            return
+        id_map: dict[str, str] = {}
+        clones: list[ControlPanelEntry] = []
+        for entry in source:
+            clone = deepcopy(entry)
+            clone.id = uuid4().hex
+            id_map[entry.id] = clone.id
+            clones.append(clone)
+        for clone in clones:
+            remap_watch_ids(clone, id_map)
+        self._add_entry_block(clones)
+        self.grid.set_selection({clone.id for clone in clones})
+        self._notify_clip("Duplicated", clones)

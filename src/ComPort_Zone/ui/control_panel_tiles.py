@@ -221,6 +221,7 @@ class TileFrame(QFrame):
     editRequested = Signal(str)
     duplicateRequested = Signal(str)
     copyRequested = Signal(str)
+    cutRequested = Signal(str)
     pasteRequested = Signal()
     removeRequested = Signal(str)
     enableToggled = Signal(str, bool)
@@ -517,22 +518,25 @@ class TileFrame(QFrame):
                 lambda: self.chartRequested.emit(self.entry_id)
             )
             menu.addSeparator()
-        edit_action = menu.addAction("Edit Entry…")
-        edit_action.triggered.connect(lambda: self.editRequested.emit(self.entry_id))
-        duplicate_action = menu.addAction("Duplicate Entry…")
-        duplicate_action.triggered.connect(
-            lambda: self.duplicateRequested.emit(self.entry_id)
-        )
+        # When this tile is part of a multi-selection, the lifecycle actions
+        # operate on (and are labelled for) the whole selection.
         selected_count = (
             self.selected_count_provider() if self.selected_count_provider else 0
         )
-        copy_label = (
-            f"Copy {selected_count} Tiles"
-            if self._selected and selected_count > 1
-            else "Copy Tile"
+        multi = self._selected and selected_count > 1
+        edit_action = menu.addAction("Edit Entry…")
+        edit_action.triggered.connect(lambda: self.editRequested.emit(self.entry_id))
+        edit_action.setEnabled(not multi)  # editing is single-tile only
+        duplicate_action = menu.addAction(
+            f"Duplicate {selected_count} Tiles" if multi else "Duplicate Entry…"
         )
-        copy_action = menu.addAction(copy_label)
+        duplicate_action.triggered.connect(
+            lambda: self.duplicateRequested.emit(self.entry_id)
+        )
+        copy_action = menu.addAction(f"Copy {selected_count} Tiles" if multi else "Copy Tile")
         copy_action.triggered.connect(lambda: self.copyRequested.emit(self.entry_id))
+        cut_action = menu.addAction(f"Cut {selected_count} Tiles" if multi else "Cut Tile")
+        cut_action.triggered.connect(lambda: self.cutRequested.emit(self.entry_id))
         paste_count = clipboard_tile_count()
         paste_action = menu.addAction(
             f"Paste {paste_count} Tiles" if paste_count > 1 else "Paste Tile"
@@ -567,7 +571,7 @@ class TileFrame(QFrame):
                 )
             )
         menu.addSeparator()
-        remove_action = menu.addAction("Remove Tile")
+        remove_action = menu.addAction(f"Remove {selected_count} Tiles" if multi else "Remove Tile")
         remove_action.triggered.connect(lambda: self.removeRequested.emit(self.entry_id))
         menu.exec(event.globalPos())
         menu.deleteLater()

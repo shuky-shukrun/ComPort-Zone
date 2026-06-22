@@ -1202,12 +1202,16 @@ def _cells(tile: TilePlacement) -> list[tuple[int, int]]:
     ]
 
 
-def _normalize(entries: list[ControlPanelEntry], columns: int, priority_id: str | None) -> None:
+def _normalize(
+    entries: list[ControlPanelEntry], columns: int, priority_ids: set[str] | None = None
+) -> None:
     columns = max(GRID_COLUMNS_MIN, min(GRID_COLUMNS_MAX, columns))
     ordered = sorted(entries, key=lambda entry: (entry.tile.row, entry.tile.col, entry.id))
-    if priority_id is not None:
-        prioritized = [entry for entry in ordered if entry.id == priority_id]
-        ordered = prioritized + [entry for entry in ordered if entry.id != priority_id]
+    if priority_ids:
+        # Prioritized tiles claim their cells first (keeping their own
+        # row/col order) so a just-moved tile or group wins the target.
+        prioritized = [entry for entry in ordered if entry.id in priority_ids]
+        ordered = prioritized + [entry for entry in ordered if entry.id not in priority_ids]
     occupied: set[tuple[int, int]] = set()
     for entry in ordered:
         tile = entry.tile
@@ -1224,7 +1228,7 @@ def normalize_layout(entries: list[ControlPanelEntry], columns: int) -> None:
     taken is pushed down one row at a time until it fits. Same input
     always produces the same layout (FR-35). Mutates ``entries`` in place.
     """
-    _normalize(entries, columns, priority_id=None)
+    _normalize(entries, columns)
 
 
 def place_tile(entries: list[ControlPanelEntry], columns: int, entry_id: str, col: int, row: int) -> bool:
@@ -1242,7 +1246,39 @@ def place_tile(entries: list[ControlPanelEntry], columns: int, entry_id: str, co
         return False
     target.tile.col = col
     target.tile.row = row
-    _normalize(entries, columns, priority_id=entry_id)
+    _normalize(entries, columns, priority_ids={entry_id})
+    return True
+
+
+def move_tiles(
+    entries: list[ControlPanelEntry],
+    columns: int,
+    ids: set[str],
+    dcol: int,
+    drow: int,
+) -> bool:
+    """Shift a group of tiles by ``(dcol, drow)`` as one block, preserving
+    their relative layout, then re-normalize with the group winning its
+    target cells. The delta is clamped to the group's bounding box so the
+    whole block stays on the grid (no per-tile clamping that would distort
+    the arrangement). Returns False when nothing moves.
+    """
+    group = [entry for entry in entries if entry.id in ids]
+    if not group:
+        return False
+    columns = max(GRID_COLUMNS_MIN, min(GRID_COLUMNS_MAX, columns))
+    min_col = min(entry.tile.col for entry in group)
+    min_row = min(entry.tile.row for entry in group)
+    max_right = max(entry.tile.col + entry.tile.span_w for entry in group)
+    # Keep the block within [0, columns] horizontally and row >= 0 vertically.
+    dcol = max(-min_col, min(dcol, columns - max_right))
+    drow = max(-min_row, drow)
+    if dcol == 0 and drow == 0:
+        return False
+    for entry in group:
+        entry.tile.col += dcol
+        entry.tile.row += drow
+    _normalize(entries, columns, priority_ids={entry.id for entry in group})
     return True
 
 
@@ -1262,7 +1298,27 @@ def set_tile_span(
         return False
     target.tile.span_w = span_w
     target.tile.span_h = span_h
-    _normalize(entries, columns, priority_id=entry_id)
+    _normalize(entries, columns, priority_ids={entry_id})
+    return True
+
+
+def set_tiles_span(
+    entries: list[ControlPanelEntry],
+    columns: int,
+    ids: set[str],
+    span_w: int,
+    span_h: int,
+) -> bool:
+    """Resize every tile in ``ids`` to the same footprint, then normalize
+    with the resized group winning its cells. Returns False when no id
+    matched."""
+    group = [entry for entry in entries if entry.id in ids]
+    if not group:
+        return False
+    for entry in group:
+        entry.tile.span_w = span_w
+        entry.tile.span_h = span_h
+    _normalize(entries, columns, priority_ids={entry.id for entry in group})
     return True
 
 
