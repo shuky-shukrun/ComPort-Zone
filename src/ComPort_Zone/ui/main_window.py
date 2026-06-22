@@ -54,6 +54,7 @@ from ..history import HistoryStore
 from ..icons import retint_icons, set_icon_color, standard_icon
 from ..models import (
     AppSettings,
+    CONTROL_PANEL_SORT_MODES,
     CommandFileTabState,
     LanProfile,
     QuickCommand,
@@ -451,6 +452,10 @@ class MainWindow(QMainWindow):
             favorite_file_sort_changed=self._shared_favorite_file_sort_changed,
             favorite_command_order_changed=self._shared_persist_favorite_command_order,
             favorite_file_order_changed=self._shared_persist_favorite_file_order,
+            control_panel_sort_changed=self._shared_control_panel_sort_changed,
+            favorite_control_panel_sort_changed=self._shared_favorite_control_panel_sort_changed,
+            control_panel_order_changed=self._shared_persist_control_panel_order,
+            favorite_control_panel_order_changed=self._shared_persist_favorite_control_panel_order,
             include_history=True,
             include_control_panels=True,
             history_primary=self._shared_resend_history,
@@ -602,6 +607,49 @@ class MainWindow(QMainWindow):
             selected_id=self._shared_favorite_file_id(),
         )
 
+    # --- Control Panels: sort mode + drag-reorder (mirrors quick files) --------
+    def _shared_control_panel_sort_changed(self) -> None:
+        mode = self.shared_drawer.control_panel_sort_combo.currentData()
+        if mode:
+            self.set_control_panel_sort_mode(str(mode))
+
+    def _shared_favorite_control_panel_sort_changed(self) -> None:
+        mode = self.shared_drawer.favorite_control_panel_sort_combo.currentData()
+        if mode:
+            self.set_favorite_control_panel_sort_mode(str(mode))
+
+    def _shared_persist_control_panel_order(self) -> None:
+        # A drag forces Custom order and stores the new arrangement on the library list.
+        ids = item_ids_in_order(self.shared_drawer.control_panel_list)
+        changed = self.control_panel_catalog.reorder(ids)
+        if self.settings.control_panel_sort_mode != "Custom":
+            self.settings.control_panel_sort_mode = "Custom"
+            changed = True
+        if changed:
+            self.save_settings()
+            self.refresh_control_panel_lists()
+
+    def _shared_persist_favorite_control_panel_order(self) -> None:
+        ids = item_ids_in_order(self.shared_drawer.favorite_control_panel_list)
+        self.settings.favorite_control_panel_order = ids
+        self.settings.favorite_control_panel_sort_mode = "Custom"
+        self.save_settings()
+        self.refresh_control_panel_lists()
+
+    def set_control_panel_sort_mode(self, mode: str) -> None:
+        if mode not in CONTROL_PANEL_SORT_MODES or mode == self.settings.control_panel_sort_mode:
+            return
+        self.settings.control_panel_sort_mode = mode
+        self.save_settings()
+        self.refresh_control_panel_lists()
+
+    def set_favorite_control_panel_sort_mode(self, mode: str) -> None:
+        if mode not in CONTROL_PANEL_SORT_MODES or mode == self.settings.favorite_control_panel_sort_mode:
+            return
+        self.settings.favorite_control_panel_sort_mode = mode
+        self.save_settings()
+        self.refresh_control_panel_lists()
+
     def _populate_group_menu(self, menu) -> None:
         menu.clear()
         hidden = set(self.quick_command_hidden_groups_snapshot())
@@ -677,6 +725,11 @@ class MainWindow(QMainWindow):
             (self.shared_drawer.quick_file_sort_combo, self.quick_file_sort_mode_snapshot()),
             (self.shared_drawer.favorite_sort_combo, self.favorite_command_sort_mode_snapshot()),
             (self.shared_drawer.favorite_file_sort_combo, self.favorite_file_sort_mode_snapshot()),
+            (self.shared_drawer.control_panel_sort_combo, self.settings.control_panel_sort_mode),
+            (
+                self.shared_drawer.favorite_control_panel_sort_combo,
+                self.settings.favorite_control_panel_sort_mode,
+            ),
         ):
             combo.blockSignals(True)
             index = combo.findData(mode)
@@ -1134,23 +1187,32 @@ class MainWindow(QMainWindow):
 
     def refresh_control_panel_lists(self) -> None:
         """Repopulate the sidebar's ControlPanels page and Favorite ControlPanels
-        panel from the library (called after any catalog mutation)."""
+        panel from the library (called after any catalog mutation), honouring the
+        saved sort mode + custom drag order."""
         drawer = getattr(self, "shared_drawer", None)
         if drawer is None:
             return
-        configs = self.control_panel_catalog.all()
+        catalog = self.control_panel_catalog
+        # Keep the favourites order in step with the live favourite set.
+        catalog.sync_favorite_order(self.settings.favorite_control_panel_order)
         populate_control_panel_list(
             drawer.control_panel_list,
-            configs,
+            catalog.ordered(self.settings.control_panel_sort_mode),
             selected_id=selected_item_id(drawer.control_panel_list),
             label_limit=30,
+            draggable=True,
         )
         populate_control_panel_list(
             drawer.favorite_control_panel_list,
-            [config for config in configs if config.favorite],
+            catalog.favorites(
+                order=self.settings.favorite_control_panel_order,
+                sort_mode=self.settings.favorite_control_panel_sort_mode,
+            ),
             selected_id=selected_item_id(drawer.favorite_control_panel_list),
             label_limit=30,
+            draggable=True,
         )
+        self._sync_shared_sort_combos()
 
     def set_control_panel_favorite(self, control_panel_id: str, favorite: bool) -> None:
         config = self.control_panel_catalog.by_id(control_panel_id)

@@ -440,6 +440,7 @@ def create_control_panel_list(
     tooltip: str,
     placeholder_text: str = CONTROL_PANEL_EMPTY_HINT,
     context_menu_requested: Callable | None = None,
+    drag_drop: bool = False,
 ) -> QuickActionList:
     quick_list = QuickActionList(placeholder_text=placeholder_text, parent=parent)
     quick_list.setObjectName("controlPanelList")
@@ -447,7 +448,7 @@ def create_control_panel_list(
         quick_list,
         tooltip=tooltip,
         context_menu_requested=context_menu_requested,
-        drag_drop=False,
+        drag_drop=drag_drop,
     )
     return quick_list
 
@@ -601,9 +602,10 @@ def populate_control_panel_list(
     selected_id: str = "",
     label_limit: int | None = None,
     item_height: int | None = QUICK_ACTION_ITEM_HEIGHT,
+    draggable: bool = False,
 ) -> int:
-    """Fill a control_panel list from ``ControlPanelConfig`` objects (name-sorted
-    by the caller). Rows carry the same roles as command/file rows so the
+    """Fill a control_panel list from ``ControlPanelConfig`` objects (in the order
+    given by the caller). Rows carry the same roles as command/file rows so the
     shared delegate and inline actions work unchanged."""
     quick_list.clear()
     selected_row = -1
@@ -617,6 +619,8 @@ def populate_control_panel_list(
         item.setToolTip(control_panel.description or control_panel.name)
         if item_height is not None:
             item.setSizeHint(QSize(0, item_height))
+        if draggable:
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
         quick_list.addItem(item)
         if control_panel.id == selected_id:
             selected_row = quick_list.count() - 1

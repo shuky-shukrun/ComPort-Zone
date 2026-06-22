@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..models import (
     AppSettings,
+    CONTROL_PANEL_SORT_MODES,
     CommandFileTabState,
     DEFAULT_SNIPPETS,
     FLOW_CONTROL_OPTIONS,
@@ -21,6 +22,7 @@ from ..models import (
 
 __all__ = [
     "AppSettings",
+    "CONTROL_PANEL_SORT_MODES",
     "CommandFileTabState",
     "DEFAULT_SNIPPETS",
     "FLOW_CONTROL_OPTIONS",

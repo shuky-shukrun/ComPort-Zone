@@ -12,6 +12,7 @@ All notable changes to ComPort Zone are documented here.
   - **Apply Size to all selected** at once from the tile's Size submenu.
   - **Keyboard shortcuts** (when the grid is focused, so they never hijack copy in an input field): Ctrl+C / Ctrl+X / Ctrl+V, Delete, Ctrl+A (select all), Ctrl+D (duplicate), and Esc (clear the selection, then disarm).
   - **Marquee box-select**: drag a rectangle on empty grid space to select every tile it touches; Ctrl+drag adds to the current selection.
+- **Sort + drag-reorder for the Control Panels side bar** — the Control Panels rail and the Favorite Control Panels panel now match the Files panel: a sort button (Custom order / Name) in the header and drag-to-reorder rows. Dragging a row switches that list to Custom order and remembers the arrangement; the sort mode and custom order persist (separately for the saved list and the favourites).
 
 ### Fixed
 

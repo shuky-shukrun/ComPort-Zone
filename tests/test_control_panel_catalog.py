@@ -117,6 +117,50 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(len(self.catalog), 0)
         self.assertFalse(self.catalog.remove(config.id))
 
+    def test_ordered_custom_keeps_stored_order_name_sorts(self) -> None:
+        self.catalog.add(make_config("zeta"))
+        self.catalog.add(make_config("Alpha"))
+        # Custom = insertion/stored order; Name = case-insensitive alphabetical.
+        self.assertEqual([c.name for c in self.catalog.ordered("Custom")], ["zeta", "Alpha"])
+        self.assertEqual([c.name for c in self.catalog.ordered("Name")], ["Alpha", "zeta"])
+
+    def test_reorder_rewrites_stored_order(self) -> None:
+        a = self.catalog.add(make_config("A"))
+        b = self.catalog.add(make_config("B"))
+        c = self.catalog.add(make_config("C"))
+        self.assertTrue(self.catalog.reorder([c.id, a.id, b.id]))
+        self.assertEqual([cfg.name for cfg in self.catalog.ordered("Custom")], ["C", "A", "B"])
+        # Reordering to the same order is a no-op.
+        self.assertFalse(self.catalog.reorder([c.id, a.id, b.id]))
+
+    def test_favorites_respects_order_then_sort_mode(self) -> None:
+        a = self.catalog.add(make_config("A", "a"))
+        a.favorite = True
+        b = self.catalog.add(make_config("B", "b"))
+        b.favorite = True
+        plain = self.catalog.add(make_config("C", "c"))  # not favourited
+        # Custom favourites follow the explicit order.
+        self.assertEqual(
+            [c.id for c in self.catalog.favorites(order=["b", "a"], sort_mode="Custom")],
+            ["b", "a"],
+        )
+        # Name mode ignores the custom order.
+        self.assertEqual(
+            [c.name for c in self.catalog.favorites(order=["b", "a"], sort_mode="Name")],
+            ["A", "B"],
+        )
+        self.assertNotIn(plain.id, [c.id for c in self.catalog.favorites(sort_mode="Custom")])
+
+    def test_sync_favorite_order_prunes_and_appends(self) -> None:
+        a = self.catalog.add(make_config("A", "a"))
+        a.favorite = True
+        b = self.catalog.add(make_config("B", "b"))
+        b.favorite = True
+        order = ["a", "ghost"]  # ghost is no longer a favourite
+        self.catalog.sync_favorite_order(order)
+        # "ghost" pruned; the newly-favourited "b" appended after the kept "a".
+        self.assertEqual(order, ["a", "b"])
+
 
 class TransferPayloadTests(unittest.TestCase):
     def test_export_import_round_trip(self) -> None:
