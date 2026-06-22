@@ -2493,6 +2493,61 @@ class ControlPanelTabConfigTests(ControlPanelTabTestBase):
         self.assertEqual(pasted_ctrl.control.watch_entry_id, pasted_outp.id)
         self.assertNotEqual(pasted_ctrl.control.watch_entry_id, "outp")
 
+    def test_remove_selection_confirmed_removes_all(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts", "trip"})
+        with patch.object(tab, "_confirm_multi_delete", return_value=True):
+            tab.remove_entry("volts")  # the clicked tile is in the selection
+        self.assertEqual(len(tab.config.entries), 0)
+
+    def test_remove_selection_cancelled_keeps_all(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts", "trip"})
+        with patch.object(tab, "_confirm_multi_delete", return_value=False):
+            tab.remove_entry("volts")
+        self.assertEqual(len(tab.config.entries), 2)
+
+    def test_remove_unselected_tile_skips_confirm(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"trip"})  # 'volts' is not selected
+        with patch.object(tab, "_confirm_multi_delete", return_value=False) as confirm:
+            tab.remove_entry("volts")
+        confirm.assert_not_called()
+        self.assertIsNone(tab.config.entry_by_id("volts"))
+        self.assertIsNotNone(tab.config.entry_by_id("trip"))
+
+    def test_delete_selection_removes_with_confirm(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts", "trip"})
+        with patch.object(tab, "_confirm_multi_delete", return_value=True):
+            tab.delete_selection()
+        self.assertEqual(len(tab.config.entries), 0)
+
+    def test_cut_selection_copies_then_removes(self) -> None:
+        source = self.make_tab(volt_entry(), trip_entry())
+        source.grid.set_selection({"volts", "trip"})
+        source.cut_entry("volts")
+        self.assertEqual(len(source.config.entries), 0)  # originals removed
+        dest = self.make_tab()
+        dest.paste_entry()  # cut tiles ride the clipboard
+        self.assertEqual(len(dest.config.entries), 2)
+
+    def test_duplicate_selection_clones_block_and_reselects(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts", "trip"})
+        tab.duplicate_selection()
+        self.assertEqual(len(tab.config.entries), 4)
+        selected = tab.grid.selected_ids()
+        self.assertEqual(len(selected), 2)  # the clones are now selected
+        self.assertNotIn("volts", selected)
+        self.assertNotIn("trip", selected)
+
+    def test_duplicate_menu_routes_multi_to_block(self) -> None:
+        tab = self.make_tab(volt_entry(), trip_entry())
+        tab.grid.set_selection({"volts", "trip"})
+        tab.duplicate_entry_via_dialog("volts")  # multi -> block clone, no dialog
+        self.assertEqual(len(tab.config.entries), 4)
+
     def test_apply_entry_edit_replaces(self) -> None:
         tab = self.make_tab(volt_entry())
         edited = volt_entry()
