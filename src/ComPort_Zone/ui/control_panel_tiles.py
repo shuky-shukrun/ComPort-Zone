@@ -18,7 +18,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDrag, QMouseEvent, QPainter, QPalette, QPen
+from PySide6.QtGui import (
+    QColor,
+    QDrag,
+    QFont,
+    QFontMetrics,
+    QMouseEvent,
+    QPainter,
+    QPalette,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -43,7 +52,7 @@ from ..control_panel_models import (
     format_setpoint_value,
 )
 from ..themes import ThemePalette
-from .control_panel_sparkline import SparklineWidget
+from .control_panel_sparkline import SPARKLINE_HEIGHT, SparklineWidget
 from .tokens import LED_LAMP, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS
 
 CONTROL_PANEL_TILE_MIME_TYPE = "application/x-comport-zone-control_panel-tile"
@@ -139,18 +148,32 @@ SPAN_CHOICES = tuple(
     (w, h) for h in range(1, 6) for w in range(1, 6)
 )  # 1×1 through 5×5
 
-# Responsive font sizing: the measure (tileValue) and the LED caption
-# (tileStateCaption) scale with the grid's per-cell width so the panel
-# stays readable on split-screen / narrow layouts as well as fullscreen.
-# Ratios are tuned so the legacy default cell width (~180px) reproduces
-# the previous fixed sizes (21px / 15px).
-VALUE_FONT_RATIO = 0.12
+# Responsive font sizing. The LED caption (tileStateCaption) and the
+# bits/register text scale with the grid's per-cell width so the panel stays
+# readable on split-screen / narrow layouts as well as fullscreen; their
+# ratio is tuned so the legacy default cell width (~180px) reproduces the
+# previous fixed size (~15px).
+# The value readout (tileValue) instead auto-fits the WHOLE tile: the largest
+# bounded font at which the actual text — word-wrapped — fits the tile box.
+# So a short reading in a big tile grows to a bold number, while a long one
+# (e.g. an *IDN? identity) shrinks to fit instead of overflowing/clipping.
 VALUE_FONT_MIN_PX = 12
-VALUE_FONT_MAX_PX = 40
+VALUE_FONT_MAX_PX = 52
+# Vertical space the tile chrome (title + timestamp + margins/spacing) takes
+# out of the body area, before the value's (optional) sparkline strip. Shared
+# by the value and LED tiles.
+TILE_CHROME_PX = 44
 
-LED_CAPTION_FONT_RATIO = 0.085
+# LED tile: the lamp and its caption both scale with the tile body so a big
+# LED tile shows a big indicator, not a tiny dot. The round lamp scales with
+# the smaller of the body's width/height (so it fits either way); the caption
+# scales with the body height. Both bounded to stay sane at the extremes.
+LED_LAMP_RATIO = 0.42
+LED_LAMP_MIN_PX = 16
+LED_LAMP_MAX_PX = 76
+LED_CAPTION_FONT_RATIO = 0.30  # of body height
 LED_CAPTION_FONT_MIN_PX = 11
-LED_CAPTION_FONT_MAX_PX = 24
+LED_CAPTION_FONT_MAX_PX = 30
 
 
 def _scale_font_px(cell_w: float, ratio: float, lo: int, hi: int) -> int:
@@ -158,6 +181,30 @@ def _scale_font_px(cell_w: float, ratio: float, lo: int, hi: int) -> int:
     if cell_w <= 0:
         return lo
     return max(lo, min(hi, round(cell_w * ratio)))
+
+
+def _fit_text_px(text: str, base_font: QFont, avail_w: float, avail_h: float) -> int:
+    """Largest font px in [MIN, MAX] at which ``text``, word-wrapped to
+    ``avail_w``, fits within an ``avail_w`` x ``avail_h`` box.
+
+    Binary search over pixel sizes, measuring the wrapped bounding box with
+    the label's own font (so family/weight match). Falls back to MIN when
+    there's no text or no room yet (e.g. before the first layout)."""
+    if not text or avail_w <= 0 or avail_h <= 0:
+        return VALUE_FONT_MIN_PX
+    font = QFont(base_font)
+    lo, hi, best = VALUE_FONT_MIN_PX, VALUE_FONT_MAX_PX, VALUE_FONT_MIN_PX
+    flags = int(Qt.TextFlag.TextWordWrap)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        font.setPixelSize(mid)
+        rect = QFontMetrics(font).boundingRect(0, 0, int(avail_w), 1 << 20, flags, text)
+        if rect.width() <= avail_w and rect.height() <= avail_h:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
 
 
 def tile_state_color(state: str, theme: ThemePalette) -> str:
@@ -209,6 +256,24 @@ def _apply_custom_style(widget: QWidget, template: str, color: str) -> bool:
     color is active, cleared back to the QSS cascade when not. Returns
     True when the stylesheet actually changed."""
     sheet = template.format(color=color) if color else ""
+    if widget.styleSheet() == sheet:
+        return False
+    widget.setStyleSheet(sheet)
+    return True
+
+
+def _apply_font_color_style(widget: QWidget, px: int, color: str) -> bool:
+    """Set a label's inline stylesheet to a size-scaled ``font-size`` plus an
+    optional custom rule color. Inline styles survive the unpolish/polish that
+    a ``tileState`` / ``bitActive`` change triggers on every poll, so a font
+    sized here sticks — a plain ``setFont`` is wiped by that QSS re-resolution.
+    Returns True when the stylesheet actually changed."""
+    parts = []
+    if px:
+        parts.append(f"font-size: {px}px;")
+    if color:
+        parts.append(f"color: {color};")
+    sheet = "".join(parts)
     if widget.styleSheet() == sheet:
         return False
     widget.setStyleSheet(sheet)
@@ -593,6 +658,12 @@ class ValueTileWidget(TileFrame):
         self.value_label.setObjectName("tileValue")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.value_label.setWordWrap(True)
+        # The size-relative font and any custom rule color are both carried on
+        # the value label's *inline* stylesheet so they survive the
+        # unpolish/polish a tileState change triggers on every poll (a plain
+        # setFont is wiped by that QSS re-resolution).
+        self._value_px = 0
+        self._value_color = ""
         self.sparkline = SparklineWidget(self)
         self.body_layout.addWidget(self.value_label, 1)
         self.body_layout.addWidget(self.sparkline)
@@ -619,13 +690,35 @@ class ValueTileWidget(TileFrame):
         self.sparkline.apply_theme_palette(theme)
 
     def apply_cell_width(self, cell_w: float) -> None:
-        px = _scale_font_px(
-            cell_w, VALUE_FONT_RATIO, VALUE_FONT_MIN_PX, VALUE_FONT_MAX_PX
-        )
-        font = self.value_label.font()
-        if font.pixelSize() != px:
-            font.setPixelSize(px)
-            self.value_label.setFont(font)
+        # Geometry is already set by the grid's relayout; auto-fit the reading
+        # to the whole tile (recomputed here on resize and on every text
+        # change, since the fit depends on both the box and the string).
+        self._refit_value(cell_w)
+
+    def _value_area(self, cell_w: float = 0.0) -> tuple[float, float]:
+        """Width/height available to the reading, net of the tile chrome and
+        the optional sparkline strip. ``cell_w`` is a width fallback before
+        the first layout sets real geometry."""
+        avail_w = (self.width() or int(cell_w)) - 2 * SPACE_MD
+        reserved = TILE_CHROME_PX
+        if self._sparkline_visible:
+            reserved += SPARKLINE_HEIGHT + SPACE_SM
+        return avail_w, self.height() - reserved
+
+    def _refit_value(self, cell_w: float = 0.0) -> None:
+        """Pick the largest font px at which the current text fits the tile
+        box and push it onto the label's inline stylesheet."""
+        avail_w, avail_h = self._value_area(cell_w)
+        px = _fit_text_px(self.value_label.text(), self.value_label.font(), avail_w, avail_h)
+        if px != self._value_px:
+            self._value_px = px
+            self._restyle_value()
+
+    def _restyle_value(self) -> bool:
+        """Recompose the value label's inline stylesheet from the auto-fit
+        font and the active custom rule color. Returns True when it changed
+        (so callers can fold it into their repaint-coalescing flag)."""
+        return _apply_font_color_style(self.value_label, self._value_px, self._value_color)
 
     def set_history(self, samples: list[Sample], color: str, *, now: float) -> bool:
         """Feed the sparkline; ignored when hidden (the data stays in the
@@ -638,12 +731,16 @@ class ValueTileWidget(TileFrame):
         changed = False
         if self.value_label.text() != runtime.value_text:
             self.value_label.setText(runtime.value_text)
+            # Re-fit: a longer/shorter reading wants a different size.
+            self._refit_value()
             changed = True
         if self.value_label.property("tileState") != runtime.state:
             _set_state_property(self.value_label, runtime.state)
             changed = True
-        if _apply_custom_style(self.value_label, "color: {color};", runtime.color):
-            changed = True
+        if self._value_color != runtime.color:
+            self._value_color = runtime.color
+            if self._restyle_value():
+                changed = True
         return changed
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt naming)
@@ -672,6 +769,14 @@ class LedTileWidget(TileFrame):
         self.caption_label.setObjectName("tileStateCaption")
         self.caption_label.setWordWrap(True)
         self.caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Size + custom color ride each label's own inline stylesheet so they
+        # survive the per-poll repolish (a plain setFont / the fixed QSS radius
+        # is wiped or frozen by it). The lamp scales with the tile too — a
+        # fixed dot looked tiny in a large tile.
+        self._caption_px = 0
+        self._caption_color = ""
+        self._lamp_radius = LED_LAMP // 2
+        self._lamp_color = ""
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(SPACE_LG)
@@ -684,16 +789,52 @@ class LedTileWidget(TileFrame):
         self.body_layout.addStretch(1)
 
     def apply_cell_width(self, cell_w: float) -> None:
-        px = _scale_font_px(
-            cell_w,
-            LED_CAPTION_FONT_RATIO,
-            LED_CAPTION_FONT_MIN_PX,
-            LED_CAPTION_FONT_MAX_PX,
+        # Scale the lamp + caption with the tile body (geometry already set by
+        # relayout), applied via inline stylesheets so they survive the
+        # per-poll repolish below. cell_w is the width fallback pre-layout.
+        avail_w = (self.width() or int(cell_w)) - 2 * SPACE_MD
+        avail_h = self.height() - TILE_CHROME_PX
+        diameter = int(
+            max(
+                LED_LAMP_MIN_PX,
+                min(LED_LAMP_MAX_PX, min(avail_w, avail_h) * LED_LAMP_RATIO),
+            )
         )
-        font = self.caption_label.font()
-        if font.pixelSize() != px:
-            font.setPixelSize(px)
-            self.caption_label.setFont(font)
+        if diameter != self.lamp.width():
+            self.lamp.setFixedSize(diameter, diameter)
+            self._lamp_radius = diameter // 2
+            self._restyle_lamp()
+        px = int(
+            max(
+                LED_CAPTION_FONT_MIN_PX,
+                min(LED_CAPTION_FONT_MAX_PX, avail_h * LED_CAPTION_FONT_RATIO),
+            )
+        )
+        if px != self._caption_px:
+            self._caption_px = px
+            self._restyle_caption()
+
+    def _restyle_caption(self) -> bool:
+        """Recompose the caption's inline stylesheet from its scaled font and
+        the active custom rule color. Returns True when it changed."""
+        return _apply_font_color_style(
+            self.caption_label, self._caption_px, self._caption_color
+        )
+
+    def _restyle_lamp(self) -> bool:
+        """Lamp inline stylesheet: a radius that tracks its scaled size (so it
+        stays circular) plus any custom rule color. Inline so it overrides the
+        fixed QSS radius and survives the per-poll repolish."""
+        parts = [f"border-radius: {self._lamp_radius}px;"]
+        if self._lamp_color:
+            parts.append(
+                f"background: {self._lamp_color}; border-color: {self._lamp_color};"
+            )
+        sheet = "".join(parts)
+        if self.lamp.styleSheet() == sheet:
+            return False
+        self.lamp.setStyleSheet(sheet)
+        return True
 
     def _render_runtime(self, runtime: TileRuntime) -> bool:
         changed = False
@@ -707,12 +848,14 @@ class LedTileWidget(TileFrame):
         if self.caption_label.property("tileState") != runtime.state:
             _set_state_property(self.caption_label, runtime.state)
             changed = True
-        if _apply_custom_style(
-            self.lamp, "background: {color}; border-color: {color};", runtime.color
-        ):
-            changed = True
-        if _apply_custom_style(self.caption_label, "color: {color};", runtime.color):
-            changed = True
+        if self._lamp_color != runtime.color:
+            self._lamp_color = runtime.color
+            if self._restyle_lamp():
+                changed = True
+        if self._caption_color != runtime.color:
+            self._caption_color = runtime.color
+            if self._restyle_caption():
+                changed = True
         return changed
 
 
@@ -1396,6 +1539,7 @@ class BitsTileWidget(TileFrame):
         self._spec = BitsSpec(bits=list(entry.bits_spec.bits))
         self._last_raw: int | None = None
         self._cell_width = 0.0
+        self._label_px = 0
 
         self._bits_host = QWidget(self)
         self._bits_grid = QGridLayout(self._bits_host)
@@ -1537,17 +1681,17 @@ class BitsTileWidget(TileFrame):
         self._apply_label_font(cell_w)
 
     def _apply_label_font(self, cell_w: float) -> None:
-        px = _scale_font_px(
+        # Apply via each label's inline stylesheet (not setFont): the bit
+        # labels are repolished on every value change (the bitActive property
+        # toggle in _refresh_lamps), which would wipe a setFont pixel size.
+        self._label_px = _scale_font_px(
             cell_w,
             BITS_LABEL_FONT_RATIO,
             BITS_LABEL_FONT_MIN_PX,
             BITS_LABEL_FONT_MAX_PX,
         )
         for _lamp, label in self._indicators.values():
-            font = label.font()
-            if font.pixelSize() != px:
-                font.setPixelSize(px)
-                label.setFont(font)
+            _apply_font_color_style(label, self._label_px, "")
 
 
 class TextTileWidget(TileFrame):

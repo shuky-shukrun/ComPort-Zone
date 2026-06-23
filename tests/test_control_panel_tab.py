@@ -887,7 +887,9 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
         for _ in range(10):
             tab._tick()
         self.assertEqual(value_tile.property("tileState"), "stale")
-        self.assertEqual(value_tile.value_label.styleSheet(), "")
+        # The custom color clears; the size-relative font-size stays on the
+        # label's inline stylesheet, so assert the color is gone, not "".
+        self.assertNotIn("#12ab34", value_tile.value_label.styleSheet())
 
 
 class MultiSessionBindingTests(ControlPanelTabTestBase):
@@ -3335,7 +3337,8 @@ class ControlPanelEntryDialogTests(unittest.TestCase):
         # Resetting the swatch clears it everywhere.
         dialog._set_rule_color(button, "")
         self.assertEqual(dialog.values().rules[0].color, "")
-        self.assertEqual(dialog.preview_tile.value_label.styleSheet(), "")
+        # Only the custom color clears; the size-relative font-size remains.
+        self.assertNotIn("#12ab34", dialog.preview_tile.value_label.styleSheet())
         dialog.deleteLater()
 
     def test_dialog_stays_compact(self) -> None:

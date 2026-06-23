@@ -23,6 +23,9 @@ from ComPort_Zone.themes import THEMES
 from ComPort_Zone.ui.control_panel_grid import GRID_GUTTER, ControlPanelGridWidget
 from ComPort_Zone.ui.control_panel_sparkline import SparklineWidget
 from ComPort_Zone.ui.control_panel_tiles import (
+    LED_LAMP,
+    VALUE_FONT_MAX_PX,
+    VALUE_FONT_MIN_PX,
     BitsTileWidget,
     ControlTileWidget,
     LedTileWidget,
@@ -140,7 +143,9 @@ class TileWidgetTests(unittest.TestCase):
 
         plain = TileRuntime(entry_id="a", value_text="5 V", state="ok")
         self.assertTrue(tile.update_runtime(plain))
-        self.assertEqual(tile.value_label.styleSheet(), "")
+        # The custom color clears; the auto-fit font-size stays on the inline
+        # stylesheet, so assert the color is gone rather than the sheet empty.
+        self.assertNotIn("#12ab34", tile.value_label.styleSheet())
         tile.deleteLater()
 
     def test_value_tile_hosts_sparkline_for_numeric_entries(self) -> None:
@@ -296,8 +301,11 @@ class TileWidgetTests(unittest.TestCase):
         self.assertIn("#ab1234", tile.caption_label.styleSheet())
 
         tile.update_runtime(TileRuntime(entry_id="a", state="warn"))
-        self.assertEqual(tile.lamp.styleSheet(), "")
-        self.assertEqual(tile.caption_label.styleSheet(), "")
+        # The lamp's inline sheet always carries its (scaled) border-radius and
+        # the caption's its font-size, so assert the custom color is gone
+        # rather than that the sheets are empty.
+        self.assertNotIn("#ab1234", tile.lamp.styleSheet())
+        self.assertNotIn("#ab1234", tile.caption_label.styleSheet())
         tile.deleteLater()
 
 
@@ -366,6 +374,25 @@ class BitsTileTests(unittest.TestCase):
         self.assertEqual(tile._indicators[0][0].property("tileState"), "fail")
         self.assertEqual(tile._indicators[1][0].property("tileState"), "warn")
         self.assertEqual(tile._indicators[2][0].property("tileState"), "ok")
+        tile.deleteLater()
+
+    def test_bit_label_font_survives_value_change(self) -> None:
+        # Every value change toggles each bit's bitActive property and
+        # repolishes its label, re-resolving the QSS font. The scaled label
+        # font must persist (inline stylesheet) rather than snap back to the
+        # default as a plain setFont did.
+        entry = self.make_bits_entry(BitDefinition(bit=0, label="OVERTEMP", state="fail"))
+        tile = BitsTileWidget(entry)
+        tile.apply_cell_width(240)  # a wide cell scales the label up
+        label = tile._indicators[0][1]
+        label.ensurePolished()
+        before = label.font().pixelSize()
+        self.assertGreater(before, 0)
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="1", value_number=1.0)
+        )
+        label.ensurePolished()
+        self.assertEqual(label.font().pixelSize(), before)
         tile.deleteLater()
 
     def test_value_text_hex_fallback_when_no_number(self) -> None:
@@ -709,22 +736,138 @@ class GridGeometryTests(unittest.TestCase):
         single.deleteLater()
         double.deleteLater()
 
-    def test_value_font_scales_with_cell_width(self) -> None:
-        # A wider grid yields a larger measure font; a narrow grid
-        # (split-screen sized) yields a smaller, still-readable one.
-        wide = self.make_grid(make_config(make_entry("a")), width=1600)
+    def test_value_font_scales_with_tile_size(self) -> None:
+        # The measure font tracks the whole tile box, not just one column
+        # width: a tall 2x2 tile shows a much larger readout than a 1x1
+        # tile in the same grid (the user-visible point of size-relative
+        # scaling). Place them side by side so they share a grid width.
+        # A snug width keeps single rows at the height floor, so the 1x1
+        # tile is the small baseline and the 2x2 is unmistakably larger.
+        grid = self.make_grid(
+            make_config(
+                make_entry("small", col=0, row=0),
+                make_entry("big", col=2, row=0, span_w=2, span_h=2),
+            ),
+            width=470,
+        )
+        small = grid.tile("small")
+        big = grid.tile("big")
+        assert small is not None and big is not None
+        # The size is carried on the label's inline stylesheet, which Qt
+        # resolves during polish — force it before reading the font.
+        small.value_label.ensurePolished()
+        big.value_label.ensurePolished()
+        small_px = small.value_label.font().pixelSize()
+        big_px = big.value_label.font().pixelSize()
+        self.assertGreater(big_px, small_px)
+        # Bounded so the readout stays legible at small sizes and never
+        # overflows the tile at large ones.
+        self.assertGreaterEqual(small_px, VALUE_FONT_MIN_PX)
+        self.assertLessEqual(big_px, VALUE_FONT_MAX_PX)
+        grid.deleteLater()
+
+    def test_value_font_stays_readable_in_narrow_panel(self) -> None:
+        # A split-screen-narrow grid must keep the measure legible rather
+        # than collapsing it below the floor.
         narrow = self.make_grid(make_config(make_entry("a")), width=420)
-        tile_wide = wide.tile("a")
-        tile_narrow = narrow.tile("a")
-        assert tile_wide is not None and tile_narrow is not None
-        wide_px = tile_wide.value_label.font().pixelSize()
-        narrow_px = tile_narrow.value_label.font().pixelSize()
-        self.assertGreater(wide_px, narrow_px)
-        # Bounded so the measure stays legible at any size.
-        self.assertGreaterEqual(narrow_px, 12)
-        self.assertLessEqual(wide_px, 40)
-        wide.deleteLater()
+        tile = narrow.tile("a")
+        assert tile is not None
+        tile.value_label.ensurePolished()
+        narrow_px = tile.value_label.font().pixelSize()
+        self.assertGreaterEqual(narrow_px, VALUE_FONT_MIN_PX)
+        self.assertLessEqual(narrow_px, VALUE_FONT_MAX_PX)
         narrow.deleteLater()
+
+    def test_value_font_survives_runtime_update(self) -> None:
+        # Every poll flips the tileState property, which unpolish/polishes
+        # the label and re-resolves its font from QSS. The size-relative
+        # font must persist through that (it rides the label's inline
+        # stylesheet); a plain setFont was silently wiped here, which is
+        # what made the readout look like it ignored tile size.
+        grid = self.make_grid(
+            make_config(make_entry("big", span_w=2, span_h=2)),
+            width=470,
+        )
+        tile = grid.tile("big")
+        assert tile is not None
+        tile.value_label.ensurePolished()
+        before = tile.value_label.font().pixelSize()
+        # A 2x2 tile with a short reading sizes up near the cap.
+        self.assertGreaterEqual(before, 40)
+        tile.update_runtime(
+            TileRuntime(entry_id="big", value_text="12.3 V", state="ok", timestamp_text="t")
+        )
+        tile.value_label.ensurePolished()
+        # Still large after the poll's repolish — a wiped setFont would read
+        # back as the QSS default (pixelSize() == -1), not a real size.
+        self.assertGreaterEqual(tile.value_label.font().pixelSize(), 40)
+        grid.deleteLater()
+
+    def test_value_font_shrinks_for_long_text(self) -> None:
+        # A long reading (an *IDN? identity) in a wide, short tile must shrink
+        # to fit instead of overflowing/clipping the tile, while a short
+        # reading in the same tile stays big. (Identity text was being cut.)
+        grid = self.make_grid(
+            make_config(make_entry("idn", span_w=4, span_h=1)),
+            width=900,
+        )
+        tile = grid.tile("idn")
+        assert tile is not None
+        tile.update_runtime(
+            TileRuntime(entry_id="idn", value_text="12 V", state="ok", timestamp_text="t")
+        )
+        tile.value_label.ensurePolished()
+        short_px = tile.value_label.font().pixelSize()
+        tile.update_runtime(
+            TileRuntime(
+                entry_id="idn",
+                value_text="TDK-LAMBDA, G10-100, 011B158-0001, G:02.122",
+                state="ok",
+                timestamp_text="t",
+            )
+        )
+        tile.value_label.ensurePolished()
+        long_px = tile.value_label.font().pixelSize()
+        self.assertLess(long_px, short_px)
+        self.assertGreaterEqual(long_px, VALUE_FONT_MIN_PX)
+        grid.deleteLater()
+
+    def test_led_caption_font_survives_runtime_update(self) -> None:
+        # The LED caption is repolished on every poll (lamp + caption state),
+        # which re-resolves its QSS font. Its scaled size must persist — it
+        # rides the inline stylesheet now; a plain setFont was wiped, leaving
+        # the caption stuck at the default size regardless of tile size.
+        grid = self.make_grid(make_config(make_entry("a", kind="led")), width=1200)
+        tile = grid.tile("a")
+        assert tile is not None
+        tile.caption_label.ensurePolished()
+        before = tile.caption_label.font().pixelSize()
+        self.assertGreater(before, 0)
+        tile.update_runtime(
+            TileRuntime(entry_id="a", state="fail", state_caption="TRIPPED")
+        )
+        tile.caption_label.ensurePolished()
+        self.assertEqual(tile.caption_label.font().pixelSize(), before)
+        grid.deleteLater()
+
+    def test_led_lamp_scales_with_tile_size(self) -> None:
+        # The round indicator grows with the tile rather than staying a fixed
+        # dot ("LED indicator is tiny in a big tile"). A 3x3 LED tile gets a
+        # clearly larger lamp than a 1x1 one in the same grid.
+        grid = self.make_grid(
+            make_config(
+                make_entry("small", kind="led", col=0, row=0),
+                make_entry("big", kind="led", col=1, row=0, span_w=3, span_h=3),
+            ),
+            width=900,
+        )
+        small = grid.tile("small")
+        big = grid.tile("big")
+        assert small is not None and big is not None
+        self.assertGreater(big.lamp.width(), small.lamp.width())
+        # And the big lamp is meaningfully larger than the old fixed dot.
+        self.assertGreater(big.lamp.width(), LED_LAMP)
+        grid.deleteLater()
 
     def test_minimum_height_reserves_configured_rows(self) -> None:
         # With no entries that exceed config.rows, the grid still
