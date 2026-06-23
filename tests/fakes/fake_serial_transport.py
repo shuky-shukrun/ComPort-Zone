@@ -252,3 +252,14 @@ class FakeSerialTransport:
 
     def shutdown(self) -> None:
         self._channel.stop()
+
+
+class FakeLanTransport(FakeSerialTransport):
+    """Protocol-compatible raw-TCP transport stand-in for CLI tests.
+
+    Inherits the serial fake wholesale (connect/send/subscribe_monitor all
+    work the same against a fake channel); only ``kind`` differs so the
+    endpoint layer routes it as LAN.
+    """
+
+    kind = "lan"

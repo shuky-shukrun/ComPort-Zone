@@ -90,13 +90,15 @@ Press **Ctrl+Shift+P** to jump to any action — connect, run a command file, sp
 
 ### A headless CLI
 
-Everything that matters for automation is scriptable. `comport-zone` shares the GUI's settings and exposes ports, one-shot sends, listening, command-file runs, quick libraries, history, and an interactive REPL — with stable exit codes for CI.
+Everything that matters for automation is scriptable. `comport-zone` shares the GUI's settings and exposes ports, one-shot sends, listening, command-file runs, quick libraries, history, and an interactive REPL — with stable exit codes for CI. The connect-using commands take a **serial COM port** (`--port`) or a **raw TCP endpoint** (`--host` / `--tcp-port`); the two are kept distinct so they never collide.
 
 ```powershell
 comport-zone send "*IDN?" --port COM6 --read-after 500
 comport-zone run bringup.cpz --port COM6 --param RANGE=10
-comport-zone listen --port COM6 --timestamps --duration 10
+comport-zone listen --host 192.168.1.50 --tcp-port 5025 --timestamps --duration 10
 ```
+
+See [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) for the full command, flag, and exit-code reference (serial and raw TCP), plus a TCP echo-server smoke test.
 
 ## Getting started
 

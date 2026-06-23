@@ -23,12 +23,12 @@ from ..command_file_runner import (
     RunOutcome,
     run_command_file,
 )
-from ..config_resolver import load_app_settings, resolve_serial_profile
+from ..config_resolver import load_app_settings
+from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli_endpoint
 from ..exit_codes import ExitCode
-from ..options import serial_flags
+from ..options import endpoint_flags
 from ..output import CliOutput
-from ..serial_session import SerialSessionError, open_serial
-from ..transports import make_serial_transport
+from ..transports import make_lan_transport, make_serial_transport
 
 
 _FAILURE_TO_EXIT: dict[str, ExitCode] = {
@@ -137,13 +137,13 @@ def execute_run(
     log_path: Path | None,
     stop_on_expect_fail: bool,
     expect_timeout_ms: int,
-    serial_flag_values: dict[str, Any],
+    endpoint_flag_values: dict[str, Any],
 ) -> None:
     """Shared executor used by ``run`` and ``files run``.
 
-    Parses ``file_path``, gathers parameters, opens the configured port,
-    streams the run through :func:`run_command_file`, and exits via
-    ``ctx.exit`` on failure.
+    Parses ``file_path``, gathers parameters, opens the configured serial or
+    TCP endpoint, streams the run through :func:`run_command_file`, and exits
+    via ``ctx.exit`` on failure.
     """
     output: CliOutput = ctx.obj["output"]
 
@@ -176,30 +176,16 @@ def execute_run(
         return
 
     settings = load_app_settings(ctx.obj.get("config_path"))
-    profile = resolve_serial_profile(settings=settings, **{
-        key: serial_flag_values[key]
-        for key in (
-            "port",
-            "baud",
-            "data_bits",
-            "parity",
-            "stop_bits",
-            "flow_control",
-            "line_ending",
-            "dtr",
-            "rts",
-            "auto_reconnect",
-        )
-    })
+    endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_serial_transport()
+    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
     try:
-        open_serial(
+        open_cli_endpoint(
             transport,
-            profile,
-            wait_seconds=serial_flag_values["wait_seconds"],
+            endpoint,
+            wait_seconds=endpoint_flag_values["wait_seconds"],
         )
-    except SerialSessionError as exc:
+    except EndpointOpenError as exc:
         output.error(str(exc), code=exc.exit_code)
         ctx.exit(int(exc.exit_code))
         return
@@ -227,7 +213,7 @@ def execute_run(
 
     try:
         output.status(
-            f"Running {file_path.name} against {profile.port} "
+            f"Running {file_path.name} against {endpoint.connection_summary} "
             f"({len(template)} step(s))."
         )
         outcome = run_command_file(
@@ -296,7 +282,7 @@ def execute_run(
     metavar="MS",
     help="Default timeout applied to every EXPECT step.",
 )
-@serial_flags
+@endpoint_flags
 @click.pass_context
 def run_command(
     ctx: click.Context,
@@ -306,9 +292,9 @@ def run_command(
     log_path: Path | None,
     stop_on_expect_fail: bool,
     expect_timeout_ms: int,
-    **serial_flag_values: Any,
+    **endpoint_flag_values: Any,
 ) -> None:
-    """Execute a SEND/WAIT/HEX/EXPECT command file against a serial port."""
+    """Execute a SEND/WAIT/HEX/EXPECT command file against a serial or TCP endpoint."""
     execute_run(
         ctx,
         file_path=file_path,
@@ -317,5 +303,5 @@ def run_command(
         log_path=log_path,
         stop_on_expect_fail=stop_on_expect_fail,
         expect_timeout_ms=expect_timeout_ms,
-        serial_flag_values=serial_flag_values,
+        endpoint_flag_values=endpoint_flag_values,
     )

@@ -14,19 +14,13 @@ from typing import Any
 
 import click
 
-from ...core.models import SerialProfile
 from ...core.serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
-from ..config_resolver import load_app_settings, resolve_serial_profile
+from ..config_resolver import load_app_settings
+from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli_endpoint
 from ..exit_codes import ExitCode
-from ..options import serial_flags
+from ..options import endpoint_flags
 from ..output import CliOutput
-from ..serial_session import (
-    PortBusyError,
-    PortNotFoundError,
-    SerialSessionError,
-    open_serial,
-)
-from ..transports import make_serial_transport
+from ..transports import make_lan_transport, make_serial_transport
 
 
 _DEFAULT_EXPECT_TIMEOUT_MS = 1000
@@ -66,49 +60,32 @@ def run_send_once(
     expect: str | None,
     expect_timeout_ms: int,
     read_after_ms: int,
-    serial_flag_values: dict[str, Any],
+    endpoint_flag_values: dict[str, Any],
     line_ending_override: str | None = None,
 ) -> None:
-    """Open the configured port, send a single message, optionally wait
-    for a response, then close. Shared between ``send`` / ``hex`` /
-    ``quick send`` so the per-command code only assembles the inputs.
+    """Open the configured serial or TCP endpoint, send a single message,
+    optionally wait for a response, then close. Shared between ``send`` /
+    ``hex`` / ``quick send`` so the per-command code only assembles the inputs.
     """
     output: CliOutput = ctx.obj["output"]
     settings = load_app_settings(ctx.obj.get("config_path"))
-    profile = resolve_serial_profile(settings=settings, **{
-        key: serial_flag_values[key]
-        for key in (
-            "port",
-            "baud",
-            "data_bits",
-            "parity",
-            "stop_bits",
-            "flow_control",
-            "line_ending",
-            "dtr",
-            "rts",
-            "auto_reconnect",
-        )
-    })
+    endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_serial_transport()
+    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
     try:
-        open_serial(
+        open_cli_endpoint(
             transport,
-            profile,
-            wait_seconds=serial_flag_values["wait_seconds"],
+            endpoint,
+            wait_seconds=endpoint_flag_values["wait_seconds"],
         )
-    except SerialSessionError as exc:
+    except EndpointOpenError as exc:
         output.error(str(exc), code=exc.exit_code)
         ctx.exit(int(exc.exit_code))
         return  # for mypy
 
     event_queue = transport.subscribe_monitor()
     try:
-        output.status(
-            f"Connected to {profile.port} @ {profile.baudrate} "
-            f"{profile.bytesize}{profile.parity}{profile.stopbits:g}"
-        )
+        output.status(f"Connected to {endpoint.connection_summary}")
 
         if as_hex:
             data = _parse_hex_payload(payload)
@@ -221,7 +198,7 @@ def _emit_event_through_output(output: CliOutput, event: SerialEvent) -> None:
     metavar="MS",
     help="Capture RX for N ms after send and print.",
 )
-@serial_flags
+@endpoint_flags
 @click.pass_context
 def send_command(
     ctx: click.Context,
@@ -230,9 +207,9 @@ def send_command(
     expect: str | None,
     expect_timeout_ms: int,
     read_after_ms: int,
-    **serial_flag_values: Any,
+    **endpoint_flag_values: Any,
 ) -> None:
-    """Open a port, send TEXT once, optionally wait for a response, close."""
+    """Open a serial or TCP endpoint, send TEXT once, optionally wait, close."""
     run_send_once(
         ctx,
         payload=text,
@@ -240,7 +217,7 @@ def send_command(
         expect=expect,
         expect_timeout_ms=expect_timeout_ms,
         read_after_ms=read_after_ms,
-        serial_flag_values=serial_flag_values,
+        endpoint_flag_values=endpoint_flag_values,
     )
 
 
@@ -270,7 +247,7 @@ def send_command(
     metavar="MS",
     help="Capture RX for N ms after send and print.",
 )
-@serial_flags
+@endpoint_flags
 @click.pass_context
 def hex_command(
     ctx: click.Context,
@@ -278,7 +255,7 @@ def hex_command(
     expect: str | None,
     expect_timeout_ms: int,
     read_after_ms: int,
-    **serial_flag_values: Any,
+    **endpoint_flag_values: Any,
 ) -> None:
     """Convenience alias for ``send --hex`` - accepts BYTES... as positional args."""
     payload = " ".join(bytes_text)
@@ -289,5 +266,5 @@ def hex_command(
         expect=expect,
         expect_timeout_ms=expect_timeout_ms,
         read_after_ms=read_after_ms,
-        serial_flag_values=serial_flag_values,
+        endpoint_flag_values=endpoint_flag_values,
     )

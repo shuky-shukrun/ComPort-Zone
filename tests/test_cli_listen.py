@@ -11,7 +11,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from ComPort_Zone.cli.main import cli
-from tests.fakes.fake_serial_transport import FakeSerialTransport
+from tests.fakes.fake_serial_transport import FakeLanTransport, FakeSerialTransport
 
 
 def _patch_listen_transport(fake: FakeSerialTransport):
@@ -116,6 +116,35 @@ class ListenJsonTests(unittest.TestCase):
         self.assertEqual(len(rx_events), 1)
         self.assertEqual(rx_events[0]["port"], "COM3")
         self.assertIn("ok", rx_events[0]["data"])
+
+    def test_tcp_json_mode_identifies_endpoint(self) -> None:
+        fake = FakeLanTransport()
+        fake.stage_rx(b"echo\r\n")
+        with patch(
+            "ComPort_Zone.cli.commands.listen.make_lan_transport",
+            return_value=fake,
+        ):
+            result = self.runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "listen",
+                    "--host",
+                    "echo.local",
+                    "--tcp-port",
+                    "9000",
+                    "--duration",
+                    "0.3",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        rx_payload = next(
+            json.loads(line)
+            for line in result.output.splitlines()
+            if line.strip() and json.loads(line).get("type") == "rx"
+        )
+        self.assertEqual(rx_payload["transport"], "tcp")
+        self.assertEqual(rx_payload["endpoint"], "echo.local:9000")
 
 
 if __name__ == "__main__":

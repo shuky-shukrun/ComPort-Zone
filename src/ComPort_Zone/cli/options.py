@@ -73,7 +73,7 @@ def serial_flags(func: F) -> F:
             "--auto-reconnect/--no-auto-reconnect",
             "auto_reconnect",
             default=None,
-            help="Re-open the port on transient disconnect.",
+            help="Re-open the endpoint on transient disconnect.",
         ),
         click.option(
             "--wait",
@@ -81,9 +81,33 @@ def serial_flags(func: F) -> F:
             type=float,
             default=0.0,
             show_default=True,
-            help="Retry-with-backoff for this many seconds when the port is busy.",
+            help="Retry-with-backoff for this many seconds while the endpoint refuses to open.",
         ),
     ]
+    for decorator in reversed(decorators):
+        func = decorator(func)
+    return func
+
+
+def endpoint_flags(func: F) -> F:
+    """Attach the serial flag set plus raw TCP endpoint overrides.
+
+    ``--port`` stays the serial COM-port flag. Supplying ``--host`` (or any
+    TCP-specific flag) selects the raw-TCP transport instead; mixing serial and
+    TCP flags on one command is a usage error.
+    """
+    decorators = [
+        click.option("--host", "host", metavar="HOST", help="Raw TCP host or IP address."),
+        click.option("--tcp-port", "tcp_port", type=int, metavar="PORT", help="Raw TCP port."),
+        click.option(
+            "--tcp-timeout",
+            "tcp_timeout_ms",
+            type=int,
+            metavar="MS",
+            help="Raw TCP connect/read timeout in milliseconds.",
+        ),
+    ]
+    func = serial_flags(func)
     for decorator in reversed(decorators):
         func = decorator(func)
     return func

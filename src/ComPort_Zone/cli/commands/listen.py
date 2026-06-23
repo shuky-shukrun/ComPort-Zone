@@ -18,12 +18,11 @@ from typing import Any, TextIO
 import click
 
 from ...core.serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
-from ..config_resolver import load_app_settings, resolve_serial_profile
-from ..exit_codes import ExitCode
-from ..options import serial_flags
+from ..config_resolver import load_app_settings
+from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli_endpoint
+from ..options import endpoint_flags
 from ..output import CliOutput
-from ..serial_session import SerialSessionError, open_serial
-from ..transports import make_serial_transport
+from ..transports import make_lan_transport, make_serial_transport
 
 
 def _local_timestamp() -> str:
@@ -74,7 +73,7 @@ def _format_rx_for_display(event: SerialEvent, *, as_hex: bool, timestamps: bool
     metavar="SECONDS",
     help="Stop listening after this many seconds (default: run until Ctrl+C).",
 )
-@serial_flags
+@endpoint_flags
 @click.pass_context
 def listen_command(
     ctx: click.Context,
@@ -84,35 +83,21 @@ def listen_command(
     filter_pattern: str | None,
     log_path: Path | None,
     duration_seconds: float | None,
-    **serial_flag_values: Any,
+    **endpoint_flag_values: Any,
 ) -> None:
-    """Open a port and stream RX to stdout."""
+    """Open a serial or TCP endpoint and stream RX to stdout."""
     output: CliOutput = ctx.obj["output"]
     settings = load_app_settings(ctx.obj.get("config_path"))
-    profile = resolve_serial_profile(settings=settings, **{
-        key: serial_flag_values[key]
-        for key in (
-            "port",
-            "baud",
-            "data_bits",
-            "parity",
-            "stop_bits",
-            "flow_control",
-            "line_ending",
-            "dtr",
-            "rts",
-            "auto_reconnect",
-        )
-    })
+    endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_serial_transport()
+    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
     try:
-        open_serial(
+        open_cli_endpoint(
             transport,
-            profile,
-            wait_seconds=serial_flag_values["wait_seconds"],
+            endpoint,
+            wait_seconds=endpoint_flag_values["wait_seconds"],
         )
-    except SerialSessionError as exc:
+    except EndpointOpenError as exc:
         output.error(str(exc), code=exc.exit_code)
         ctx.exit(int(exc.exit_code))
         return
@@ -130,7 +115,7 @@ def listen_command(
 
     try:
         output.status(
-            f"Listening on {profile.port} @ {profile.baudrate}. "
+            f"Listening on {endpoint.connection_summary}. "
             "Press Ctrl+C to stop."
         )
         while True:
@@ -155,7 +140,7 @@ def listen_command(
                         "rx",
                         data=text_for_filter,
                         hex=format_hex_bytes(event.raw),
-                        port=profile.port,
+                        **endpoint.rx_fields(),
                     )
                 else:
                     click.echo(line)

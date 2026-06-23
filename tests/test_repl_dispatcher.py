@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ComPort_Zone.cli.output import CliOutput
 from ComPort_Zone.cli.repl_dispatcher import ReplDispatcher, ReplState
-from ComPort_Zone.core.models import AppSettings, QuickCommand, SerialProfile
+from ComPort_Zone.core.models import AppSettings, LanProfile, QuickCommand, SerialProfile
 from ComPort_Zone.core.settings_service import SettingsService
 from ComPort_Zone.core.storage import SettingsStore
 from tests.fakes.fake_serial_transport import FakeSerialTransport
@@ -36,7 +36,7 @@ class _Harness:
         self,
         *,
         settings: AppSettings | None = None,
-        profile: SerialProfile | None = None,
+        profile: SerialProfile | LanProfile | None = None,
         config_path: Path | None = None,
     ) -> None:
         self.transport = FakeSerialTransport()
@@ -108,6 +108,28 @@ class ConnectionLifecycleTests(unittest.TestCase):
         # disconnect_calls increments on every disconnect (initial connect
         # doesn't call disconnect; /reconnect does).
         self.assertGreaterEqual(h.transport.disconnect_calls, 1)
+
+    def test_tcp_connect_and_show_endpoint(self) -> None:
+        h = _Harness(profile=LanProfile(host="127.0.0.1", port=7000))
+        h.run("/connect")
+        self.assertTrue(h.transport.is_connected)
+        h.run("/show endpoint")
+        self.assertIn("127.0.0.1:7000", h.stdout.getvalue())
+
+    def test_tcp_set_shortcuts_update_lan_profile_and_settings(self) -> None:
+        h = _Harness(profile=LanProfile(host="127.0.0.1", port=7000))
+        h.run("/set tcp-port 9000")
+        self.assertEqual(h.state.profile.port, 9000)
+        # The change mirrors into the persisted LAN settings, not the serial ones.
+        self.assertEqual(h.state.settings.transport_kind, "lan")
+        self.assertIsNotNone(h.state.settings.lan)
+        self.assertEqual(h.state.settings.lan.port, 9000)
+
+    def test_tcp_set_rejects_out_of_range_port(self) -> None:
+        h = _Harness(profile=LanProfile(host="127.0.0.1", port=7000))
+        h.run("/set tcp-port 70000")
+        self.assertEqual(h.state.profile.port, 7000)  # unchanged
+        self.assertIn("1 to 65535", h.stderr.getvalue())
 
 
 class SendingTests(unittest.TestCase):

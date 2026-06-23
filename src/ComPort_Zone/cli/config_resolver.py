@@ -21,7 +21,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..core.models import AppSettings, SerialProfile
+from ..core.models import AppSettings, LanProfile, SerialProfile
 from ..core.settings_service import SettingsService
 from ..core.storage import SettingsStore
 
@@ -208,5 +208,53 @@ def resolve_serial_profile(
         line_ending=resolved_line_ending,
         dtr=resolved_dtr,
         rts=resolved_rts,
+        auto_reconnect=resolved_auto_reconnect,
+    )
+
+
+def resolve_lan_profile(
+    *,
+    settings: AppSettings,
+    host: str | None = None,
+    tcp_port: int | None = None,
+    tcp_timeout_ms: int | None = None,
+    line_ending: str | None = None,
+    auto_reconnect: bool | None = None,
+) -> LanProfile:
+    """Resolve a raw TCP/LAN profile from flags, env, settings, defaults.
+
+    Mirrors :func:`resolve_serial_profile`'s precedence for the LAN-relevant
+    fields (``host`` / ``port`` / ``timeout_ms`` / ``line_ending`` /
+    ``auto_reconnect``). Env vars: ``COMPORTZONE_HOST`` / ``COMPORTZONE_TCP_PORT``
+    / ``COMPORTZONE_TCP_TIMEOUT_MS``.
+    """
+    base = settings.lan if settings.lan else LanProfile()
+    resolved_auto_reconnect = (
+        auto_reconnect
+        if auto_reconnect is not None
+        else (
+            _env_bool("AUTO_RECONNECT")
+            if _env("AUTO_RECONNECT") is not None
+            else base.auto_reconnect
+        )
+    )
+    return replace(
+        base,
+        host=(host if host is not None else _env("HOST") or base.host).strip(),
+        port=(
+            tcp_port
+            if tcp_port is not None
+            else _env_int("TCP_PORT") or base.port
+        ),
+        timeout_ms=(
+            tcp_timeout_ms
+            if tcp_timeout_ms is not None
+            else _env_int("TCP_TIMEOUT_MS") or base.timeout_ms
+        ),
+        line_ending=(
+            _normalize_line_ending(line_ending)
+            or _normalize_line_ending(_env("LINE_ENDING"))
+            or base.line_ending
+        ),
         auto_reconnect=resolved_auto_reconnect,
     )
