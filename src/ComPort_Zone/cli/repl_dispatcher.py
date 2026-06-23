@@ -18,19 +18,19 @@ from ..core.library_lookup import (
     EntryNotFoundError,
     resolve_entry,
 )
-from ..core.models import AppSettings, SerialProfile
+from ..core.models import AppSettings, LanProfile, SerialProfile
 from ..core.serial_core import decode_serial_bytes, format_hex_bytes
-from ..core.transports import SerialTransportAdapter
+from ..core.transports import TransportAdapter
 from .command_file_runner import RunOutcome, run_command_file
 from .commands.send import _parse_hex_payload
 from .config_resolver import save_app_settings
+from .endpoint_session import EndpointOpenError, endpoint_from_profile, open_cli_endpoint
 from .output import CliOutput
-from .serial_session import SerialSessionError, open_serial
 
 
 # CLI shortcut → dotted SerialProfile key for ``/set``. Kept narrow on
 # purpose: this is the set users plausibly tweak between connects.
-_SET_SHORTCUTS: dict[str, str] = {
+_SERIAL_SET_SHORTCUTS: dict[str, str] = {
     "port": "port",
     "baud": "baudrate",
     "data-bits": "bytesize",
@@ -42,20 +42,27 @@ _SET_SHORTCUTS: dict[str, str] = {
     "rts": "rts",
 }
 
+_TCP_SET_SHORTCUTS: dict[str, str] = {
+    "host": "host",
+    "tcp-port": "port",
+    "tcp-timeout": "timeout_ms",
+    "line-ending": "line_ending",
+}
+
 
 @dataclass(slots=True)
 class ReplState:
     """Mutable per-session state.
 
     Held by :class:`ReplDispatcher` so meta commands and tests share the
-    same view. The transport is a real :class:`SerialTransportAdapter`
-    in production and a fake in tests.
+    same view. The transport is a real adapter in production and a fake in
+    tests.
     """
 
-    transport: SerialTransportAdapter
+    transport: TransportAdapter
     output: CliOutput
     settings: AppSettings
-    profile: SerialProfile
+    profile: SerialProfile | LanProfile
     config_path: Path | None = None
     timestamps_enabled: bool = False
     log_handle: TextIO | None = None
@@ -164,20 +171,22 @@ class ReplDispatcher:
             "Meta commands:",
             "  /help                          show this list",
             "  /quit, /exit                   exit the REPL (Ctrl-D also works)",
-            "  /connect                       open the configured port",
-            "  /disconnect                    close the port",
+            "  /connect                       open the configured endpoint",
+            "  /disconnect                    close the endpoint",
             "  /reconnect                     close then re-open",
-            "  /set <key> <value>             change a serial setting",
-            "                                 (port|baud|data-bits|parity|stop-bits|",
-            "                                  flow-control|line-ending|dtr|rts)",
-            "  /show settings | /show port    inspect current state",
+            "  /set <key> <value>             change an endpoint setting",
+            "                                 serial: port|baud|data-bits|parity|stop-bits|",
+            "                                         flow-control|line-ending|dtr|rts",
+            "                                 tcp: host|tcp-port|tcp-timeout|line-ending",
+            "  /show settings | /show endpoint",
+            "                                 inspect current state",
             "  /hex <bytes>                   send hex bytes",
             "  /quick <label-or-id>           send a saved Quick Command",
             "  /run <file> [--param K=V ...]  run a command file",
             "  /log start <path> | /log stop  mirror RX/TX to a file",
             "  /timestamps on|off             toggle timestamp prefix on RX lines",
             "  /clear                         print a separator line",
-            "Anything not starting with / is sent over the serial port.",
+            "Anything not starting with / is sent over the connected endpoint.",
         ]
         for line in lines:
             self.state.output.status(line)
@@ -186,14 +195,13 @@ class ReplDispatcher:
         self.state.quit_requested = True
 
     def _cmd_connect(self, args: list[str]) -> None:
+        endpoint = endpoint_from_profile(self.state.profile)
         try:
-            open_serial(self.state.transport, self.state.profile, wait_seconds=0.0)
-        except SerialSessionError as exc:
+            open_cli_endpoint(self.state.transport, endpoint, wait_seconds=0.0)
+        except EndpointOpenError as exc:
             self.state.output.error(str(exc), code=exc.exit_code)
             return
-        self.state.output.status(
-            f"Connected to {self.state.profile.port} @ {self.state.profile.baudrate}."
-        )
+        self.state.output.status(f"Connected to {endpoint.connection_summary}.")
 
     def _cmd_disconnect(self, args: list[str]) -> None:
         if not self.state.transport.is_connected:
@@ -213,26 +221,30 @@ class ReplDispatcher:
             return
         raw_key, raw_value = args
         key = raw_key.lower()
-        attr = _SET_SHORTCUTS.get(key)
+        shortcuts = (
+            _TCP_SET_SHORTCUTS
+            if isinstance(self.state.profile, LanProfile)
+            else _SERIAL_SET_SHORTCUTS
+        )
+        attr = shortcuts.get(key)
         if attr is None:
             self.state.output.error(
                 f"Unknown /set key {raw_key!r}. "
-                f"Valid keys: {', '.join(sorted(_SET_SHORTCUTS))}."
+                f"Valid keys: {', '.join(sorted(shortcuts))}."
             )
             return
         coerced = self._coerce_profile_value(attr, raw_value)
         if coerced is None:
             return  # error already emitted
         setattr(self.state.profile, attr, coerced)
-        # Mirror the change into the persisted SerialProfile.
-        setattr(self.state.settings.serial, attr, coerced)
+        self._mirror_profile_to_settings()
         if not save_app_settings(self.state.config_path, self.state.settings):
             self.state.output.error("Failed to persist settings.json.")
             return
         self.state.output.status(f"Set {key} = {coerced}")
 
     def _coerce_profile_value(self, attr: str, raw: str) -> Any:
-        """Map a CLI value string to the SerialProfile attribute's type.
+        """Map a CLI value string to the current profile attribute's type.
 
         Returns ``None`` after emitting an error if the value is invalid;
         the caller checks for ``None`` rather than catching.
@@ -249,6 +261,26 @@ class ReplDispatcher:
             except ValueError:
                 self.state.output.error(f"/set baud expects an integer (got {raw!r}).")
                 return None
+        if attr == "timeout_ms":
+            try:
+                return int(raw)
+            except ValueError:
+                self.state.output.error(
+                    f"/set tcp-timeout expects an integer (got {raw!r})."
+                )
+                return None
+        if attr == "port" and isinstance(self.state.profile, LanProfile):
+            try:
+                value = int(raw)
+            except ValueError:
+                self.state.output.error(
+                    f"/set tcp-port expects an integer (got {raw!r})."
+                )
+                return None
+            if not 1 <= value <= 65535:
+                self.state.output.error("/set tcp-port expects a value from 1 to 65535.")
+                return None
+            return value
         if attr == "stopbits":
             try:
                 return float(raw)
@@ -296,21 +328,33 @@ class ReplDispatcher:
             return normalized
         return raw  # plain string fields (port)
 
+    def _mirror_profile_to_settings(self) -> None:
+        profile = self.state.profile
+        if isinstance(profile, LanProfile):
+            self.state.settings.transport_kind = "lan"
+            self.state.settings.lan = LanProfile.from_dict(profile.to_dict())
+        else:
+            self.state.settings.transport_kind = "serial"
+            self.state.settings.serial = SerialProfile.from_dict(profile.to_dict())
+        self.state.settings.transport_profile = profile.to_dict()
+
     def _cmd_show(self, args: list[str]) -> None:
         if not args:
-            self.state.output.error("Usage: /show settings|port")
+            self.state.output.error("Usage: /show settings|endpoint")
             return
         what = args[0].lower()
         if what == "settings":
             self.state.output.object(self.state.profile.to_dict())
             return
-        if what == "port":
+        if what in {"endpoint", "port"}:
+            endpoint = endpoint_from_profile(self.state.profile)
             payload = {
                 "connected": self.state.transport.is_connected,
                 "reconnecting": self.state.transport.is_reconnecting,
-                "port": self.state.profile.port,
-                "baud": self.state.profile.baudrate,
+                **endpoint.rx_fields(),
             }
+            if isinstance(self.state.profile, SerialProfile):
+                payload["baud"] = self.state.profile.baudrate
             self.state.output.object(payload)
             return
         self.state.output.error(f"Unknown /show target {args[0]!r}.")

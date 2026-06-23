@@ -20,12 +20,12 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from ...core.serial_core import decode_serial_bytes, format_hex_bytes
-from ..config_resolver import load_app_settings, resolve_serial_profile
-from ..options import serial_flags
+from ..config_resolver import load_app_settings
+from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli_endpoint
+from ..options import endpoint_flags
 from ..output import CliOutput
 from ..repl_dispatcher import ReplDispatcher, ReplState
-from ..serial_session import SerialSessionError, open_serial
-from ..transports import make_serial_transport
+from ..transports import make_lan_transport, make_serial_transport
 
 
 _PROMPT_TEXT = "TX> "
@@ -93,47 +93,33 @@ def _build_completer(history_entries: list[str]) -> WordCompleter:
 
 
 @click.command("repl")
-@serial_flags
+@endpoint_flags
 @click.pass_context
-def repl_command(ctx: click.Context, **serial_flag_values: Any) -> None:
-    """Open an interactive prompt against the configured serial port."""
+def repl_command(ctx: click.Context, **endpoint_flag_values: Any) -> None:
+    """Open an interactive prompt against the configured serial or TCP endpoint."""
     output: CliOutput = ctx.obj["output"]
     settings = load_app_settings(ctx.obj.get("config_path"))
-    profile = resolve_serial_profile(settings=settings, **{
-        key: serial_flag_values[key]
-        for key in (
-            "port",
-            "baud",
-            "data_bits",
-            "parity",
-            "stop_bits",
-            "flow_control",
-            "line_ending",
-            "dtr",
-            "rts",
-            "auto_reconnect",
-        )
-    })
+    endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_serial_transport()
+    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
     state = ReplState(
         transport=transport,
         output=output,
         settings=settings,
-        profile=profile,
+        profile=endpoint.profile,
         config_path=ctx.obj.get("config_path"),
     )
 
     # Best-effort initial connect — failure isn't fatal, the user can
     # /set new params and /connect themselves.
     try:
-        open_serial(
+        open_cli_endpoint(
             transport,
-            profile,
-            wait_seconds=serial_flag_values["wait_seconds"],
+            endpoint,
+            wait_seconds=endpoint_flag_values["wait_seconds"],
         )
-        output.status(f"Connected to {profile.port} @ {profile.baudrate}.")
-    except SerialSessionError as exc:
+        output.status(f"Connected to {endpoint.connection_summary}.")
+    except EndpointOpenError as exc:
         output.error(str(exc), code=exc.exit_code)
         output.status("Type /set <key> <value> to change settings, then /connect.")
 

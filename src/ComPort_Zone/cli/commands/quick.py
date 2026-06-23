@@ -37,7 +37,7 @@ from ...core.quick_actions import (
 )
 from ..config_resolver import load_app_settings, save_app_settings
 from ..exit_codes import ExitCode
-from ..options import serial_flags
+from ..options import endpoint_flags
 from ..output import CliOutput
 from .send import run_send_once
 
@@ -120,12 +120,12 @@ def quick_list(ctx: click.Context, group_filter: str | None) -> None:
 
 @quick_group.command("send")
 @click.argument("identifier", metavar="LABEL_OR_ID")
-@serial_flags
+@endpoint_flags
 @click.pass_context
 def quick_send(
-    ctx: click.Context, identifier: str, **serial_flag_values: Any
+    ctx: click.Context, identifier: str, **endpoint_flag_values: Any
 ) -> None:
-    """Open a port and send the saved command identified by LABEL_OR_ID."""
+    """Open a serial or TCP endpoint and send the saved command LABEL_OR_ID."""
     command, _ = _resolve_command(ctx, identifier)
     run_send_once(
         ctx,
@@ -134,7 +134,7 @@ def quick_send(
         expect=None,
         expect_timeout_ms=0,
         read_after_ms=0,
-        serial_flag_values=serial_flag_values,
+        endpoint_flag_values=endpoint_flag_values,
         line_ending_override=command.line_ending_override or None,
     )
 

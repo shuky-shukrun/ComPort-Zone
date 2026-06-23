@@ -11,7 +11,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from ComPort_Zone.cli.main import cli
-from tests.fakes.fake_serial_transport import FakeSerialTransport
+from tests.fakes.fake_serial_transport import FakeLanTransport, FakeSerialTransport
 
 
 def _patch_run_transport(fake: FakeSerialTransport):
@@ -64,6 +64,33 @@ class RunCommandFileTests(unittest.TestCase):
                 cli, ["run", str(script), "--port", "COM3", "--expect-timeout", "200"],
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
+
+    def test_run_supports_raw_tcp_endpoint(self) -> None:
+        fake = FakeLanTransport()
+        fake.queue_response(b"PONG\r\n")
+        script = _write_file(self.tmp_path, "tcp_smoke.txt", """\
+            SEND ping
+            EXPECT PONG
+        """)
+        with patch(
+            "ComPort_Zone.cli.commands.run.make_lan_transport",
+            return_value=fake,
+        ):
+            result = self.runner.invoke(
+                cli,
+                [
+                    "run",
+                    str(script),
+                    "--host",
+                    "127.0.0.1",
+                    "--tcp-port",
+                    "7000",
+                    "--expect-timeout",
+                    "200",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(fake.sent_text, [("ping", None)])
 
     def test_run_expect_timeout_returns_expect_failed(self) -> None:
         script = _write_file(self.tmp_path, "missing.txt", """\

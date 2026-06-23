@@ -28,7 +28,7 @@ from ..core.batch import (
     substitute_batch_parameters,
 )
 from ..core.serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
-from ..core.transports import SerialTransportAdapter
+from ..core.transports import TransportAdapter
 
 
 # Failure kinds emitted in :class:`RunOutcome`. Strings — not an enum — so
@@ -150,7 +150,7 @@ def _wait_for_expect(
 
 
 def run_command_file(
-    transport: SerialTransportAdapter,
+    transport: TransportAdapter,
     steps: list[BatchTemplateStep],
     parameter_values: dict[str, str],
     *,

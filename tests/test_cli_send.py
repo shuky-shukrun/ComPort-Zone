@@ -9,7 +9,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from ComPort_Zone.cli.main import cli
-from tests.fakes.fake_serial_transport import FakeSerialTransport
+from tests.fakes.fake_serial_transport import FakeLanTransport, FakeSerialTransport
 
 
 def _patch_transport(fake: FakeSerialTransport):
@@ -113,6 +113,66 @@ class SendJsonTests(unittest.TestCase):
         kinds = [event["type"] for event in events]
         self.assertIn("tx", kinds)
         self.assertIn("rx", kinds)
+
+
+class SendTcpTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+        self.fake = FakeLanTransport()
+
+    def test_tcp_send_connects_and_matches_echo_response(self) -> None:
+        self.fake.queue_response(b"PONG\r\n")
+        with patch(
+            "ComPort_Zone.cli.commands.send.make_lan_transport",
+            return_value=self.fake,
+        ):
+            result = self.runner.invoke(
+                cli,
+                [
+                    "send",
+                    "ping",
+                    "--host",
+                    "127.0.0.1",
+                    "--tcp-port",
+                    "7000",
+                    "--line-ending",
+                    "LF",
+                    "--expect",
+                    "PONG",
+                    "--expect-timeout",
+                    "200",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(self.fake.sent_text, [("ping", None)])
+        profile = self.fake.connect_calls[0]
+        self.assertEqual(profile.host, "127.0.0.1")
+        self.assertEqual(profile.port, 7000)
+        self.assertEqual(profile.line_ending, "LF")
+
+    def test_tcp_and_serial_endpoint_flags_cannot_be_mixed(self) -> None:
+        result = self.runner.invoke(
+            cli,
+            ["send", "ping", "--host", "127.0.0.1", "--port", "COM3"],
+        )
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertIn("cannot be combined", result.output)
+
+    def test_tcp_connect_failure_exits_and_releases_the_transport(self) -> None:
+        self.fake.connect_returns = False
+        with patch(
+            "ComPort_Zone.cli.commands.send.make_lan_transport",
+            return_value=self.fake,
+        ):
+            result = self.runner.invoke(
+                cli,
+                ["send", "ping", "--host", "127.0.0.1", "--tcp-port", "7000"],
+            )
+        self.assertEqual(result.exit_code, 1, msg=result.output)
+        self.assertIn("Could not connect to TCP endpoint", result.output)
+        # A failed connect must not leave the transport (or a background
+        # auto-reconnect thread) dangling: open_cli_endpoint disconnects first.
+        self.assertGreaterEqual(self.fake.disconnect_calls, 1)
 
 
 if __name__ == "__main__":

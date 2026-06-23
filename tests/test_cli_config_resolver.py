@@ -13,9 +13,10 @@ from unittest.mock import patch
 
 from ComPort_Zone.cli.config_resolver import (
     load_app_settings,
+    resolve_lan_profile,
     resolve_serial_profile,
 )
-from ComPort_Zone.core.models import AppSettings, SerialProfile
+from ComPort_Zone.core.models import AppSettings, LanProfile, SerialProfile
 
 
 def _empty_settings() -> AppSettings:
@@ -155,6 +156,38 @@ class AutoReconnectTests(unittest.TestCase):
             profile = resolve_serial_profile(settings=settings)
         # "0" is falsy via _env_bool's truthy-set membership.
         self.assertFalse(profile.auto_reconnect)
+
+
+class LanProfileTests(unittest.TestCase):
+    def test_tcp_flags_override_lan_settings(self) -> None:
+        settings = AppSettings(
+            transport_kind="lan",
+            lan=LanProfile(host="settings.local", port=5025, line_ending="CRLF"),
+        )
+        with patch.dict(os.environ, _scrub_env(), clear=True):
+            profile = resolve_lan_profile(
+                settings=settings,
+                host="127.0.0.1",
+                tcp_port=7000,
+                tcp_timeout_ms=250,
+                line_ending="lf",
+            )
+        self.assertEqual(profile.host, "127.0.0.1")
+        self.assertEqual(profile.port, 7000)
+        self.assertEqual(profile.timeout_ms, 250)
+        self.assertEqual(profile.line_ending, "LF")
+
+    def test_tcp_env_used_when_flags_are_absent(self) -> None:
+        env = _scrub_env() | {
+            "COMPORTZONE_HOST": "echo.local",
+            "COMPORTZONE_TCP_PORT": "9000",
+            "COMPORTZONE_TCP_TIMEOUT_MS": "500",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            profile = resolve_lan_profile(settings=AppSettings())
+        self.assertEqual(profile.host, "echo.local")
+        self.assertEqual(profile.port, 9000)
+        self.assertEqual(profile.timeout_ms, 500)
 
 
 class LoadAppSettingsTests(unittest.TestCase):

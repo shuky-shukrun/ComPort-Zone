@@ -27,7 +27,7 @@ from ...core.quick_actions import (
 )
 from ..config_resolver import load_app_settings, save_app_settings
 from ..exit_codes import ExitCode
-from ..options import serial_flags
+from ..options import endpoint_flags
 from ..output import CliOutput
 from .run import execute_run
 
@@ -118,7 +118,7 @@ def files_list(ctx: click.Context) -> None:
     show_default=True,
     metavar="MS",
 )
-@serial_flags
+@endpoint_flags
 @click.pass_context
 def files_run(
     ctx: click.Context,
@@ -128,7 +128,7 @@ def files_run(
     log_path: Path | None,
     stop_on_expect_fail: bool,
     expect_timeout_ms: int,
-    **serial_flag_values: Any,
+    **endpoint_flag_values: Any,
 ) -> None:
     """Run a Quick File by label/id, falling back to a path on disk."""
     file_path = _resolve_to_path(ctx, identifier)
@@ -140,7 +140,7 @@ def files_run(
         log_path=log_path,
         stop_on_expect_fail=stop_on_expect_fail,
         expect_timeout_ms=expect_timeout_ms,
-        serial_flag_values=serial_flag_values,
+        endpoint_flag_values=endpoint_flag_values,
     )
 
 
