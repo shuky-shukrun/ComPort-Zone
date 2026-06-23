@@ -160,12 +160,20 @@ SPAN_CHOICES = tuple(
 VALUE_FONT_MIN_PX = 12
 VALUE_FONT_MAX_PX = 52
 # Vertical space the tile chrome (title + timestamp + margins/spacing) takes
-# out of the value area, before the (optional) sparkline strip.
-VALUE_TILE_CHROME_PX = 44
+# out of the body area, before the value's (optional) sparkline strip. Shared
+# by the value and LED tiles.
+TILE_CHROME_PX = 44
 
-LED_CAPTION_FONT_RATIO = 0.085
+# LED tile: the lamp and its caption both scale with the tile body so a big
+# LED tile shows a big indicator, not a tiny dot. The round lamp scales with
+# the smaller of the body's width/height (so it fits either way); the caption
+# scales with the body height. Both bounded to stay sane at the extremes.
+LED_LAMP_RATIO = 0.42
+LED_LAMP_MIN_PX = 16
+LED_LAMP_MAX_PX = 76
+LED_CAPTION_FONT_RATIO = 0.30  # of body height
 LED_CAPTION_FONT_MIN_PX = 11
-LED_CAPTION_FONT_MAX_PX = 24
+LED_CAPTION_FONT_MAX_PX = 30
 
 
 def _scale_font_px(cell_w: float, ratio: float, lo: int, hi: int) -> int:
@@ -692,7 +700,7 @@ class ValueTileWidget(TileFrame):
         the optional sparkline strip. ``cell_w`` is a width fallback before
         the first layout sets real geometry."""
         avail_w = (self.width() or int(cell_w)) - 2 * SPACE_MD
-        reserved = VALUE_TILE_CHROME_PX
+        reserved = TILE_CHROME_PX
         if self._sparkline_visible:
             reserved += SPARKLINE_HEIGHT + SPACE_SM
         return avail_w, self.height() - reserved
@@ -761,10 +769,14 @@ class LedTileWidget(TileFrame):
         self.caption_label.setObjectName("tileStateCaption")
         self.caption_label.setWordWrap(True)
         self.caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Size + custom color ride the caption's own inline stylesheet so they
-        # survive the per-poll repolish (a plain setFont is wiped by it).
+        # Size + custom color ride each label's own inline stylesheet so they
+        # survive the per-poll repolish (a plain setFont / the fixed QSS radius
+        # is wiped or frozen by it). The lamp scales with the tile too — a
+        # fixed dot looked tiny in a large tile.
         self._caption_px = 0
         self._caption_color = ""
+        self._lamp_radius = LED_LAMP // 2
+        self._lamp_color = ""
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(SPACE_LG)
@@ -777,14 +789,26 @@ class LedTileWidget(TileFrame):
         self.body_layout.addStretch(1)
 
     def apply_cell_width(self, cell_w: float) -> None:
-        # Scale the caption with the per-cell width (short state words don't
-        # need full text-fit), applied via the inline stylesheet so it isn't
-        # wiped by the per-poll repolish below.
-        px = _scale_font_px(
-            cell_w,
-            LED_CAPTION_FONT_RATIO,
-            LED_CAPTION_FONT_MIN_PX,
-            LED_CAPTION_FONT_MAX_PX,
+        # Scale the lamp + caption with the tile body (geometry already set by
+        # relayout), applied via inline stylesheets so they survive the
+        # per-poll repolish below. cell_w is the width fallback pre-layout.
+        avail_w = (self.width() or int(cell_w)) - 2 * SPACE_MD
+        avail_h = self.height() - TILE_CHROME_PX
+        diameter = int(
+            max(
+                LED_LAMP_MIN_PX,
+                min(LED_LAMP_MAX_PX, min(avail_w, avail_h) * LED_LAMP_RATIO),
+            )
+        )
+        if diameter != self.lamp.width():
+            self.lamp.setFixedSize(diameter, diameter)
+            self._lamp_radius = diameter // 2
+            self._restyle_lamp()
+        px = int(
+            max(
+                LED_CAPTION_FONT_MIN_PX,
+                min(LED_CAPTION_FONT_MAX_PX, avail_h * LED_CAPTION_FONT_RATIO),
+            )
         )
         if px != self._caption_px:
             self._caption_px = px
@@ -796,6 +820,21 @@ class LedTileWidget(TileFrame):
         return _apply_font_color_style(
             self.caption_label, self._caption_px, self._caption_color
         )
+
+    def _restyle_lamp(self) -> bool:
+        """Lamp inline stylesheet: a radius that tracks its scaled size (so it
+        stays circular) plus any custom rule color. Inline so it overrides the
+        fixed QSS radius and survives the per-poll repolish."""
+        parts = [f"border-radius: {self._lamp_radius}px;"]
+        if self._lamp_color:
+            parts.append(
+                f"background: {self._lamp_color}; border-color: {self._lamp_color};"
+            )
+        sheet = "".join(parts)
+        if self.lamp.styleSheet() == sheet:
+            return False
+        self.lamp.setStyleSheet(sheet)
+        return True
 
     def _render_runtime(self, runtime: TileRuntime) -> bool:
         changed = False
@@ -809,10 +848,10 @@ class LedTileWidget(TileFrame):
         if self.caption_label.property("tileState") != runtime.state:
             _set_state_property(self.caption_label, runtime.state)
             changed = True
-        if _apply_custom_style(
-            self.lamp, "background: {color}; border-color: {color};", runtime.color
-        ):
-            changed = True
+        if self._lamp_color != runtime.color:
+            self._lamp_color = runtime.color
+            if self._restyle_lamp():
+                changed = True
         if self._caption_color != runtime.color:
             self._caption_color = runtime.color
             if self._restyle_caption():

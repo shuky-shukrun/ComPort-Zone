@@ -23,6 +23,7 @@ from ComPort_Zone.themes import THEMES
 from ComPort_Zone.ui.control_panel_grid import GRID_GUTTER, ControlPanelGridWidget
 from ComPort_Zone.ui.control_panel_sparkline import SparklineWidget
 from ComPort_Zone.ui.control_panel_tiles import (
+    LED_LAMP,
     VALUE_FONT_MAX_PX,
     VALUE_FONT_MIN_PX,
     BitsTileWidget,
@@ -300,9 +301,10 @@ class TileWidgetTests(unittest.TestCase):
         self.assertIn("#ab1234", tile.caption_label.styleSheet())
 
         tile.update_runtime(TileRuntime(entry_id="a", state="warn"))
-        self.assertEqual(tile.lamp.styleSheet(), "")
-        # The caption's inline sheet also carries its scaled font-size once a
-        # grid sizes it, so assert the custom color is gone, not that it's "".
+        # The lamp's inline sheet always carries its (scaled) border-radius and
+        # the caption's its font-size, so assert the custom color is gone
+        # rather than that the sheets are empty.
+        self.assertNotIn("#ab1234", tile.lamp.styleSheet())
         self.assertNotIn("#ab1234", tile.caption_label.styleSheet())
         tile.deleteLater()
 
@@ -846,6 +848,25 @@ class GridGeometryTests(unittest.TestCase):
         )
         tile.caption_label.ensurePolished()
         self.assertEqual(tile.caption_label.font().pixelSize(), before)
+        grid.deleteLater()
+
+    def test_led_lamp_scales_with_tile_size(self) -> None:
+        # The round indicator grows with the tile rather than staying a fixed
+        # dot ("LED indicator is tiny in a big tile"). A 3x3 LED tile gets a
+        # clearly larger lamp than a 1x1 one in the same grid.
+        grid = self.make_grid(
+            make_config(
+                make_entry("small", kind="led", col=0, row=0),
+                make_entry("big", kind="led", col=1, row=0, span_w=3, span_h=3),
+            ),
+            width=900,
+        )
+        small = grid.tile("small")
+        big = grid.tile("big")
+        assert small is not None and big is not None
+        self.assertGreater(big.lamp.width(), small.lamp.width())
+        # And the big lamp is meaningfully larger than the old fixed dot.
+        self.assertGreater(big.lamp.width(), LED_LAMP)
         grid.deleteLater()
 
     def test_minimum_height_reserves_configured_rows(self) -> None:
