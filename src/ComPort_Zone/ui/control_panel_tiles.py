@@ -18,7 +18,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDrag, QMouseEvent, QPainter, QPalette, QPen
+from PySide6.QtGui import (
+    QColor,
+    QDrag,
+    QFont,
+    QFontMetrics,
+    QMouseEvent,
+    QPainter,
+    QPalette,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -144,13 +153,10 @@ SPAN_CHOICES = tuple(
 # readable on split-screen / narrow layouts as well as fullscreen; their
 # ratio is tuned so the legacy default cell width (~180px) reproduces the
 # previous fixed size (~15px).
-# The value readout (tileValue) instead scales with the whole TILE, not a
-# single cell, so a bigger tile shows a bigger number. Width and height each
-# bound it: height keeps the reading on one line; width keeps it from
-# overflowing. A single-row tile stays compact (~20px at the row-height
-# floor); a tall 2x2 grows to a bold readout up to the cap.
-VALUE_FONT_W_RATIO = 0.32
-VALUE_FONT_H_RATIO = 0.85
+# The value readout (tileValue) instead auto-fits the WHOLE tile: the largest
+# bounded font at which the actual text — word-wrapped — fits the tile box.
+# So a short reading in a big tile grows to a bold number, while a long one
+# (e.g. an *IDN? identity) shrinks to fit instead of overflowing/clipping.
 VALUE_FONT_MIN_PX = 12
 VALUE_FONT_MAX_PX = 52
 # Vertical space the tile chrome (title + timestamp + margins/spacing) takes
@@ -169,14 +175,28 @@ def _scale_font_px(cell_w: float, ratio: float, lo: int, hi: int) -> int:
     return max(lo, min(hi, round(cell_w * ratio)))
 
 
-def _scale_font_to_box(
-    width: float, height: float, w_ratio: float, h_ratio: float, lo: int, hi: int
-) -> int:
-    """Largest bounded font px that fits a ``width`` x ``height`` box on one
-    line: height caps the line height, width caps the run length."""
-    if width <= 0 or height <= 0:
-        return lo
-    return int(max(lo, min(hi, min(width * w_ratio, height * h_ratio))))
+def _fit_text_px(text: str, base_font: QFont, avail_w: float, avail_h: float) -> int:
+    """Largest font px in [MIN, MAX] at which ``text``, word-wrapped to
+    ``avail_w``, fits within an ``avail_w`` x ``avail_h`` box.
+
+    Binary search over pixel sizes, measuring the wrapped bounding box with
+    the label's own font (so family/weight match). Falls back to MIN when
+    there's no text or no room yet (e.g. before the first layout)."""
+    if not text or avail_w <= 0 or avail_h <= 0:
+        return VALUE_FONT_MIN_PX
+    font = QFont(base_font)
+    lo, hi, best = VALUE_FONT_MIN_PX, VALUE_FONT_MAX_PX, VALUE_FONT_MIN_PX
+    flags = int(Qt.TextFlag.TextWordWrap)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        font.setPixelSize(mid)
+        rect = QFontMetrics(font).boundingRect(0, 0, int(avail_w), 1 << 20, flags, text)
+        if rect.width() <= avail_w and rect.height() <= avail_h:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
 
 
 def tile_state_color(state: str, theme: ThemePalette) -> str:
@@ -644,23 +664,26 @@ class ValueTileWidget(TileFrame):
         self.sparkline.apply_theme_palette(theme)
 
     def apply_cell_width(self, cell_w: float) -> None:
-        # Scale the reading with the whole tile (its geometry is already set by
-        # the grid's relayout), not a single cell, so a larger tile shows a
-        # larger number. cell_w is the fallback width before first layout.
-        width = self.width() or int(cell_w)
-        avail_w = width - 2 * SPACE_MD
+        # Geometry is already set by the grid's relayout; auto-fit the reading
+        # to the whole tile (recomputed here on resize and on every text
+        # change, since the fit depends on both the box and the string).
+        self._refit_value(cell_w)
+
+    def _value_area(self, cell_w: float = 0.0) -> tuple[float, float]:
+        """Width/height available to the reading, net of the tile chrome and
+        the optional sparkline strip. ``cell_w`` is a width fallback before
+        the first layout sets real geometry."""
+        avail_w = (self.width() or int(cell_w)) - 2 * SPACE_MD
         reserved = VALUE_TILE_CHROME_PX
         if self._sparkline_visible:
             reserved += SPARKLINE_HEIGHT + SPACE_SM
-        avail_h = self.height() - reserved
-        px = _scale_font_to_box(
-            avail_w,
-            avail_h,
-            VALUE_FONT_W_RATIO,
-            VALUE_FONT_H_RATIO,
-            VALUE_FONT_MIN_PX,
-            VALUE_FONT_MAX_PX,
-        )
+        return avail_w, self.height() - reserved
+
+    def _refit_value(self, cell_w: float = 0.0) -> None:
+        """Pick the largest font px at which the current text fits the tile
+        box and push it onto the label's inline stylesheet."""
+        avail_w, avail_h = self._value_area(cell_w)
+        px = _fit_text_px(self.value_label.text(), self.value_label.font(), avail_w, avail_h)
         if px != self._value_px:
             self._value_px = px
             self._restyle_value()
@@ -691,6 +714,8 @@ class ValueTileWidget(TileFrame):
         changed = False
         if self.value_label.text() != runtime.value_text:
             self.value_label.setText(runtime.value_text)
+            # Re-fit: a longer/shorter reading wants a different size.
+            self._refit_value()
             changed = True
         if self.value_label.property("tileState") != runtime.state:
             _set_state_property(self.value_label, runtime.state)

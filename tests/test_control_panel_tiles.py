@@ -142,7 +142,9 @@ class TileWidgetTests(unittest.TestCase):
 
         plain = TileRuntime(entry_id="a", value_text="5 V", state="ok")
         self.assertTrue(tile.update_runtime(plain))
-        self.assertEqual(tile.value_label.styleSheet(), "")
+        # The custom color clears; the auto-fit font-size stays on the inline
+        # stylesheet, so assert the color is gone rather than the sheet empty.
+        self.assertNotIn("#12ab34", tile.value_label.styleSheet())
         tile.deleteLater()
 
     def test_value_tile_hosts_sparkline_for_numeric_entries(self) -> None:
@@ -767,12 +769,44 @@ class GridGeometryTests(unittest.TestCase):
         assert tile is not None
         tile.value_label.ensurePolished()
         before = tile.value_label.font().pixelSize()
-        self.assertGreater(before, VALUE_FONT_MIN_PX)
+        # A 2x2 tile with a short reading sizes up near the cap.
+        self.assertGreaterEqual(before, 40)
         tile.update_runtime(
             TileRuntime(entry_id="big", value_text="12.3 V", state="ok", timestamp_text="t")
         )
         tile.value_label.ensurePolished()
-        self.assertEqual(tile.value_label.font().pixelSize(), before)
+        # Still large after the poll's repolish — a wiped setFont would read
+        # back as the QSS default (pixelSize() == -1), not a real size.
+        self.assertGreaterEqual(tile.value_label.font().pixelSize(), 40)
+        grid.deleteLater()
+
+    def test_value_font_shrinks_for_long_text(self) -> None:
+        # A long reading (an *IDN? identity) in a wide, short tile must shrink
+        # to fit instead of overflowing/clipping the tile, while a short
+        # reading in the same tile stays big. (Identity text was being cut.)
+        grid = self.make_grid(
+            make_config(make_entry("idn", span_w=4, span_h=1)),
+            width=900,
+        )
+        tile = grid.tile("idn")
+        assert tile is not None
+        tile.update_runtime(
+            TileRuntime(entry_id="idn", value_text="12 V", state="ok", timestamp_text="t")
+        )
+        tile.value_label.ensurePolished()
+        short_px = tile.value_label.font().pixelSize()
+        tile.update_runtime(
+            TileRuntime(
+                entry_id="idn",
+                value_text="TDK-LAMBDA, G10-100, 011B158-0001, G:02.122",
+                state="ok",
+                timestamp_text="t",
+            )
+        )
+        tile.value_label.ensurePolished()
+        long_px = tile.value_label.font().pixelSize()
+        self.assertLess(long_px, short_px)
+        self.assertGreaterEqual(long_px, VALUE_FONT_MIN_PX)
         grid.deleteLater()
 
     def test_minimum_height_reserves_configured_rows(self) -> None:
