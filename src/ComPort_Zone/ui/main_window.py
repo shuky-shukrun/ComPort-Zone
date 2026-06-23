@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 from collections.abc import Callable
@@ -41,6 +42,7 @@ from ..quick_actions_panel import (
 from ..quick_actions_sidebar import QuickActionsSidebar, QuickActionsSidebarActions
 from ..app_settings_controller import AppSettingsController
 from ..command_editor import CommandEditorQuickActionCallbacks, CommandEditorSources, CommandFileEditorDialog
+from ..command_file_service import looks_like_command_file
 from ..command_registry import CommandPaletteEntry, CommandRegistry
 from ..command_run_targets import CommandRunRequest, CommandRunTarget
 from ..control_panel_catalog import (
@@ -287,6 +289,8 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(lambda _: self.sync_status_from_current_session())
         self.tabs.tabContextMenuRequested.connect(self.show_tab_context_menu)
         self.tabs.tabMovedBetweenPanes.connect(self._tab_moved_between_panes)
+        # Files dragged from Explorer onto the tab area open in new tabs.
+        self.tabs.filesDropped.connect(self.open_command_files_in_tabs)
         # The drawer is one shared full-height side bar to the left of the tabs
         # (the mockup's app-body: rail | side panel | main column). Its actions
         # dispatch to the active tab; per-tab drawers are hidden.
@@ -426,6 +430,7 @@ class MainWindow(QMainWindow):
                 file_favorite_toggle=self.set_quick_file_favorite,
                 file_edit_by_id=self.edit_quick_file,
                 file_delete_by_id=self.delete_quick_file,
+                files_dropped=self.add_quick_files_from_paths,
                 history_favorite=lambda text: self.add_saved_command_from_text(text, favorite=True),
                 history_save=lambda text: self.add_saved_command_from_text(text, favorite=False),
                 history_remove=self.remove_command_from_history,
@@ -887,12 +892,58 @@ class MainWindow(QMainWindow):
             )
             if not selected:
                 return
-            path = Path(selected)
-        elif isinstance(path, str):
-            path = Path(path)
-        self.add_command_file_tab(path=path)
-        if path is not None:
-            self.record_recent_file(str(path))
+            path = selected
+        self.open_command_file_in_tab(path)
+
+    def open_command_file_in_tab(self, path: Path | str) -> CommandFileEditorDialog:
+        """Open ``path`` in a command-file tab, focusing an existing tab for the same
+        file instead of opening a duplicate. Returns the (existing or new) editor."""
+        path = Path(path)
+        existing = self._existing_command_file_editor(path)
+        if existing is not None:
+            self.tabs.setCurrentWidget(existing)
+            editor = existing
+        else:
+            editor = self.add_command_file_tab(path=path)
+        self.record_recent_file(str(path))
+        return editor
+
+    def open_command_files_in_tabs(self, paths: list[str]) -> None:
+        """Open several files at once (drag-drop into the tab area, or a forwarded
+        ``.cpz``). Recognised command files open as editor tabs; other files are skipped
+        with a status note rather than opening a binary in the editor."""
+        skipped: list[str] = []
+        for raw in paths:
+            if looks_like_command_file(raw):
+                self.open_command_file_in_tab(raw)
+            else:
+                skipped.append(Path(raw).name)
+        if skipped:
+            self.set_status(f"Skipped {len(skipped)} unsupported file(s): {', '.join(skipped)}")
+
+    def _existing_command_file_editor(self, path: Path) -> CommandFileEditorDialog | None:
+        def key(candidate: Path | str) -> str:
+            # normcase folds case on Windows; abspath normalises separators and ``..``.
+            return os.path.normcase(os.path.abspath(str(candidate)))
+
+        target = key(path)
+        for editor in self.iter_command_file_editors():
+            editor_path = getattr(editor, "path", None)
+            if editor_path is not None and key(editor_path) == target:
+                return editor
+        return None
+
+    def handle_forwarded_open(self, paths: list[str]) -> None:
+        """A secondary launch forwarded these paths to us (the primary instance): open
+        them in tabs and bring the window to the front."""
+        self.open_command_files_in_tabs(list(paths))
+        self.activate_window_front()
+
+    def activate_window_front(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def add_command_file_tab(self, path: Path | None = None, state: CommandFileTabState | None = None) -> CommandFileEditorDialog:
         editor = CommandFileEditorDialog(
@@ -2003,6 +2054,25 @@ class MainWindow(QMainWindow):
             )
             return
         self.quick_action_controller.add_quick_file(quick_file)
+
+    def add_quick_files_from_paths(self, paths: list[str]) -> None:
+        """Add files dropped onto the sidebar Files area as quick files. A single file
+        opens the name dialog (seeded with its file name); several files are added
+        directly, each defaulting to its file name."""
+        files = [path for path in paths if path and os.path.isfile(path)]
+        if not files:
+            return
+        self.settings.last_script_path = str(Path(files[0]).parent)
+        if len(files) == 1:
+            self.quick_action_controller.add_quick_file(
+                QuickFile(label=Path(files[0]).name, path=files[0]), prompt=True
+            )
+            return
+        for path in files:
+            self.quick_action_controller.add_quick_file(
+                QuickFile(label=Path(path).name, path=path), prompt=False
+            )
+        self.set_status(f"Added {len(files)} quick files.")
 
     def edit_quick_file(self, quick_file_id: str) -> None:
         self.quick_action_controller.edit_quick_file(quick_file_id)

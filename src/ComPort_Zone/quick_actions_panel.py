@@ -308,6 +308,11 @@ class QuickActionList(EmptyHintListWidget):
     # Emitted with the row item and the action key ("send"/"star"/"play"/
     # "favorite"/"save"/"remove") of the clicked inline glyph.
     actionTriggered = Signal(QListWidgetItem, str)
+    # Emitted with local file paths dropped from outside the app (Explorer) when
+    # external file drops are enabled via set_accepts_file_drops(). Internal drag-reorder
+    # (InternalMove) is unaffected — those drags carry no URLs, so they fall through to
+    # the base class.
+    filesDropped = Signal(list)
 
     def __init__(
         self,
@@ -323,6 +328,10 @@ class QuickActionList(EmptyHintListWidget):
         # Set on the favourites lists so the star/✕ glyphs (and their tooltips) can
         # explain that ✕ removes the row from *saved*, not just from favourites.
         self.is_favorites = False
+        # External file drops (from Explorer) are opt-in per list — only the sidebar's
+        # Files list turns this on. Off by default so the embedded editor/terminal
+        # drawers keep their reorder-only behaviour.
+        self._accepts_file_drops = False
 
     def apply_theme_palette(self, palette: ThemePalette) -> None:
         self.row_delegate.set_palette(palette)
@@ -392,6 +401,40 @@ class QuickActionList(EmptyHintListWidget):
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+    def set_accepts_file_drops(self, enabled: bool) -> None:
+        """Opt this list into accepting files dropped from outside the app; dropped
+        local paths are emitted via :attr:`filesDropped`."""
+        self._accepts_file_drops = bool(enabled)
+        if enabled:
+            self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:
+        if self._accepts_file_drops and self._local_files_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if self._accepts_file_drops and self._local_files_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if self._accepts_file_drops:
+            files = self._local_files_from_mime(event.mimeData())
+            if files:
+                self.filesDropped.emit(files)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
+
+    @staticmethod
+    def _local_files_from_mime(mime) -> list[str]:
+        if not mime.hasUrls():
+            return []
+        return [path for url in mime.urls() if (path := url.toLocalFile())]
 
 
 def create_quick_command_list(

@@ -52,6 +52,7 @@ class QuickActionsSidebarActions:
     file_favorite_toggle: Callable[[str, bool], None] | None = None     # (quick_file_id, favorite)
     file_edit_by_id: Callable[[str], None] | None = None          # inline edit by file id
     file_delete_by_id: Callable[[str], None] | None = None        # inline remove (from saved) by file id
+    files_dropped: Callable[[list[str]], None] | None = None       # external files dropped on the Files list
     history_favorite: Callable[[str], None] | None = None         # add history text to favorites
     history_save: Callable[[str], None] | None = None             # add history text to saved
     history_remove: Callable[[str], None] | None = None           # remove history text
@@ -242,6 +243,11 @@ class QuickActionsSidebar(QuickActionsDrawer):
             file_list.itemDoubleClicked.connect(
                 lambda item, lst=file_list: self._on_file_double_clicked(lst, item)
             )
+        # Files dropped from Explorer onto the saved Files list are added as quick files
+        # by the host. Enabled only on the saved list (not the favourites view) so a
+        # dropped file is never silently absent just because it isn't starred yet.
+        self.quick_file_list.set_accepts_file_drops(True)
+        self.quick_file_list.filesDropped.connect(self._on_files_dropped)
         self.quick_history_list.actionTriggered.connect(self._on_history_action)
         if history_primary is not None:
             self.quick_history_list.itemDoubleClicked.connect(lambda item: history_primary(item.text()))
@@ -553,6 +559,10 @@ class QuickActionsSidebar(QuickActionsDrawer):
             self.actions.file_open_by_id(file_id)
         elif self._file_double_clicked is not None:
             self._file_double_clicked()
+
+    def _on_files_dropped(self, paths) -> None:
+        if self.actions.files_dropped is not None and paths:
+            self.actions.files_dropped(list(paths))
 
     @staticmethod
     def _control_panel_action(callback: Callable[[], None] | None) -> None:

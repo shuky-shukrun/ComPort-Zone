@@ -83,6 +83,30 @@ class QuickActionsSidebarTests(unittest.TestCase):
             sidebar.deleteLater()
             parent.deleteLater()
 
+    def test_files_dropped_on_files_list_invokes_action(self) -> None:
+        parent = QWidget()
+        actions = make_actions([])
+        dropped: list[list[str]] = []
+        actions.files_dropped = lambda paths: dropped.append(list(paths))
+        sidebar = QuickActionsSidebar(
+            actions=actions,
+            command_primary_label="Insert",
+            file_primary_label="Open",
+            parent=parent,
+        )
+        try:
+            # The saved Files list accepts external drops; the favourites view does not
+            # (a dropped-but-unstarred file would otherwise vanish from the list you
+            # dropped onto).
+            self.assertTrue(sidebar.quick_file_list._accepts_file_drops)
+            self.assertFalse(sidebar.favorite_file_list._accepts_file_drops)
+
+            sidebar.quick_file_list.filesDropped.emit(["C:/a.cpz", "C:/b.cpz"])
+            self.assertEqual(dropped, [["C:/a.cpz", "C:/b.cpz"]])
+        finally:
+            sidebar.deleteLater()
+            parent.deleteLater()
+
     def test_sort_and_group_are_header_icons_that_collapse_into_overflow(self) -> None:
         from PySide6.QtWidgets import QToolButton
 

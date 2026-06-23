@@ -1,5 +1,6 @@
 import unittest
 
+from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtWidgets import QApplication, QStyle, QWidget
 
 from ComPort_Zone.models import QuickCommand, QuickFile
@@ -10,6 +11,7 @@ from ComPort_Zone.quick_actions_panel import (
     ROLE_BADGE,
     ROLE_FAVORITE,
     EmptyHintListWidget,
+    QuickActionList,
     QuickActionsDrawer,
     QuickActionsRailMode,
     QuickActionsPanel,
@@ -22,6 +24,21 @@ from ComPort_Zone.quick_actions_panel import (
     row_action_keys,
     selected_item_id,
 )
+
+
+class _FakeFileDropEvent:
+    """An external (Explorer) file drag carrying file:// URLs."""
+
+    def __init__(self, paths: list[str]) -> None:
+        self._mime = QMimeData()
+        self._mime.setUrls([QUrl.fromLocalFile(path) for path in paths])
+        self.accepted = False
+
+    def mimeData(self) -> QMimeData:
+        return self._mime
+
+    def acceptProposedAction(self) -> None:
+        self.accepted = True
 
 
 class QuickActionsPanelTests(unittest.TestCase):
@@ -219,6 +236,41 @@ class QuickActionsPanelTests(unittest.TestCase):
         finally:
             drawer.deleteLater()
             parent.deleteLater()
+
+
+class QuickActionListFileDropTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.qt = QApplication.instance() or QApplication([])
+
+    def test_drop_emits_files_when_enabled(self) -> None:
+        parent = QWidget()
+        quick_list = create_quick_file_list(parent, tooltip="Files", drag_drop=True)
+        quick_list.set_accepts_file_drops(True)
+        captured: list[list[str]] = []
+        quick_list.filesDropped.connect(lambda paths: captured.append(paths))
+
+        paths = ["C:/scripts/a.cpz", "C:/scripts/b.txt"]
+        event = _FakeFileDropEvent(paths)
+        quick_list.dropEvent(event)
+
+        expected = [QUrl.fromLocalFile(path).toLocalFile() for path in paths]
+        self.assertTrue(event.accepted)
+        self.assertEqual(captured, [expected])
+        parent.deleteLater()
+
+    def test_external_drops_are_opt_in(self) -> None:
+        # A list that never opted in keeps the flag off, so it ignores external URLs and
+        # leaves drag-reorder (InternalMove) untouched.
+        parent = QWidget()
+        quick_list = create_quick_file_list(parent, tooltip="Files", drag_drop=True)
+        self.assertFalse(quick_list._accepts_file_drops)
+        parent.deleteLater()
+
+    def test_local_files_from_mime_ignores_non_urls(self) -> None:
+        mime = QMimeData()
+        mime.setText("not a file")
+        self.assertEqual(QuickActionList._local_files_from_mime(mime), [])
 
 
 if __name__ == "__main__":
