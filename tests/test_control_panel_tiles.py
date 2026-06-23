@@ -301,7 +301,9 @@ class TileWidgetTests(unittest.TestCase):
 
         tile.update_runtime(TileRuntime(entry_id="a", state="warn"))
         self.assertEqual(tile.lamp.styleSheet(), "")
-        self.assertEqual(tile.caption_label.styleSheet(), "")
+        # The caption's inline sheet also carries its scaled font-size once a
+        # grid sizes it, so assert the custom color is gone, not that it's "".
+        self.assertNotIn("#ab1234", tile.caption_label.styleSheet())
         tile.deleteLater()
 
 
@@ -370,6 +372,25 @@ class BitsTileTests(unittest.TestCase):
         self.assertEqual(tile._indicators[0][0].property("tileState"), "fail")
         self.assertEqual(tile._indicators[1][0].property("tileState"), "warn")
         self.assertEqual(tile._indicators[2][0].property("tileState"), "ok")
+        tile.deleteLater()
+
+    def test_bit_label_font_survives_value_change(self) -> None:
+        # Every value change toggles each bit's bitActive property and
+        # repolishes its label, re-resolving the QSS font. The scaled label
+        # font must persist (inline stylesheet) rather than snap back to the
+        # default as a plain setFont did.
+        entry = self.make_bits_entry(BitDefinition(bit=0, label="OVERTEMP", state="fail"))
+        tile = BitsTileWidget(entry)
+        tile.apply_cell_width(240)  # a wide cell scales the label up
+        label = tile._indicators[0][1]
+        label.ensurePolished()
+        before = label.font().pixelSize()
+        self.assertGreater(before, 0)
+        tile.update_runtime(
+            TileRuntime(entry_id="stat", value_text="1", value_number=1.0)
+        )
+        label.ensurePolished()
+        self.assertEqual(label.font().pixelSize(), before)
         tile.deleteLater()
 
     def test_value_text_hex_fallback_when_no_number(self) -> None:
@@ -807,6 +828,24 @@ class GridGeometryTests(unittest.TestCase):
         long_px = tile.value_label.font().pixelSize()
         self.assertLess(long_px, short_px)
         self.assertGreaterEqual(long_px, VALUE_FONT_MIN_PX)
+        grid.deleteLater()
+
+    def test_led_caption_font_survives_runtime_update(self) -> None:
+        # The LED caption is repolished on every poll (lamp + caption state),
+        # which re-resolves its QSS font. Its scaled size must persist — it
+        # rides the inline stylesheet now; a plain setFont was wiped, leaving
+        # the caption stuck at the default size regardless of tile size.
+        grid = self.make_grid(make_config(make_entry("a", kind="led")), width=1200)
+        tile = grid.tile("a")
+        assert tile is not None
+        tile.caption_label.ensurePolished()
+        before = tile.caption_label.font().pixelSize()
+        self.assertGreater(before, 0)
+        tile.update_runtime(
+            TileRuntime(entry_id="a", state="fail", state_caption="TRIPPED")
+        )
+        tile.caption_label.ensurePolished()
+        self.assertEqual(tile.caption_label.font().pixelSize(), before)
         grid.deleteLater()
 
     def test_minimum_height_reserves_configured_rows(self) -> None:

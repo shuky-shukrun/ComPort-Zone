@@ -254,6 +254,24 @@ def _apply_custom_style(widget: QWidget, template: str, color: str) -> bool:
     return True
 
 
+def _apply_font_color_style(widget: QWidget, px: int, color: str) -> bool:
+    """Set a label's inline stylesheet to a size-scaled ``font-size`` plus an
+    optional custom rule color. Inline styles survive the unpolish/polish that
+    a ``tileState`` / ``bitActive`` change triggers on every poll, so a font
+    sized here sticks — a plain ``setFont`` is wiped by that QSS re-resolution.
+    Returns True when the stylesheet actually changed."""
+    parts = []
+    if px:
+        parts.append(f"font-size: {px}px;")
+    if color:
+        parts.append(f"color: {color};")
+    sheet = "".join(parts)
+    if widget.styleSheet() == sheet:
+        return False
+    widget.setStyleSheet(sheet)
+    return True
+
+
 class TileFrame(QFrame):
     """Shared tile chrome: header, footer, context menu, edit-mode drag."""
 
@@ -689,19 +707,10 @@ class ValueTileWidget(TileFrame):
             self._restyle_value()
 
     def _restyle_value(self) -> bool:
-        """Recompose the value label's inline stylesheet from the size-scaled
+        """Recompose the value label's inline stylesheet from the auto-fit
         font and the active custom rule color. Returns True when it changed
         (so callers can fold it into their repaint-coalescing flag)."""
-        parts = []
-        if self._value_px:
-            parts.append(f"font-size: {self._value_px}px;")
-        if self._value_color:
-            parts.append(f"color: {self._value_color};")
-        sheet = "".join(parts)
-        if self.value_label.styleSheet() == sheet:
-            return False
-        self.value_label.setStyleSheet(sheet)
-        return True
+        return _apply_font_color_style(self.value_label, self._value_px, self._value_color)
 
     def set_history(self, samples: list[Sample], color: str, *, now: float) -> bool:
         """Feed the sparkline; ignored when hidden (the data stays in the
@@ -752,6 +761,10 @@ class LedTileWidget(TileFrame):
         self.caption_label.setObjectName("tileStateCaption")
         self.caption_label.setWordWrap(True)
         self.caption_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Size + custom color ride the caption's own inline stylesheet so they
+        # survive the per-poll repolish (a plain setFont is wiped by it).
+        self._caption_px = 0
+        self._caption_color = ""
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(SPACE_LG)
@@ -764,16 +777,25 @@ class LedTileWidget(TileFrame):
         self.body_layout.addStretch(1)
 
     def apply_cell_width(self, cell_w: float) -> None:
+        # Scale the caption with the per-cell width (short state words don't
+        # need full text-fit), applied via the inline stylesheet so it isn't
+        # wiped by the per-poll repolish below.
         px = _scale_font_px(
             cell_w,
             LED_CAPTION_FONT_RATIO,
             LED_CAPTION_FONT_MIN_PX,
             LED_CAPTION_FONT_MAX_PX,
         )
-        font = self.caption_label.font()
-        if font.pixelSize() != px:
-            font.setPixelSize(px)
-            self.caption_label.setFont(font)
+        if px != self._caption_px:
+            self._caption_px = px
+            self._restyle_caption()
+
+    def _restyle_caption(self) -> bool:
+        """Recompose the caption's inline stylesheet from its scaled font and
+        the active custom rule color. Returns True when it changed."""
+        return _apply_font_color_style(
+            self.caption_label, self._caption_px, self._caption_color
+        )
 
     def _render_runtime(self, runtime: TileRuntime) -> bool:
         changed = False
@@ -791,8 +813,10 @@ class LedTileWidget(TileFrame):
             self.lamp, "background: {color}; border-color: {color};", runtime.color
         ):
             changed = True
-        if _apply_custom_style(self.caption_label, "color: {color};", runtime.color):
-            changed = True
+        if self._caption_color != runtime.color:
+            self._caption_color = runtime.color
+            if self._restyle_caption():
+                changed = True
         return changed
 
 
@@ -1476,6 +1500,7 @@ class BitsTileWidget(TileFrame):
         self._spec = BitsSpec(bits=list(entry.bits_spec.bits))
         self._last_raw: int | None = None
         self._cell_width = 0.0
+        self._label_px = 0
 
         self._bits_host = QWidget(self)
         self._bits_grid = QGridLayout(self._bits_host)
@@ -1617,17 +1642,17 @@ class BitsTileWidget(TileFrame):
         self._apply_label_font(cell_w)
 
     def _apply_label_font(self, cell_w: float) -> None:
-        px = _scale_font_px(
+        # Apply via each label's inline stylesheet (not setFont): the bit
+        # labels are repolished on every value change (the bitActive property
+        # toggle in _refresh_lamps), which would wipe a setFont pixel size.
+        self._label_px = _scale_font_px(
             cell_w,
             BITS_LABEL_FONT_RATIO,
             BITS_LABEL_FONT_MIN_PX,
             BITS_LABEL_FONT_MAX_PX,
         )
         for _lamp, label in self._indicators.values():
-            font = label.font()
-            if font.pixelSize() != px:
-                font.setPixelSize(px)
-                label.setFont(font)
+            _apply_font_color_style(label, self._label_px, "")
 
 
 class TextTileWidget(TileFrame):
