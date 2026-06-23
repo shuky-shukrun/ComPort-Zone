@@ -6,7 +6,7 @@
 
 Connect to COM ports and TCP endpoints, watch traffic in a structured terminal, fire off saved commands, and run repeatable command files — in an IDE-style desktop app or a matching headless CLI.
 
-![Version](https://img.shields.io/badge/version-0.5.1-3aa675)
+![Version](https://img.shields.io/badge/version-0.5.2-3aa675)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Python](https://img.shields.io/badge/python-3.12%2B-3776AB)
 ![UI](https://img.shields.io/badge/UI-PySide6-41cd52)

@@ -1,3 +1,39 @@
+# ComPort Zone v0.5.2 Release Notes
+
+Release date: 2026-06-23
+
+ComPort Zone v0.5.2 rounds out the Control Panel with group tile editing and readability polish, adds Explorer file integration, and improves connection reliability and the update check.
+
+## Highlights
+
+- **Multi-tile editing** on the Control Panel: marquee- or Ctrl-click a group of tiles, then move, resize, copy/cut/paste, duplicate, or delete them together — with full keyboard shortcuts.
+- **Open `.cpz` command files from Explorer** (they open in your running instance, not a second copy), and drag files onto the workspace or the Files list.
+- Control Panel tiles now **scale their readings, LED lamps, and labels to the tile size**, so values stay glanceable and never clip.
+- More reliable shared connections, and an update check that no longer hits GitHub's rate limit.
+
+## Control Panel
+
+- **Group editing** — select multiple tiles by Ctrl-click or by dragging a marquee box, then drag the group as one block, apply a size to all of them, or copy / cut / paste / duplicate / delete the selection. Keyboard shortcuts work when the grid is focused: Ctrl+C/X/V, Delete, Ctrl+A, Ctrl+D, and Esc.
+- **Sort & reorder the library** — the Control Panels rail and the Favorites list gain a sort button (Custom order / Name) and drag-to-reorder, matching the Files panel.
+- **Readable tiles at any size** — value readings auto-fit (big and bold in a large tile, shrunk to fit a long identity string), and LED lamps and status-bit labels scale with the tile instead of staying tiny.
+- **Resume during a command-file run** — when a command file runs on the panel's connection, polling pauses and a banner offers one-click **Resume polling** for that run.
+
+## Files
+
+- **Explorer integration** — double-click a `.cpz` command file and it opens as a tab in your running ComPort Zone (re-opening a file focuses its existing tab). Drag command files onto the tab area to open them, or onto the Files list to save them as Quick Files.
+
+## Fixed
+
+- **Crash when splitting a pane that holds a live Control Panel** — moving a panel between split panes (Split Right/Down, drag, or Join) could crash while the widget was briefly reparented; updates are now suppressed for the duration of the move.
+- **Update check no longer fails with "rate limit exceeded"** — it reads the releases feed instead of the rate-limited API, so checks work every time, and a failed check shows a clear message instead of a raw HTTP error.
+- **More reliable shared connections** — when the terminal, a running command file, and Control Panel polling share one connection, every reply now goes to the requester that asked for it (the I/O layer was reworked to prevent misrouted replies under concurrency).
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, and saved Control Panels under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+---
+
 # ComPort Zone v0.5.1 Release Notes
 
 Release date: 2026-06-10

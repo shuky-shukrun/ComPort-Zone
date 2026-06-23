@@ -4,6 +4,8 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+## 0.5.2 - 2026-06-23
+
 ### Added
 
 - **Multi-tile editing on the Control Panel canvas** — select several tiles (Ctrl-click, or drag a marquee box over them) and operate on them as a group:
@@ -13,6 +15,12 @@ All notable changes to ComPort Zone are documented here.
   - **Keyboard shortcuts** (when the grid is focused, so they never hijack copy in an input field): Ctrl+C / Ctrl+X / Ctrl+V, Delete, Ctrl+A (select all), Ctrl+D (duplicate), and Esc (clear the selection, then disarm).
   - **Marquee box-select**: drag a rectangle on empty grid space to select every tile it touches; Ctrl+drag adds to the current selection.
 - **Sort + drag-reorder for the Control Panels side bar** — the Control Panels rail and the Favorite Control Panels panel now match the Files panel: a sort button (Custom order / Name) in the header and drag-to-reorder rows. Dragging a row switches that list to Custom order and remembers the arrangement; the sort mode and custom order persist (separately for the saved list and the favourites).
+- **Open files from Explorer, and drag them in** — double-click a `.cpz` command file (or pass one on the command line) and it opens as a tab in your already-running ComPort Zone instead of launching a second copy; re-opening a file that is already open just focuses its tab. You can also drag command files from Explorer onto the tab area to open them, or onto the sidebar's Files list to add them as Quick Files.
+
+### Changed
+
+- **Control Panel polling pauses for command-file runs, with one-click Resume** — when a command file runs on a panel's bound connection, the panel pauses its polling and controls and shows a prominent amber banner with a **Resume polling** button that lifts the pause for that run only. It is safe: a resumed panel's polls are ignored by the running script's `EXPECT` checks, so they can neither satisfy nor pollute them.
+- **More reliable shared connections** — the serial/LAN I/O layer was reworked into a single serialized request/response channel per connection. When the terminal, a running command file, and Control Panel polling share one port, each reply now reliably reaches the requester that asked for it; the previous design could misroute replies under heavy concurrency.
 
 ### Fixed
 
