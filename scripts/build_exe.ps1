@@ -477,7 +477,11 @@ $PyInstallerArgs = @(
     # PyInstaller's static scan can miss it (and silently fall back to
     # QApplication.beep in the shipped exe). Pin it as a hidden import
     # so control_panel alert sounds work after packaging.
-    "--hidden-import", "PySide6.QtMultimedia"
+    "--hidden-import", "PySide6.QtMultimedia",
+    # single_instance.py uses QtNetwork (QLocalServer/QLocalSocket) to forward
+    # a double-clicked .cpz into the running instance. The import is static, but
+    # pin it so packaging can never silently drop the single-instance feature.
+    "--hidden-import", "PySide6.QtNetwork"
 ) + $IconArgs + @($EntryPoint)
 Invoke-Checked $VenvPython $PyInstallerArgs
 

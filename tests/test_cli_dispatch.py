@@ -22,7 +22,7 @@ class DispatchTests(unittest.TestCase):
              patch.object(entry, "_run_cli", return_value=0) as cli_mock, \
              patch("sys.argv", new=["comport-zone"]):
             self.assertEqual(entry.main(), 0)
-        gui_mock.assert_called_once_with(None)
+        gui_mock.assert_called_once_with([])
         cli_mock.assert_not_called()
 
     def test_gui_arg_runs_gui(self) -> None:
@@ -30,7 +30,7 @@ class DispatchTests(unittest.TestCase):
              patch.object(entry, "_run_cli", return_value=0) as cli_mock, \
              patch("sys.argv", new=["comport-zone", "gui"]):
             self.assertEqual(entry.main(), 0)
-        gui_mock.assert_called_once_with(None)
+        gui_mock.assert_called_once_with([])
         cli_mock.assert_not_called()
 
     def test_command_file_arg_opens_gui_with_file(self) -> None:
@@ -39,7 +39,16 @@ class DispatchTests(unittest.TestCase):
              patch.object(entry, "_run_cli", return_value=0) as cli_mock, \
              patch("sys.argv", new=["comport-zone", "C:/scripts/run.cpz"]):
             self.assertEqual(entry.main(), 0)
-        gui_mock.assert_called_once_with("C:/scripts/run.cpz")
+        gui_mock.assert_called_once_with(["C:/scripts/run.cpz"])
+        cli_mock.assert_not_called()
+
+    def test_multiple_command_file_args_open_gui(self) -> None:
+        # Several files dragged onto the exe arrive as multiple paths; all open in the GUI.
+        with patch.object(entry, "_run_gui", return_value=0) as gui_mock, \
+             patch.object(entry, "_run_cli", return_value=0) as cli_mock, \
+             patch("sys.argv", new=["comport-zone", "a.cpz", "b.cmd"]):
+            self.assertEqual(entry.main(), 0)
+        gui_mock.assert_called_once_with(["a.cpz", "b.cmd"])
         cli_mock.assert_not_called()
 
     def test_subcommand_runs_cli(self) -> None:

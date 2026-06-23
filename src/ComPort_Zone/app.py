@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import faulthandler
+import os
 import sys
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -11,6 +12,7 @@ from . import __version__
 from . import quick_actions as _quick_actions
 from .models import LanProfile, SerialProfile
 from .serial_core import SerialEvent
+from .single_instance import SingleInstanceServer, default_instance_key, forward_open_request
 from .storage import default_config_path
 from .themes import VS_CODE_DARK
 from .ui.tokens import RADIUS_LG, SPACE_2XL
@@ -200,7 +202,8 @@ def create_startup_splash(message: str) -> QSplashScreen:
     return splash
 
 
-def run(initial_file: str | None = None) -> int:
+def run(initial_file: str | None = None, *, initial_files: list[str] | None = None) -> int:
+    files = list(initial_files) if initial_files else ([initial_file] if initial_file else [])
     set_windows_app_user_model_id()
     if QApplication.instance() is None:
         # Keep fractional display scales (125%/150%) intact so device-pixel icon
@@ -213,6 +216,15 @@ def run(initial_file: str | None = None) -> int:
     app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
     app.setFont(pick_ui_font())
+
+    # Single-instance forward: when a file is opened (the .cpz association) while an
+    # instance is already running, hand the path(s) to it and exit quietly — no second
+    # window, no splash. Done before any UI is built so the forwarded launch is fast.
+    instance_key = default_instance_key()
+    abs_files = [os.path.abspath(item) for item in files]
+    if abs_files and forward_open_request(instance_key, abs_files):
+        return 0
+
     boot_splash = update_boot_splash("Loading ComPort Zone...")
     splash = create_startup_splash("Loading serial workspace...")
     close_boot_splash(boot_splash)
@@ -232,8 +244,17 @@ def run(initial_file: str | None = None) -> int:
     splash.finish(window)
     install_freeze_watchdog(window)
     window.run_startup_actions()
-    if initial_file:
-        window.open_command_file_editor(initial_file)
+
+    # Become the primary listener (the first instance — launched however — owns the
+    # name). A secondary launch gets False here and just runs as its own window; it
+    # won't receive forwards, which is the accepted trade-off of "forward-only".
+    instance_server = SingleInstanceServer()
+    if instance_server.listen(instance_key):
+        instance_server.openRequested.connect(window.handle_forwarded_open)
+        window._instance_server = instance_server  # keep a ref for the app's lifetime
+
+    if abs_files:
+        window.open_command_files_in_tabs(abs_files)
     result = app.exec()
     # Clean exit: cancel the armed dump so a slow-but-normal shutdown
     # never writes a spurious freeze report.

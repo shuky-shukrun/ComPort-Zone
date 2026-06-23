@@ -1,6 +1,6 @@
 import unittest
 
-from PySide6.QtCore import QByteArray, QMimeData, QPoint, QPointF, Qt
+from PySide6.QtCore import QByteArray, QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
@@ -20,6 +20,21 @@ class FakeDragEvent:
 
     def position(self) -> QPointF:
         return self._position
+
+    def acceptProposedAction(self) -> None:
+        self.accepted = True
+
+
+class FakeFileDropEvent:
+    """An external (Explorer) file drag: a mime carrying file:// URLs."""
+
+    def __init__(self, paths: list[str]) -> None:
+        self._mime = QMimeData()
+        self._mime.setUrls([QUrl.fromLocalFile(path) for path in paths])
+        self.accepted = False
+
+    def mimeData(self) -> QMimeData:
+        return self._mime
 
     def acceptProposedAction(self) -> None:
         self.accepted = True
@@ -100,6 +115,30 @@ class SplitWorkspaceWidgetTests(unittest.TestCase):
         workspace.deleteLater()
         first.deleteLater()
         second.deleteLater()
+
+    def test_external_file_drop_emits_files_dropped(self) -> None:
+        workspace = SplitWorkspaceWidget()
+        captured: list[list[str]] = []
+        workspace.filesDropped.connect(lambda paths: captured.append(paths))
+
+        paths = ["C:/scripts/a.cpz", "C:/scripts/b.cmd"]
+        event = FakeFileDropEvent(paths)
+        workspace.dropEvent(event)
+
+        expected = [QUrl.fromLocalFile(path).toLocalFile() for path in paths]
+        self.assertTrue(event.accepted)
+        self.assertEqual(captured, [expected])
+
+        workspace.deleteLater()
+
+    def test_external_file_drag_enter_is_accepted(self) -> None:
+        workspace = SplitWorkspaceWidget()
+        event = FakeFileDropEvent(["C:/scripts/a.cpz"])
+
+        workspace.dragEnterEvent(event)
+
+        self.assertTrue(event.accepted)
+        workspace.deleteLater()
 
     def test_clicking_tab_content_activates_that_pane(self) -> None:
         workspace = SplitWorkspaceWidget()

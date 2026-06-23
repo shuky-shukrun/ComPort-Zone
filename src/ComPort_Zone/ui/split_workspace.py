@@ -29,6 +29,10 @@ class SplitWorkspaceWidget(QWidget):
     currentChanged = Signal(int)
     tabContextMenuRequested = Signal(QPoint)
     tabMovedBetweenPanes = Signal(QWidget, int)
+    # Emitted with a list of local file paths dropped from outside the app (Explorer),
+    # so the host can open each in a new tab. Internal tab drags use TAB_MIME_TYPE and
+    # are handled here directly.
+    filesDropped = Signal(list)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -488,12 +492,18 @@ class SplitWorkspaceWidget(QWidget):
         if event.mimeData().hasFormat(TAB_MIME_TYPE):
             self._show_drop_preview(event)
             event.acceptProposedAction()
+        elif self._local_files_from_mime(event.mimeData()):
+            self._show_file_drop_preview()
+            event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event) -> None:
         if event.mimeData().hasFormat(TAB_MIME_TYPE):
             self._show_drop_preview(event)
+            event.acceptProposedAction()
+        elif self._local_files_from_mime(event.mimeData()):
+            self._show_file_drop_preview()
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
@@ -505,7 +515,12 @@ class SplitWorkspaceWidget(QWidget):
     def dropEvent(self, event) -> None:
         self.drop_preview.hide()
         if not event.mimeData().hasFormat(TAB_MIME_TYPE):
-            super().dropEvent(event)
+            files = self._local_files_from_mime(event.mimeData())
+            if files:
+                self.filesDropped.emit(files)
+                event.acceptProposedAction()
+            else:
+                super().dropEvent(event)
             return
         try:
             index = int(bytes(event.mimeData().data(TAB_MIME_TYPE)).decode("ascii"))
@@ -574,3 +589,17 @@ class SplitWorkspaceWidget(QWidget):
         self.drop_preview.setGeometry(geometry.adjusted(8, 8, -8, -8))
         self.drop_preview.raise_()
         self.drop_preview.show()
+
+    def _show_file_drop_preview(self) -> None:
+        self.drop_preview.setText("Release to open in a new tab")
+        self.drop_preview.setGeometry(self.rect().adjusted(8, 8, -8, -8))
+        self.drop_preview.raise_()
+        self.drop_preview.show()
+
+    @staticmethod
+    def _local_files_from_mime(mime: QMimeData) -> list[str]:
+        """Local filesystem paths from an external (Explorer) drag, or [] for anything
+        else — including internal tab drags, which carry TAB_MIME_TYPE, not URLs."""
+        if not mime.hasUrls():
+            return []
+        return [path for url in mime.urls() if (path := url.toLocalFile())]
