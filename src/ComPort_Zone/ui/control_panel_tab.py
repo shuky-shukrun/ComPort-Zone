@@ -1644,13 +1644,34 @@ class ControlPanelTabWidget(QWidget):
 
     # ----------------------------------------------------------- chip text
 
+    def _target_label(self, session_id: int | None, endpoint: str, title: str = "") -> str:
+        """Display label for a bound target: the terminal's current tab name
+        with its endpoint in parentheses — ``My Tab (COM10)``. Reads the live
+        session so a rename shows through; falls back to the persisted
+        title/endpoint hints when the session isn't resolved. Collapses to just
+        the endpoint when the tab was never renamed (its title *is* the
+        endpoint), so an unnamed port stays ``COM10``, not ``COM10 (COM10)``."""
+        session = (
+            self.coordinator.session_by_id(session_id) if session_id is not None else None
+        )
+        if session is not None:
+            title = getattr(session, "tab_title", "") or title
+            endpoint = session.connection_endpoint() or endpoint
+        if title and endpoint and title != endpoint:
+            return f"{title} ({endpoint})"
+        return title or endpoint or "—"
+
     def _target_status_lines(self) -> list[tuple[str, str, bool]]:
-        """(endpoint label, status text, healthy) per involved target."""
+        """(target label, status text, healthy) per involved target."""
         lines: list[tuple[str, str, bool]] = []
         seen: set[int | None] = set()
         ordered_targets: list[tuple[str, int | None]] = []
         if self._bound_session_id is not None or not self._has_entry_overrides:
-            default_label = self._tab_state.target_endpoint or self._tab_state.target_title or "—"
+            default_label = self._target_label(
+                self._bound_session_id,
+                self._tab_state.target_endpoint,
+                self._tab_state.target_title,
+            )
             ordered_targets.append((default_label, self._bound_session_id))
             seen.add(self._bound_session_id)
         for entry in self.config.entries:
@@ -1660,7 +1681,9 @@ class ControlPanelTabWidget(QWidget):
             if session_id in seen and session_id is not None:
                 continue
             seen.add(session_id)
-            ordered_targets.append((entry.target_endpoint, session_id))
+            ordered_targets.append(
+                (self._target_label(session_id, entry.target_endpoint), session_id)
+            )
         for label, session_id in ordered_targets:
             if session_id is None:
                 lines.append((label, "no matching terminal tab", False))
@@ -1720,7 +1743,7 @@ class ControlPanelTabWidget(QWidget):
             label, status, healthy = lines[0]
             if healthy:
                 state, text = "polling", f"Polling {label}"
-                tooltip = f"Bound to {self._tab_state.target_title} ({label})"
+                tooltip = f"Bound to {label}"
             else:
                 state = "paused"
                 if status == "disconnected":
