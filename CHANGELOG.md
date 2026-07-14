@@ -4,6 +4,10 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Fixed
+
+- **Control Panel binding chip shows the terminal's name, not just the port** — a bound panel's status chip now reads `Polling My Tab (COM10)` instead of the raw `COM10`, matching the name shown in the bind menu; an unnamed terminal still shows just its endpoint (no redundant `COM10 (COM10)`). Renaming the bound terminal updates the chip immediately (it previously stayed stale until the next connect/disconnect).
+
 ## 0.5.2 - 2026-06-23
 
 ### Added

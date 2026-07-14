@@ -249,6 +249,24 @@ class ControlPanelAppTests(unittest.TestCase):
         self.assertEqual(fake.sent_text, [("MEAS:VOLT?", None)])
         self.assertIn("1 alert(s)", control_panel.status_summary())
 
+    def test_rename_terminal_updates_bound_chip(self) -> None:
+        config = make_control_panel()
+        window, _path = self.launch_window(AppSettings(control_panels=[config]), "rename")
+        session = window.iter_sessions()[0]
+        self.fake_out_session(session)
+        session.profile = SerialProfile(port="COM10")
+        control_panel = window.open_control_panel_tab(config.id)
+        self.stop_tick_timer(control_panel)
+        control_panel.bind_to_session(session.session_id)
+
+        # Renaming the bound terminal flows through update_tab_titles to the
+        # panel's chip — it echoes the new name with the endpoint in parens.
+        session.title = "Bench PSU"
+        session.title_is_custom = True
+        window.update_tab_titles()
+
+        self.assertEqual(control_panel.bind_chip.text(), "Polling Bench PSU (COM10)")
+
     def test_disconnect_pauses_and_terminal_close_unbinds(self) -> None:
         config = make_control_panel()
         window, _path = self.launch_window(AppSettings(control_panels=[config]), "pauses")

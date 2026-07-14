@@ -213,8 +213,24 @@ class ControlPanelTabPollingTests(ControlPanelTabTestBase):
     def test_chip_shows_polling_state(self) -> None:
         tab = self.make_tab(volt_entry())
         tab.bind_to_session(1)
-        self.assertEqual(tab.bind_chip.text(), "Polling COM7")
+        # The chip shows the terminal's tab name with its endpoint in parens.
+        self.assertEqual(tab.bind_chip.text(), "Polling Terminal 1 (COM7)")
         self.assertEqual(tab.bind_chip.property("state"), "polling")
+        self.assertEqual(tab.bind_chip.toolTip(), "Bound to Terminal 1 (COM7)")
+
+    def test_chip_label_uses_tab_name_and_collapses_when_unnamed(self) -> None:
+        tab = self.make_tab(volt_entry())
+        tab.bind_to_session(1)
+        # A renamed terminal: the chip shows the name with the port in parens,
+        # and a later rename shows through on the next refresh.
+        self.session.tab_title = "Bench PSU"
+        tab.refresh_binding_state()
+        self.assertEqual(tab.bind_chip.text(), "Polling Bench PSU (COM7)")
+        # An unnamed terminal (its tab title *is* the endpoint): just the port,
+        # not the redundant "COM7 (COM7)".
+        self.session.tab_title = "COM7"
+        tab.refresh_binding_state()
+        self.assertEqual(tab.bind_chip.text(), "Polling COM7")
 
     def test_disconnect_pauses_and_blocks_sends(self) -> None:
         # v2: disconnect gates the session's entries at submit time
@@ -936,8 +952,8 @@ class MultiSessionBindingTests(ControlPanelTabTestBase):
 
         self.assertEqual(len(self.session.transport.sent_text), 1)
         self.assertEqual(second.transport.sent_text, [])
-        self.assertIn("Polling COM7", tab.bind_chip.text())
-        self.assertIn("COM9 — disconnected", tab.bind_chip.toolTip())
+        self.assertIn("Polling Terminal 1 (COM7)", tab.bind_chip.text())
+        self.assertIn("Terminal 2 (COM9) — disconnected", tab.bind_chip.toolTip())
 
     def test_batch_on_one_session_gates_only_it(self) -> None:
         second = self.add_session(2, "COM9")
@@ -953,7 +969,7 @@ class MultiSessionBindingTests(ControlPanelTabTestBase):
 
         self.assertEqual(len(self.session.transport.sent_text), 1)
         self.assertEqual(second.transport.sent_text, [])
-        self.assertIn("COM9 — command file running", tab.bind_chip.toolTip())
+        self.assertIn("Terminal 2 (COM9) — command file running", tab.bind_chip.toolTip())
 
     def test_unresolved_override_never_submits(self) -> None:
         tab = self.make_tab(volt_entry(), self.override_entry("COM99"))

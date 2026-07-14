@@ -1628,6 +1628,10 @@ class MainWindow(QMainWindow):
             sync = getattr(session, "_sync_prompt_context", None)
             if callable(sync):
                 sync()
+        # A bound Control Panel's chip echoes the tab name too, so re-render it
+        # on the same title changes (a rename otherwise stayed stale until the
+        # next gate change).
+        self.control_panel_runs.refresh_control_panels()
 
     def _set_workspace_tab_active_property(self, widget: QWidget, active: bool) -> None:
         targets = [widget]
