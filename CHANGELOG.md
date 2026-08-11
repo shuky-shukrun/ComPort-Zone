@@ -4,6 +4,17 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-11
+
+### Added
+
+- **`@@settings` persistent execution directives in command files** — `@@name value` lines set execution properties that persist from that line to the end of the run (or until the same setting is set again): `@@wait <ms>` (delay before each following command), `@@expect-timeout <ms>` (timeout for following `EXPECT` steps), `@@on-error stop|continue` (abort on a failed step, or log it and continue), and `@@send-mode text|hex` (read following bare/SEND lines as text or raw hex). They're distinct from the one-time `WAIT` step and `{{param}}` templating, and are never sent to the device. A single settings registry keeps the parser, both run engines (GUI and CLI), syntax highlighting, completion, and validation in agreement, with editor squiggles and CLI `validate` catching unknown or malformed `@@` lines. See `example-settings.cpz` and the README for the full list.
+- **CLI: raw TCP endpoints alongside serial** — `send`/`hex`/`listen`/`run`/`repl`, quick send, and `files run` now also accept a raw TCP endpoint via `--host`/`--tcp-port`/`--tcp-timeout`, kept distinct from the serial `--port` (mixing the two is a usage error). The REPL gains matching TCP `/set` shortcuts and `/show endpoint`. JSON `rx`/`status` records self-identify their transport. See `docs/CLI_REFERENCE.md` and the bundled `resources/tcp_echo_server.py` for a local target to test against.
+
+### Changed
+
+- **Large device messages render instantly instead of over ~2 seconds** — a long message that arrives from the port as many small reads used to trigger a full render pass per read; those bursts are now coalesced into a single render pass, over 1000x faster in the worst case, with per-source ordering (TX echoes, status lines, control-panel traffic) preserved.
+
 ### Fixed
 
 - **App stuck on the logo at launch when a restored command file was deleted** — if a command-file tab was open when the app last closed and that file was later deleted, moved, or lived on a drive that is no longer mounted, startup raised a modal "Open Command File" error while rebuilding the workspace — before the main window existed, and behind the always-on-top splash. The dialog was invisible but blocking, so the app sat on the logo forever; the only sign of it was an extra window under ComPortZone in Task Manager, and ending that window let the launch continue. Restoring a tab whose file is gone now keeps the tab (still bound to its path, so Save recreates the file) with an empty buffer, and reports the reason in the tab's status line and the status bar instead of a dialog. Two guards back it up: the startup splash is no longer always-on-top, so nothing on screen can be hidden behind it, and the freeze watchdog now also covers window construction — a startup that stalls writes `freeze-dump.txt` next to the settings file instead of leaving nothing to diagnose.

@@ -1,3 +1,39 @@
+# ComPort Zone v0.6.0 Release Notes
+
+Release date: 2026-08-11
+
+ComPort Zone v0.6.0 adds persistent `@@settings` directives to command files, brings the CLI up to parity with the GUI for raw TCP endpoints, and makes large device messages render instantly.
+
+## Highlights
+
+- **`@@settings` directives in command files** — `@@wait`, `@@expect-timeout`, `@@on-error`, and `@@send-mode` set execution properties that persist from that line to the end of the run, with editor highlighting, completion, and validation.
+- **CLI: raw TCP endpoints** — `send`, `hex`, `listen`, `run`, `repl`, quick send, and `files run` now accept `--host`/`--tcp-port`/`--tcp-timeout` alongside the existing serial `--port`, matching what the GUI already supports.
+- **Large messages render instantly** — a burst of small reads from the port used to trigger a render pass per read; they're now coalesced into one, over 1000x faster in the worst case.
+- Fixes a startup hang when a restored command-file tab pointed at a deleted file, and the Control Panel binding chip now shows the terminal's name instead of just its port.
+
+## Command Files
+
+- **`@@` settings directives** — `@@wait <ms>` delays before every following command; `@@expect-timeout <ms>` sets the timeout for following `EXPECT` steps; `@@on-error stop|continue` controls whether a failed step aborts the run or just logs a warning; `@@send-mode text|hex` switches following bare/`SEND` lines between text and raw hex. Each setting persists until changed again or the run ends, and applies in both the GUI runner and the CLI. Unknown or malformed `@@` lines are caught by the editor's lint and by `comport-zone files validate`. See `example-settings.cpz` for a worked example.
+
+## CLI
+
+- **Raw TCP endpoints** — every connect-using command now takes `--host`/`--tcp-port`/`--tcp-timeout` as an alternative to `--port`, and the REPL gains matching `/set` shortcuts and `/show endpoint`. JSON `rx`/`status` output records which transport was used. See [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) and the bundled `resources/tcp_echo_server.py` for a local target to try it against.
+
+## Performance
+
+- **Burst RX reads coalesce into one render pass** — a long device message that arrives as many small reads no longer re-renders the terminal per read; consecutive reads from the same source are merged before rendering, so a message that used to take ~2.3 seconds to appear now renders in ~1.5 ms. Ordering across sources (TX echoes, status lines, control-panel traffic) is unchanged.
+
+## Fixed
+
+- **App stuck on the logo at launch when a restored command file was deleted** — a command-file tab pointing at a file that was deleted, moved, or on an unmounted drive used to raise an invisible modal dialog during startup, hanging the app on the splash screen. The tab now restores with an empty buffer and reports the problem in its status line instead.
+- **Control Panel binding chip shows the terminal's name** — a bound panel's chip now reads `Polling My Tab (COM10)` instead of just `COM10`, matching the bind menu, and updates immediately when the terminal is renamed.
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, and saved Control Panels under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+---
+
 # ComPort Zone v0.5.2 Release Notes
 
 Release date: 2026-06-23
