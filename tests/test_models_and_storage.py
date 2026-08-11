@@ -101,11 +101,17 @@ class ModelsAndStorageTests(unittest.TestCase):
             EXAMPLE_COMMAND_FILE,
             EXAMPLE_MEASUREMENT_FILE,
             EXAMPLE_SELF_TEST_FILE,
+            EXAMPLE_SETTINGS_FILE,
         )
 
         self.assertEqual(
             [qf.label for qf in settings.quick_files],
-            ["Example Commands", "Self-Test (EXPECT)", "Measurement (parameters)"],
+            [
+                "Example Commands",
+                "Self-Test (EXPECT)",
+                "Measurement (parameters)",
+                "Settings (@@directives)",
+            ],
         )
         self.assertEqual(
             [qf.label for qf in settings.quick_files if qf.favorite],
@@ -115,6 +121,7 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertTrue(EXAMPLE_COMMAND_FILE.exists())
         self.assertTrue(EXAMPLE_SELF_TEST_FILE.exists())
         self.assertTrue(EXAMPLE_MEASUREMENT_FILE.exists())
+        self.assertTrue(EXAMPLE_SETTINGS_FILE.exists())
         self.assertTrue(settings.check_for_updates_on_launch)
 
     def test_settings_store_round_trip(self) -> None:

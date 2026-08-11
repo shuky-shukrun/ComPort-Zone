@@ -116,6 +116,42 @@ SEND c
         self.assertEqual([text for text, _ in fake.sent_text], ["a", "b", "c"])
 
 
+class SettingsDirectiveTests(unittest.TestCase):
+    def test_send_mode_hex_sends_bare_lines_as_bytes(self) -> None:
+        fake = FakeSerialTransport()
+        outcome = run_command_file(
+            fake, _steps("@@send-mode hex\n55 AA\n"), {}, on_event=_no_events_sink
+        )
+        self.assertTrue(outcome.success)
+        self.assertEqual(fake.sent_bytes, [b"\x55\xaa"])
+
+    def test_on_error_continue_overrides_default_stop(self) -> None:
+        # Default is stop; the @@ directive flips it mid-run so SEND b still runs.
+        fake = FakeSerialTransport()
+        outcome = run_command_file(
+            fake,
+            _steps("SEND a\n@@on-error continue\nEXPECT NEVER\nSEND b\n"),
+            {},
+            on_event=_no_events_sink,
+            expect_timeout_ms=20,
+        )
+        self.assertTrue(outcome.success)
+        self.assertEqual([text for text, _ in fake.sent_text], ["a", "b"])
+
+    def test_expect_timeout_setting_lowers_timeout(self) -> None:
+        fake = FakeSerialTransport()
+        outcome = run_command_file(
+            fake,
+            _steps("@@expect-timeout 20\nSEND x\nEXPECT NEVER\n"),
+            {},
+            on_event=_no_events_sink,
+            expect_timeout_ms=1000,
+        )
+        self.assertFalse(outcome.success)
+        self.assertEqual(outcome.failure_kind, FAILURE_EXPECT)
+        self.assertIn("after 20 ms", outcome.failure_message)
+
+
 class ParameterTests(unittest.TestCase):
     def test_param_value_substituted_into_send(self) -> None:
         fake = FakeSerialTransport()

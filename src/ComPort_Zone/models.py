@@ -39,9 +39,10 @@ DEFAULT_SNIPPETS = ["*IDN?", "SYST:ERR:ALL?", "SYST:FIRM?"]
 # Example command files shipped alongside the package (installation folder).
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
-# Two richer samples: one driving EXPECT response-matching, one with {{parameters}}.
+# Richer samples: EXPECT response-matching, {{parameters}}, and @@ execution settings.
 EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
 EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
+EXAMPLE_SETTINGS_FILE = _ASSETS_DIR / "example-settings.cpz"
 SETTINGS_SCHEMA_VERSION = 8
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 # Feature floors: a saved payload declares the highest floor of any
@@ -480,6 +481,7 @@ def default_quick_files() -> list[QuickFile]:
         QuickFile(label="Example Commands", path=str(EXAMPLE_COMMAND_FILE), favorite=True),
         QuickFile(label="Self-Test (EXPECT)", path=str(EXAMPLE_SELF_TEST_FILE)),
         QuickFile(label="Measurement (parameters)", path=str(EXAMPLE_MEASUREMENT_FILE)),
+        QuickFile(label="Settings (@@directives)", path=str(EXAMPLE_SETTINGS_FILE)),
     ]
 
 

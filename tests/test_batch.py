@@ -65,6 +65,30 @@ class BatchParserTests(unittest.TestCase):
             parse_batch_script("HEX ABC")
         self.assertEqual(context.exception.line_number, 1)
 
+    def test_parse_settings_directives(self) -> None:
+        steps = parse_batch_script(
+            "@@wait 100\n@@expect-timeout 2000\n@@on-error continue\n@@send-mode hex"
+        )
+        self.assertEqual([step.kind for step in steps], ["setting"] * 4)
+        self.assertEqual(steps[0].payload, ("wait", 100))
+        self.assertEqual(steps[1].payload, ("expect-timeout", 2000))
+        self.assertEqual(steps[2].payload, ("on-error", "continue"))
+        self.assertEqual(steps[3].payload, ("send-mode", "hex"))
+
+    def test_parse_setting_name_is_case_insensitive(self) -> None:
+        self.assertEqual(parse_batch_script("@@WAIT 5")[0].payload, ("wait", 5))
+
+    def test_parse_rejects_unknown_and_malformed_settings(self) -> None:
+        for bad in (
+            "@@nope 1",
+            "@@wait -1",
+            "@@wait abc",
+            "@@expect-timeout 0",
+            "@@send-mode sideways",
+        ):
+            with self.assertRaises(BatchParseError, msg=bad):
+                parse_batch_script(bad)
+
     def test_parse_hex_payload_accepts_spaces_commas_and_prefixes(self) -> None:
         payload = parse_hex_payload("0xAA, 55 01-0D")
         self.assertEqual(payload, bytes.fromhex("AA55010D"))
@@ -222,6 +246,70 @@ class BatchParserTests(unittest.TestCase):
         messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
         self.assertTrue(any(message.startswith("EXPECT timed out on line 2") for message in messages))
         self.assertNotIn("Batch run completed.", messages)
+
+    def test_wait_setting_delays_before_each_command(self) -> None:
+        sleeps: list[float] = []
+        runner = BatchRunner(
+            emit_event=lambda event: None,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+        )
+        runner._resume_event.set()
+        runner._sleep_interruptible = lambda seconds: (sleeps.append(seconds) or True)
+
+        runner._run_steps(parse_batch_script("@@wait 50\nSEND a\nSEND b"))
+
+        # The setting step doesn't sleep; each following command does.
+        self.assertEqual(sleeps, [0.05, 0.05])
+
+    def test_expect_timeout_setting_overrides_runner_default(self) -> None:
+        output_events: Queue = Queue()
+        runner = BatchRunner(  # runner default is DEFAULT_EXPECT_TIMEOUT_MS (1000)
+            emit_event=output_events.put_nowait,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+        )
+        runner._rx_event_queue = Queue()
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("@@expect-timeout 5\nSEND x\nEXPECT missing"))
+
+        messages = [output_events.get_nowait().message for _ in range(output_events.qsize())]
+        self.assertTrue(any("after 5 ms" in message for message in messages))
+
+    def test_on_error_continue_proceeds_after_failed_expect(self) -> None:
+        sent: list[str] = []
+        runner = BatchRunner(
+            emit_event=lambda event: None,
+            send_text=lambda text, **kw: sent.append(text),
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+            expect_timeout_ms=1,
+        )
+        runner._rx_event_queue = Queue()
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("SEND a\n@@on-error continue\nEXPECT missing\nSEND b"))
+
+        self.assertEqual(sent, ["a", "b"])
+
+    def test_send_mode_hex_routes_bare_lines_to_bytes(self) -> None:
+        sent_text: list[str] = []
+        sent_bytes: list[bytes] = []
+        runner = BatchRunner(
+            emit_event=lambda event: None,
+            send_text=lambda text, **kw: sent_text.append(text),
+            send_bytes=lambda data, **kw: sent_bytes.append(data),
+            connected_supplier=lambda: True,
+        )
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("@@send-mode hex\n55 AA\n@@send-mode text\nhello"))
+
+        self.assertEqual(sent_bytes, [bytes.fromhex("55AA")])
+        self.assertEqual(sent_text, ["hello"])
 
     def test_user_pause_blocks_next_step_until_resume(self) -> None:
         output_events: Queue = Queue()

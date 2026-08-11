@@ -53,6 +53,14 @@ class ValidateTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 13, msg=result.output)
         self.assertIn("HEX", result.output)
 
+    def test_unknown_setting_is_reported(self) -> None:
+        path = _write_file(self.tmp_path, """\
+            @@nope 1
+        """)
+        result = self.runner.invoke(cli, ["validate", str(path)])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("Unknown setting", result.output)
+
     def test_parameter_with_default_validates_clean(self) -> None:
         path = _write_file(self.tmp_path, """\
             SEND voltage={{VOLT=3.3}}

@@ -15,6 +15,8 @@ class CommandFileHighlighter(QSyntaxHighlighter):
         self.warn_unknown = True
         self.keyword_format = QTextCharFormat()
         self.keyword_format.setFontWeight(QFont.Weight.Bold)
+        self.setting_format = QTextCharFormat()
+        self.setting_format.setFontWeight(QFont.Weight.Bold)
         self.comment_format = QTextCharFormat()
         self.parameter_format = QTextCharFormat()
         self.issue_format = QTextCharFormat()
@@ -25,6 +27,7 @@ class CommandFileHighlighter(QSyntaxHighlighter):
     def apply_theme(self, theme: ThemePalette) -> None:
         """Recolor syntax formats from the active palette (derived from its tokens)."""
         self.keyword_format.setForeground(QColor(theme.tx))
+        self.setting_format.setForeground(QColor(theme.accent))
         self.comment_format.setForeground(QColor(theme.rx))
         self.parameter_format.setForeground(QColor(theme.status))
         self.issue_format.setUnderlineColor(QColor(theme.error))
@@ -41,6 +44,9 @@ class CommandFileHighlighter(QSyntaxHighlighter):
             if re.match(rf"^{keyword}\b", stripped, re.IGNORECASE):
                 self.setFormat(leading, len(keyword), self.keyword_format)
                 break
+        setting_match = re.match(r"^@@[\w-]+", stripped)
+        if setting_match:
+            self.setFormat(leading, setting_match.end(), self.setting_format)
         comment_index = text.find("//")
         hash_index = text.find("#")
         comment_starts = [index for index in (comment_index, hash_index) if index >= 0]
