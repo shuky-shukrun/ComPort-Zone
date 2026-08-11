@@ -24,7 +24,9 @@ from typing import Callable
 from ..core.batch import (
     BatchParseError,
     BatchTemplateStep,
+    RunSettings,
     parse_batch_line,
+    parse_hex_payload,
     substitute_batch_parameters,
 )
 from ..core.serial_core import SerialEvent, decode_serial_bytes, format_hex_bytes
@@ -171,11 +173,30 @@ def run_command_file(
     rx_buffer = bytearray()
     expect_failures = 0
     steps_run = 0
+    # Seed the run's @@settings from the CLI flags; @@ directives override them mid-run.
+    settings = RunSettings(
+        expect_timeout_ms=max(expect_timeout_ms, 1),
+        stop_on_error=stop_on_expect_fail,
+    )
 
     def _missing_param_prompt(name: str, line_number: int, line_text: str) -> str | None:
         # Reaching this means the resolver couldn't find a value AND the
         # template has no default. Validation should have prevented this;
         # treat it as a fatal parameter error.
+        return None
+
+    def _handle_send_failure(line_number: int, message: str) -> RunOutcome | None:
+        # @@on-error stop -> return a fatal outcome; continue -> log and keep going.
+        if settings.stop_on_error:
+            return RunOutcome(
+                success=False,
+                failure_kind=FAILURE_SEND,
+                failure_line=line_number,
+                failure_message=message,
+                steps_run=steps_run,
+                expect_failures=expect_failures,
+            )
+        on_event("error", {"message": f"Line {line_number}: {message}"})
         return None
 
     try:
@@ -226,26 +247,54 @@ def run_command_file(
 
             steps_run += 1
 
+            if step.kind == "setting":
+                name, value = step.payload
+                settings.apply(name, value)
+                on_event("status", {"message": f"Setting @@{name} = {value}."})
+                continue
+
             if step.kind == "wait":
                 _interruptible_sleep(step.payload / 1000.0, event_queue, rx_buffer, on_event)
                 continue
 
-            if step.kind == "send":
-                try:
-                    transport.send_text(str(step.payload))
-                except Exception as exc:
-                    return RunOutcome(
-                        success=False,
-                        failure_kind=FAILURE_SEND,
-                        failure_line=step.line_number,
-                        failure_message=f"SEND failed: {exc}",
-                        steps_run=steps_run,
-                        expect_failures=expect_failures,
-                    )
-                on_event(
-                    "tx",
-                    {"display": str(step.payload), "mode": "text", "line_number": step.line_number},
+            # Persistent inter-command delay (@@wait) applies before each send/hex.
+            if step.kind in ("send", "hex") and settings.wait_before_ms > 0:
+                _interruptible_sleep(
+                    settings.wait_before_ms / 1000.0, event_queue, rx_buffer, on_event
                 )
+
+            if step.kind == "send":
+                if settings.send_mode == "hex":
+                    try:
+                        data = parse_hex_payload(str(step.payload))
+                    except ValueError as exc:
+                        outcome = _handle_send_failure(step.line_number, f"@@send-mode hex: {exc}")
+                        if outcome is not None:
+                            return outcome
+                        continue
+                    try:
+                        transport.send_bytes(data)
+                    except Exception as exc:
+                        outcome = _handle_send_failure(step.line_number, f"SEND failed: {exc}")
+                        if outcome is not None:
+                            return outcome
+                        continue
+                    on_event(
+                        "tx",
+                        {"display": f"HEX {format_hex_bytes(data)}", "mode": "hex", "line_number": step.line_number},
+                    )
+                else:
+                    try:
+                        transport.send_text(str(step.payload))
+                    except Exception as exc:
+                        outcome = _handle_send_failure(step.line_number, f"SEND failed: {exc}")
+                        if outcome is not None:
+                            return outcome
+                        continue
+                    on_event(
+                        "tx",
+                        {"display": str(step.payload), "mode": "text", "line_number": step.line_number},
+                    )
                 # Reset the expectation buffer between sends so subsequent
                 # EXPECT only sees post-send RX.
                 rx_buffer.clear()
@@ -255,14 +304,10 @@ def run_command_file(
                 try:
                     transport.send_bytes(step.payload)
                 except Exception as exc:
-                    return RunOutcome(
-                        success=False,
-                        failure_kind=FAILURE_SEND,
-                        failure_line=step.line_number,
-                        failure_message=f"HEX send failed: {exc}",
-                        steps_run=steps_run,
-                        expect_failures=expect_failures,
-                    )
+                    outcome = _handle_send_failure(step.line_number, f"HEX send failed: {exc}")
+                    if outcome is not None:
+                        return outcome
+                    continue
                 on_event(
                     "tx",
                     {
@@ -279,7 +324,7 @@ def run_command_file(
                     str(step.payload),
                     event_queue=event_queue,
                     rx_buffer=rx_buffer,
-                    timeout_ms=expect_timeout_ms,
+                    timeout_ms=settings.expect_timeout_ms,
                     on_event=on_event,
                 )
                 on_event(
@@ -293,14 +338,14 @@ def run_command_file(
                 )
                 if not matched:
                     expect_failures += 1
-                    if stop_on_expect_fail:
+                    if settings.stop_on_error:
                         return RunOutcome(
                             success=False,
                             failure_kind=FAILURE_EXPECT,
                             failure_line=step.line_number,
                             failure_message=(
                                 f"EXPECT timed out on line {step.line_number} "
-                                f"after {expect_timeout_ms} ms: {step.payload}"
+                                f"after {settings.expect_timeout_ms} ms: {step.payload}"
                             ),
                             steps_run=steps_run,
                             expect_failures=expect_failures,

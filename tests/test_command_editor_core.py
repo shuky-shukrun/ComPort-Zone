@@ -14,6 +14,27 @@ class CommandEditorCoreTests(unittest.TestCase):
         self.assertEqual(command_text_from_line("HEX 55 AA"), "")
         self.assertEqual(command_token("SYST:ERR? 1"), "SYST:ERR?")
 
+    def test_settings_directives_validate_and_complete(self) -> None:
+        sources = CommandEditorSources()
+        # A valid setting line is accepted (not mis-flagged as an unknown command).
+        self.assertEqual(sources.validation_issues("@@wait 100"), [])
+        # Unknown name and bad value are errors.
+        self.assertTrue(
+            any(issue.severity == "error" for issue in sources.validation_issues("@@nope 1"))
+        )
+        self.assertTrue(
+            any(issue.severity == "error" for issue in sources.validation_issues("@@wait abc"))
+        )
+        # An indented setting is warned — it must start the line.
+        indented = sources.validation_issues("   @@wait 100")
+        self.assertTrue(
+            any(issue.severity == "warning" and "beginning" in issue.message for issue in indented)
+        )
+        # Settings are offered as completions.
+        suggestions = sources.suggestions()
+        self.assertIn("@@wait", suggestions)
+        self.assertIn("@@expect-timeout", suggestions)
+
     def test_sources_validate_and_suggest_without_qt_dependencies(self) -> None:
         sources = CommandEditorSources(
             history_commands=["MEAS:VOLT?"],

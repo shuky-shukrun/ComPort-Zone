@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from ..batch import (
+    KNOWN_SETTINGS,
+    SETTING_NAMES,
     BatchParameterInputLine,
     BatchParameterOccurrence,
     BatchParseError,
@@ -8,6 +10,7 @@ from ..batch import (
     BatchRunner,
     BatchStep,
     BatchTemplateStep,
+    RunSettings,
     batch_parameter_input_lines,
     find_batch_parameters,
     load_batch_file,
@@ -20,6 +23,8 @@ from ..batch import (
 )
 
 __all__ = [
+    "KNOWN_SETTINGS",
+    "SETTING_NAMES",
     "BatchParameterInputLine",
     "BatchParameterOccurrence",
     "BatchParseError",
@@ -27,6 +32,7 @@ __all__ = [
     "BatchRunner",
     "BatchStep",
     "BatchTemplateStep",
+    "RunSettings",
     "batch_parameter_input_lines",
     "find_batch_parameters",
     "load_batch_file",

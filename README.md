@@ -150,7 +150,23 @@ HEX 55 AA 01 0D             // send raw bytes, no line ending
 - **`SEND <text>`** sends text with the active line ending; a bare line does the same.
 - **`WAIT <ms>`** pauses before the next step.
 - **`HEX <bytes>`** sends raw bytes with no line ending.
-- **`EXPECT <text>`** waits (up to one second) for RX text containing `<text>`; if it doesn't arrive, the run stops with an error. RX is still shown in the terminal, and matches can span multiple chunks.
+- **`EXPECT <text>`** waits (up to one second, unless `@@expect-timeout` changes it) for RX text containing `<text>`; if it doesn't arrive, the run stops with an error. RX is still shown in the terminal, and matches can span multiple chunks.
+
+### Settings (`@@`)
+
+`@@` directives set execution properties that persist from that line to the end of the run (or until the same one is set again). They must start the line and are never sent to the device:
+
+```text
+@@wait 200            # pause 200 ms before each following command
+@@expect-timeout 2000 # give EXPECT up to 2000 ms (default 1000)
+@@on-error continue   # a failed step logs a warning instead of stopping the run
+@@send-mode hex       # read following bare / SEND lines as raw hex bytes
+```
+
+- **`@@wait <ms>`** delays before every following command (`0` disables).
+- **`@@expect-timeout <ms>`** sets the timeout for following `EXPECT` steps.
+- **`@@on-error <stop|continue>`** aborts on a failed step (default `stop`) or logs it and keeps going.
+- **`@@send-mode <text|hex>`** interprets following bare/`SEND` lines as text (default) or raw hex bytes; `HEX`/`EXPECT`/`WAIT` are unaffected.
 
 ### Parameters
 

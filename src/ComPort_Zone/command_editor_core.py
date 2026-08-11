@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 
-from .batch import BatchParseError, parse_batch_line, strip_c_style_comment
+from .batch import SETTING_NAMES, BatchParseError, parse_batch_line, strip_c_style_comment
 from .models import QuickCommand
 from .quick_actions import quick_group_name
 
 BATCH_KEYWORDS = ("SEND", "WAIT", "HEX", "EXPECT")
 COMMENT_SNIPPETS = ("// ", "# ")
+# ``@@`` execution-setting directives offered as completions (e.g. "@@wait").
+SETTING_SNIPPETS = tuple(f"@@{name}" for name in SETTING_NAMES)
 DEFAULT_KNOWN_COMMANDS = (
     "*IDN?",
     "SYST:FIRM?",
@@ -31,7 +33,8 @@ DEFAULT_KNOWN_COMMANDS = (
     "VOLT?",
 )
 COMMAND_TOKEN_PATTERN = re.compile(r"^[^\s]+")
-COMPLETION_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:*?.-")
+# ``@`` is included so ``@@wait`` is treated as one completable token under the caret.
+COMPLETION_TOKEN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_:*?.-@")
 
 
 @dataclass(slots=True)
@@ -113,6 +116,7 @@ class CommandEditorSources:
     def suggestions(self, document_text: str = "", prefix: str = "", exclude: str = "") -> list[str]:
         candidates: list[str] = []
         candidates.extend(BATCH_KEYWORDS)
+        candidates.extend(SETTING_SNIPPETS)
         candidates.extend(COMMENT_SNIPPETS)
         candidates.extend(self.known_commands)
         candidates.extend(self.history_commands)
@@ -146,6 +150,17 @@ class CommandEditorSources:
             stripped = strip_c_style_comment(raw_line)
             if not stripped or stripped.startswith("#"):
                 continue
+            if stripped.startswith("@@") and raw_line[:1].isspace():
+                # Settings persist by document order, so they must start the line.
+                issues.append(
+                    CommandValidationIssue(
+                        line_number,
+                        "Settings must start at the beginning of the line.",
+                        len(raw_line) - len(raw_line.lstrip()),
+                        2,
+                        "warning",
+                    )
+                )
             if has_parameter(stripped):
                 command_text = command_text_from_line(stripped)
             else:

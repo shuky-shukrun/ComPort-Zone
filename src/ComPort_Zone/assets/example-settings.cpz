@@ -1,0 +1,28 @@
+# Execution settings — "@@name value" tunes how the run behaves from that line
+# onward, until the same @@ is set again. Settings are never sent to the device.
+#   @@wait <ms>               pause before every following command
+#   @@expect-timeout <ms>     how long EXPECT waits for a reply
+#   @@on-error stop|continue  abort on a failed step, or log it and keep going
+#   @@send-mode text|hex      read following lines as text or raw hex bytes
+
+# Pace the whole run: 200 ms before each command, and give EXPECT up to 2 s.
+@@wait 200
+@@expect-timeout 2000
+
+# Identify the instrument and confirm it answers.
+*IDN?
+EXPECT ComPort
+
+# From here, a failed check logs a warning instead of stopping the run.
+@@on-error continue
+SYST:ERR?
+EXPECT 0,"No error"
+
+# Send a raw wake sequence without prefixing each line with HEX.
+@@send-mode hex
+55 AA 01 0D
+@@send-mode text
+
+# Back to normal text commands; confirm pending operations completed.
+*OPC?
+EXPECT 1

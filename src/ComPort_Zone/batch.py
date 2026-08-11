@@ -14,6 +14,9 @@ WAIT_PATTERN = re.compile(r"^WAIT\s+(\d+)$", re.IGNORECASE)
 SEND_PATTERN = re.compile(r"^SEND\s+(.+)$", re.IGNORECASE)
 HEX_PATTERN = re.compile(r"^HEX\s+([0-9A-Fa-f\s]+)$", re.IGNORECASE)
 EXPECT_PATTERN = re.compile(r"^EXPECT\s+(.+)$", re.IGNORECASE)
+# ``@@name value`` — a persistent execution setting (see KNOWN_SETTINGS). Distinct
+# from the one-time ``WAIT`` step and from ``{{param}}`` templating.
+SETTING_PATTERN = re.compile(r"^@@([A-Za-z][\w-]*)\s*(.*)$")
 PARAMETER_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:=([^{}]*?))?\s*\}\}")
 HIGH_RES_WAIT_THRESHOLD_SECONDS = 0.020
 COARSE_WAIT_CHUNK_SECONDS = 0.050
@@ -34,10 +37,98 @@ class BatchParseError(ValueError):
         self.line_number = line_number
 
 
+# ----- @@settings: persistent execution directives -------------------------
+# A settings line (``@@name value``) mutates the run's RunSettings from that point
+# forward (persist-until-overridden). The registry below is the single source of
+# truth so parsing, execution, highlighting, completion, and validation all agree,
+# and adding a setting is one entry + one RunSettings field.
+
+SEND_MODES = ("text", "hex")
+
+
+@dataclass(slots=True)
+class RunSettings:
+    """Mutable per-run state driven by ``@@`` directives. Seeded from each engine's
+    defaults, then updated in document order as ``setting`` steps execute."""
+
+    wait_before_ms: int = 0
+    expect_timeout_ms: int = DEFAULT_EXPECT_TIMEOUT_MS
+    stop_on_error: bool = True
+    send_mode: str = "text"
+
+    def apply(self, name: str, value: object) -> None:
+        KNOWN_SETTINGS[name].apply(self, value)
+
+
+@dataclass(frozen=True, slots=True)
+class SettingSpec:
+    name: str
+    value_hint: str  # e.g. "<ms>" — shown in completion, docs, and parse errors
+    parse: Callable[[str], object]  # raw text -> typed value; raises ValueError if bad
+    apply: Callable[[RunSettings, object], None]
+    help: str
+
+
+def _parse_non_negative_ms(text: str) -> int:
+    if not text:
+        raise ValueError("a whole number of milliseconds is required.")
+    try:
+        value = int(text)
+    except ValueError:
+        raise ValueError(f"'{text}' is not a whole number of milliseconds.") from None
+    if value < 0:
+        raise ValueError("milliseconds cannot be negative.")
+    return value
+
+
+def _parse_positive_ms(text: str) -> int:
+    value = _parse_non_negative_ms(text)
+    if value < 1:
+        raise ValueError("milliseconds must be at least 1.")
+    return value
+
+
+def _parse_choice(text: str, choices: tuple[str, ...]) -> str:
+    value = text.strip().lower()
+    if value not in choices:
+        raise ValueError(f"expected one of {', '.join(choices)}.")
+    return value
+
+
+KNOWN_SETTINGS: dict[str, SettingSpec] = {
+    "wait": SettingSpec(
+        "wait", "<ms>", _parse_non_negative_ms,
+        lambda settings, value: setattr(settings, "wait_before_ms", value),
+        "Delay (ms) before each following command.",
+    ),
+    "expect-timeout": SettingSpec(
+        "expect-timeout", "<ms>", _parse_positive_ms,
+        lambda settings, value: setattr(settings, "expect_timeout_ms", value),
+        "Timeout (ms) for following EXPECT steps.",
+    ),
+    "on-error": SettingSpec(
+        "on-error", "<stop|continue>",
+        lambda text: _parse_choice(text, ("stop", "continue")),
+        lambda settings, value: setattr(settings, "stop_on_error", value == "stop"),
+        "Whether a failed step aborts the run (stop) or logs and continues.",
+    ),
+    "send-mode": SettingSpec(
+        "send-mode", "<text|hex>",
+        lambda text: _parse_choice(text, SEND_MODES),
+        lambda settings, value: setattr(settings, "send_mode", value),
+        "Interpret following bare/SEND lines as text or raw hex bytes.",
+    ),
+}
+
+# Names in registration order — the editor imports this for completion/highlighting.
+SETTING_NAMES = tuple(KNOWN_SETTINGS)
+
+
 @dataclass(slots=True)
 class BatchStep:
     kind: str
-    payload: str | bytes | int
+    # For a "setting" step the payload is a ``(name, parsed_value)`` tuple.
+    payload: str | bytes | int | tuple[str, object]
     line_number: int
 
 
@@ -109,6 +200,18 @@ def parse_batch_line(line: str, line_number: int) -> BatchStep:
     stripped = line.strip()
     if not stripped:
         raise BatchParseError("Line became empty after parameter substitution.", line_number)
+    setting_match = SETTING_PATTERN.match(stripped)
+    if setting_match:
+        name = setting_match.group(1).lower()
+        raw_value = setting_match.group(2).strip()
+        spec = KNOWN_SETTINGS.get(name)
+        if spec is None:
+            raise BatchParseError(f"Unknown setting @@{name}.", line_number)
+        try:
+            value = spec.parse(raw_value)
+        except ValueError as exc:
+            raise BatchParseError(f"@@{name} {spec.value_hint}: {exc}", line_number) from exc
+        return BatchStep("setting", (name, value), line_number)
     wait_match = WAIT_PATTERN.match(stripped)
     if wait_match:
         return BatchStep("wait", int(wait_match.group(1)), line_number)
@@ -228,6 +331,7 @@ class BatchRunner:
         event_queue_factory: EventQueueFactory | None = None,
         event_queue_disposer: EventQueueDisposer | None = None,
         expect_timeout_ms: int = DEFAULT_EXPECT_TIMEOUT_MS,
+        stop_on_error: bool = True,
     ) -> None:
         self._emit_event = emit_event
         self._send_text = send_text
@@ -236,6 +340,8 @@ class BatchRunner:
         self._event_queue_factory = event_queue_factory
         self._event_queue_disposer = event_queue_disposer
         self._expect_timeout_ms = max(expect_timeout_ms, 1)
+        # Defaults a script's @@settings start from (and can override per run).
+        self._stop_on_error = stop_on_error
         self._rx_event_queue: Queue[SerialEvent] | None = None
         self._rx_buffer = ""
         self._thread: Thread | None = None
@@ -404,17 +510,29 @@ class BatchRunner:
                 self._connection_paused = False
                 self._refresh_resume_state_locked()
 
+    def _new_run_settings(self) -> RunSettings:
+        return RunSettings(
+            expect_timeout_ms=self._expect_timeout_ms,
+            stop_on_error=self._stop_on_error,
+        )
+
+    def _step_failed_should_abort(self, settings: RunSettings) -> bool:
+        # A real stop/disconnect always aborts; a step *error* aborts only when the
+        # current @@on-error setting says so.
+        return self._stop_event.is_set() or settings.stop_on_error
+
     def _run_steps(self, steps: list[BatchStep]) -> None:
         self._emit("status", f"Batch run started with {len(steps)} step(s).")
         if not steps:
             self._emit("status", "Batch file had no runnable commands.")
             return
+        settings = self._new_run_settings()
         completed = True
         for step in steps:
             if self._stop_event.is_set():
                 completed = False
                 break
-            if not self._run_step(step):
+            if not self._run_step(step, settings) and self._step_failed_should_abort(settings):
                 completed = False
                 break
         if completed:
@@ -425,6 +543,7 @@ class BatchRunner:
         if not steps:
             self._emit("status", "Batch file had no runnable commands.")
             return
+        settings = self._new_run_settings()
         completed = True
         for template_step in steps:
             if self._stop_event.is_set():
@@ -448,25 +567,33 @@ class BatchRunner:
             if self._stop_event.is_set():
                 completed = False
                 break
-            if not self._run_step(step):
+            if not self._run_step(step, settings) and self._step_failed_should_abort(settings):
                 completed = False
                 break
         if completed:
             self._emit("status", "Batch run completed.")
 
-    def _run_step(self, step: BatchStep) -> bool:
+    def _run_step(self, step: BatchStep, settings: RunSettings) -> bool:
+        if step.kind == "setting":
+            name, value = step.payload
+            settings.apply(name, value)
+            self._emit("status", f"Setting @@{name} = {value}.")
+            return True
         if step.kind == "wait":
             return self._sleep_interruptible(step.payload / 1000)
         if step.kind == "expect":
             if not self._wait_for_connection():
                 return False
-            return self._expect_text(str(step.payload), step.line_number)
+            return self._expect_text(str(step.payload), step.line_number, settings.expect_timeout_ms)
         if not self._wait_for_connection():
+            return False
+        # Persistent inter-command delay (@@wait) applies before each send/hex.
+        if not self._sleep_interruptible(settings.wait_before_ms / 1000):
             return False
         try:
             if step.kind == "send":
                 self._reset_expectation_buffer()
-                self._send_text(step.payload, source=BATCH_TX_SOURCE)
+                self._send_command(step.payload, settings)
             elif step.kind == "hex":
                 self._reset_expectation_buffer()
                 self._send_bytes(step.payload, source=BATCH_TX_SOURCE)
@@ -475,7 +602,14 @@ class BatchRunner:
             return False
         return True
 
-    def _expect_text(self, expected: str, line_number: int) -> bool:
+    def _send_command(self, payload, settings: RunSettings) -> None:
+        # A "send" step honours @@send-mode: hex re-parses the text payload as bytes.
+        if settings.send_mode == "hex":
+            self._send_bytes(parse_hex_payload(str(payload)), source=BATCH_TX_SOURCE)
+        else:
+            self._send_text(payload, source=BATCH_TX_SOURCE)
+
+    def _expect_text(self, expected: str, line_number: int, timeout_ms: int) -> bool:
         if self._expected_text_available(expected):
             self._emit("status", f"EXPECT matched on line {line_number}: {expected}")
             return True
@@ -483,14 +617,14 @@ class BatchRunner:
         if queue is None:
             self._emit("error", "EXPECT is not available because RX events are not connected to the batch runner.")
             return False
-        remaining_timeout = self._expect_timeout_ms / 1000
+        remaining_timeout = timeout_ms / 1000
         while not self._stop_event.is_set():
             if not self._wait_for_connection():
                 return False
             if remaining_timeout <= 0:
                 self._emit(
                     "error",
-                    f"EXPECT timed out on line {line_number} after {self._expect_timeout_ms} ms: {expected}",
+                    f"EXPECT timed out on line {line_number} after {timeout_ms} ms: {expected}",
                 )
                 return False
             wait_time = min(remaining_timeout, 0.05)
