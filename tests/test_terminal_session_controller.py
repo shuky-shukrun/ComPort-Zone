@@ -6,7 +6,10 @@ from threading import Event, Thread
 from ComPort_Zone.batch import BatchRunSnapshot
 from ComPort_Zone.models import QuickCommand, SerialProfile
 from ComPort_Zone.serial_core import SerialEvent
-from ComPort_Zone.terminal_session_controller import TerminalSessionController
+from ComPort_Zone.terminal_session_controller import (
+    TerminalSessionController,
+    coalesce_rx_events,
+)
 
 
 class FakeTransport:
@@ -283,6 +286,46 @@ class TerminalSessionControllerTests(unittest.TestCase):
         steps, resolver = started_templates[0]
         self.assertTrue(result.started)
         self.assertEqual(resolver(steps[0].line, steps[0].line_number), "SEND VOLT 5")
+
+
+class CoalesceRxEventsTests(unittest.TestCase):
+    @staticmethod
+    def _rx(raw: bytes, source: str = "") -> SerialEvent:
+        return SerialEvent(kind="rx", message=raw.decode("utf-8", "replace"), raw=raw, source=source)
+
+    def test_consecutive_rx_from_same_source_merge_into_one(self) -> None:
+        merged = coalesce_rx_events([self._rx(b"AB"), self._rx(b"CD"), self._rx(b"EF")])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].raw, b"ABCDEF")
+        self.assertEqual(merged[0].message, "ABCDEF")
+        self.assertEqual(merged[0].kind, "rx")
+
+    def test_merge_repairs_multibyte_char_split_across_reads(self) -> None:
+        # 'é' is 0xC3 0xA9; arriving as two reads must decode as one glyph.
+        merged = coalesce_rx_events([self._rx(b"\xc3"), self._rx(b"\xa9")])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].message, "é")
+
+    def test_non_rx_event_and_source_change_break_the_run(self) -> None:
+        events = [
+            self._rx(b"a", source=""),
+            self._rx(b"b", source="control_panel"),
+            SerialEvent(kind="tx", message="x", raw=b"x"),
+            self._rx(b"c", source=""),
+        ]
+        merged = coalesce_rx_events(events)
+        self.assertEqual([e.kind for e in merged], ["rx", "rx", "tx", "rx"])
+        self.assertEqual([e.raw for e in merged], [b"a", b"b", b"x", b"c"])
+        # The hidden control-panel run keeps its source so the terminal still filters it.
+        self.assertEqual(merged[1].source, "control_panel")
+
+    def test_timestamp_of_the_run_is_the_first_event(self) -> None:
+        first = self._rx(b"a")
+        merged = coalesce_rx_events([first, self._rx(b"b")])
+        self.assertEqual(merged[0].timestamp, first.timestamp)
+
+    def test_empty_input_returns_empty(self) -> None:
+        self.assertEqual(coalesce_rx_events([]), [])
 
 
 if __name__ == "__main__":
