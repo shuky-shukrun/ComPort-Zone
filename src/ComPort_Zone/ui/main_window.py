@@ -203,6 +203,10 @@ class MainWindow(QMainWindow):
         self.theme = THEMES.get(self.settings.theme, THEMES["ComPort Zone Dark"])
         self._session_counter = 0
         self._loading = True
+        # Set when a tab could not be restored as saved (deleted command file,
+        # deleted control-panel config) so the reason survives the "Ready" reset
+        # at the end of startup instead of flashing past unseen.
+        self._restore_notice: str | None = None
         self._deferred_startup_actions_pending = defer_startup_actions
         self._deferred_startup_prompt_settings = (
             defer_startup_actions and self._should_prompt_first_session_settings()
@@ -265,7 +269,7 @@ class MainWindow(QMainWindow):
         self.refresh_shared_drawer()
         self._apply_shared_drawer_state()
         self._loading = False
-        self.set_status("Ready")
+        self.set_status(self._restore_notice or "Ready")
         if not defer_startup_actions:
             self._schedule_launch_update_check()
 
@@ -949,6 +953,11 @@ class MainWindow(QMainWindow):
         editor = CommandFileEditorDialog(
             sources=self.command_editor_sources(),
             path=path,
+            # A tab is built before it is on screen (and, on workspace restore,
+            # before the main window is shown at all), so an unreadable file is
+            # reported below through the status bar instead of a modal dialog that
+            # would sit invisible behind the startup splash and freeze the launch.
+            notify_load_errors=False,
             run_callback=None,
             font_change_callback=self.change_font_size,
             quick_files_supplier=self.quick_files_snapshot,
@@ -1013,6 +1022,12 @@ class MainWindow(QMainWindow):
                 editor.path = Path(state.path)
                 editor.update_window_state()
                 editor.update_validation_status()
+        if editor.load_error:
+            name = editor.path.name if editor.path else "command file"
+            message = f"Could not open {name}: {editor.load_error}"
+            editor.status_label.setText(message)
+            self._restore_notice = message
+            self.set_status(message)
         editor.stateChanged.connect(self.update_tab_titles)
         editor.stateChanged.connect(self.sync_status_from_current_session)
         index = self.tabs.addTab(
@@ -1104,7 +1119,8 @@ class MainWindow(QMainWindow):
         tab with a notice instead of crashing)."""
         config = self.control_panel_catalog.by_id(state.control_panel_id)
         if config is None:
-            self.set_status("A restored control panel tab was skipped: its config was deleted.")
+            self._restore_notice = "A restored control panel tab was skipped: its config was deleted."
+            self.set_status(self._restore_notice)
             return None
         for control_panel in self.iter_control_panels():
             if control_panel.config.id == config.id:
@@ -1351,6 +1367,7 @@ class MainWindow(QMainWindow):
         return self.tab_context_menus.build(index)
 
     def restore_sessions(self, *, prompt_first_settings: bool = True) -> None:
+        self._restore_notice = None
         self.workspace_state_service.restore_from_settings(
             self.settings,
             self,

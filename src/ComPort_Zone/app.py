@@ -72,17 +72,25 @@ MainWindow.config_path_supplier = staticmethod(lambda: default_config_path())
 # diagnosed instead of guessed at.
 _FREEZE_WATCHDOG_STALL_S = 10.0
 _FREEZE_WATCHDOG_TICK_MS = 2000
+# Startup builds the window before any event loop runs, so the heartbeat below
+# cannot cover it. A one-shot deadline spans that gap: it is generous enough for
+# a slow cold start and is cancelled by the first heartbeat once the window is up.
+_STARTUP_STALL_S = 45.0
 _freeze_dump_file = None  # module-level so the handle outlives install_*
+_freeze_dump_file_path = None
 
 
 def freeze_dump_path():
     return default_config_path().parent / "freeze-dump.txt"
 
 
-def install_freeze_watchdog(window) -> QTimer | None:
-    global _freeze_dump_file
+def _open_freeze_dump_file() -> bool:
+    """Open (once) the dump file both the startup deadline and the heartbeat write to."""
+    global _freeze_dump_file, _freeze_dump_file_path
+    path = freeze_dump_path()
+    if _freeze_dump_file is not None and _freeze_dump_file_path == path:
+        return True
     try:
-        path = freeze_dump_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         # Append so a captured dump survives a relaunch (the user can send
         # the file after force-killing the frozen app).
@@ -94,6 +102,26 @@ def install_freeze_watchdog(window) -> QTimer | None:
         # diagnostic watchdog can never prevent the app from starting.
         faulthandler.enable(file=_freeze_dump_file)
     except Exception:
+        return False
+    _freeze_dump_file_path = path
+    return True
+
+
+def arm_startup_freeze_dump() -> bool:
+    """Cover the window-construction phase, where a stall (a modal raised while
+    restoring the workspace, a blocking read) leaves the app sitting on the
+    splash with nothing to diagnose."""
+    if not _open_freeze_dump_file():
+        return False
+    try:
+        faulthandler.dump_traceback_later(_STARTUP_STALL_S, file=_freeze_dump_file, exit=False)
+    except Exception:
+        return False
+    return True
+
+
+def install_freeze_watchdog(window) -> QTimer | None:
+    if not _open_freeze_dump_file():
         return None
 
     def _heartbeat() -> None:
@@ -196,7 +224,10 @@ def create_startup_splash(message: str) -> QSplashScreen:
     painter.end()
 
     splash = QSplashScreen(pixmap)
-    splash.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+    # Deliberately NOT WindowStaysOnTopHint: a topmost splash covers any dialog
+    # that startup puts on screen (e.g. a prompt raised while restoring the
+    # workspace), which reads as "the app is stuck on the logo" — the window is
+    # there and modal, just invisible behind the splash.
     splash.show()
     QApplication.processEvents()
     return splash
@@ -234,6 +265,7 @@ def run(initial_file: str | None = None, *, initial_files: list[str] | None = No
         QColor(VS_CODE_DARK.muted),
     )
     app.processEvents()
+    arm_startup_freeze_dump()
     window = MainWindow(defer_startup_actions=True)
     splash.showMessage(
         "Opening terminal...",
