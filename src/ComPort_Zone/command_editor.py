@@ -667,11 +667,17 @@ class CommandFileEditorDialog(QDialog):
         embedded: bool = False,
         show_run_button: bool = True,
         show_workspace_side_panel: bool = False,
+        notify_load_errors: bool = True,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.sources = sources
         self.path = path
+        # Set when the initial load of ``path`` failed (deleted/renamed/unreadable
+        # file). The caller reports it — the constructor never blocks on a dialog
+        # when notify_load_errors is False.
+        self.load_error: str | None = None
+        self.notify_load_errors = notify_load_errors
         self.run_callback = run_callback
         self.font_change_callback = font_change_callback
         self.quick_files_supplier = quick_files_supplier
@@ -796,7 +802,7 @@ class CommandFileEditorDialog(QDialog):
             layout.addWidget(self.editor_column, 1)
 
         if self.path:
-            self.load_path(self.path)
+            self.load_path(self.path, notify_errors=self.notify_load_errors)
         else:
             self.editor.setPlainText("")
             self._dirty = False
@@ -1804,12 +1810,27 @@ class CommandFileEditorDialog(QDialog):
         if path:
             self.load_path(Path(path))
 
-    def load_path(self, path: Path) -> bool:
+    def load_path(self, path: Path, *, notify_errors: bool = True) -> bool:
         try:
             text = self.file_service.load_text(path)
         except OSError as exc:
-            QMessageBox.warning(self, "Open Command File", str(exc))
+            # A modal here would be invisible (and would hang the app) when the
+            # tab is being built before the main window is on screen — workspace
+            # restore for a file that was deleted since the last run. Callers that
+            # opt out get an empty buffer still bound to the path, and report the
+            # failure themselves via ``load_error``.
+            self.load_error = str(exc)
+            if notify_errors:
+                QMessageBox.warning(self, "Open Command File", str(exc))
+                return False
+            self.path = path
+            self.editor.setPlainText("")
+            self._dirty = False
+            self.update_window_state()
+            self.update_validation_status()
+            self.status_label.setText(f"Could not open {path.name}: {exc}")
             return False
+        self.load_error = None
         self.path = path
         self.editor.setPlainText(text)
         self._dirty = False
