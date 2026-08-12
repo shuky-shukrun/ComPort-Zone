@@ -640,6 +640,87 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_confirming_update_dialog_downloads_and_launches_installer(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_update_install.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            self.assertTrue(
+                SettingsService(SettingsStore(settings_path)).save(
+                    AppSettings(check_for_updates_on_launch=False)
+                )
+            )
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_version_update_dialog = main_window_module.VersionUpdateDialog
+            old_download_installer = main_window_module.download_installer
+            downloaded_to: list[Path] = []
+            window = None
+
+            class FakeVersionUpdateDialog:
+                def __init__(self, result, check_on_launch: bool, parent=None) -> None:
+                    self._check_on_launch = check_on_launch
+
+                def exec(self) -> int:
+                    return int(main_window_module.QDialog.DialogCode.Accepted)
+
+                def check_on_launch_enabled(self) -> bool:
+                    return self._check_on_launch
+
+            def fake_download_installer(
+                url, destination, *, user_agent, progress_callback=None, cancel_event=None
+            ):
+                if progress_callback is not None:
+                    progress_callback(10, 10)
+                destination.write_bytes(b"fake-installer")
+                downloaded_to.append(destination)
+                return destination
+
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            main_window_module.VersionUpdateDialog = FakeVersionUpdateDialog
+            main_window_module.download_installer = fake_download_installer
+            try:
+                with mock.patch("os.startfile", create=True) as fake_startfile:
+                    window = app_module.MainWindow()
+                    result = VersionCheckResult(
+                        current_version="0.2.5",
+                        latest_version="0.2.6",
+                        release_name="ComPort Zone v0.2.6",
+                        release_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.2.6",
+                        update_available=True,
+                        tag_name="v0.2.6",
+                    )
+
+                    window._show_version_update_dialog(result)
+                    for _ in range(20):
+                        if downloaded_to:
+                            break
+                        QTest.qWait(50)
+                        self.qt.processEvents()
+
+                    self.assertEqual(len(downloaded_to), 1)
+                    self.assertTrue(
+                        downloaded_to[0].name.endswith("ComPort_Zone-0.2.6-win64-setup.exe")
+                    )
+                    fake_startfile.assert_called_once()
+                    self.assertEqual(fake_startfile.call_args[0][0], str(downloaded_to[0]))
+                    downloaded_to[0].unlink(missing_ok=True)
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                main_window_module.VersionUpdateDialog = old_version_update_dialog
+                main_window_module.download_installer = old_download_installer
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_automatic_update_check_sets_checking_status(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_update_check_status.json")
         settings_path.unlink(missing_ok=True)

@@ -34,7 +34,7 @@ class VersionUpdateDialog(QDialog):
 
         body_text = (
             f"You are running version {escape(result.current_version)}. "
-            "Open the release page to download the new version."
+            "Download and run the installer, or open the release page below."
             if result.update_available
             else f"You are using the latest version of ComPort Zone ({escape(result.current_version)})."
         )
@@ -51,8 +51,17 @@ class VersionUpdateDialog(QDialog):
         self.check_on_launch = QCheckBox("Check for updates when ComPort Zone starts", self)
         self.check_on_launch.setChecked(check_on_launch)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, self)
+        if result.update_available:
+            buttons = QDialogButtonBox(self)
+            install_button = buttons.addButton(
+                "Download and Install", QDialogButtonBox.ButtonRole.AcceptRole
+            )
+            buttons.addButton("Later", QDialogButtonBox.ButtonRole.RejectRole)
+            install_button.setDefault(True)
+        else:
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, self)
         buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
         layout.addWidget(title)
