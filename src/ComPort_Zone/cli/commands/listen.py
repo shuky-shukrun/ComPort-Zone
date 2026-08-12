@@ -22,7 +22,7 @@ from ..config_resolver import load_app_settings
 from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli_endpoint
 from ..options import endpoint_flags
 from ..output import CliOutput
-from ..transports import make_lan_transport, make_serial_transport
+from ..transports import make_transport
 
 
 def _local_timestamp() -> str:
@@ -85,12 +85,12 @@ def listen_command(
     duration_seconds: float | None,
     **endpoint_flag_values: Any,
 ) -> None:
-    """Open a serial or TCP endpoint and stream RX to stdout."""
+    """Open a serial, TCP, or UDP endpoint and stream RX to stdout."""
     output: CliOutput = ctx.obj["output"]
     settings = load_app_settings(ctx.obj.get("config_path"))
     endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
+    transport = make_transport(endpoint.kind)
     try:
         open_cli_endpoint(
             transport,

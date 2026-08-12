@@ -11,12 +11,16 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from ComPort_Zone.cli.main import cli
-from tests.fakes.fake_serial_transport import FakeLanTransport, FakeSerialTransport
+from tests.fakes.fake_serial_transport import (
+    FakeLanTransport,
+    FakeSerialTransport,
+    FakeUdpTransport,
+)
 
 
 def _patch_listen_transport(fake: FakeSerialTransport):
     return patch(
-        "ComPort_Zone.cli.commands.listen.make_serial_transport",
+        "ComPort_Zone.cli.commands.listen.make_transport",
         return_value=fake,
     )
 
@@ -121,7 +125,7 @@ class ListenJsonTests(unittest.TestCase):
         fake = FakeLanTransport()
         fake.stage_rx(b"echo\r\n")
         with patch(
-            "ComPort_Zone.cli.commands.listen.make_lan_transport",
+            "ComPort_Zone.cli.commands.listen.make_transport",
             return_value=fake,
         ):
             result = self.runner.invoke(
@@ -145,6 +149,38 @@ class ListenJsonTests(unittest.TestCase):
         )
         self.assertEqual(rx_payload["transport"], "tcp")
         self.assertEqual(rx_payload["endpoint"], "echo.local:9000")
+
+    def test_udp_json_mode_identifies_endpoint(self) -> None:
+        fake = FakeUdpTransport()
+        fake.stage_rx(b"echo")
+        with patch(
+            "ComPort_Zone.cli.commands.listen.make_transport",
+            return_value=fake,
+        ):
+            result = self.runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "listen",
+                    "--udp-host",
+                    "echo.local",
+                    "--udp-port",
+                    "9000",
+                    "--duration",
+                    "0.3",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        rx_payload = next(
+            json.loads(line)
+            for line in result.output.splitlines()
+            if line.strip() and json.loads(line).get("type") == "rx"
+        )
+        self.assertEqual(rx_payload["transport"], "udp")
+        self.assertEqual(rx_payload["endpoint"], "echo.local:9000")
+        # One output record per datagram: an unterminated reply still
+        # gets its own line.
+        self.assertEqual(rx_payload["data"], "echo")
 
 
 if __name__ == "__main__":

@@ -11,12 +11,16 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from ComPort_Zone.cli.main import cli
-from tests.fakes.fake_serial_transport import FakeLanTransport, FakeSerialTransport
+from tests.fakes.fake_serial_transport import (
+    FakeLanTransport,
+    FakeSerialTransport,
+    FakeUdpTransport,
+)
 
 
 def _patch_run_transport(fake: FakeSerialTransport):
     return patch(
-        "ComPort_Zone.cli.commands.run.make_serial_transport",
+        "ComPort_Zone.cli.commands.run.make_transport",
         return_value=fake,
     )
 
@@ -73,7 +77,7 @@ class RunCommandFileTests(unittest.TestCase):
             EXPECT PONG
         """)
         with patch(
-            "ComPort_Zone.cli.commands.run.make_lan_transport",
+            "ComPort_Zone.cli.commands.run.make_transport",
             return_value=fake,
         ):
             result = self.runner.invoke(
@@ -85,6 +89,34 @@ class RunCommandFileTests(unittest.TestCase):
                     "127.0.0.1",
                     "--tcp-port",
                     "7000",
+                    "--expect-timeout",
+                    "200",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(fake.sent_text, [("ping", None)])
+
+    def test_run_supports_udp_endpoint(self) -> None:
+        fake = FakeUdpTransport()
+        # No terminator: a command file EXPECT scans the RX stream, so it
+        # resolves a bare datagram the same way it resolves a line.
+        fake.queue_response(b"PONG")
+        script = _write_file(self.tmp_path, "udp_smoke.txt", """\n            SEND ping
+            EXPECT PONG
+        """)
+        with patch(
+            "ComPort_Zone.cli.commands.run.make_transport",
+            return_value=fake,
+        ):
+            result = self.runner.invoke(
+                cli,
+                [
+                    "run",
+                    str(script),
+                    "--udp-host",
+                    "127.0.0.1",
+                    "--udp-port",
+                    "5025",
                     "--expect-timeout",
                     "200",
                 ],

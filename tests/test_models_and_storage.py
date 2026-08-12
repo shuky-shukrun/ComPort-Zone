@@ -22,6 +22,8 @@ from ComPort_Zone.models import (
     SerialProfile,
     SETTINGS_SCHEMA_VERSION,
     TerminalSessionState,
+    UDP_SCHEMA_FLOOR,
+    UdpProfile,
     WorkspaceLayoutState,
     WorkspacePaneState,
     WorkspaceTabState,
@@ -395,6 +397,51 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(loaded.lan.port, 5025)
         self.assertEqual(loaded.lan.line_ending, "LF")
 
+    def test_settings_accept_udp_transport_profile_and_marks_udp_floor_required(self) -> None:
+        settings = AppSettings(
+            transport_kind="udp",
+            udp=UdpProfile(host="192.168.1.50", port=5025, line_ending="LF", timeout_ms=750),
+            control_panels=[],  # isolate the UDP floor from the seeded example
+        )
+
+        payload = settings.to_dict()
+        loaded = AppSettings.from_dict(payload)
+
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(payload["minimum_compatible_schema_version"], UDP_SCHEMA_FLOOR)
+        self.assertEqual(payload["transport"]["kind"], "udp")
+        self.assertEqual(payload["transport"]["profile"]["host"], "192.168.1.50")
+        self.assertEqual(loaded.transport_kind, "udp")
+        self.assertEqual(loaded.udp.host, "192.168.1.50")
+        self.assertEqual(loaded.udp.port, 5025)
+        self.assertEqual(loaded.udp.line_ending, "LF")
+        self.assertEqual(loaded.udp.timeout_ms, 750)
+
+    def test_serial_only_settings_keep_their_floor_after_the_udp_bump(self) -> None:
+        """A schema bump must not lock non-UDP users out of older builds."""
+        settings = AppSettings(transport_kind="serial", control_panels=[])
+
+        self.assertEqual(
+            settings.to_dict()["minimum_compatible_schema_version"],
+            MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION,
+        )
+
+    def test_udp_tab_alone_raises_the_floor(self) -> None:
+        settings = AppSettings(
+            transport_kind="serial",
+            control_panels=[],
+            restored_tabs=[
+                TerminalSessionState(
+                    transport_kind="udp",
+                    udp=UdpProfile(host="dut.local", port=9000),
+                )
+            ],
+        )
+
+        self.assertEqual(
+            settings.to_dict()["minimum_compatible_schema_version"], UDP_SCHEMA_FLOOR
+        )
+
     def test_restored_tab_accepts_generic_serial_transport_profile(self) -> None:
         state = TerminalSessionState.from_dict(
             {
@@ -427,6 +474,24 @@ class ModelsAndStorageTests(unittest.TestCase):
         self.assertEqual(state.lan.host, "dut.local")
         self.assertEqual(state.lan.port, 9000)
         self.assertEqual(state.lan.line_ending, "LF")
+
+    def test_restored_tab_accepts_udp_transport_profile(self) -> None:
+        state = TerminalSessionState.from_dict(
+            {
+                "title": "UDP DUT",
+                "transport": {
+                    "kind": "udp",
+                    "profile": {"host": "dut.local", "port": 9000, "line_ending": "LF"},
+                },
+            }
+        )
+
+        self.assertEqual(state.transport_kind, "udp")
+        self.assertIsNotNone(state.udp)
+        self.assertEqual(state.udp.host, "dut.local")
+        self.assertEqual(state.udp.port, 9000)
+        self.assertEqual(state.udp.line_ending, "LF")
+        self.assertEqual(state.to_dict()["transport"]["profile"]["host"], "dut.local")
         self.assertEqual(state.to_dict()["transport"]["profile"]["host"], "dut.local")
 
     def test_settings_service_rejects_missing_schema(self) -> None:

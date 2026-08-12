@@ -44,6 +44,9 @@ git diff --check
 | Integrated terminal prompt/draft editing      | `src/ComPort_Zone/widgets.py`                                                                                                      | `tests/test_integrated_terminal_input`                        |
 | Serial behavior                               | `src/ComPort_Zone/serial_core.py`                                                                                                  | `tests/test_serial_core`                                      |
 | LAN behavior                                  | `src/ComPort_Zone/lan_core.py`                                                                                                     | `tests/test_lan_core`                                         |
+| UDP behavior                                  | `src/ComPort_Zone/udp_core.py`                                                                                                     | `tests/test_udp_core`                                         |
+| Byte-level links / framing                    | `src/ComPort_Zone/raw_transport.py`, `src/ComPort_Zone/port_channel.py`                                                            | `tests/test_raw_transport`, `tests/test_port_channel`         |
+| Transport-kind names/labels                   | `src/ComPort_Zone/transport_kinds.py`                                                                                              | `tests/test_dialogs`, `tests/test_app_sessions`               |
 | Transport abstraction                         | `src/ComPort_Zone/transports.py`                                                                                                   | `tests/test_transports`                                       |
 | Command-file parsing/running                  | `src/ComPort_Zone/batch.py`, `src/ComPort_Zone/command_file_service.py`                                                            | `tests/test_batch`, `tests/test_command_file_service`         |
 | Command-file editor UI                        | `src/ComPort_Zone/command_editor.py`                                                                                               | `tests/test_command_editor`                                   |
@@ -333,13 +336,34 @@ poll-driven side effect should usually go in the same place.
 
 ### Add A Future Transport
 
-Do not start by editing UI labels everywhere.
+Do not start by editing UI labels everywhere — there is one table for those.
+UDP (2026-08) is the worked example; follow the same order:
 
-1. Add adapter behavior behind `transports.TransportAdapter`.
-2. Add fake adapter contract tests in `tests/test_transports.py`.
-3. Extend settings profiles through `models.py` and `settings_service.py` only as needed.
-4. Wire controller-level selection before UI polish.
-5. Keep serial and LAN behavior unchanged.
+1. Add a profile dataclass in `models.py` (a **new** class, never a subclass of
+   `LanProfile` — a dozen `isinstance` checks would silently accept it), plus a
+   feature floor constant and a `_uses_<kind>_transport()` arm in
+   `minimum_compatible_schema_version()` so files without the new transport
+   stay readable by older builds. Bump `SETTINGS_SCHEMA_VERSION`.
+2. Add a `RawTransport` implementation in `raw_transport.py` with an injectable
+   socket/handle factory — that factory is the whole test seam.
+3. Add a `<kind>_core.py` client mirroring `lan_core.py`. If the link has
+   different framing, pass a `default_matcher` factory to `PortChannel` rather
+   than teaching callers about the transport.
+4. Add an adapter in `transports.py`, a `TransportProfile.from_/to_` pair, and
+   an `_ADAPTERS` entry. Add contract tests in `tests/test_transports.py`.
+5. Add a row to `transport_kinds.TRANSPORT_KINDS`. That covers the combo box,
+   tab titles, status text, run-target labels, and the CLI's JSON `transport`
+   field — no new UI branches.
+6. Add a flag group in `cli/options.py`, a `_<KIND>_ONLY_FLAGS` tuple plus a
+   `_KIND_FLAG_GROUPS` entry in `cli/endpoint_session.py`, a
+   `resolve_<kind>_profile` in `cli/config_resolver.py`, and a factory in
+   `cli/transports.py`. The four connect-using commands need no edits.
+7. Add the dialog page in `ui/dialogs/connection.py` and the typed-profile arms
+   in `ui/terminal_tab.py` / `workspace_state.py` / `ui/main_window.py`.
+8. Add a `Fake<Kind>Transport` one-liner in
+   `tests/fakes/fake_serial_transport.py` and register the new core module in
+   `tests/test_core_no_pyside.py`.
+9. Keep serial, LAN, and UDP behavior unchanged.
 
 ## Project Scripts
 

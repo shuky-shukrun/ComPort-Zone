@@ -20,7 +20,7 @@ from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli
 from ..exit_codes import ExitCode
 from ..options import endpoint_flags
 from ..output import CliOutput
-from ..transports import make_lan_transport, make_serial_transport
+from ..transports import make_transport
 
 
 _DEFAULT_EXPECT_TIMEOUT_MS = 1000
@@ -63,7 +63,7 @@ def run_send_once(
     endpoint_flag_values: dict[str, Any],
     line_ending_override: str | None = None,
 ) -> None:
-    """Open the configured serial or TCP endpoint, send a single message,
+    """Open the configured serial, TCP, or UDP endpoint, send a single message,
     optionally wait for a response, then close. Shared between ``send`` /
     ``hex`` / ``quick send`` so the per-command code only assembles the inputs.
     """
@@ -71,7 +71,7 @@ def run_send_once(
     settings = load_app_settings(ctx.obj.get("config_path"))
     endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
+    transport = make_transport(endpoint.kind)
     try:
         open_cli_endpoint(
             transport,
@@ -102,8 +102,9 @@ def run_send_once(
         )
         if deadline_ms <= 0 and expect is None:
             # Nothing to wait for - just give the reader a moment to flush
-            # whatever was already in flight.
-            deadline_ms = 50
+            # whatever was already in flight. A datagram device answers once,
+            # in its own time, so UDP holds the window open longer.
+            deadline_ms = endpoint.default_read_window_ms
 
         pattern = re.compile(expect) if expect else None
         matched = False
@@ -209,7 +210,7 @@ def send_command(
     read_after_ms: int,
     **endpoint_flag_values: Any,
 ) -> None:
-    """Open a serial or TCP endpoint, send TEXT once, optionally wait, close."""
+    """Open a serial, TCP, or UDP endpoint, send TEXT once, optionally wait, close."""
     run_send_once(
         ctx,
         payload=text,

@@ -43,7 +43,7 @@ EXAMPLE_COMMAND_FILE = _ASSETS_DIR / "example-commands.cpz"
 EXAMPLE_SELF_TEST_FILE = _ASSETS_DIR / "example-self-test.cpz"
 EXAMPLE_MEASUREMENT_FILE = _ASSETS_DIR / "example-measurement.cpz"
 EXAMPLE_SETTINGS_FILE = _ASSETS_DIR / "example-settings.cpz"
-SETTINGS_SCHEMA_VERSION = 8
+SETTINGS_SCHEMA_VERSION = 9
 MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION = 2
 # Feature floors: a saved payload declares the highest floor of any
 # feature it actually contains, so files without LAN/Control Panel
@@ -61,6 +61,8 @@ CONTROL_PANEL_V3_SCHEMA_FLOOR = 7
 # Control Panel v4 capabilities (static text / separator tiles) — only a
 # panel that actually uses one pushes the floor to 8 (FR-39 v4).
 CONTROL_PANEL_V4_SCHEMA_FLOOR = 8
+# UDP transport — only a payload with a UDP endpoint pushes the floor to 9.
+UDP_SCHEMA_FLOOR = 9
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
@@ -174,6 +176,44 @@ class LanProfile:
 
 
 @dataclass(slots=True)
+class UdpProfile:
+    """A UDP peer.
+
+    Deliberately smaller than :class:`LanProfile`: there is no connection to
+    lose, so the reconnect fields would never be read. ``timeout_ms`` is the
+    default *reply-wait* window (not a connect timeout — opening a datagram
+    socket performs no network I/O).
+    """
+
+    host: str = ""
+    port: int = 5025
+    line_ending: str = "CRLF"
+    timeout_ms: int = 1000
+
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}" if self.host else ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "host": self.host,
+            "port": self.port,
+            "line_ending": self.line_ending,
+            "timeout_ms": self.timeout_ms,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "UdpProfile":
+        if not data:
+            return cls()
+        return cls(
+            host=str(data.get("host", "")).strip(),
+            port=int(data.get("port", 5025)),
+            line_ending=str(data.get("line_ending", "CRLF")),
+            timeout_ms=int(data.get("timeout_ms", 1000)),
+        )
+
+
+@dataclass(slots=True)
 class QuickCommand:
     id: str = field(default_factory=lambda: uuid4().hex)
     label: str = ""
@@ -271,6 +311,7 @@ class TerminalSessionState:
     transport_profile: dict[str, Any] = field(default_factory=dict)
     serial: SerialProfile | None = None
     lan: LanProfile | None = None
+    udp: UdpProfile | None = None
     connected_on_launch: bool = False
     terminal_text: str = ""
     command_draft: str = ""
@@ -283,6 +324,8 @@ class TerminalSessionState:
             transport_profile = self.serial.to_dict()
         if not transport_profile and transport_kind == "lan" and self.lan is not None:
             transport_profile = self.lan.to_dict()
+        if not transport_profile and transport_kind == "udp" and self.udp is not None:
+            transport_profile = self.udp.to_dict()
         payload = {
             "title": self.title,
             "title_is_custom": self.title_is_custom,
@@ -310,6 +353,7 @@ class TerminalSessionState:
         title = str(data.get("title", "Terminal")) or "Terminal"
         serial = SerialProfile.from_dict(transport_profile) if transport_kind == "serial" else None
         lan = LanProfile.from_dict(transport_profile) if transport_kind == "lan" else None
+        udp = UdpProfile.from_dict(transport_profile) if transport_kind == "udp" else None
         return cls(
             title=title,
             title_is_custom=bool(
@@ -322,6 +366,7 @@ class TerminalSessionState:
             transport_profile=dict(transport_profile),
             serial=serial,
             lan=lan,
+            udp=udp,
             connected_on_launch=bool(data.get("connected_on_launch", False)),
             terminal_text=str(data.get("terminal_text", "")),
             command_draft=str(data.get("command_draft", "")),
@@ -495,6 +540,7 @@ class AppSettings:
     transport_profile: dict[str, Any] = field(default_factory=dict)
     serial: SerialProfile = field(default_factory=SerialProfile)
     lan: LanProfile = field(default_factory=LanProfile)
+    udp: UdpProfile = field(default_factory=UdpProfile)
     command_history: list[str] = field(default_factory=list)
     quick_commands: list[QuickCommand] = field(default_factory=default_quick_commands)
     quick_files: list[QuickFile] = field(default_factory=default_quick_files)
@@ -549,12 +595,20 @@ class AppSettings:
     def _default_transport_profile(self, kind: str) -> dict[str, Any]:
         if kind == "lan":
             return self.lan.to_dict()
+        if kind == "udp":
+            return self.udp.to_dict()
         return self.serial.to_dict()
 
-    def _uses_lan_transport(self) -> bool:
-        if self.transport_kind == "lan":
+    def _uses_transport(self, kind: str) -> bool:
+        if self.transport_kind == kind:
             return True
-        return any(session.transport_kind == "lan" for session in self.restored_tabs)
+        return any(session.transport_kind == kind for session in self.restored_tabs)
+
+    def _uses_lan_transport(self) -> bool:
+        return self._uses_transport("lan")
+
+    def _uses_udp_transport(self) -> bool:
+        return self._uses_transport("udp")
 
     def _uses_control_panels(self) -> bool:
         if self.control_panels or self.restored_control_panels:
@@ -569,6 +623,8 @@ class AppSettings:
         floors = [MINIMUM_COMPATIBLE_SETTINGS_SCHEMA_VERSION]
         if self._uses_lan_transport():
             floors.append(LAN_SCHEMA_FLOOR)
+        if self._uses_udp_transport():
+            floors.append(UDP_SCHEMA_FLOOR)
         if self._uses_control_panels():
             floors.append(CONTROL_PANEL_SCHEMA_FLOOR)
         if any(control_panel_uses_v2_features(config) for config in self.control_panels):
@@ -675,6 +731,7 @@ class AppSettings:
         transport_profile = _dict_value(transport.get("profile"))
         serial = SerialProfile.from_dict(transport_profile if transport_kind == "serial" else {})
         lan = LanProfile.from_dict(transport_profile if transport_kind == "lan" else {})
+        udp = UdpProfile.from_dict(transport_profile if transport_kind == "udp" else {})
         app = _dict_value(data.get("app"))
         terminal_font = _dict_value(app.get("terminal_font"))
         drawer = _dict_value(app.get("drawer"))
@@ -732,10 +789,11 @@ class AppSettings:
             transport_kind=transport_kind,
             transport_profile=dict(
                 transport_profile
-                or (lan.to_dict() if transport_kind == "lan" else serial.to_dict())
+                or {"lan": lan, "udp": udp}.get(transport_kind, serial).to_dict()
             ),
             serial=serial,
             lan=lan,
+            udp=udp,
             command_history=[str(item) for item in _list_value(history.get("commands"))],
             quick_commands=quick_commands,
             quick_files=quick_files,

@@ -40,6 +40,7 @@ from ..models import (
     QuickFile,
     SerialProfile,
     TerminalSessionState,
+    UdpProfile,
 )
 from ..quick_actions import SEND_MODES, quick_file_display_text
 from ..quick_actions_panel import (
@@ -58,9 +59,11 @@ from ..terminal_session_controller import (
     ConnectionProfile,
     TerminalRenderPlan,
     TerminalSessionController,
+    endpoint_for_profile,
 )
 from ..terminal_view import TerminalView, prompt_leader_text
 from ..themes import mix_hex
+from ..transport_kinds import TransportKindInfo, transport_kind_info
 from ..transports import SerialTransportAdapter
 from ..widgets import (
     ChevronComboBox,
@@ -103,6 +106,10 @@ def clone_profile(profile: SerialProfile) -> SerialProfile:
 
 def clone_lan_profile(profile: LanProfile) -> LanProfile:
     return LanProfile.from_dict(profile.to_dict())
+
+
+def clone_udp_profile(profile: UdpProfile) -> UdpProfile:
+    return UdpProfile.from_dict(profile.to_dict())
 
 
 def short_label(text: str, limit: int = 40) -> str:
@@ -182,7 +189,7 @@ class TerminalSessionWidget(QWidget):
         endpoint = self.connection_endpoint()
         if endpoint:
             return endpoint
-        return "No endpoint" if self.transport_kind == "lan" else "No port"
+        return self._kind_info().no_endpoint_label
 
     @property
     def paused(self) -> bool:
@@ -200,6 +207,7 @@ class TerminalSessionWidget(QWidget):
         transport_profile = self.profile.to_dict()
         serial_profile = clone_profile(self.profile) if isinstance(self.profile, SerialProfile) else None
         lan_profile = clone_lan_profile(self.profile) if isinstance(self.profile, LanProfile) else None
+        udp_profile = clone_udp_profile(self.profile) if isinstance(self.profile, UdpProfile) else None
         return TerminalSessionState(
             title=self.title,
             title_is_custom=self.title_is_custom,
@@ -207,6 +215,7 @@ class TerminalSessionWidget(QWidget):
             transport_profile=transport_profile,
             serial=serial_profile,
             lan=lan_profile,
+            udp=udp_profile,
             connected_on_launch=self._connected or self.transport.is_connected,
             terminal_text=self.terminal.toPlainText(),
             command_draft=self.command_input.text(),
@@ -220,6 +229,12 @@ class TerminalSessionWidget(QWidget):
             if state.transport_profile:
                 return LanProfile.from_dict(state.transport_profile)
             return self.host.default_lan_profile()
+        if self.transport_kind == "udp":
+            if state.udp is not None:
+                return clone_udp_profile(state.udp)
+            if state.transport_profile:
+                return UdpProfile.from_dict(state.transport_profile)
+            return self.host.default_udp_profile()
         if state.serial is not None:
             return clone_profile(state.serial)
         if state.transport_profile:
@@ -1145,7 +1160,9 @@ class TerminalSessionWidget(QWidget):
     def refresh_ports(self) -> None:
         if self.transport_kind != "serial":
             self._ports = []
-            self.host.set_status("LAN endpoints are entered manually.")
+            self.host.set_status(
+                f"{self._kind_info().ui_label} endpoints are entered manually."
+            )
             self._update_connection_ui(self.transport.is_connected, update_footer=False)
             return
         self._ports = self.list_ports_snapshot()
@@ -1188,6 +1205,11 @@ class TerminalSessionWidget(QWidget):
                 self.profile
                 if isinstance(self.profile, LanProfile)
                 else self.host.default_lan_profile()
+            ),
+            udp_profile=(
+                self.profile
+                if isinstance(self.profile, UdpProfile)
+                else self.host.default_udp_profile()
             ),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1897,8 +1919,11 @@ class TerminalSessionWidget(QWidget):
             return "missing"
         return "closed"
 
+    def _kind_info(self) -> TransportKindInfo:
+        return transport_kind_info(self.transport_kind)
+
     def connection_state_label(self) -> str:
-        no_endpoint_label = "No endpoint" if self.transport_kind == "lan" else "No port"
+        no_endpoint_label = self._kind_info().no_endpoint_label
         return {
             "connected": "Connected",
             "retrying": "Retrying",
@@ -1908,7 +1933,7 @@ class TerminalSessionWidget(QWidget):
         }[self.connection_state()]
 
     def connection_action_text(self) -> str:
-        no_endpoint_action = "Set Endpoint" if self.transport_kind == "lan" else "Set Port"
+        no_endpoint_action = self._kind_info().set_endpoint_action
         return {
             "connected": "Disconnect",
             "retrying": "Stop Retry",
@@ -1927,19 +1952,20 @@ class TerminalSessionWidget(QWidget):
         if state == "missing":
             return f"{self.profile.port} is not currently detected. Try to connect anyway or open Connection Settings."
         if state == "no-port":
-            return "Choose a LAN host and port." if self.transport_kind == "lan" else "Choose a COM port and connect."
+            return self._kind_info().choose_hint
         return f"Connect to {profile_text}."
 
     def connection_status_text(self) -> str:
         endpoint = self.connection_endpoint()
+        info = self._kind_info()
         if not endpoint:
-            return "No endpoint selected" if self.transport_kind == "lan" else "No port selected"
+            return info.no_endpoint_selected
         log_status = "Log on" if self.logger.enabled else "Log off"
-        if isinstance(self.profile, LanProfile):
+        if info.status_prefix:
             return " | ".join(
                 [
                     self.connection_state_label(),
-                    f"LAN {endpoint}",
+                    f"{info.status_prefix} {endpoint}",
                     self.profile.line_ending,
                     log_status,
                 ]
@@ -1962,22 +1988,20 @@ class TerminalSessionWidget(QWidget):
 
     def _profile_summary(self) -> str:
         endpoint = self.connection_endpoint()
+        info = self._kind_info()
         if not endpoint:
-            return "No endpoint" if self.transport_kind == "lan" else "No port"
-        if isinstance(self.profile, LanProfile):
-            return f"LAN {endpoint}"
+            return info.no_endpoint_label
+        if info.status_prefix:
+            return f"{info.status_prefix} {endpoint}"
         framing = f"{self.profile.bytesize}{self.profile.parity}{self.profile.stopbits:g}"
         return f"{self.profile.port} {self.profile.baudrate} {framing}"
 
     def connection_endpoint(self) -> str:
-        if isinstance(self.profile, LanProfile):
-            return self.profile.endpoint()
-        return self.profile.port
+        return endpoint_for_profile(self.profile)
 
     def run_target_label(self) -> str:
         """Compact label for the editor's send-to list: "<tab name> · <type>"."""
-        kind = "TCP" if self.transport_kind == "lan" else "Serial"
-        return f"{self.tab_title} · {kind}"
+        return f"{self.tab_title} · {self._kind_info().short_label}"
 
     def _profile_port_missing(self) -> bool:
         if self.transport_kind != "serial" or not isinstance(self.profile, SerialProfile):

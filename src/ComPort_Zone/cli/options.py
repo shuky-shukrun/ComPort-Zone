@@ -90,11 +90,12 @@ def serial_flags(func: F) -> F:
 
 
 def endpoint_flags(func: F) -> F:
-    """Attach the serial flag set plus raw TCP endpoint overrides.
+    """Attach the serial flag set plus raw TCP and UDP endpoint overrides.
 
     ``--port`` stays the serial COM-port flag. Supplying ``--host`` (or any
-    TCP-specific flag) selects the raw-TCP transport instead; mixing serial and
-    TCP flags on one command is a usage error.
+    TCP-specific flag) selects the raw-TCP transport; supplying ``--udp-host``
+    (or any UDP-specific flag) selects UDP. Mixing flags from two transports on
+    one command is a usage error.
     """
     decorators = [
         click.option("--host", "host", metavar="HOST", help="Raw TCP host or IP address."),
@@ -105,6 +106,15 @@ def endpoint_flags(func: F) -> F:
             type=int,
             metavar="MS",
             help="Raw TCP connect/read timeout in milliseconds.",
+        ),
+        click.option("--udp-host", "udp_host", metavar="HOST", help="UDP host or IP address."),
+        click.option("--udp-port", "udp_port", type=int, metavar="PORT", help="UDP port."),
+        click.option(
+            "--udp-timeout",
+            "udp_timeout_ms",
+            type=int,
+            metavar="MS",
+            help="Default UDP reply-wait window in milliseconds.",
         ),
     ]
     func = serial_flags(func)

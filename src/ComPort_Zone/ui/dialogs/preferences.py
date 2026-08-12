@@ -314,7 +314,10 @@ class PreferencesDialog(QDialog):
         line_ending = str(self.line_ending_combo.currentData() or settings.serial.line_ending)
         settings.serial.line_ending = line_ending
         settings.lan.line_ending = line_ending
+        settings.udp.line_ending = line_ending
 
+        # UDP is deliberately absent here: it has no connection to lose, so
+        # UdpProfile carries no reconnect fields.
         interval = int(self.reconnect_interval_input.value())
         settings.serial.reconnect_initial_delay_ms = interval
         settings.lan.reconnect_initial_delay_ms = interval

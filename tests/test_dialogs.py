@@ -243,6 +243,48 @@ class DialogExtractionTests(unittest.TestCase):
             dialog.deleteLater()
             self.qt.processEvents()
 
+    def test_connection_settings_dialog_supports_udp_profile(self) -> None:
+        dialog = ConnectionSettingsDialog(
+            app_module.UdpProfile(host="192.168.1.50", port=5025, line_ending="LF"),
+            [],
+            transport_kind="udp",
+        )
+        try:
+            self.assertEqual(dialog.transport_kind(), "udp")
+            self.assertEqual(dialog.connection_stack.currentIndex(), 2)
+            profile = dialog.profile()
+
+            self.assertIsInstance(profile, app_module.UdpProfile)
+            self.assertEqual(profile.host, "192.168.1.50")
+            self.assertEqual(profile.port, 5025)
+            self.assertEqual(profile.line_ending, "LF")
+
+            # UDP has no connection to lose, so the page offers no
+            # auto-reconnect control at all.
+            self.assertFalse(hasattr(dialog, "udp_auto_reconnect"))
+
+            lan_index = dialog.connection_type_combo.findData("lan")
+            dialog.connection_type_combo.setCurrentIndex(lan_index)
+            self.assertEqual(dialog.transport_kind(), "lan")
+            self.assertIsInstance(dialog.profile(), app_module.LanProfile)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+            self.qt.processEvents()
+
+    def test_connection_settings_dialog_offers_every_transport_kind(self) -> None:
+        dialog = ConnectionSettingsDialog(app_module.SerialProfile(port="COM1"), [])
+        try:
+            combo = dialog.connection_type_combo
+            self.assertEqual(
+                [combo.itemData(index) for index in range(combo.count())],
+                ["serial", "lan", "udp"],
+            )
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+            self.qt.processEvents()
+
     def test_command_palette_filters_and_executes_selected_entry(self) -> None:
         calls: list[str] = []
 

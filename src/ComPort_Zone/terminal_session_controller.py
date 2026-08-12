@@ -15,7 +15,7 @@ from .batch import (
     substitute_batch_parameters,
 )
 from .history import HistoryStore
-from .models import LanProfile, QuickCommand, SerialProfile
+from .models import LanProfile, QuickCommand, SerialProfile, UdpProfile
 from .port_channel import INTERACTIVE, SerialEvent, decode_serial_bytes, format_hex_bytes
 from .session_log import SessionLogger
 from .transports import TransportAdapter, create_transport_adapter
@@ -30,7 +30,7 @@ TERMINAL_QUIET_READ_S = 0.15
 ParameterSheet = tuple[dict[str, str], set[str]]
 ParameterCollector = Callable[[Iterable[Any]], ParameterSheet | None]
 ParameterPrompt = Callable[[str, int, str], str | None]
-ConnectionProfile = SerialProfile | LanProfile
+ConnectionProfile = SerialProfile | LanProfile | UdpProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +338,6 @@ class TerminalSessionController:
 
 
 def endpoint_for_profile(profile: ConnectionProfile) -> str:
-    if isinstance(profile, LanProfile):
+    if isinstance(profile, (LanProfile, UdpProfile)):
         return profile.endpoint()
     return profile.port

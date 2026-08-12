@@ -4,6 +4,16 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Added
+
+- **UDP endpoints, in the app and the CLI** — a terminal tab can now talk to a UDP device: pick **UDP** in Connection Settings, enter a host and port, and send/receive exactly as you would over serial or TCP. The CLI gains matching `--udp-host`/`--udp-port`/`--udp-timeout` flags on `send`/`hex`/`listen`/`run`/`repl`, quick send, and `files run` (kept distinct from the serial `--port` and the TCP `--host`; mixing flags from two transports is a usage error), plus `COMPORTZONE_UDP_*` environment variables, UDP `/set` shortcuts in the REPL, and `"transport": "udp"` in JSON records. `resources/udp_echo_server.py` ships as a local target to test against.
+
+  UDP is connectionless and the app treats it that way rather than pretending otherwise. A reply is **one whole datagram**, so devices that answer without a CR/LF terminator work with no configuration — where a line-framed transport would sit there until the timeout. There is no auto-reconnect (there is no link to lose), so that checkbox is absent from the UDP page and `--auto-reconnect` is accepted and ignored; `--wait` is likewise a no-op, because opening a datagram socket does no network I/O. Sending to a port with no listener does not tear the session down: the resulting ICMP port-unreachable is ignored, as UDP requires.
+
+### Changed
+
+- **Settings schema is now version 9.** Only a settings file that actually contains a UDP endpoint declares the new floor, so serial- and TCP-only files stay readable by older builds exactly as before. A file that *does* use UDP will be refused by builds older than this one rather than silently losing the endpoint.
+
 ## 0.6.1 - 2026-08-12
 
 ### Fixed

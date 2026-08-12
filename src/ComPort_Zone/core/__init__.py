@@ -23,7 +23,9 @@ from . import (
     session_log,
     settings_service,
     storage,
+    transport_kinds,
     transports,
+    udp_core,
     version_check,
 )
 
@@ -42,6 +44,8 @@ __all__ = [
     "session_log",
     "settings_service",
     "storage",
+    "transport_kinds",
     "transports",
+    "udp_core",
     "version_check",
 ]

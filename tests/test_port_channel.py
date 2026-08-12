@@ -22,6 +22,7 @@ from ComPort_Zone.port_channel import (
     SOURCE_UNSOLICITED,
     TIMEOUT,
     CountMatcher,
+    DatagramMatcher,
     LineMatcher,
     PortChannel,
     RegexMatcher,
@@ -114,6 +115,35 @@ class QueryCorrelationTests(ChannelTestBase):
         ).result(timeout=2.0)
         self.assertEqual(result.status, OK)
         self.assertEqual(result.response, b"\x01\x02\x03\x04")
+
+    def test_datagram_matcher_completes_without_a_terminator(self) -> None:
+        self.raw.set_responder(lambda payload: b"12.345")
+        result = self.channel.query(
+            b"MEAS?", matcher=DatagramMatcher(), timeout=1.0
+        ).result(timeout=2.0)
+        self.assertEqual(result.status, OK)
+        self.assertEqual(result.response, b"12.345")
+
+    def test_datagram_matcher_ignores_an_empty_spool(self) -> None:
+        self.assertIsNone(DatagramMatcher().find_complete(b""))
+        self.assertEqual(DatagramMatcher().find_complete(b"x"), 1)
+
+
+class DefaultMatcherTests(unittest.TestCase):
+    def test_defaults_to_line_framing(self) -> None:
+        raw = FakeRawTransport()
+        raw.open()
+        channel = PortChannel(raw)
+        self.assertIsInstance(channel.default_matcher(), LineMatcher)
+
+    def test_datagram_transports_supply_their_own_default(self) -> None:
+        raw = FakeRawTransport()
+        raw.open()
+        channel = PortChannel(raw, default_matcher=DatagramMatcher)
+        first = channel.default_matcher()
+        self.assertIsInstance(first, DatagramMatcher)
+        # A factory, not a shared instance: no state can leak between requests.
+        self.assertIsNot(first, channel.default_matcher())
 
 
 class WriteSemanticsTests(ChannelTestBase):

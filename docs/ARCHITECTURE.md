@@ -33,7 +33,7 @@ ComPort Zone should settle into these layers:
 | Controllers | Coordinate UI events with domain services and transports | `terminal_session_controller.py`, `quick_action_controller.py`, `app_settings_controller.py`, `workspace_settings_controller.py`, future command-file/workspace controllers |
 | Domain/services | Pure or mostly pure behavior: parsing, quick actions, command files, search state, workspace state | `quick_actions.py`, `batch.py`, `command_file_service.py`, `command_search.py`, `workspace_state.py` |
 | Commands | One registry for actions used by menus, command palette, shortcuts, and context menus where practical | `command_registry.py` |
-| Transports | Abstract communication endpoints and concrete adapters | `transports.py`, `serial_core.py`, `lan_core.py` |
+| Transports | Abstract communication endpoints and concrete adapters | `transports.py`, `serial_core.py`, `lan_core.py`, `udp_core.py`, `raw_transport.py`, `port_channel.py`, `transport_kinds.py` |
 | Persistence/settings | Read/write settings payloads, schema ownership, import/export behavior | `settings_service.py`, `storage.py`, `models.py` |
 | Shared utilities | Theme, icons, widgets, history, logging | `themes.py`, `icons.py`, `widgets.py`, `history.py`, `session_log.py` |
 | Tests | Focused tests beside each extracted module plus app-session regression tests | `tests/` |
@@ -87,7 +87,7 @@ The current test suite is built around `unittest` and has focused coverage for e
 | Workspace tabs | `ui/split_workspace.py`, `ui/tab_workspace.py` | Same | Done foundation | Split workspace owns one or two tab panes and live tab movement; tab workspace owns typed lookup, duplicate/close behavior, and session activation helpers. |
 | Workspace status | `ui/workspace_status.py` | `ui/workspace_status.py` | Done | Owns tab colors/icons/tooltips and footer connection action state. |
 | Workspace drawer state | `ui/main_window.py`, terminal/editor tab drawer hooks | Future presenter/controller if it grows | Done foundation | Collapsed state, selected page, and width are global settings applied across terminal and editor tabs. |
-| Transport abstraction | `transports.py`, `serial_core.py`, `lan_core.py` | Same | Done foundation | Serial and raw TCP LAN adapters share the terminal controller/event contract. Future transports should add adapters, not rewrite UI. |
+| Transport abstraction | `transports.py`, `serial_core.py`, `lan_core.py`, `udp_core.py`, `transport_kinds.py` | Same | Done | Serial, raw TCP LAN, and UDP adapters share the terminal controller/event contract and the same `PortChannel`. `transport_kinds.py` holds every user-visible name for a kind (labels, status prefixes, the CLI's `lan`→`tcp` wire spelling), so a fourth transport is one table row rather than a grep. Future transports add adapters, not UI branches. |
 | Settings and schema | `settings_service.py`, `storage.py`, `models.py` | Same | Done foundation | `SettingsService` owns schema v2, minimum-compatible schema checks, and import/export payload rules; `SettingsStore` owns atomic save and backup fallback. |
 | App settings workflow | `app_settings_controller.py` | `app_settings_controller.py` | Done foundation | Owns app-settings transfer dialogs, file pickers, busy state, load/export calls, status, and save-after-import; `MainWindow` still applies imported settings to live tabs. |
 | Workspace restore/capture | `workspace_state.py`, `workspace_settings_controller.py` | Same | Done | Captures/restores terminal and command-file tabs; save/apply-imported-settings coordination is outside `MainWindow`. |
@@ -100,9 +100,25 @@ The current test suite is built around `unittest` and has focused coverage for e
 
 ### Launch and Workspace Restore
 
-`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. During normal app launch, startup prompts and the automatic update check are deferred until after the main window is shown and the splash is closed; if the first-run connection settings prompt is needed, the update check waits until that prompt returns. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for connection settings. Restored connected serial tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected. Restored LAN tabs connect to the saved host and port directly because there is no endpoint discovery in v1.
+`app.py` creates the QApplication, splash screen, and `MainWindow`. `ui/main_window.py` creates `SettingsStore`, `SettingsService`, loads `AppSettings`, creates the main tabs/status/menu shell, then delegates restored workspace creation through `WorkspaceStateService`. During normal app launch, startup prompts and the automatic update check are deferred until after the main window is shown and the splash is closed; if the first-run connection settings prompt is needed, the update check waits until that prompt returns. Terminal sessions and command-file tabs are recreated from settings state. New blank terminal tabs still prompt for connection settings. Restored connected serial tabs only auto-connect when the saved port is currently detected; missing ports are reported and left disconnected. Restored LAN and UDP tabs connect to the saved host and port directly because there is no endpoint discovery for either.
 
 Nothing on this path may open a modal dialog: the window is not on screen yet, so a dialog blocks the launch where the user cannot see or dismiss it (the splash is deliberately not always-on-top for the same reason). Restore failures are reported instead — a command file that can no longer be read keeps its tab and surfaces the reason through `CommandFileEditorDialog.load_error` (status line plus the status bar), and a control-panel tab whose config was deleted is skipped with a notice. `MainWindow._restore_notice` carries that message past the "Ready" status set at the end of startup. `app.arm_startup_freeze_dump()` covers window construction, which runs before the event loop and so before the `install_freeze_watchdog` heartbeat can tick.
+
+### Response Framing
+
+`PortChannel` correlates a reply structurally — the worker runs drain → write →
+read-window for one transaction at a time — and a `Matcher` decides when that
+window holds a complete response. Byte-stream transports (serial, TCP) default
+to `LineMatcher`; UDP defaults to `DatagramMatcher`, which completes on the
+first whole datagram regardless of terminator. The default travels with the
+channel (`PortChannel(default_matcher=...)`) and is read back through
+`TransportAdapter.default_matcher()`, so callers never branch on transport kind.
+
+An explicitly configured matcher always wins: a control-panel entry with a
+regex parse rule gets its `RegexMatcher` on every transport. Only the
+no-explicit-rule path consults the transport default — that single decision
+lives in `control_panel_engine._matcher_for`, the one place in production code
+that constructs a matcher.
 
 ### Terminal Send
 
@@ -167,7 +183,7 @@ The drawer container around those shared panels is app-level UI state. Selecting
 | Done | Tab context menu extraction | `ui/tab_context_menus.py` owns terminal/editor/empty-tab context menu construction. |
 | Next | Slim `ui/main_window.py` into a thinner shell | Keep construction and top-level wiring; move workflow coordination into services/presenters. |
 | Next | Decide final module location for the command-file tab | Terminal tab moved; command-file tab still needs the same treatment once dependencies are stable. |
-| Later | Add more non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. |
+| Later | Add more non-serial transports | Add concrete adapters only after controller/UI boundaries are stable. UDP (2026-08) is the worked example: raw transport + client + adapter + a `transport_kinds` row, no UI restructuring. |
 | Later | Broaden command registry use in context menus | Use registry metadata for shared actions; keep selection-specific logic local. |
 
 ## Refactor Rules

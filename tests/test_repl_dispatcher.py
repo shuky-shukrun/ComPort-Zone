@@ -15,7 +15,13 @@ from pathlib import Path
 
 from ComPort_Zone.cli.output import CliOutput
 from ComPort_Zone.cli.repl_dispatcher import ReplDispatcher, ReplState
-from ComPort_Zone.core.models import AppSettings, LanProfile, QuickCommand, SerialProfile
+from ComPort_Zone.core.models import (
+    AppSettings,
+    LanProfile,
+    QuickCommand,
+    SerialProfile,
+    UdpProfile,
+)
 from ComPort_Zone.core.settings_service import SettingsService
 from ComPort_Zone.core.storage import SettingsStore
 from tests.fakes.fake_serial_transport import FakeSerialTransport
@@ -36,7 +42,7 @@ class _Harness:
         self,
         *,
         settings: AppSettings | None = None,
-        profile: SerialProfile | LanProfile | None = None,
+        profile: SerialProfile | LanProfile | UdpProfile | None = None,
         config_path: Path | None = None,
     ) -> None:
         self.transport = FakeSerialTransport()
@@ -130,6 +136,37 @@ class ConnectionLifecycleTests(unittest.TestCase):
         h.run("/set tcp-port 70000")
         self.assertEqual(h.state.profile.port, 7000)  # unchanged
         self.assertIn("1 to 65535", h.stderr.getvalue())
+
+    def test_udp_connect_and_show_endpoint(self) -> None:
+        h = _Harness(profile=UdpProfile(host="127.0.0.1", port=5025))
+        h.run("/connect")
+        self.assertTrue(h.transport.is_connected)
+        h.run("/show endpoint")
+        printed = h.stdout.getvalue()
+        self.assertIn("127.0.0.1:5025", printed)
+        self.assertIn("udp", printed)
+
+    def test_udp_set_shortcuts_update_udp_profile_and_settings(self) -> None:
+        h = _Harness(profile=UdpProfile(host="127.0.0.1", port=5025))
+        h.run("/set udp-port 9000")
+        h.run("/set udp-timeout 750")
+        self.assertEqual(h.state.profile.port, 9000)
+        self.assertEqual(h.state.profile.timeout_ms, 750)
+        self.assertEqual(h.state.settings.transport_kind, "udp")
+        self.assertEqual(h.state.settings.udp.port, 9000)
+        self.assertEqual(h.state.settings.udp.timeout_ms, 750)
+
+    def test_udp_set_rejects_out_of_range_port_naming_the_udp_flag(self) -> None:
+        h = _Harness(profile=UdpProfile(host="127.0.0.1", port=5025))
+        h.run("/set udp-port 70000")
+        self.assertEqual(h.state.profile.port, 5025)  # unchanged
+        self.assertIn("/set udp-port", h.stderr.getvalue())
+
+    def test_udp_rejects_the_tcp_set_vocabulary(self) -> None:
+        h = _Harness(profile=UdpProfile(host="127.0.0.1", port=5025))
+        h.run("/set tcp-port 9000")
+        self.assertEqual(h.state.profile.port, 5025)
+        self.assertIn("Unknown /set key", h.stderr.getvalue())
 
 
 class SendingTests(unittest.TestCase):

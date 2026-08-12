@@ -20,6 +20,7 @@ from ComPort_Zone.models import (
     SETTINGS_SCHEMA_VERSION,
     SerialProfile,
     TerminalSessionState,
+    UDP_SCHEMA_FLOOR,
 )
 from ComPort_Zone.serial_core import SerialClient, SerialEvent
 from ComPort_Zone.settings_service import SettingsService
@@ -1962,6 +1963,61 @@ class AppSessionTests(unittest.TestCase):
             self.assertIn("LAN dut.local:5555", actions[0].text())
             actions[0].trigger()
             self.assertEqual(started, [("SEND *IDN?\n", "Untitled", None)])
+        finally:
+            app_module.default_config_path = old_config_path
+            app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+            app_module.MainWindow.prompt_session_settings = old_prompt_session
+            if window is not None:
+                for active_session in window.iter_sessions():
+                    active_session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
+            settings_path.unlink(missing_ok=True)
+
+    def test_udp_status_labels_and_settings_round_trip(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_udp_session.json")
+        settings_path.unlink(missing_ok=True)
+        old_config_path = app_module.default_config_path
+        old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+        old_prompt_session = app_module.MainWindow.prompt_session_settings
+        window = None
+
+        app_module.default_config_path = lambda: settings_path
+        app_module.MainWindow.prompt_current_session_settings = lambda self: None
+        app_module.MainWindow.prompt_session_settings = lambda self, session: None
+        try:
+            window = app_module.MainWindow()
+            session = window.current_session()
+            session._replace_controller(
+                app_module.UdpProfile(host="dut.local", port=5025, line_ending="LF"),
+                "udp",
+            )
+            session._update_connection_ui(False)
+
+            self.assertEqual(
+                window.tabs.tabText(window.tabs.currentIndex()), "dut.local:5025"
+            )
+            self.assertEqual(
+                window.connection_status_label.text(),
+                "Closed | UDP dut.local:5025 | LF | Log off",
+            )
+            self.assertIn("UDP", session.run_target_label())
+            # No modem control lines on a datagram socket.
+            self.assertFalse(session.supports_signals())
+
+            window.save_settings()
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["transport"]["kind"], "udp")
+            self.assertEqual(payload["transport"]["profile"]["host"], "dut.local")
+            terminal_tabs = payload["workspace"]["terminal_tabs"]
+            restored = [
+                tab for tab in terminal_tabs if tab["transport"]["kind"] == "udp"
+            ]
+            self.assertTrue(restored, msg=terminal_tabs)
+            self.assertEqual(restored[0]["transport"]["profile"]["port"], 5025)
+            # A UDP endpoint raises the compatibility floor so older builds
+            # refuse the file rather than silently dropping the tab.
+            self.assertEqual(payload["minimum_compatible_schema_version"], UDP_SCHEMA_FLOOR)
         finally:
             app_module.default_config_path = old_config_path
             app_module.MainWindow.prompt_current_session_settings = old_prompt_current

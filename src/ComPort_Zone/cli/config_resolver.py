@@ -21,7 +21,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..core.models import AppSettings, LanProfile, SerialProfile
+from ..core.models import AppSettings, LanProfile, SerialProfile, UdpProfile
 from ..core.settings_service import SettingsService
 from ..core.storage import SettingsStore
 
@@ -257,4 +257,41 @@ def resolve_lan_profile(
             or base.line_ending
         ),
         auto_reconnect=resolved_auto_reconnect,
+    )
+
+
+def resolve_udp_profile(
+    *,
+    settings: AppSettings,
+    udp_host: str | None = None,
+    udp_port: int | None = None,
+    udp_timeout_ms: int | None = None,
+    line_ending: str | None = None,
+) -> UdpProfile:
+    """Resolve a UDP profile from flags, env, settings, defaults.
+
+    Same precedence as :func:`resolve_lan_profile`, minus ``auto_reconnect``
+    (a datagram socket has no connection to lose). Env vars:
+    ``COMPORTZONE_UDP_HOST`` / ``COMPORTZONE_UDP_PORT`` /
+    ``COMPORTZONE_UDP_TIMEOUT_MS``.
+    """
+    base = settings.udp if settings.udp else UdpProfile()
+    return replace(
+        base,
+        host=(udp_host if udp_host is not None else _env("UDP_HOST") or base.host).strip(),
+        port=(
+            udp_port
+            if udp_port is not None
+            else _env_int("UDP_PORT") or base.port
+        ),
+        timeout_ms=(
+            udp_timeout_ms
+            if udp_timeout_ms is not None
+            else _env_int("UDP_TIMEOUT_MS") or base.timeout_ms
+        ),
+        line_ending=(
+            _normalize_line_ending(line_ending)
+            or _normalize_line_ending(_env("LINE_ENDING"))
+            or base.line_ending
+        ),
     )

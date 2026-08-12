@@ -65,6 +65,7 @@ from ..models import (
     RECENT_FILES_LIMIT,
     SerialProfile,
     TerminalSessionState,
+    UdpProfile,
     WorkspaceLayoutState,
     WorkspacePaneState,
     WorkspaceTabState,
@@ -125,6 +126,10 @@ def clone_profile(profile: SerialProfile) -> SerialProfile:
 
 def clone_lan_profile(profile: LanProfile) -> LanProfile:
     return LanProfile.from_dict(profile.to_dict())
+
+
+def clone_udp_profile(profile: UdpProfile) -> UdpProfile:
+    return UdpProfile.from_dict(profile.to_dict())
 
 
 def app_icon() -> QIcon:
@@ -1880,6 +1885,9 @@ class MainWindow(QMainWindow):
 
     def default_lan_profile(self) -> LanProfile:
         return clone_lan_profile(self.settings.lan)
+
+    def default_udp_profile(self) -> UdpProfile:
+        return clone_udp_profile(self.settings.udp)
 
     def apply_settings_to_ui(self) -> None:
         self.apply_theme(self.settings.theme, save=False)

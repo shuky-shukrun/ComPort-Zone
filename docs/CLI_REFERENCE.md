@@ -19,7 +19,8 @@ comport-zone send --help
 
 ## Connection Targets
 
-The connect-using commands support serial COM ports and raw TCP endpoints:
+The connect-using commands support serial COM ports, raw TCP endpoints, and
+UDP endpoints:
 
 - `send`
 - `hex`
@@ -41,9 +42,16 @@ Use TCP flags for raw TCP endpoints:
 comport-zone send ping --host 127.0.0.1 --tcp-port 5025 --line-ending LF
 ```
 
+Use UDP flags for UDP endpoints:
+
+```powershell
+comport-zone send ping --udp-host 127.0.0.1 --udp-port 5025 --line-ending LF
+```
+
 `--port` always means a serial COM port. `--host`, `--tcp-port`, and
-`--tcp-timeout` select raw TCP. Do not combine serial-only flags such as
-`--port` or `--baud` with TCP flags in the same command.
+`--tcp-timeout` select raw TCP; `--udp-host`, `--udp-port`, and `--udp-timeout`
+select UDP. Flags from two different transports cannot be combined in the same
+command (exit code 2).
 
 When no explicit endpoint flags are supplied, the CLI uses the default
 transport saved in the ComPort Zone settings. Command-line flags win over
@@ -55,7 +63,7 @@ file and built-in profile defaults.
 | Flag | Meaning |
 | --- | --- |
 | `--line-ending none|CR|LF|CRLF` | Line ending appended by text sends. |
-| `--auto-reconnect` / `--no-auto-reconnect` | Reconnect preference on the profile. |
+| `--auto-reconnect` / `--no-auto-reconnect` | Reconnect preference on the profile. Accepted and ignored for UDP. |
 
 ### Serial Flags
 
@@ -79,6 +87,31 @@ file and built-in profile defaults.
 | `--tcp-port PORT` | TCP port. The profile default is `5025`. |
 | `--tcp-timeout MS` | TCP connect and read timeout in milliseconds. |
 
+### UDP Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--udp-host HOST` | UDP host name or IP address. |
+| `--udp-port PORT` | UDP port. The profile default is `5025`. |
+| `--udp-timeout MS` | Default reply-wait window in milliseconds (default `1000`). |
+
+UDP is client-only: datagrams go to the configured peer from an
+OS-assigned local port, and replies are read back from that peer. Notes that
+follow from UDP having no connection:
+
+- `--wait` is accepted and ignored. Opening a datagram socket performs no
+  network I/O, so it fails only for deterministic reasons and retrying cannot
+  change the outcome.
+- `--auto-reconnect` is accepted and ignored. There is no link loss to detect.
+- `--udp-timeout` is **not** a connect timeout. It is how long `send` holds a
+  read window open when you give it no `--expect` or `--read-after`.
+- In `listen`, one output record is one datagram. A reply with no trailing
+  CR/LF still gets its own line.
+- A datagram larger than the path MTU (roughly 1472 bytes on Ethernet)
+  fragments; one larger than the socket send buffer fails loudly.
+- Pointing at a port nobody is listening on does not close the session — the
+  resulting ICMP port-unreachable is ignored, as UDP requires.
+
 Useful endpoint environment variables are:
 
 | Variable | Target |
@@ -88,6 +121,9 @@ Useful endpoint environment variables are:
 | `COMPORTZONE_HOST` | TCP host. |
 | `COMPORTZONE_TCP_PORT` | TCP port. |
 | `COMPORTZONE_TCP_TIMEOUT_MS` | TCP timeout. |
+| `COMPORTZONE_UDP_HOST` | UDP host. |
+| `COMPORTZONE_UDP_PORT` | UDP port. |
+| `COMPORTZONE_UDP_TIMEOUT_MS` | UDP reply-wait window. |
 | `COMPORTZONE_LINE_ENDING` | Text line ending. |
 | `COMPORTZONE_AUTO_RECONNECT` | Reconnect preference. |
 
@@ -144,6 +180,42 @@ comport-zone --json send ping --host 127.0.0.1 --tcp-port 5025 --line-ending LF 
 comport-zone send "round trip 123" --host 127.0.0.1 --tcp-port 5025 --line-ending LF --read-after 500
 ```
 
+## UDP Echo Server Smoke Test
+
+The UDP twin of the above. Start it in one shell (it binds `127.0.0.1:5025` —
+the UDP profile default, so `--udp-port` is optional):
+
+```powershell
+python resources/udp_echo_server.py
+```
+
+It returns `PONG` for `ping`, the current time for `time`, and echoes anything
+else — deliberately **without** a trailing CR/LF, which is what most datagram
+devices do. Then, from another shell:
+
+```powershell
+comport-zone send ping --udp-host 127.0.0.1 --udp-port 5025 --expect PONG
+```
+
+```powershell
+comport-zone send time --udp-host 127.0.0.1 --udp-port 5025 --read-after 500
+```
+
+```powershell
+comport-zone --json send ping --udp-host 127.0.0.1 --udp-port 5025 --expect PONG
+```
+
+```powershell
+comport-zone listen --udp-host 127.0.0.1 --udp-port 5025 --duration 5
+```
+
+To see the no-connection behaviour, aim at a port with no listener — the
+command still opens and simply times out waiting for a reply:
+
+```powershell
+comport-zone send ping --udp-host 127.0.0.1 --udp-port 5099 --read-after 500
+```
+
 ## Commands
 
 ### `version`
@@ -164,7 +236,7 @@ comport-zone ports list
 comport-zone ports info COM3
 ```
 
-`ports` is serial-only because raw TCP endpoints are supplied explicitly.
+`ports` is serial-only because TCP and UDP endpoints are supplied explicitly.
 
 ### `send`
 
@@ -173,6 +245,7 @@ Open an endpoint, send one text payload, optionally read RX, then close:
 ```powershell
 comport-zone send ping --port COM3 --expect PONG --expect-timeout 1000
 comport-zone send time --host instrument.local --tcp-port 5025 --read-after 500
+comport-zone send time --udp-host instrument.local --udp-port 5025 --read-after 500
 ```
 
 Useful options:
