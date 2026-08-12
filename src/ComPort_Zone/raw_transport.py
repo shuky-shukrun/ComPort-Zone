@@ -226,7 +226,7 @@ class LanRawTransport:
     def open(self) -> None:
         profile = self._profile
         if not profile.host.strip() or not 1 <= int(profile.port) <= 65535:
-            raise TransportError("LAN host and port are required.")
+            raise TransportError("TCP host and port are required.")
         connect_timeout = max(profile.timeout_ms, 10) / 1000
         try:
             connection = self._socket_factory(
@@ -254,7 +254,7 @@ class LanRawTransport:
     def write(self, data: bytes) -> None:
         connection = self._socket
         if connection is None:
-            raise ConnectionLost("LAN endpoint is not connected.")
+            raise ConnectionLost("TCP endpoint is not connected.")
         try:
             connection.sendall(data)
         except OSError as exc:
@@ -263,7 +263,7 @@ class LanRawTransport:
     def read(self) -> bytes:
         connection = self._socket
         if connection is None:
-            raise ConnectionLost("LAN endpoint is not connected.")
+            raise ConnectionLost("TCP endpoint is not connected.")
         try:
             payload = connection.recv(4096)
         except socket.timeout:

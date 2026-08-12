@@ -280,6 +280,14 @@ class DialogExtractionTests(unittest.TestCase):
                 [combo.itemData(index) for index in range(combo.count())],
                 ["serial", "lan", "udp"],
             )
+            # The raw-TCP kind is stored as "lan" (frozen by settings files
+            # already on disk) but must never be *shown* as "LAN": TCP and UDP
+            # are both LAN transports, so that label named the network instead
+            # of the protocol and read as a third category beside UDP.
+            self.assertEqual(
+                [combo.itemText(index) for index in range(combo.count())],
+                ["Serial", "TCP", "UDP"],
+            )
         finally:
             dialog.reject()
             dialog.deleteLater()

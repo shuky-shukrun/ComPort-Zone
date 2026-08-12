@@ -280,7 +280,7 @@ def open_cli_endpoint(
     profile = endpoint.profile
     if not profile.host:
         raise EndpointOpenError(
-            "No TCP host specified. Use --host or configure a LAN endpoint.",
+            "No TCP host specified. Use --host or configure a TCP endpoint.",
             ExitCode.GENERIC_ERROR,
         )
     if not 1 <= int(profile.port) <= 65535:

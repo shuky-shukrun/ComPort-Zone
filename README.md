@@ -21,7 +21,7 @@ ComPort Zone is built for the work that happens on a bench: bringing up a new bo
 
 - **Terminal-first** — a structured, color-coded terminal with an integrated `TX>` prompt, timestamps, search, and history.
 - **Built for repetition** — save commands, star favorites, and codify sequences into runnable command files with waits and response checks.
-- **Serial and network** — RS-232 / USB-serial COM ports, raw TCP/LAN endpoints, and UDP endpoints share the same workflow.
+- **Serial and network** — RS-232 / USB-serial COM ports, raw TCP endpoints, and UDP endpoints share the same workflow.
 - **One tool, two faces** — a polished PySide6 desktop app and a `comport-zone` CLI that share the same settings.
 
 ## Features
@@ -74,7 +74,7 @@ Drag tabs into side-by-side or stacked panes to watch a terminal while you edit 
 
 ### Serial, TCP, and UDP connectivity
 
-Full control over the serial line — port, baud rate, data bits, parity, stop bits, flow control, DTR/RTS, line ending, and auto-reconnect — or point a tab at a raw TCP host/port for LAN-connected gear, or at a UDP host/port for datagram devices. Connection settings open per tab, and a status bar always shows the active endpoint's state.
+Full control over the serial line — port, baud rate, data bits, parity, stop bits, flow control, DTR/RTS, line ending, and auto-reconnect — or point a tab at a raw TCP host/port for network-connected gear, or at a UDP host/port for datagram devices. Connection settings open per tab, and a status bar always shows the active endpoint's state.
 
 UDP is client-only and connectionless: a reply is one whole datagram, so devices that answer without a line terminator work out of the box, and there is no auto-reconnect because there is no link to lose.
 

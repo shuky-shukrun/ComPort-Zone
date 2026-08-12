@@ -277,7 +277,7 @@ class LanTransportAdapter(_ClientAdapter):
         if isinstance(profile, TransportProfile):
             if profile.kind != self.kind:
                 raise ValueError(
-                    f"LAN transport cannot connect profile kind {profile.kind!r}."
+                    f"TCP transport cannot connect profile kind {profile.kind!r}."
                 )
             profile = profile.to_lan_profile()
         return self.client.connect(profile)

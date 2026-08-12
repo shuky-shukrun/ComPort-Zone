@@ -14,10 +14,10 @@ Keep this document current when ownership, flows, settings shape, or extension p
 
 ## Product Summary
 
-ComPort Zone is a PySide6 desktop app for working with serial COM-port devices and raw TCP LAN endpoints. The app supports:
+ComPort Zone is a PySide6 desktop app for working with serial COM-port devices, raw TCP endpoints, and UDP endpoints. The app supports:
 
 - Multiple terminal tabs.
-- Serial and LAN connection settings and reconnect behavior.
+- Serial, TCP, and UDP connection settings and reconnect behavior.
 - Integrated `TX> ` terminal prompt with text and hex send modes.
 - Timestamped terminal output, search, copy, conversion helpers, and logging.
 - Command-file editing, validation, syntax highlighting, autocomplete, find/replace, and execution.
@@ -29,7 +29,7 @@ ComPort Zone is a PySide6 desktop app for working with serial COM-port devices a
 - Restored workspace tabs across app launches.
 - Manual and default-on launch-time GitHub release checks with clickable release-page links.
 
-Serial and raw TCP LAN are implemented transports today, and the design keeps a transport abstraction so future transports can be added without rewriting UI flows.
+Serial, raw TCP, and UDP are implemented transports today, and the design keeps a transport abstraction so future transports can be added without rewriting UI flows.
 
 ## Current High-Level Shape
 
@@ -106,9 +106,10 @@ Rules:
 | Terminal behavior | `terminal_session_controller.py` | Send/run/log/event decisions, pause buffering, batch runner coordination. |
 | Terminal rendering | `terminal_view.py` | QTextEdit insertion, rendered event plans, terminal search highlighting. |
 | Terminal input widget | `widgets.py` | `IntegratedTerminalEdit` prompt/draft editing, protected transcript behavior, autocomplete navigation, and font-wheel forwarding. |
-| Transport abstraction | `transports.py` | `TransportAdapter`, transport events, serial and LAN adapters. |
+| Transport abstraction | `transports.py` | `TransportAdapter`, transport events, serial/TCP/UDP adapters. |
 | Serial implementation | `serial_core.py` | Serial port list/connect/read/write/reconnect behavior. |
-| LAN implementation | `lan_core.py` | Raw TCP client connect/read/write/reconnect behavior. |
+| Raw TCP implementation | `lan_core.py` | Raw TCP client connect/read/write/reconnect behavior. Module keeps its `lan` name because the persisted transport kind does. |
+| UDP implementation | `udp_core.py` | Connectionless datagram client; whole-datagram framing, no reconnect. |
 | Command editor UI | `command_editor.py` | Command-file editor tab/dialog UI and editor-specific wiring. |
 | Command editor internals | `command_editor_core.py`, `command_editor_highlighting.py`, `command_search.py` | Editor state, highlighting, find/replace. |
 | Command files | `batch.py`, `command_file_service.py`, `command_run_targets.py`, `ui/command_file_targets.py` | Parse/run command files and coordinate run targets. |
@@ -509,7 +510,7 @@ Transport rules:
 
 Dialogs in `ui/dialogs/*` should be focused and reusable:
 
-- `connection.py`: serial and LAN connection settings dialog.
+- `connection.py`: serial, TCP, and UDP connection settings dialog.
 - `quick_actions.py`: quick command/file edit and import option dialogs.
 - `app_settings_transfer.py`: app settings import/export choice.
 - `command_palette.py`: command palette.
@@ -569,7 +570,7 @@ Done foundations:
 - Command editor core, search, highlighting, command-file services, and run-target coordination are extracted.
 - Settings service, workspace state, workspace settings controller, app settings controller are extracted.
 - Settings storage now saves atomically, can fall back to `settings.json.bak`, and declares minimum-compatible schema metadata for upgrade/downgrade safety.
-- Transport abstraction foundation exists with serial and raw TCP LAN adapters.
+- Transport abstraction foundation exists with serial, raw TCP, and UDP adapters.
 - Shared drawer collapsed state, selected page, and resized width are synchronized across terminal and embedded command-file editor tabs.
 
 Remaining design work:

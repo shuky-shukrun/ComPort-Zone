@@ -3,10 +3,17 @@
 The kind discriminator itself is a bare string — ``"serial"``, ``"lan"``,
 ``"udp"`` — because it is persisted in settings.json and there is no migration
 path (see ``settings_service.settings_from_payload``, which gates but never
-upgrades). What used to be scattered were the ~15 ``"LAN" if kind == "lan" else
+upgrades). What used to be scattered were the ~15 ``"TCP" if kind == "lan" else
 "COM port"`` label ternaries in the UI and the lone ``"transport": "tcp"``
 literal in the CLI's JSON records; those all read from here now, so adding a
 transport is one row rather than a grep.
+
+**The ``"lan"`` kind is presented as "TCP" everywhere.** The internal spelling
+is frozen by the settings files already on disk, but "LAN" was never a useful
+label: TCP and UDP are both LAN transports, so it named the network rather than
+the protocol and read as a third category next to UDP. Every user-facing string
+for that kind says TCP; only the persisted discriminator and the class names
+built on it (``LanProfile``, ``LanClient``) still say ``lan``.
 
 Deliberately imports nothing from ``models``/``transports``/Qt: presentation
 data only, importable from anywhere including the headless CLI.
@@ -65,15 +72,17 @@ SERIAL = TransportKindInfo(
     datagram=False,
 )
 
+# Presented as "TCP", not "LAN" — see the module docstring. ``kind`` stays
+# "lan" because it is already written into users' settings.json.
 LAN = TransportKindInfo(
     kind="lan",
-    ui_label="LAN",
+    ui_label="TCP",
     short_label="TCP",
-    status_prefix="LAN",
+    status_prefix="TCP",
     no_endpoint_label="No endpoint",
     no_endpoint_selected="No endpoint selected",
     set_endpoint_action="Set Endpoint",
-    choose_hint="Choose a LAN host and port.",
+    choose_hint="Choose a TCP host and port.",
     rx_transport="tcp",
     datagram=False,
 )

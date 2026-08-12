@@ -221,9 +221,9 @@ def resolve_lan_profile(
     line_ending: str | None = None,
     auto_reconnect: bool | None = None,
 ) -> LanProfile:
-    """Resolve a raw TCP/LAN profile from flags, env, settings, defaults.
+    """Resolve a raw TCP profile from flags, env, settings, defaults.
 
-    Mirrors :func:`resolve_serial_profile`'s precedence for the LAN-relevant
+    Mirrors :func:`resolve_serial_profile`'s precedence for the TCP-relevant
     fields (``host`` / ``port`` / ``timeout_ms`` / ``line_ending`` /
     ``auto_reconnect``). Env vars: ``COMPORTZONE_HOST`` / ``COMPORTZONE_TCP_PORT``
     / ``COMPORTZONE_TCP_TIMEOUT_MS``.

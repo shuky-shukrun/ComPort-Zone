@@ -43,7 +43,7 @@ git diff --check
 | Terminal tab UI layout/glue                   | `src/ComPort_Zone/ui/terminal_tab.py`                                                                                              | terminal tests plus app-session tests                         |
 | Integrated terminal prompt/draft editing      | `src/ComPort_Zone/widgets.py`                                                                                                      | `tests/test_integrated_terminal_input`                        |
 | Serial behavior                               | `src/ComPort_Zone/serial_core.py`                                                                                                  | `tests/test_serial_core`                                      |
-| LAN behavior                                  | `src/ComPort_Zone/lan_core.py`                                                                                                     | `tests/test_lan_core`                                         |
+| Raw TCP behavior (kind `lan`)                 | `src/ComPort_Zone/lan_core.py`                                                                                                     | `tests/test_lan_core`                                         |
 | UDP behavior                                  | `src/ComPort_Zone/udp_core.py`                                                                                                     | `tests/test_udp_core`                                         |
 | Byte-level links / framing                    | `src/ComPort_Zone/raw_transport.py`, `src/ComPort_Zone/port_channel.py`                                                            | `tests/test_raw_transport`, `tests/test_port_channel`         |
 | Transport-kind names/labels                   | `src/ComPort_Zone/transport_kinds.py`                                                                                              | `tests/test_dialogs`, `tests/test_app_sessions`               |
@@ -363,7 +363,7 @@ UDP (2026-08) is the worked example; follow the same order:
 8. Add a `Fake<Kind>Transport` one-liner in
    `tests/fakes/fake_serial_transport.py` and register the new core module in
    `tests/test_core_no_pyside.py`.
-9. Keep serial, LAN, and UDP behavior unchanged.
+9. Keep serial, TCP, and UDP behavior unchanged.
 
 ## Project Scripts
 

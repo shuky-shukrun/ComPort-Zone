@@ -413,7 +413,7 @@ class AppSessionTests(unittest.TestCase):
                 self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "192.168.1.50:5025")
                 self.assertEqual(
                     window.connection_status_label.text(),
-                    "Connected | LAN 192.168.1.50:5025 | LF | Log off",
+                    "Connected | TCP 192.168.1.50:5025 | LF | Log off",
                 )
             finally:
                 app_module.default_config_path = old_config_path
@@ -1935,7 +1935,7 @@ class AppSessionTests(unittest.TestCase):
             self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "dut.local:5555")
             self.assertEqual(
                 window.connection_status_label.text(),
-                "Closed | LAN dut.local:5555 | LF | Log off",
+                "Closed | TCP dut.local:5555 | LF | Log off",
             )
 
             window.duplicate_current_session()
@@ -1960,7 +1960,7 @@ class AppSessionTests(unittest.TestCase):
             actions = menu.actions()
 
             self.assertEqual(len(actions), 1)
-            self.assertIn("LAN dut.local:5555", actions[0].text())
+            self.assertIn("TCP dut.local:5555", actions[0].text())
             actions[0].trigger()
             self.assertEqual(started, [("SEND *IDN?\n", "Untitled", None)])
         finally:

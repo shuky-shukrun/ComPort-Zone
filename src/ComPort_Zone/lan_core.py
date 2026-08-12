@@ -1,4 +1,4 @@
-"""LAN (TCP) connection management on top of the serialized port channel.
+"""Raw-TCP connection management on top of the serialized port channel.
 
 Mirrors :class:`ComPort_Zone.serial_core.SerialClient` exactly — same
 lifecycle, monitor hub, and reconnect — differing only in the underlying
@@ -168,10 +168,10 @@ class LanClient:
     ):
         profile = self.active_profile
         if not profile:
-            raise RuntimeError("No LAN profile is active.")
+            raise RuntimeError("No TCP profile is active.")
         channel = self._channel
         if channel is None:
-            raise RuntimeError("LAN endpoint is not connected.")
+            raise RuntimeError("TCP endpoint is not connected.")
         payload = apply_line_ending(text, line_ending_override or profile.line_ending)
         return channel.write(
             payload, source=source, display=text, priority=priority, quiet_read=quiet_read
@@ -187,7 +187,7 @@ class LanClient:
     ):
         channel = self._channel
         if channel is None:
-            raise RuntimeError("LAN endpoint is not connected.")
+            raise RuntimeError("TCP endpoint is not connected.")
         display = "HEX " + format_hex_bytes(data)
         return channel.write(
             data, source=source, display=display, priority=priority, quiet_read=quiet_read
@@ -206,7 +206,7 @@ class LanClient:
     ):
         channel = self._channel
         if channel is None:
-            raise RuntimeError("LAN endpoint is not connected.")
+            raise RuntimeError("TCP endpoint is not connected.")
         return channel.query(
             payload,
             matcher=matcher,
@@ -230,7 +230,7 @@ class LanClient:
     ):
         profile = self.active_profile
         if not profile:
-            raise RuntimeError("No LAN profile is active.")
+            raise RuntimeError("No TCP profile is active.")
         payload = apply_line_ending(text, line_ending_override or profile.line_ending)
         return self.query(
             payload,

@@ -149,7 +149,7 @@ comport-zone --config C:\bench\settings.json ports list
 ## TCP Echo Server Smoke Test
 
 The repo ships a tiny localhost echo server you can use as a target. Start it
-in one shell (it listens on `127.0.0.1:5025` — the LAN profile default, so
+in one shell (it listens on `127.0.0.1:5025` — the TCP profile default, so
 `--tcp-port` is optional):
 
 ```powershell

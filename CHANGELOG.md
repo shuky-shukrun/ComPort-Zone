@@ -12,6 +12,7 @@ All notable changes to ComPort Zone are documented here.
 
 ### Changed
 
+- **The raw TCP connection type is now labelled "TCP", not "LAN".** With UDP alongside it, "LAN" named the network rather than the protocol — both are LAN transports — and read as a third category next to UDP. The Connection Settings dropdown, tab titles, status bar, tooltips, and error messages all say TCP now. Nothing about saved settings changes: the persisted transport kind is still `lan`, so existing files load untouched and older builds still read them.
 - **Settings schema is now version 9.** Only a settings file that actually contains a UDP endpoint declares the new floor, so serial- and TCP-only files stay readable by older builds exactly as before. A file that *does* use UDP will be refused by builds older than this one rather than silently losing the endpoint.
 
 ## 0.6.1 - 2026-08-12
