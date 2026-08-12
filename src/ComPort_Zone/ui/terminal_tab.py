@@ -58,7 +58,6 @@ from ..terminal_session_controller import (
     ConnectionProfile,
     TerminalRenderPlan,
     TerminalSessionController,
-    coalesce_rx_events,
 )
 from ..terminal_view import TerminalView, prompt_leader_text
 from ..themes import mix_hex
@@ -1745,17 +1744,11 @@ class TerminalSessionWidget(QWidget):
         self.command_input.setCursorPosition(len(value))
 
     def _drain_events(self) -> None:
-        # Drain the whole batch first, then coalesce consecutive same-source RX
-        # events into one. A long device message arrives as many tiny reads; one
-        # render pass per read is what makes large RX slow, so a burst that other
-        # terminals paint once now paints once here too.
-        batch: list[SerialEvent] = []
         while True:
             try:
-                batch.append(self.monitor_queue.get_nowait())
+                event = self.monitor_queue.get_nowait()
             except Empty:
                 break
-        for event in coalesce_rx_events(batch):
             self._handle_event(event)
         self._refresh_script_controls()
 

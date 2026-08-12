@@ -33,43 +33,6 @@ ParameterPrompt = Callable[[str, int, str], str | None]
 ConnectionProfile = SerialProfile | LanProfile
 
 
-def coalesce_rx_events(events: list[SerialEvent]) -> list[SerialEvent]:
-    """Merge each run of consecutive same-source RX events into one.
-
-    A long device message arrives as many small reads — one monitor event per
-    read — and the terminal pays a full render pass (cursor moves, prompt
-    remove/reinsert, layout) per event, so a burst that other terminals render
-    once costs us hundreds of passes. Coalescing a drained batch collapses each
-    run of RX into a single render, the dominant cost for large RX messages.
-
-    Ordering is preserved: a non-RX event, or a change of ``source``, ends the
-    run (so TX echoes, status lines, and hidden control-panel traffic keep their
-    place and their per-source handling). Concatenating the raw bytes and
-    re-decoding as one string also repairs a multi-byte character that was split
-    across two reads.
-    """
-    merged: list[SerialEvent] = []
-    for event in events:
-        prev = merged[-1] if merged else None
-        if (
-            event.kind == "rx"
-            and prev is not None
-            and prev.kind == "rx"
-            and prev.source == event.source
-        ):
-            combined = prev.raw + event.raw
-            merged[-1] = SerialEvent(
-                kind="rx",
-                message=decode_serial_bytes(combined),
-                raw=combined,
-                source=prev.source,
-                timestamp=prev.timestamp,
-            )
-        else:
-            merged.append(event)
-    return merged
-
-
 @dataclass(frozen=True, slots=True)
 class ScriptRunResult:
     started: bool
