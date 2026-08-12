@@ -21,7 +21,7 @@ ComPort Zone is built for the work that happens on a bench: bringing up a new bo
 
 - **Terminal-first** — a structured, color-coded terminal with an integrated `TX>` prompt, timestamps, search, and history.
 - **Built for repetition** — save commands, star favorites, and codify sequences into runnable command files with waits and response checks.
-- **Serial and network** — RS-232 / USB-serial COM ports and raw TCP/LAN endpoints share the same workflow.
+- **Serial and network** — RS-232 / USB-serial COM ports, raw TCP endpoints, and UDP endpoints share the same workflow.
 - **One tool, two faces** — a polished PySide6 desktop app and a `comport-zone` CLI that share the same settings.
 
 ## Features
@@ -72,9 +72,11 @@ Drag tabs into side-by-side or stacked panes to watch a terminal while you edit 
 <img src="docs/media/comport-zone-split-workspace.png" alt="Split workspace with the command-file editor beside a live terminal" width="900">
 </div>
 
-### Serial and TCP connectivity
+### Serial, TCP, and UDP connectivity
 
-Full control over the serial line — port, baud rate, data bits, parity, stop bits, flow control, DTR/RTS, line ending, and auto-reconnect — or point a tab at a raw TCP host/port for LAN-connected gear. Connection settings open per tab, and a status bar always shows the active endpoint's state.
+Full control over the serial line — port, baud rate, data bits, parity, stop bits, flow control, DTR/RTS, line ending, and auto-reconnect — or point a tab at a raw TCP host/port for network-connected gear, or at a UDP host/port for datagram devices. Connection settings open per tab, and a status bar always shows the active endpoint's state.
+
+UDP is client-only and connectionless: a reply is one whole datagram, so devices that answer without a line terminator work out of the box, and there is no auto-reconnect because there is no link to lose.
 
 <div align="center">
 <img src="docs/media/comport-zone-connection.png" alt="The connection settings dialog for a serial port" width="540">
@@ -90,12 +92,13 @@ Press **Ctrl+Shift+P** to jump to any action — connect, run a command file, sp
 
 ### A headless CLI
 
-Everything that matters for automation is scriptable. `comport-zone` shares the GUI's settings and exposes ports, one-shot sends, listening, command-file runs, quick libraries, history, and an interactive REPL — with stable exit codes for CI. The connect-using commands take a **serial COM port** (`--port`) or a **raw TCP endpoint** (`--host` / `--tcp-port`); the two are kept distinct so they never collide.
+Everything that matters for automation is scriptable. `comport-zone` shares the GUI's settings and exposes ports, one-shot sends, listening, command-file runs, quick libraries, history, and an interactive REPL — with stable exit codes for CI. The connect-using commands take a **serial COM port** (`--port`), a **raw TCP endpoint** (`--host` / `--tcp-port`), or a **UDP endpoint** (`--udp-host` / `--udp-port`); each transport has its own flags so they never collide.
 
 ```powershell
 comport-zone send "*IDN?" --port COM6 --read-after 500
 comport-zone run bringup.cpz --port COM6 --param RANGE=10
 comport-zone listen --host 192.168.1.50 --tcp-port 5025 --timestamps --duration 10
+comport-zone send ping --udp-host 192.168.1.50 --udp-port 5025 --expect PONG
 ```
 
 See [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) for the full command, flag, and exit-code reference (serial and raw TCP), plus a TCP echo-server smoke test.

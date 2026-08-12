@@ -179,7 +179,7 @@ class QuickSendTests(unittest.TestCase):
             ),
         )
         with patch(
-            "ComPort_Zone.cli.commands.send.make_serial_transport",
+            "ComPort_Zone.cli.commands.send.make_transport",
             return_value=self.fake,
         ):
             result = self.runner.invoke(
@@ -205,7 +205,7 @@ class QuickSendTests(unittest.TestCase):
             ),
         )
         with patch(
-            "ComPort_Zone.cli.commands.send.make_serial_transport",
+            "ComPort_Zone.cli.commands.send.make_transport",
             return_value=self.fake,
         ):
             result = self.runner.invoke(

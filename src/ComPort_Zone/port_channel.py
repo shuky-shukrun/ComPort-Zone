@@ -141,6 +141,25 @@ class SubstringMatcher:
         return None
 
 
+class DatagramMatcher:
+    """One whole datagram is one response (default on datagram transports).
+
+    A datagram transport's ``read()`` returns exactly one datagram per call and
+    the reader notifies once per non-empty read, so the first non-empty spool
+    observation inside a transaction window is normally one datagram —
+    terminator or not, which is the point: UDP devices often reply without
+    CR/LF and ``LineMatcher`` would sit there until the timeout.
+
+    Accepted v1 caveat: two replies arriving back-to-back can be delivered as
+    one response if the worker is not scheduled between the reader's two
+    notifications. A request/response device sends one reply per request, and
+    the window closes on the first one.
+    """
+
+    def find_complete(self, spool: bytes) -> int | None:
+        return len(spool) if spool else None
+
+
 class CountMatcher:
     """Complete once at least ``count`` bytes have arrived (binary protocols)."""
 
@@ -216,11 +235,15 @@ class PortChannel:
         hub: MonitorHub | None = None,
         on_connection_lost: Callable[[str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        default_matcher: Callable[[], Matcher] | None = None,
     ) -> None:
         self._raw = raw
         self._hub = hub or MonitorHub()
         self._on_connection_lost = on_connection_lost
         self._clock = clock
+        # A factory, not an instance: callers get a fresh matcher per request
+        # so a future stateful matcher cannot leak across transactions.
+        self._default_matcher: Callable[[], Matcher] = default_matcher or LineMatcher
 
         self._queue: "PriorityQueue[tuple[int, int, Transaction]]" = PriorityQueue()
         self._seq = count()
@@ -272,6 +295,12 @@ class PortChannel:
     @property
     def is_open(self) -> bool:
         return not self._closed.is_set() and self._raw.is_open
+
+    def default_matcher(self) -> Matcher:
+        """A fresh matcher suited to this channel's transport, for callers that
+        have no explicit framing rule of their own (see
+        ``control_panel_engine._matcher_for``)."""
+        return self._default_matcher()
 
     # -- monitor ------------------------------------------------------------
 

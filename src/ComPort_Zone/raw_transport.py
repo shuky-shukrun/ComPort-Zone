@@ -15,13 +15,13 @@ Qt-free by design (re-exported through ``core/raw_transport.py``).
 from __future__ import annotations
 
 import socket
-from threading import Lock
+from threading import Event, Lock
 from typing import Callable, Protocol
 
 import serial
 from serial import SerialException
 
-from .models import LanProfile, SerialProfile
+from .models import LanProfile, SerialProfile, UdpProfile
 
 # Reader-thread block granularity. ``read()`` blocks at most this long when
 # the wire is idle, so the channel's reader stays responsive to shutdown.
@@ -226,7 +226,7 @@ class LanRawTransport:
     def open(self) -> None:
         profile = self._profile
         if not profile.host.strip() or not 1 <= int(profile.port) <= 65535:
-            raise TransportError("LAN host and port are required.")
+            raise TransportError("TCP host and port are required.")
         connect_timeout = max(profile.timeout_ms, 10) / 1000
         try:
             connection = self._socket_factory(
@@ -254,7 +254,7 @@ class LanRawTransport:
     def write(self, data: bytes) -> None:
         connection = self._socket
         if connection is None:
-            raise ConnectionLost("LAN endpoint is not connected.")
+            raise ConnectionLost("TCP endpoint is not connected.")
         try:
             connection.sendall(data)
         except OSError as exc:
@@ -263,7 +263,7 @@ class LanRawTransport:
     def read(self) -> bytes:
         connection = self._socket
         if connection is None:
-            raise ConnectionLost("LAN endpoint is not connected.")
+            raise ConnectionLost("TCP endpoint is not connected.")
         try:
             payload = connection.recv(4096)
         except socket.timeout:
@@ -285,3 +285,163 @@ class LanRawTransport:
                 shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+
+
+# ----- UDP ------------------------------------------------------------------
+
+# Largest legal IPv4 datagram. Sized so an oversized-datagram error is
+# unreachable: on Windows a datagram longer than the recv buffer raises
+# WSAEMSGSIZE *and discards the remainder*, where Linux truncates silently.
+UDP_MAX_DATAGRAM = 65535
+
+
+class _DatagramSocketLike(Protocol):
+    def recv(self, size: int) -> bytes: ...
+    def send(self, data: bytes) -> int: ...
+    def close(self) -> None: ...
+    def settimeout(self, value: float | None) -> None: ...
+
+
+UdpSocketFactory = Callable[[tuple[str, int], float], _DatagramSocketLike]
+
+
+def _disable_udp_conn_reset(sock) -> None:
+    """Windows: stop an ICMP port-unreachable from poisoning the socket.
+
+    Without this, a datagram sent to a port nobody is listening on makes the
+    *next* recv raise WSAECONNRESET. UDP has no connection, so that is noise.
+    ``getattr`` guards both lookups: ``SIO_UDP_CONNRESET`` does not exist off
+    Windows, and test doubles have no ``ioctl``.
+    """
+    ioctl = getattr(sock, "ioctl", None)
+    control = getattr(socket, "SIO_UDP_CONNRESET", None)
+    if ioctl is None or control is None:
+        return
+    try:
+        ioctl(control, False)
+    except OSError:
+        pass
+
+
+def _default_udp_socket_factory(
+    address: tuple[str, int], timeout: float
+) -> _DatagramSocketLike:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        _disable_udp_conn_reset(sock)
+        sock.settimeout(timeout)
+        # connect() on a datagram socket performs no network I/O: it just binds
+        # an ephemeral local port and installs a peer filter so send/recv work
+        # and replies from other hosts are dropped.
+        sock.connect(address)
+    except OSError:
+        sock.close()
+        raise
+    return sock
+
+
+class UdpRawTransport:
+    """UDP-socket-backed :class:`RawTransport` (client side).
+
+    Mirrors :class:`LanRawTransport`, but datagram semantics change three
+    things and each one is a correctness trap if copied across:
+
+    * A zero-length datagram is legal and is **not** end-of-stream.
+    * ``ConnectionResetError`` means "an earlier datagram bounced", not
+      "the link died" — the peer may simply not be listening yet.
+    * ``shutdown()`` does not reliably unblock a parked ``recv`` on a UDP
+      socket, so :meth:`cancel_read` uses a flag plus the read tick instead.
+    """
+
+    def __init__(
+        self,
+        profile: UdpProfile,
+        *,
+        socket_factory: UdpSocketFactory | None = None,
+        read_timeout: float = DEFAULT_READ_TIMEOUT_S,
+    ) -> None:
+        self._profile = profile
+        self._socket_factory = socket_factory or _default_udp_socket_factory
+        self._read_timeout = read_timeout
+        self._lock = Lock()
+        self._socket: _DatagramSocketLike | None = None
+        self._cancelled = Event()
+
+    @property
+    def is_open(self) -> bool:
+        return self._socket is not None
+
+    def open(self) -> None:
+        profile = self._profile
+        if not profile.host.strip() or not 1 <= int(profile.port) <= 65535:
+            raise TransportError("UDP host and port are required.")
+        try:
+            connection = self._socket_factory(
+                (profile.host, int(profile.port)), self._read_timeout
+            )
+            connection.settimeout(self._read_timeout)
+        except OSError as exc:
+            # Includes socket.gaierror for an unresolvable host.
+            raise TransportError(str(exc)) from exc
+        self._cancelled.clear()
+        with self._lock:
+            self._socket = connection
+
+    def close(self) -> None:
+        with self._lock:
+            connection = self._socket
+            self._socket = None
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except OSError:
+            pass
+
+    def write(self, data: bytes) -> None:
+        connection = self._socket
+        if connection is None:
+            raise ConnectionLost("UDP endpoint is not open.")
+        try:
+            sent = connection.send(data)
+        except ConnectionResetError:
+            # WSAECONNRESET surfacing on the send side after a prior ICMP
+            # port-unreachable. Dropping datagrams is UDP's contract, so this
+            # is not a link failure.
+            return
+        except OSError as exc:
+            raise ConnectionLost(str(exc)) from exc
+        if sent is not None and sent != len(data):
+            # Cannot happen for datagrams; asserted so a stubbed socket that
+            # short-writes fails loudly rather than silently truncating.
+            raise ConnectionLost(
+                f"Short UDP write: sent {sent} of {len(data)} bytes."
+            )
+
+    def read(self) -> bytes:
+        if self._cancelled.is_set():
+            return b""
+        connection = self._socket
+        if connection is None:
+            raise ConnectionLost("UDP endpoint is not open.")
+        try:
+            payload = connection.recv(UDP_MAX_DATAGRAM)
+        except socket.timeout:
+            return b""
+        except ConnectionResetError:
+            # See _disable_udp_conn_reset. Belt and braces: the ioctl is not
+            # available on every Windows socket wrapper.
+            return b""
+        except OSError as exc:
+            raise ConnectionLost(str(exc)) from exc
+        # NOTE: unlike TCP, an empty payload is a legal zero-length datagram,
+        # not a closed peer. Never raise ConnectionLost here.
+        return payload
+
+    def cancel_read(self) -> None:
+        # No shutdown(): on a UDP socket it typically returns WSAENOTCONN and
+        # leaves a parked recv() sitting. A self-pipe wake-up is impossible
+        # too, because connect() makes the socket ignore non-peer datagrams.
+        # Instead short-circuit the next read and let the in-flight one expire
+        # on the read tick (50 ms) — well inside PortChannel.stop()'s 1.5 s join.
+        self._cancelled.set()

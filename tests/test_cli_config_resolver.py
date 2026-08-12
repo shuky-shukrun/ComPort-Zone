@@ -15,8 +15,9 @@ from ComPort_Zone.cli.config_resolver import (
     load_app_settings,
     resolve_lan_profile,
     resolve_serial_profile,
+    resolve_udp_profile,
 )
-from ComPort_Zone.core.models import AppSettings, LanProfile, SerialProfile
+from ComPort_Zone.core.models import AppSettings, LanProfile, SerialProfile, UdpProfile
 
 
 def _empty_settings() -> AppSettings:
@@ -188,6 +189,48 @@ class LanProfileTests(unittest.TestCase):
         self.assertEqual(profile.host, "echo.local")
         self.assertEqual(profile.port, 9000)
         self.assertEqual(profile.timeout_ms, 500)
+
+
+class UdpProfileTests(unittest.TestCase):
+    def test_udp_flags_override_udp_settings(self) -> None:
+        settings = AppSettings(
+            transport_kind="udp",
+            udp=UdpProfile(host="settings.local", port=5025, line_ending="CRLF"),
+        )
+        with patch.dict(os.environ, _scrub_env(), clear=True):
+            profile = resolve_udp_profile(
+                settings=settings,
+                udp_host="127.0.0.1",
+                udp_port=7000,
+                udp_timeout_ms=250,
+                line_ending="lf",
+            )
+        self.assertEqual(profile.host, "127.0.0.1")
+        self.assertEqual(profile.port, 7000)
+        self.assertEqual(profile.timeout_ms, 250)
+        self.assertEqual(profile.line_ending, "LF")
+
+    def test_udp_env_used_when_flags_are_absent(self) -> None:
+        env = _scrub_env() | {
+            "COMPORTZONE_UDP_HOST": "echo.local",
+            "COMPORTZONE_UDP_PORT": "9000",
+            "COMPORTZONE_UDP_TIMEOUT_MS": "500",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            profile = resolve_udp_profile(settings=AppSettings())
+        self.assertEqual(profile.host, "echo.local")
+        self.assertEqual(profile.port, 9000)
+        self.assertEqual(profile.timeout_ms, 500)
+
+    def test_udp_env_does_not_leak_from_the_tcp_variables(self) -> None:
+        env = _scrub_env() | {
+            "COMPORTZONE_HOST": "tcp.local",
+            "COMPORTZONE_TCP_PORT": "7000",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            profile = resolve_udp_profile(settings=AppSettings())
+        self.assertEqual(profile.host, "")
+        self.assertEqual(profile.port, 5025)
 
 
 class LoadAppSettingsTests(unittest.TestCase):

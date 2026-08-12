@@ -44,7 +44,6 @@ from .port_channel import (
     CLOSED,
     OK,
     TIMEOUT,
-    LineMatcher,
     RegexMatcher,
     decode_serial_bytes,
 )
@@ -564,11 +563,12 @@ class SessionPollDispatcher:
 
     # -- channel plumbing ---------------------------------------------------
 
-    @staticmethod
-    def _matcher_for(compiled: CompiledParseRule):
+    def _matcher_for(self, compiled: CompiledParseRule):
         if compiled.rule.kind == "regex" and compiled.pattern is not None:
             return RegexMatcher(compiled.pattern)
-        return LineMatcher()
+        # No explicit rule: let the transport decide how a reply is framed —
+        # a line for serial/TCP, a whole datagram for UDP.
+        return self._transport.default_matcher()
 
     def _send(
         self,

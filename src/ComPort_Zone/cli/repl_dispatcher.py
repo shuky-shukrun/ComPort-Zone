@@ -18,7 +18,7 @@ from ..core.library_lookup import (
     EntryNotFoundError,
     resolve_entry,
 )
-from ..core.models import AppSettings, LanProfile, SerialProfile
+from ..core.models import AppSettings, LanProfile, SerialProfile, UdpProfile
 from ..core.serial_core import decode_serial_bytes, format_hex_bytes
 from ..core.transports import TransportAdapter
 from .command_file_runner import RunOutcome, run_command_file
@@ -49,6 +49,24 @@ _TCP_SET_SHORTCUTS: dict[str, str] = {
     "line-ending": "line_ending",
 }
 
+_UDP_SET_SHORTCUTS: dict[str, str] = {
+    "udp-host": "host",
+    "udp-port": "port",
+    "udp-timeout": "timeout_ms",
+    "line-ending": "line_ending",
+}
+
+# Which /set vocabulary applies, by profile type.
+_SET_SHORTCUTS_BY_PROFILE = (
+    (LanProfile, _TCP_SET_SHORTCUTS),
+    (UdpProfile, _UDP_SET_SHORTCUTS),
+    (SerialProfile, _SERIAL_SET_SHORTCUTS),
+)
+
+# Flag names quoted back at the user when a shared attribute is invalid.
+_PORT_KEY_BY_PROFILE = {LanProfile: "tcp-port", UdpProfile: "udp-port"}
+_TIMEOUT_KEY_BY_PROFILE = {LanProfile: "tcp-timeout", UdpProfile: "udp-timeout"}
+
 
 @dataclass(slots=True)
 class ReplState:
@@ -62,7 +80,7 @@ class ReplState:
     transport: TransportAdapter
     output: CliOutput
     settings: AppSettings
-    profile: SerialProfile | LanProfile
+    profile: SerialProfile | LanProfile | UdpProfile
     config_path: Path | None = None
     timestamps_enabled: bool = False
     log_handle: TextIO | None = None
@@ -178,6 +196,7 @@ class ReplDispatcher:
             "                                 serial: port|baud|data-bits|parity|stop-bits|",
             "                                         flow-control|line-ending|dtr|rts",
             "                                 tcp: host|tcp-port|tcp-timeout|line-ending",
+            "                                 udp: udp-host|udp-port|udp-timeout|line-ending",
             "  /show settings | /show endpoint",
             "                                 inspect current state",
             "  /hex <bytes>                   send hex bytes",
@@ -221,11 +240,7 @@ class ReplDispatcher:
             return
         raw_key, raw_value = args
         key = raw_key.lower()
-        shortcuts = (
-            _TCP_SET_SHORTCUTS
-            if isinstance(self.state.profile, LanProfile)
-            else _SERIAL_SET_SHORTCUTS
-        )
+        shortcuts = self._set_shortcuts()
         attr = shortcuts.get(key)
         if attr is None:
             self.state.output.error(
@@ -262,23 +277,25 @@ class ReplDispatcher:
                 self.state.output.error(f"/set baud expects an integer (got {raw!r}).")
                 return None
         if attr == "timeout_ms":
+            key = _TIMEOUT_KEY_BY_PROFILE.get(type(self.state.profile), "timeout")
             try:
                 return int(raw)
             except ValueError:
                 self.state.output.error(
-                    f"/set tcp-timeout expects an integer (got {raw!r})."
+                    f"/set {key} expects an integer (got {raw!r})."
                 )
                 return None
-        if attr == "port" and isinstance(self.state.profile, LanProfile):
+        if attr == "port" and type(self.state.profile) in _PORT_KEY_BY_PROFILE:
+            key = _PORT_KEY_BY_PROFILE[type(self.state.profile)]
             try:
                 value = int(raw)
             except ValueError:
                 self.state.output.error(
-                    f"/set tcp-port expects an integer (got {raw!r})."
+                    f"/set {key} expects an integer (got {raw!r})."
                 )
                 return None
             if not 1 <= value <= 65535:
-                self.state.output.error("/set tcp-port expects a value from 1 to 65535.")
+                self.state.output.error(f"/set {key} expects a value from 1 to 65535.")
                 return None
             return value
         if attr == "stopbits":
@@ -328,11 +345,20 @@ class ReplDispatcher:
             return normalized
         return raw  # plain string fields (port)
 
+    def _set_shortcuts(self) -> dict[str, str]:
+        for profile_type, shortcuts in _SET_SHORTCUTS_BY_PROFILE:
+            if isinstance(self.state.profile, profile_type):
+                return shortcuts
+        return _SERIAL_SET_SHORTCUTS
+
     def _mirror_profile_to_settings(self) -> None:
         profile = self.state.profile
         if isinstance(profile, LanProfile):
             self.state.settings.transport_kind = "lan"
             self.state.settings.lan = LanProfile.from_dict(profile.to_dict())
+        elif isinstance(profile, UdpProfile):
+            self.state.settings.transport_kind = "udp"
+            self.state.settings.udp = UdpProfile.from_dict(profile.to_dict())
         else:
             self.state.settings.transport_kind = "serial"
             self.state.settings.serial = SerialProfile.from_dict(profile.to_dict())

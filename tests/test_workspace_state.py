@@ -8,6 +8,7 @@ from ComPort_Zone.models import (
     LanProfile,
     SerialProfile,
     TerminalSessionState,
+    UdpProfile,
     WorkspaceLayoutState,
     WorkspacePaneState,
     WorkspaceTabState,
@@ -194,6 +195,35 @@ class WorkspaceStateServiceTests(unittest.TestCase):
         self.assertEqual(settings.transport_profile["host"], "dut.local")
         self.assertEqual(settings.lan.host, "dut.local")
         self.assertEqual(settings.restored_tabs[0].transport_kind, "lan")
+
+    def test_capture_active_udp_session_updates_default_transport(self) -> None:
+        service = WorkspaceStateService()
+        settings = AppSettings(serial=SerialProfile(port="COM1"))
+        active = FakeTerminalSession(
+            UdpProfile(host="dut.local", port=5025),
+            TerminalSessionState(
+                title="UDP DUT",
+                transport_kind="udp",
+                transport_profile={"host": "dut.local", "port": 5025},
+                udp=UdpProfile(host="dut.local", port=5025),
+            ),
+        )
+
+        service.capture_into_settings(
+            settings,
+            active_session=active,
+            terminal_sessions=[active],
+            command_file_editors=[],
+            command_history=[],
+            window_width=1000,
+            window_height=700,
+        )
+
+        self.assertEqual(settings.transport_kind, "udp")
+        self.assertEqual(settings.transport_profile["host"], "dut.local")
+        self.assertEqual(settings.udp.host, "dut.local")
+        self.assertEqual(settings.udp.port, 5025)
+        self.assertEqual(settings.restored_tabs[0].transport_kind, "udp")
 
     def test_capture_persists_workspace_layout_and_flat_fallbacks(self) -> None:
         service = WorkspaceStateService()

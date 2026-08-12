@@ -114,7 +114,7 @@ class FilesRunResolutionTests(unittest.TestCase):
 
     def _patch_run_transport(self):
         return patch(
-            "ComPort_Zone.cli.commands.run.make_serial_transport",
+            "ComPort_Zone.cli.commands.run.make_transport",
             return_value=self.fake,
         )
 

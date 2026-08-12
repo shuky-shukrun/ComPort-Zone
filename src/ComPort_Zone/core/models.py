@@ -17,6 +17,7 @@ from ..models import (
     SerialProfile,
     TerminalSessionState,
     THEME_OPTIONS,
+    UdpProfile,
     apply_line_ending,
     utc_now_iso,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "SerialProfile",
     "TerminalSessionState",
     "THEME_OPTIONS",
+    "UdpProfile",
     "apply_line_ending",
     "utc_now_iso",
 ]

@@ -3,7 +3,8 @@ from __future__ import annotations
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 
 APP_SETTINGS_EXPLANATION = (
-    "App Settings JSON includes serial defaults, restored tabs, theme, terminal font, "
+    "App Settings JSON includes connection defaults (serial, TCP, and UDP), restored "
+    "tabs, theme, terminal font, "
     "terminal display preferences, drawer and window state, command history, and last "
     "log/script paths.\n\n"
     "Quick Commands and Quick Files are not included here. Manage them with their own "

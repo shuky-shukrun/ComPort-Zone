@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 
 from . import __version__
 from . import quick_actions as _quick_actions
-from .models import LanProfile, SerialProfile
+from .models import LanProfile, SerialProfile, UdpProfile
 from .serial_core import SerialEvent
 from .single_instance import SingleInstanceServer, default_instance_key, forward_open_request
 from .storage import default_config_path

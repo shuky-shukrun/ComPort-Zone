@@ -24,6 +24,7 @@ from ComPort_Zone.control_panel_engine import (
 )
 from ComPort_Zone.control_panel_models import ControlPanelEntry, ParseRule
 from ComPort_Zone.control_panel_parse import CompiledParseRule, MAX_RX_WINDOW_CHARS
+from ComPort_Zone.port_channel import RegexMatcher
 from ComPort_Zone.serial_core import SerialEvent
 
 from tests.fakes.fake_serial_transport import FakeSerialTransport
@@ -374,6 +375,27 @@ class DispatcherTransactionTests(unittest.TestCase):
         assert result.outcome is not None
         self.assertEqual(result.outcome.value_number, 13.2)
         self.assertLessEqual(len(result.raw_window), MAX_RX_WINDOW_CHARS)
+
+    def test_non_regex_rule_defers_framing_to_the_transport(self) -> None:
+        """A parse rule without an explicit pattern must not hardcode line
+        framing — a UDP device commonly replies with no terminator at all."""
+        sentinel = object()
+        self.fake.default_matcher = lambda: sentinel  # type: ignore[method-assign]
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="line", value_type="text")
+
+        matcher = self.dispatcher._matcher_for(CompiledParseRule.compile(entry.parse))
+
+        self.assertIs(matcher, sentinel)
+
+    def test_regex_rule_overrides_the_transport_default(self) -> None:
+        self.fake.default_matcher = lambda: object()  # type: ignore[method-assign]
+        entry = make_entry("a")
+        entry.parse = ParseRule(kind="regex", pattern=r"V=([\d.]+)", group=1, value_type="number")
+
+        matcher = self.dispatcher._matcher_for(CompiledParseRule.compile(entry.parse))
+
+        self.assertIsInstance(matcher, RegexMatcher)
 
 
 def make_control_request(

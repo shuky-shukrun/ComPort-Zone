@@ -31,6 +31,7 @@ from ComPort_Zone.control_panel_models import (
 )
 from ComPort_Zone.models import (
     AppSettings,
+    SETTINGS_SCHEMA_VERSION,
     SerialProfile,
     TerminalSessionState,
     WorkspaceLayoutState,
@@ -400,8 +401,8 @@ class ControlPanelAppTests(unittest.TestCase):
 
         payload = json.loads(settings_path.read_text(encoding="utf-8"))
         # schema_version always stamps the latest the producing build
-        # supports (v4 → 8); the floor is the back-compat predicate.
-        self.assertEqual(payload["schema_version"], 8)
+        # supports; the floor is the back-compat predicate.
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
         # The test control_panel is v1-shaped, so the library declares the v1
         # control_panel floor, not v2/v3/v4.
         self.assertEqual(payload["minimum_compatible_schema_version"], 5)
@@ -973,12 +974,12 @@ class ControlPanelAppTests(unittest.TestCase):
         original = AppSettings(control_panels=[config])
         self.assertTrue(service.save(original))
         # Sanity: the test config uses v2 features (derived + custom rule
-        # color + control toggle), so the floor pegs to v6 even on a v3
-        # build. schema_version stamps the latest the build supports.
+        # color + control toggle), so the floor pegs to v6 regardless of
+        # how far schema_version has since advanced.
         with settings_path.open(encoding="utf-8") as handle:
             payload = json.load(handle)
         self.assertEqual(payload.get("minimum_compatible_schema_version"), 6)
-        self.assertEqual(payload["schema_version"], 8)
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
 
         restored = service.load()
         # Every v2 field round-trips intact.
@@ -1069,9 +1070,9 @@ class ControlPanelAppTests(unittest.TestCase):
         with settings_path.open(encoding="utf-8") as handle:
             payload = json.load(handle)
         # v3 features push the floor to 7; schema_version stamps the
-        # latest the build supports (now v4 → 8).
+        # latest the build supports.
         self.assertEqual(payload.get("minimum_compatible_schema_version"), 7)
-        self.assertEqual(payload["schema_version"], 8)
+        self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
 
         restored = service.load()
         entries = {entry.id: entry for entry in restored.control_panels[0].entries}

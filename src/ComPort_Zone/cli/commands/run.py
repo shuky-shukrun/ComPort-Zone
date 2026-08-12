@@ -28,7 +28,7 @@ from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli
 from ..exit_codes import ExitCode
 from ..options import endpoint_flags
 from ..output import CliOutput
-from ..transports import make_lan_transport, make_serial_transport
+from ..transports import make_transport
 
 
 _FAILURE_TO_EXIT: dict[str, ExitCode] = {
@@ -178,7 +178,7 @@ def execute_run(
     settings = load_app_settings(ctx.obj.get("config_path"))
     endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
+    transport = make_transport(endpoint.kind)
     try:
         open_cli_endpoint(
             transport,
@@ -294,7 +294,7 @@ def run_command(
     expect_timeout_ms: int,
     **endpoint_flag_values: Any,
 ) -> None:
-    """Execute a SEND/WAIT/HEX/EXPECT command file against a serial or TCP endpoint."""
+    """Execute a SEND/WAIT/HEX/EXPECT command file against a serial, TCP, or UDP endpoint."""
     execute_run(
         ctx,
         file_path=file_path,

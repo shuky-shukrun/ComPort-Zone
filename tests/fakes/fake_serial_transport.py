@@ -24,6 +24,7 @@ from typing import Any
 from ComPort_Zone.core.models import apply_line_ending
 from ComPort_Zone.core.port_channel import (
     NORMAL,
+    DatagramMatcher,
     MonitorHub,
     PortChannel,
     SerialEvent,
@@ -82,6 +83,9 @@ class FakeSerialTransport:
     @property
     def channel(self) -> PortChannel:
         return self._channel
+
+    def default_matcher(self):
+        return self._channel.default_matcher()
 
     def list_endpoints(self) -> list[EndpointInfo]:
         if self._endpoints:
@@ -263,3 +267,17 @@ class FakeLanTransport(FakeSerialTransport):
     """
 
     kind = "lan"
+
+
+class FakeUdpTransport(FakeSerialTransport):
+    """Protocol-compatible UDP transport stand-in for CLI tests.
+
+    Same inheritance trick as :class:`FakeLanTransport`, plus the datagram
+    framing default so a caller with no explicit parse rule gets whole-datagram
+    replies exactly as it would from the real ``UdpTransportAdapter``.
+    """
+
+    kind = "udp"
+
+    def default_matcher(self):
+        return DatagramMatcher()

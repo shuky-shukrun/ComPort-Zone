@@ -266,7 +266,7 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         shortcut="Ctrl+,",
         icon="cog",
         palette_title="Connection Settings",
-        palette_subtitle="Open serial COM port or LAN host settings",
+        palette_subtitle="Open serial COM port, TCP, or UDP endpoint settings",
         palette_keywords="settings connection serial lan tcp port baud parity stop bits flow control",
     ),
     CommandSpec(

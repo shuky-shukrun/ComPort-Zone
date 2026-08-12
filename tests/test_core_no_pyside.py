@@ -37,7 +37,9 @@ CORE_SUBMODULES = (
     "session_log",
     "settings_service",
     "storage",
+    "transport_kinds",
     "transports",
+    "udp_core",
     "version_check",
 )
 
@@ -54,6 +56,7 @@ CLI_MODULES = (
     "ComPort_Zone.cli.config_resolver",
     "ComPort_Zone.cli.transports",
     "ComPort_Zone.cli.serial_session",
+    "ComPort_Zone.cli.endpoint_session",
     "ComPort_Zone.cli.commands.version",
     "ComPort_Zone.cli.commands.ports",
     "ComPort_Zone.cli.commands.send",

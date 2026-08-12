@@ -9,11 +9,19 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from ComPort_Zone.cli.main import cli
-from tests.fakes.fake_serial_transport import FakeLanTransport, FakeSerialTransport
+from tests.fakes.fake_serial_transport import (
+    FakeLanTransport,
+    FakeSerialTransport,
+    FakeUdpTransport,
+)
 
 
 def _patch_transport(fake: FakeSerialTransport):
-    """Patch the CLI's transport factory to return ``fake``."""
+    """Patch the CLI's transport factory to return ``fake``.
+
+    Targets the per-kind factory rather than ``make_transport`` so this also
+    pins down that ``make_transport`` dispatches through the module global.
+    """
     return patch(
         "ComPort_Zone.cli.transports.make_serial_transport",
         return_value=fake,
@@ -21,10 +29,10 @@ def _patch_transport(fake: FakeSerialTransport):
 
 
 def _patch_send_transport(fake: FakeSerialTransport):
-    # send.py imports make_serial_transport at module load, so we also need
+    # send.py imports make_transport at module load, so we also need
     # to patch the imported symbol in that module's namespace.
     return patch(
-        "ComPort_Zone.cli.commands.send.make_serial_transport",
+        "ComPort_Zone.cli.commands.send.make_transport",
         return_value=fake,
     )
 
@@ -123,7 +131,7 @@ class SendTcpTests(unittest.TestCase):
     def test_tcp_send_connects_and_matches_echo_response(self) -> None:
         self.fake.queue_response(b"PONG\r\n")
         with patch(
-            "ComPort_Zone.cli.commands.send.make_lan_transport",
+            "ComPort_Zone.cli.commands.send.make_transport",
             return_value=self.fake,
         ):
             result = self.runner.invoke(
@@ -161,7 +169,7 @@ class SendTcpTests(unittest.TestCase):
     def test_tcp_connect_failure_exits_and_releases_the_transport(self) -> None:
         self.fake.connect_returns = False
         with patch(
-            "ComPort_Zone.cli.commands.send.make_lan_transport",
+            "ComPort_Zone.cli.commands.send.make_transport",
             return_value=self.fake,
         ):
             result = self.runner.invoke(
@@ -173,6 +181,102 @@ class SendTcpTests(unittest.TestCase):
         # A failed connect must not leave the transport (or a background
         # auto-reconnect thread) dangling: open_cli_endpoint disconnects first.
         self.assertGreaterEqual(self.fake.disconnect_calls, 1)
+
+
+class SendUdpTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+        self.fake = FakeUdpTransport()
+
+    def _patch(self):
+        return patch(
+            "ComPort_Zone.cli.commands.send.make_transport", return_value=self.fake
+        )
+
+    def test_udp_send_opens_socket_and_matches_reply(self) -> None:
+        self.fake.queue_response(b"PONG\r\n")
+        with self._patch():
+            result = self.runner.invoke(
+                cli,
+                [
+                    "send",
+                    "ping",
+                    "--udp-host",
+                    "127.0.0.1",
+                    "--udp-port",
+                    "5025",
+                    "--line-ending",
+                    "LF",
+                    "--expect",
+                    "PONG",
+                    "--expect-timeout",
+                    "200",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(self.fake.sent_text, [("ping", None)])
+        profile = self.fake.connect_calls[0]
+        self.assertEqual(profile.host, "127.0.0.1")
+        self.assertEqual(profile.port, 5025)
+        self.assertEqual(profile.line_ending, "LF")
+
+    def test_udp_flags_cannot_be_mixed_with_serial(self) -> None:
+        result = self.runner.invoke(
+            cli, ["send", "ping", "--udp-host", "127.0.0.1", "--port", "COM3"]
+        )
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertIn("cannot be combined", result.output)
+
+    def test_udp_flags_cannot_be_mixed_with_tcp(self) -> None:
+        result = self.runner.invoke(
+            cli, ["send", "ping", "--udp-host", "127.0.0.1", "--host", "127.0.0.1"]
+        )
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertIn("cannot be combined", result.output)
+
+    def test_udp_open_failure_exits_and_releases_the_transport(self) -> None:
+        self.fake.connect_returns = False
+        with self._patch():
+            result = self.runner.invoke(
+                cli, ["send", "ping", "--udp-host", "127.0.0.1", "--udp-port", "5025"]
+            )
+        self.assertEqual(result.exit_code, 1, msg=result.output)
+        self.assertIn("Could not open UDP endpoint", result.output)
+        self.assertGreaterEqual(self.fake.disconnect_calls, 1)
+
+    def test_udp_port_out_of_range_is_a_usage_error(self) -> None:
+        with self._patch():
+            result = self.runner.invoke(
+                cli, ["send", "ping", "--udp-host", "127.0.0.1", "--udp-port", "70000"]
+            )
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+
+    def test_udp_reply_window_defaults_to_the_profile_timeout(self) -> None:
+        """Serial/TCP flush a 50 ms tick; a datagram device answers once, in
+        its own time, so UDP holds the window open for --udp-timeout."""
+        self.fake.queue_response(b"LATE-REPLY")
+        with self._patch():
+            result = self.runner.invoke(
+                cli,
+                [
+                    "--json",
+                    "send",
+                    "ping",
+                    "--udp-host",
+                    "127.0.0.1",
+                    "--udp-port",
+                    "5025",
+                    "--udp-timeout",
+                    "600",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        events = [
+            json.loads(line) for line in result.output.splitlines() if line.strip()
+        ]
+        rx = [event for event in events if event["type"] == "rx"]
+        self.assertTrue(rx, msg=result.output)
+        self.assertIn("LATE-REPLY", rx[0]["data"])
 
 
 if __name__ == "__main__":

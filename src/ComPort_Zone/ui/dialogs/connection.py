@@ -15,22 +15,38 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import FLOW_CONTROL_OPTIONS, LINE_ENDINGS, LanProfile, SerialProfile
+from ...models import (
+    FLOW_CONTROL_OPTIONS,
+    LINE_ENDINGS,
+    LanProfile,
+    SerialProfile,
+    UdpProfile,
+)
+from ...transport_kinds import TRANSPORT_KIND_ORDER, transport_kind_info
 from ...widgets import ChevronComboBox
 
 COMMON_BAUD_RATES = ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 
 
+def _kind_of(profile: SerialProfile | LanProfile | UdpProfile) -> str:
+    if isinstance(profile, LanProfile):
+        return "lan"
+    if isinstance(profile, UdpProfile):
+        return "udp"
+    return "serial"
+
+
 class ConnectionSettingsDialog(QDialog):
     def __init__(
         self,
-        profile: SerialProfile | LanProfile,
+        profile: SerialProfile | LanProfile | UdpProfile,
         ports: list[dict[str, str]],
         parent=None,
         *,
         transport_kind: str | None = None,
         serial_profile: SerialProfile | None = None,
         lan_profile: LanProfile | None = None,
+        udp_profile: UdpProfile | None = None,
         ports_supplier: Callable[[], list[dict[str, str]]] | None = None,
     ) -> None:
         super().__init__(parent)
@@ -38,13 +54,14 @@ class ConnectionSettingsDialog(QDialog):
         self.setMinimumWidth(420)
         self._ports_supplier = ports_supplier
         self._port_signature: tuple[tuple[str, str], ...] | None = None
-        self._transport_kind = transport_kind or ("lan" if isinstance(profile, LanProfile) else "serial")
+        self._transport_kind = transport_kind or _kind_of(profile)
         serial_profile = serial_profile or (profile if isinstance(profile, SerialProfile) else SerialProfile())
         lan_profile = lan_profile or (profile if isinstance(profile, LanProfile) else LanProfile())
+        udp_profile = udp_profile or (profile if isinstance(profile, UdpProfile) else UdpProfile())
 
         self.connection_type_combo = ChevronComboBox(self)
-        self.connection_type_combo.addItem("Serial", "serial")
-        self.connection_type_combo.addItem("LAN", "lan")
+        for kind in TRANSPORT_KIND_ORDER:
+            self.connection_type_combo.addItem(transport_kind_info(kind).ui_label, kind)
         selected_type = self.connection_type_combo.findData(self._transport_kind)
         self.connection_type_combo.setCurrentIndex(max(selected_type, 0))
         self.connection_type_combo.currentIndexChanged.connect(self._connection_type_changed)
@@ -121,9 +138,33 @@ class ConnectionSettingsDialog(QDialog):
         lan_form.addRow("Timeout", self.lan_timeout_spin)
         lan_form.addRow("", self.lan_auto_reconnect)
 
+        self.udp_host_input = QLineEdit(udp_profile.host, self)
+        self.udp_host_input.setPlaceholderText("192.168.1.50 or device.local")
+        self.udp_port_spin = QSpinBox(self)
+        self.udp_port_spin.setRange(1, 65535)
+        self.udp_port_spin.setValue(max(1, min(int(udp_profile.port), 65535)))
+        self.udp_timeout_spin = QSpinBox(self)
+        self.udp_timeout_spin.setRange(10, 60000)
+        self.udp_timeout_spin.setSuffix(" ms")
+        self.udp_timeout_spin.setValue(max(10, min(int(udp_profile.timeout_ms), 60000)))
+        self.udp_line_ending_combo = ChevronComboBox(self)
+        self.udp_line_ending_combo.addItems(LINE_ENDINGS.keys())
+        self.udp_line_ending_combo.setCurrentText(udp_profile.line_ending)
+
+        udp_widget = QWidget(self)
+        udp_form = QFormLayout(udp_widget)
+        udp_form.addRow("Host", self.udp_host_input)
+        udp_form.addRow("Port", self.udp_port_spin)
+        udp_form.addRow("Line ending", self.udp_line_ending_combo)
+        # Not a connect timeout: opening a datagram socket does no network
+        # I/O. This is how long a query waits for the device to answer.
+        udp_form.addRow("Reply timeout", self.udp_timeout_spin)
+        # No auto-reconnect checkbox: UDP has no connection to lose.
+
         self.connection_stack = QStackedWidget(self)
         self.connection_stack.addWidget(serial_widget)
         self.connection_stack.addWidget(lan_widget)
+        self.connection_stack.addWidget(udp_widget)
         self._connection_type_changed()
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -145,8 +186,11 @@ class ConnectionSettingsDialog(QDialog):
         self.finished.connect(lambda *_: self.port_refresh_timer.stop())
 
     def _connection_type_changed(self, *_args) -> None:
-        kind = self.transport_kind()
-        self.connection_stack.setCurrentIndex(1 if kind == "lan" else 0)
+        try:
+            index = TRANSPORT_KIND_ORDER.index(self.transport_kind())
+        except ValueError:
+            index = 0
+        self.connection_stack.setCurrentIndex(index)
 
     def _port_label(self, port: dict[str, str]) -> str:
         device = str(port.get("device", "")).strip()
@@ -201,7 +245,14 @@ class ConnectionSettingsDialog(QDialog):
     def transport_kind(self) -> str:
         return str(self.connection_type_combo.currentData() or "serial")
 
-    def profile(self) -> SerialProfile | LanProfile:
+    def profile(self) -> SerialProfile | LanProfile | UdpProfile:
+        if self.transport_kind() == "udp":
+            return UdpProfile(
+                host=self.udp_host_input.text().strip(),
+                port=int(self.udp_port_spin.value()),
+                line_ending=self.udp_line_ending_combo.currentText(),
+                timeout_ms=int(self.udp_timeout_spin.value()),
+            )
         if self.transport_kind() == "lan":
             return LanProfile(
                 host=self.lan_host_input.text().strip(),

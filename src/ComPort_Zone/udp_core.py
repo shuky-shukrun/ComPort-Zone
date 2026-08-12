@@ -1,53 +1,50 @@
-"""Raw-TCP connection management on top of the serialized port channel.
+"""UDP connection management on top of the serialized port channel.
 
-Mirrors :class:`ComPort_Zone.serial_core.SerialClient` exactly — same
-lifecycle, monitor hub, and reconnect — differing only in the underlying
-:class:`~ComPort_Zone.raw_transport.LanRawTransport`. The channel above is
-identical, which is what makes serial and LAN behave the same.
+Mirrors :class:`ComPort_Zone.lan_core.LanClient` — same lifecycle, monitor hub,
+and send/query surface — with two deliberate differences:
+
+* **No reconnect loop.** Opening a datagram socket is ``socket()`` +
+  ``connect()``, which performs no network I/O. It fails only on a blank/bad
+  endpoint, an unresolvable host, or local resource exhaustion — all
+  deterministic. Retrying on a timer would be a busy-wait that cannot change
+  the outcome, and there is no link-loss signal to retry *after*.
+* **Datagram framing.** The channel is built with a
+  :class:`~ComPort_Zone.port_channel.DatagramMatcher` default, so a caller with
+  no explicit parse rule gets one whole datagram as the reply rather than
+  waiting for a CR/LF that many UDP devices never send.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
-from threading import Event, Lock, Thread, current_thread
+from threading import Lock
 
-from .models import LanProfile, apply_line_ending
+from .models import UdpProfile, apply_line_ending
 from .port_channel import (
     NORMAL,
+    DatagramMatcher,
     Matcher,
     MonitorHub,
     PortChannel,
     SerialEvent,
-    decode_serial_bytes,
     format_hex_bytes,
 )
-from .raw_transport import LanRawTransport, SocketFactory, TransportError
-
-# Back-compat alias: callers/tests historically referenced ``SocketLike`` from
-# this module. The protocol now lives in raw_transport.
-from .raw_transport import _SocketLike as SocketLike  # noqa: F401
+from .raw_transport import TransportError, UdpRawTransport, UdpSocketFactory
 
 __all__ = [
-    "LAN_RECONNECT_RETRY_INTERVAL_MS",
-    "LanClient",
-    "SocketLike",
+    "UdpClient",
 ]
 
-LAN_RECONNECT_RETRY_INTERVAL_MS = 1000
 
-
-class LanClient:
-    def __init__(self, socket_factory: SocketFactory | None = None) -> None:
+class UdpClient:
+    def __init__(self, socket_factory: UdpSocketFactory | None = None) -> None:
         self._hub = MonitorHub()
         self._lock = Lock()
         self._socket_factory = socket_factory
-        self._raw: LanRawTransport | None = None
+        self._raw: UdpRawTransport | None = None
         self._channel: PortChannel | None = None
-        self._profile: LanProfile | None = None
-        self._desired_profile: LanProfile | None = None
-        self._reconnect_thread: Thread | None = None
-        self._reconnect_stop = Event()
-        self._user_disconnect = True
+        self._profile: UdpProfile | None = None
+        self._desired_profile: UdpProfile | None = None
 
     # -- state --------------------------------------------------------------
 
@@ -58,11 +55,12 @@ class LanClient:
 
     @property
     def is_reconnecting(self) -> bool:
-        thread = self._reconnect_thread
-        return bool(thread and thread.is_alive())
+        # Kept as a property so the adapter and the GUI's connection_state()
+        # need no UDP special case; there is simply never a retry in flight.
+        return False
 
     @property
-    def active_profile(self) -> LanProfile | None:
+    def active_profile(self) -> UdpProfile | None:
         with self._lock:
             return deepcopy(self._profile or self._desired_profile)
 
@@ -80,36 +78,31 @@ class LanClient:
 
     def emit_event(self, event: SerialEvent) -> None:
         """Publish a display/log event (e.g. a batch-runner status line) on
-        the monitor stream, independent of any active connection."""
+        the monitor stream, independent of any active socket."""
         self._hub.publish(event)
 
     # -- connection lifecycle ----------------------------------------------
 
-    def connect(self, profile: LanProfile) -> bool:
+    def connect(self, profile: UdpProfile) -> bool:
         self._desired_profile = deepcopy(profile)
-        self._user_disconnect = False
-        self._stop_reconnect_thread()
         self._teardown_channel()
-        success = self._attempt_connect(profile, reconnect_attempt=False)
-        if not success and profile.auto_reconnect:
-            self._start_reconnect_loop()
-        return success
+        return self._attempt_connect(profile)
 
     def disconnect(self) -> None:
-        self._user_disconnect = True
-        self._stop_reconnect_thread()
         self._teardown_channel(emit_disconnect=True, reason="Disconnected.")
 
-    def _attempt_connect(self, profile: LanProfile, reconnect_attempt: bool) -> bool:
-        raw = LanRawTransport(deepcopy(profile), socket_factory=self._socket_factory)
+    def _attempt_connect(self, profile: UdpProfile) -> bool:
+        raw = UdpRawTransport(deepcopy(profile), socket_factory=self._socket_factory)
         try:
             raw.open()
         except TransportError as exc:
-            if not reconnect_attempt:
-                self._emit("error", f"Connect failed: {exc}")
+            self._emit("error", f"Connect failed: {exc}")
             return False
         channel = PortChannel(
-            raw, hub=self._hub, on_connection_lost=self._on_channel_loss
+            raw,
+            hub=self._hub,
+            on_connection_lost=self._on_channel_loss,
+            default_matcher=DatagramMatcher,
         )
         channel.start()
         with self._lock:
@@ -117,23 +110,23 @@ class LanClient:
             self._channel = channel
             self._profile = deepcopy(profile)
         self._emit("connection", "connected")
-        self._emit("status", f"Connected to {profile.endpoint()}.")
+        self._emit("status", f"UDP socket open to {profile.endpoint()}.")
         return True
 
     def _on_channel_loss(self, reason: str) -> None:
+        # Runs on the channel's own thread, so do not join the channel here —
+        # just release the socket. A genuine OSError on the socket is the only
+        # way to get here; there is nothing to reconnect to.
         with self._lock:
             raw = self._raw
             self._raw = None
             self._channel = None
-            profile = self._profile
             self._profile = None
         if raw is not None:
             try:
                 raw.close()
             except Exception:
                 pass
-        if profile and profile.auto_reconnect and not self._user_disconnect:
-            self._start_reconnect_loop()
 
     def _teardown_channel(self, *, emit_disconnect: bool = False, reason: str = "") -> None:
         with self._lock:
@@ -168,10 +161,10 @@ class LanClient:
     ):
         profile = self.active_profile
         if not profile:
-            raise RuntimeError("No TCP profile is active.")
+            raise RuntimeError("No UDP profile is active.")
         channel = self._channel
         if channel is None:
-            raise RuntimeError("TCP endpoint is not connected.")
+            raise RuntimeError("UDP endpoint is not open.")
         payload = apply_line_ending(text, line_ending_override or profile.line_ending)
         return channel.write(
             payload, source=source, display=text, priority=priority, quiet_read=quiet_read
@@ -187,7 +180,7 @@ class LanClient:
     ):
         channel = self._channel
         if channel is None:
-            raise RuntimeError("TCP endpoint is not connected.")
+            raise RuntimeError("UDP endpoint is not open.")
         display = "HEX " + format_hex_bytes(data)
         return channel.write(
             data, source=source, display=display, priority=priority, quiet_read=quiet_read
@@ -206,7 +199,7 @@ class LanClient:
     ):
         channel = self._channel
         if channel is None:
-            raise RuntimeError("TCP endpoint is not connected.")
+            raise RuntimeError("UDP endpoint is not open.")
         return channel.query(
             payload,
             matcher=matcher,
@@ -230,7 +223,7 @@ class LanClient:
     ):
         profile = self.active_profile
         if not profile:
-            raise RuntimeError("No TCP profile is active.")
+            raise RuntimeError("No UDP profile is active.")
         payload = apply_line_ending(text, line_ending_override or profile.line_ending)
         return self.query(
             payload,
@@ -262,7 +255,7 @@ class LanClient:
             pre_read_delay=pre_read_delay,
         )
 
-    # -- control lines (not supported on LAN) ------------------------------
+    # -- control lines (not supported on UDP) ------------------------------
 
     def set_dtr(self, value: bool) -> bool:
         return False
@@ -275,47 +268,6 @@ class LanClient:
 
     def current_signal_state(self) -> tuple[bool, bool] | None:
         return None
-
-    # -- reconnect ----------------------------------------------------------
-
-    def _start_reconnect_loop(self) -> None:
-        if self._reconnect_thread and self._reconnect_thread.is_alive():
-            return
-        self._reconnect_stop = Event()
-        self._reconnect_thread = Thread(
-            target=self._reconnect_loop,
-            args=(self._reconnect_stop,),
-            daemon=True,
-            name="lan-reconnect",
-        )
-        self._reconnect_thread.start()
-
-    def _reconnect_loop(self, stop_event: Event) -> None:
-        profile = self.active_profile
-        if not profile:
-            return
-        interval_ms = max(
-            int(getattr(profile, "reconnect_initial_delay_ms", LAN_RECONNECT_RETRY_INTERVAL_MS)),
-            100,
-        )
-        self._emit("status", f"Auto-reconnect armed. Retrying every {interval_ms} ms.")
-        while not stop_event.wait(interval_ms / 1000):
-            if self._user_disconnect or self.is_connected:
-                return
-            profile = self.active_profile
-            if not profile:
-                return
-            if self._attempt_connect(profile, reconnect_attempt=True):
-                self._emit("status", "Auto-reconnect succeeded.")
-                return
-
-    def _stop_reconnect_thread(self) -> None:
-        thread = self._reconnect_thread
-        if thread and thread.is_alive():
-            self._reconnect_stop.set()
-            if thread is not current_thread():
-                thread.join(timeout=1.0)
-        self._reconnect_thread = None
 
     # -- helpers ------------------------------------------------------------
 

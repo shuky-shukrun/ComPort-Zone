@@ -7,7 +7,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import QMenu, QStyle, QTabBar, QTabWidget, QToolButton, QWidget
 
 from ..icons import set_button_icon
-from ..models import LanProfile, SerialProfile, TerminalSessionState
+from ..models import LanProfile, SerialProfile, TerminalSessionState, UdpProfile
 
 
 class TextBufferLike(Protocol):
@@ -26,7 +26,7 @@ class ComboBoxLike(Protocol):
 
 
 class TerminalTabLike(Protocol):
-    profile: SerialProfile | LanProfile
+    profile: SerialProfile | LanProfile | UdpProfile
     terminal: TextBufferLike
     command_input: LineEditLike
     mode_combo: ComboBoxLike

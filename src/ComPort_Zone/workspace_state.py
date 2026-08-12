@@ -11,6 +11,7 @@ from .models import (
     LanProfile,
     SerialProfile,
     TerminalSessionState,
+    UdpProfile,
     WorkspaceLayoutState,
     WorkspacePaneState,
     WorkspaceTabState,
@@ -18,7 +19,7 @@ from .models import (
 
 
 class TerminalStateSource(Protocol):
-    profile: SerialProfile | LanProfile
+    profile: SerialProfile | LanProfile | UdpProfile
 
     def to_state(self) -> TerminalSessionState:
         ...
@@ -75,6 +76,10 @@ def clone_serial_profile(profile: SerialProfile) -> SerialProfile:
     return SerialProfile.from_dict(profile.to_dict())
 
 
+def clone_udp_profile(profile: UdpProfile) -> UdpProfile:
+    return UdpProfile.from_dict(profile.to_dict())
+
+
 def clone_lan_profile(profile: LanProfile) -> LanProfile:
     return LanProfile.from_dict(profile.to_dict())
 
@@ -108,6 +113,10 @@ class WorkspaceStateService:
                 settings.lan = clone_lan_profile(active_state.lan)
                 if not settings.transport_profile:
                     settings.transport_profile = settings.lan.to_dict()
+            if active_state.udp is not None:
+                settings.udp = clone_udp_profile(active_state.udp)
+                if not settings.transport_profile:
+                    settings.transport_profile = settings.udp.to_dict()
         settings.command_history = [str(command) for command in command_history]
         settings.window_width = int(window_width)
         settings.window_height = int(window_height)

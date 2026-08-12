@@ -25,7 +25,7 @@ from ..endpoint_session import EndpointOpenError, open_cli_endpoint, require_cli
 from ..options import endpoint_flags
 from ..output import CliOutput
 from ..repl_dispatcher import ReplDispatcher, ReplState
-from ..transports import make_lan_transport, make_serial_transport
+from ..transports import make_transport
 
 
 _PROMPT_TEXT = "TX> "
@@ -96,12 +96,12 @@ def _build_completer(history_entries: list[str]) -> WordCompleter:
 @endpoint_flags
 @click.pass_context
 def repl_command(ctx: click.Context, **endpoint_flag_values: Any) -> None:
-    """Open an interactive prompt against the configured serial or TCP endpoint."""
+    """Open an interactive prompt against the configured serial, TCP, or UDP endpoint."""
     output: CliOutput = ctx.obj["output"]
     settings = load_app_settings(ctx.obj.get("config_path"))
     endpoint = require_cli_endpoint(ctx, settings, endpoint_flag_values)
 
-    transport = make_lan_transport() if endpoint.kind == "lan" else make_serial_transport()
+    transport = make_transport(endpoint.kind)
     state = ReplState(
         transport=transport,
         output=output,

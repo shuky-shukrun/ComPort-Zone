@@ -7,9 +7,10 @@ from queue import Queue
 from typing import Any, Protocol, runtime_checkable
 
 from .lan_core import LanClient
-from .models import LanProfile, SerialProfile
-from .port_channel import NORMAL, Matcher, PortChannel, SerialEvent, TxResult
+from .models import LanProfile, SerialProfile, UdpProfile
+from .port_channel import NORMAL, LineMatcher, Matcher, PortChannel, SerialEvent, TxResult
 from .serial_core import SerialClient
+from .udp_core import UdpClient
 
 
 @dataclass(slots=True)
@@ -43,11 +44,18 @@ class TransportProfile:
     def from_lan_profile(cls, profile: LanProfile) -> "TransportProfile":
         return cls(kind="lan", settings=profile.to_dict())
 
+    @classmethod
+    def from_udp_profile(cls, profile: UdpProfile) -> "TransportProfile":
+        return cls(kind="udp", settings=profile.to_dict())
+
     def to_serial_profile(self) -> SerialProfile:
         return SerialProfile.from_dict(self.settings)
 
     def to_lan_profile(self) -> LanProfile:
         return LanProfile.from_dict(self.settings)
+
+    def to_udp_profile(self) -> UdpProfile:
+        return UdpProfile.from_dict(self.settings)
 
 
 @runtime_checkable
@@ -63,7 +71,11 @@ class TransportAdapter(Protocol):
 
     def list_endpoints(self) -> list[EndpointInfo]: ...
 
-    def connect(self, profile: TransportProfile | SerialProfile | LanProfile) -> bool: ...
+    def default_matcher(self) -> Matcher: ...
+
+    def connect(
+        self, profile: TransportProfile | SerialProfile | LanProfile | UdpProfile
+    ) -> bool: ...
 
     def disconnect(self) -> None: ...
 
@@ -133,6 +145,12 @@ class _ClientAdapter:
     @property
     def channel(self) -> PortChannel | None:
         return self.client.channel
+
+    def default_matcher(self) -> Matcher:
+        """Framing to use when the caller has no rule of its own. Byte-stream
+        transports line-frame; datagram transports return a whole datagram."""
+        channel = self.client.channel
+        return channel.default_matcher() if channel is not None else LineMatcher()
 
     def disconnect(self) -> None:
         self.client.disconnect()
@@ -259,7 +277,7 @@ class LanTransportAdapter(_ClientAdapter):
         if isinstance(profile, TransportProfile):
             if profile.kind != self.kind:
                 raise ValueError(
-                    f"LAN transport cannot connect profile kind {profile.kind!r}."
+                    f"TCP transport cannot connect profile kind {profile.kind!r}."
                 )
             profile = profile.to_lan_profile()
         return self.client.connect(profile)
@@ -280,7 +298,48 @@ class LanTransportAdapter(_ClientAdapter):
         return False
 
 
+class UdpTransportAdapter(_ClientAdapter):
+    kind = "udp"
+
+    def __init__(self, client: UdpClient | None = None) -> None:
+        super().__init__(client or UdpClient())
+
+    def list_endpoints(self) -> list[EndpointInfo]:
+        return []
+
+    def connect(self, profile: TransportProfile | UdpProfile) -> bool:
+        if isinstance(profile, TransportProfile):
+            if profile.kind != self.kind:
+                raise ValueError(
+                    f"UDP transport cannot connect profile kind {profile.kind!r}."
+                )
+            profile = profile.to_udp_profile()
+        return self.client.connect(profile)
+
+    def set_dtr(self, value: bool) -> bool:
+        return False
+
+    def set_rts(self, value: bool) -> bool:
+        return False
+
+    def send_break(self, duration: float = 0.25) -> bool:
+        return False
+
+    def signal_state(self) -> tuple[bool, bool] | None:
+        return None
+
+    def supports_signals(self) -> bool:
+        return False
+
+
+_ADAPTERS = {
+    "serial": SerialTransportAdapter,
+    "lan": LanTransportAdapter,
+    "udp": UdpTransportAdapter,
+}
+
+
 def create_transport_adapter(kind: str) -> TransportAdapter:
-    if kind == "lan":
-        return LanTransportAdapter()
-    return SerialTransportAdapter()
+    # Unknown kinds fall back to serial so a settings file written by a newer
+    # build still opens rather than crashing on load.
+    return _ADAPTERS.get(kind, SerialTransportAdapter)()

@@ -125,7 +125,7 @@ def quick_list(ctx: click.Context, group_filter: str | None) -> None:
 def quick_send(
     ctx: click.Context, identifier: str, **endpoint_flag_values: Any
 ) -> None:
-    """Open a serial or TCP endpoint and send the saved command LABEL_OR_ID."""
+    """Open a serial, TCP, or UDP endpoint and send the saved command LABEL_OR_ID."""
     command, _ = _resolve_command(ctx, identifier)
     run_send_once(
         ctx,

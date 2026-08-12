@@ -7,6 +7,7 @@ from ..transports import (
     TransportAdapter,
     TransportEvent,
     TransportProfile,
+    UdpTransportAdapter,
     create_transport_adapter,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "TransportAdapter",
     "TransportEvent",
     "TransportProfile",
+    "UdpTransportAdapter",
     "create_transport_adapter",
 ]
