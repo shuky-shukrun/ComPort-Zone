@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import threading
 from collections.abc import Callable
 from html import escape
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QStyle,
@@ -77,11 +79,14 @@ from ..themes import THEMES, ThemePalette
 from ..version_check import (
     GITHUB_ISSUES_URL,
     GITHUB_REPOSITORY_URL,
+    DownloadCancelled,
     ReleaseInfo,
     VersionCheckResult,
     build_version_check_result,
     describe_check_error,
+    download_installer,
     fetch_latest_release,
+    installer_download_url,
 )
 from ..workspace_settings_controller import WorkspaceSettingsController
 from ..workspace_state import WorkspaceStateService
@@ -152,6 +157,13 @@ class MainWindow(QMainWindow):
     # ReleaseInfo (or the Exception raised) and whether the check was
     # automatic. A queued connection marshals it back to the GUI thread.
     version_check_finished = Signal(object, bool)
+    # Emitted from the update-download worker thread with bytes downloaded
+    # so far and the total (0 if unknown). Queued back to the GUI thread.
+    update_download_progress = Signal(int, int)
+    # Emitted from the update-download worker thread with the downloaded
+    # installer Path on success, or the raised Exception (including
+    # DownloadCancelled) on failure/cancellation.
+    update_download_finished = Signal(object)
 
     def __init__(self, *, defer_startup_actions: bool = False) -> None:
         super().__init__()
@@ -219,6 +231,11 @@ class MainWindow(QMainWindow):
         self._version_check_running = False
         self._version_check_previous_status: str | None = None
         self.version_check_finished.connect(self._on_version_check_finished)
+        self._update_download_running = False
+        self._update_download_cancel_event: threading.Event | None = None
+        self._update_download_progress_dialog: QProgressDialog | None = None
+        self.update_download_progress.connect(self._on_update_download_progress)
+        self.update_download_finished.connect(self._on_update_download_finished)
 
         self.setWindowTitle("ComPort Zone")
         self.setWindowIcon(app_icon())
@@ -2599,8 +2616,96 @@ class MainWindow(QMainWindow):
 
     def _show_version_update_dialog(self, result: VersionCheckResult) -> None:
         dialog = VersionUpdateDialog(result, self.settings.check_for_updates_on_launch, self)
-        dialog.exec()
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
         self._set_check_for_updates_on_launch(dialog.check_on_launch_enabled())
+        if accepted and result.update_available:
+            self._start_update_download(result)
+
+    def _start_update_download(self, result: VersionCheckResult) -> None:
+        if self._update_download_running:
+            return
+        self._update_download_running = True
+        url = installer_download_url(result.tag_name, result.latest_version)
+        destination = Path(tempfile.gettempdir()) / url.rsplit("/", 1)[-1]
+        user_agent = f"ComPort-Zone/{__version__}"
+        cancel_event = threading.Event()
+        self._update_download_cancel_event = cancel_event
+
+        progress = QProgressDialog(
+            f"Downloading ComPort Zone {result.latest_version}...", "Cancel", 0, 0, self
+        )
+        progress.setWindowTitle("Downloading Update")
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setMinimumDuration(0)
+        progress.canceled.connect(cancel_event.set)
+        self._update_download_progress_dialog = progress
+
+        def _worker() -> None:
+            # Off the GUI thread on Python's own SSL stack, same reasoning
+            # as the version check itself (see fetch_latest_release).
+            try:
+                payload: object = download_installer(
+                    url,
+                    destination,
+                    user_agent=user_agent,
+                    progress_callback=lambda done, total: self.update_download_progress.emit(
+                        done, total
+                    ),
+                    cancel_event=cancel_event,
+                )
+            except Exception as exc:  # noqa: BLE001 — report any failure to the user
+                payload = exc
+            self.update_download_finished.emit(payload)
+
+        threading.Thread(target=_worker, name="update-download", daemon=True).start()
+        progress.show()
+
+    def _on_update_download_progress(self, downloaded: int, total: int) -> None:
+        dialog = self._update_download_progress_dialog
+        if dialog is None:
+            return
+        if total > 0:
+            dialog.setMaximum(total)
+            dialog.setValue(min(downloaded, total))
+        else:
+            dialog.setMaximum(0)
+
+    def _on_update_download_finished(self, payload: object) -> None:
+        self._update_download_running = False
+        self._update_download_cancel_event = None
+        dialog = self._update_download_progress_dialog
+        self._update_download_progress_dialog = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+
+        if isinstance(payload, Path):
+            self._launch_installer(payload)
+            return
+        if isinstance(payload, DownloadCancelled):
+            self.set_status("Update download cancelled.")
+            return
+        self.set_status("Could not download the update.")
+        QMessageBox.warning(
+            self,
+            "Download Update",
+            f"Could not download the update:\n{describe_check_error(payload)}",
+        )
+
+    def _launch_installer(self, installer_path: Path) -> None:
+        try:
+            os.startfile(str(installer_path))
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Install Update",
+                f"Downloaded the update but could not start the installer:\n{exc}\n\n"
+                f"You can run it yourself from:\n{installer_path}",
+            )
+            return
+        self.set_status(f"Installer launched: {installer_path.name}")
 
     def _set_check_for_updates_on_launch(self, enabled: bool) -> None:
         if self.settings.check_for_updates_on_launch == enabled:

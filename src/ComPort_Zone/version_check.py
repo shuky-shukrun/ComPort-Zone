@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 DEFAULT_HTTP_TIMEOUT_SECONDS = 8
@@ -40,6 +43,7 @@ class VersionCheckResult:
     release_name: str
     release_url: str
     update_available: bool
+    tag_name: str = ""
 
 
 def clean_version_label(value: str) -> str:
@@ -134,7 +138,77 @@ def build_version_check_result(current_version: str, release: ReleaseInfo) -> Ve
         release_name=release.name or release.tag_name or f"Version {release.version}",
         release_url=release.html_url or GITHUB_RELEASES_URL,
         update_available=is_newer_version(release.version, current_version),
+        tag_name=release.tag_name,
     )
+
+
+def installer_asset_name(version: str) -> str:
+    """Filename of the Windows installer asset published by the release workflow.
+
+    Must track the naming in ``.github/workflows/release.yml``
+    (``ComPort_Zone-$version-win64-setup.exe``).
+    """
+    return f"ComPort_Zone-{clean_version_label(version)}-win64-setup.exe"
+
+
+def installer_download_url(tag_name: str, version: str) -> str:
+    """Direct-download URL for the release's Windows installer asset.
+
+    GitHub release asset URLs follow a predictable
+    ``/releases/download/<tag>/<asset>`` shape, so this needs no REST API call
+    (and therefore no API rate limit) beyond the Atom feed already used to
+    learn ``tag_name``.
+    """
+    tag = tag_name.strip() or f"v{clean_version_label(version)}"
+    return f"{GITHUB_REPOSITORY_URL}/releases/download/{tag}/{installer_asset_name(version)}"
+
+
+class DownloadCancelled(Exception):
+    """Raised when a caller-supplied cancel event is set mid-download."""
+
+
+def download_installer(
+    url: str,
+    destination: Path,
+    *,
+    user_agent: str,
+    timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
+    chunk_size: int = 262_144,
+    progress_callback: Callable[[int, int], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> Path:
+    """Stream a GitHub release asset to ``destination``.
+
+    Uses Python's own SSL stack (``urllib``), off Qt's network path, for the
+    same reason as :func:`fetch_latest_release`. Call this on a worker
+    thread. Writes to a ``.part`` sibling and renames on success so a failed
+    or cancelled download never leaves a half-written file at ``destination``.
+    ``progress_callback``, if given, is called as ``(bytes_downloaded,
+    total_bytes)`` after each chunk; ``total_bytes`` is ``0`` when the server
+    did not send a ``Content-Length``.
+    """
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    part_path = destination.with_name(destination.name + ".part")
+    downloaded = 0
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            total = int(response.headers.get("Content-Length") or 0)
+            with open(part_path, "wb") as handle:
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise DownloadCancelled("Download cancelled.")
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback is not None:
+                        progress_callback(downloaded, total)
+    except BaseException:
+        part_path.unlink(missing_ok=True)
+        raise
+    part_path.replace(destination)
+    return destination
 
 
 def fetch_latest_release(

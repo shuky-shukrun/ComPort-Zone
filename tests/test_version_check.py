@@ -1,15 +1,23 @@
 import io
+import tempfile
+import threading
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import patch
 
 from ComPort_Zone.version_check import (
     GITHUB_RELEASES_ATOM_URL,
     GITHUB_RELEASES_URL,
+    GITHUB_REPOSITORY_URL,
+    DownloadCancelled,
     build_version_check_result,
     compare_versions,
     describe_check_error,
+    download_installer,
     fetch_latest_release,
+    installer_asset_name,
+    installer_download_url,
     is_newer_version,
     release_info_from_atom,
     release_info_from_payload,
@@ -106,6 +114,89 @@ class VersionCheckTests(unittest.TestCase):
         self.assertEqual(captured["user_agent"], "ComPort-Zone/1.2.3")
         self.assertEqual(captured["accept"], "application/atom+xml")
         self.assertIsNotNone(captured["timeout"])
+
+    def test_installer_asset_name_and_download_url_follow_release_naming(self) -> None:
+        self.assertEqual(
+            installer_asset_name("v0.6.0"), "ComPort_Zone-0.6.0-win64-setup.exe"
+        )
+        self.assertEqual(
+            installer_download_url("v0.6.0", "0.6.0"),
+            f"{GITHUB_REPOSITORY_URL}/releases/download/v0.6.0/"
+            "ComPort_Zone-0.6.0-win64-setup.exe",
+        )
+        # A missing tag falls back to a v-prefixed version.
+        self.assertEqual(
+            installer_download_url("", "0.6.0"),
+            f"{GITHUB_REPOSITORY_URL}/releases/download/v0.6.0/"
+            "ComPort_Zone-0.6.0-win64-setup.exe",
+        )
+
+    def test_download_installer_streams_to_destination_and_reports_progress(self) -> None:
+        body = b"x" * 10
+        progress_calls: list[tuple[int, int]] = []
+
+        class FakeResponse:
+            def __init__(self) -> None:
+                self.headers = {"Content-Length": str(len(body))}
+                self._remaining = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, size):
+                chunk, self._remaining = self._remaining[:size], self._remaining[size:]
+                return chunk
+
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "installer.exe"
+            with patch("urllib.request.urlopen", lambda request, timeout=None: FakeResponse()):
+                result = download_installer(
+                    "https://example.invalid/installer.exe",
+                    destination,
+                    user_agent="ComPort-Zone/1.2.3",
+                    chunk_size=4,
+                    progress_callback=lambda done, total: progress_calls.append((done, total)),
+                )
+
+            self.assertEqual(result, destination)
+            self.assertEqual(destination.read_bytes(), body)
+            self.assertFalse(destination.with_name(destination.name + ".part").exists())
+            self.assertEqual(progress_calls, [(4, 10), (8, 10), (10, 10)])
+
+    def test_download_installer_removes_partial_file_when_cancelled(self) -> None:
+        class FakeResponse:
+            def __init__(self) -> None:
+                self.headers = {}
+                self._chunks = iter([b"abcd", b"efgh"])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, size):
+                return next(self._chunks, b"")
+
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "installer.exe"
+            with patch("urllib.request.urlopen", lambda request, timeout=None: FakeResponse()):
+                with self.assertRaises(DownloadCancelled):
+                    download_installer(
+                        "https://example.invalid/installer.exe",
+                        destination,
+                        user_agent="ComPort-Zone/1.2.3",
+                        cancel_event=cancel_event,
+                    )
+
+            self.assertFalse(destination.exists())
+            self.assertFalse(destination.with_name(destination.name + ".part").exists())
 
     def test_describe_check_error_explains_rate_limit_and_others(self) -> None:
         rate_limited = urllib.error.HTTPError(

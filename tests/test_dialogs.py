@@ -110,6 +110,37 @@ class DialogExtractionTests(unittest.TestCase):
         finally:
             dialog.deleteLater()
 
+    def test_version_update_dialog_offers_install_when_update_available(self) -> None:
+        result = VersionCheckResult(
+            current_version="0.2.5",
+            latest_version="0.2.6",
+            release_name="ComPort Zone v0.2.6",
+            release_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.2.6",
+            update_available=True,
+        )
+        dialog = VersionUpdateDialog(result, check_on_launch=False)
+        try:
+            buttons = {button.text() for button in dialog.findChildren(QPushButton)}
+            self.assertIn("Download and Install", buttons)
+            self.assertIn("Later", buttons)
+        finally:
+            dialog.deleteLater()
+
+    def test_version_update_dialog_offers_only_ok_when_up_to_date(self) -> None:
+        result = VersionCheckResult(
+            current_version="0.2.5",
+            latest_version="0.2.5",
+            release_name="ComPort Zone v0.2.5",
+            release_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.2.5",
+            update_available=False,
+        )
+        dialog = VersionUpdateDialog(result, check_on_launch=False)
+        try:
+            buttons = {button.text() for button in dialog.findChildren(QPushButton)}
+            self.assertEqual(buttons, {"OK"})
+        finally:
+            dialog.deleteLater()
+
     def test_command_file_parameter_summary_keeps_stable_names_defaults_and_lines(self) -> None:
         summary = summarize_parameter_occurrences(
             [
