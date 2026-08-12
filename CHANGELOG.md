@@ -4,6 +4,12 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+## 0.6.1 - 2026-08-12
+
+### Fixed
+
+- **Reverted the v0.6.0 burst RX-read coalescing** — the change that merged consecutive small reads into a single render pass to speed up long messages caused problems in practice and has been reverted; RX events render one at a time again, as in v0.5.2 and earlier. A revisit will follow in a later release.
+
 ## 0.6.0 - 2026-08-11
 
 ### Added

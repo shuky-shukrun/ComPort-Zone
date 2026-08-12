@@ -1,3 +1,15 @@
+# ComPort Zone v0.6.1 Release Notes
+
+Release date: 2026-08-12
+
+This is a hotfix release. v0.6.0's burst RX-read coalescing (merging consecutive small reads into a single render pass to speed up long messages) caused problems in practice and has been reverted; RX events render one at a time again, matching v0.5.2 and earlier behavior. Everything else from v0.6.0 — `@@settings` command-file directives and the CLI's raw TCP endpoint support — is unaffected.
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, and saved Control Panels under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+---
+
 # ComPort Zone v0.6.0 Release Notes
 
 Release date: 2026-08-11
