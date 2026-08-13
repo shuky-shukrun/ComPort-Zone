@@ -85,7 +85,7 @@ from ..version_check import (
     build_version_check_result,
     describe_check_error,
     download_installer,
-    fetch_latest_release,
+    fetch_releases,
     installer_download_url,
 )
 from ..workspace_settings_controller import WorkspaceSettingsController
@@ -2564,8 +2564,10 @@ class MainWindow(QMainWindow):
             # never Qt's network/OpenSSL path, which can crash on an
             # OpenSSL version mismatch. The result hops back to the GUI
             # thread via the queued ``version_check_finished`` signal.
+            # The whole feed is fetched, not just the newest entry, so a build
+            # several versions behind can show every release it skipped.
             try:
-                payload: object = fetch_latest_release(user_agent=user_agent)
+                payload: object = fetch_releases(user_agent=user_agent)
             except Exception as exc:  # noqa: BLE001 — report any failure to the user
                 payload = exc
             self.version_check_finished.emit(payload, automatic)
@@ -2578,7 +2580,7 @@ class MainWindow(QMainWindow):
     def _on_version_check_finished(self, payload: object, automatic: bool) -> None:
         """GUI-thread slot for ``version_check_finished`` (queued)."""
         self._version_check_running = False
-        if isinstance(payload, ReleaseInfo):
+        if isinstance(payload, ReleaseInfo) or (isinstance(payload, list) and payload):
             result = build_version_check_result(__version__, payload)
             self._show_version_check_result(result, automatic=automatic)
         else:

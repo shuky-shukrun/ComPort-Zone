@@ -6,8 +6,10 @@ import threading
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,11 @@ class ReleaseInfo:
     name: str
     version: str
     html_url: str
+    # Release notes as sanitized HTML (see :func:`sanitize_release_notes_html`),
+    # and the release date as an ISO ``YYYY-MM-DD`` string. Both are empty when
+    # the source did not carry them.
+    notes_html: str = ""
+    published: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +51,10 @@ class VersionCheckResult:
     release_url: str
     update_available: bool
     tag_name: str = ""
+    # Every release newer than ``current_version``, newest first. When the local
+    # build is more than one version behind, this holds all the skipped releases
+    # so the update dialog can show their accumulated notes.
+    releases: tuple[ReleaseInfo, ...] = ()
 
 
 def clean_version_label(value: str) -> str:
@@ -79,6 +90,168 @@ def is_newer_version(candidate: str, current: str) -> bool:
     return compare_versions(candidate, current) > 0
 
 
+# Tags kept when sanitizing GitHub's rendered release notes. Limited to what
+# Qt's rich-text engine actually renders, which is a small subset of HTML.
+_ALLOWED_NOTE_TAGS = frozenset(
+    {
+        "a", "b", "blockquote", "br", "code", "dd", "del", "div", "dl", "dt",
+        "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "li", "ol", "p",
+        "pre", "s", "span", "strong", "sub", "sup", "table", "tbody", "td",
+        "tfoot", "th", "thead", "tr", "u", "ul",
+    }
+)
+_VOID_NOTE_TAGS = frozenset({"br", "hr", "img", "input", "meta", "link"})
+# Tags whose *content* is dropped as well, not just their markup.
+_DROPPED_NOTE_SUBTREES = frozenset({"script", "style", "head", "svg", "iframe", "object"})
+
+
+class _ReleaseNotesSanitizer(HTMLParser):
+    """Reduce GitHub's release-notes HTML to a safe, Qt-renderable subset.
+
+    The notes come off the network, so nothing is passed through verbatim:
+    every tag is either whitelisted or dropped (keeping its text), every
+    attribute is discarded except ``href`` on links with an http(s) scheme,
+    and images/scripts/styles are removed outright.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+        # (source tag, emitted tag or None) for every open non-void element, so
+        # a dropped tag's end tag is dropped too.
+        self._open: list[tuple[str, str | None]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _DROPPED_NOTE_SUBTREES:
+            self._skip_depth += 1
+            return
+        if self._skip_depth:
+            return
+        if tag in _VOID_NOTE_TAGS:
+            if tag in _ALLOWED_NOTE_TAGS:
+                self._parts.append(f"<{tag}>")
+            return
+        emitted: str | None = tag if tag in _ALLOWED_NOTE_TAGS else None
+        if emitted == "a":
+            href = self._safe_href(attrs)
+            if href:
+                self._parts.append(f'<a href="{escape(href, quote=True)}">')
+            else:
+                emitted = None
+        elif emitted is not None:
+            self._parts.append(f"<{emitted}>")
+        self._open.append((tag, emitted))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag not in _VOID_NOTE_TAGS and tag not in _DROPPED_NOTE_SUBTREES:
+            self.handle_endtag(tag)
+        elif tag in _DROPPED_NOTE_SUBTREES:
+            self._skip_depth = max(0, self._skip_depth - 1)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _DROPPED_NOTE_SUBTREES:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if self._skip_depth or tag in _VOID_NOTE_TAGS:
+            return
+        for index in range(len(self._open) - 1, -1, -1):
+            if self._open[index][0] != tag:
+                continue
+            # Close the unclosed elements nested inside it as well.
+            for _, emitted in reversed(self._open[index:]):
+                if emitted:
+                    self._parts.append(f"</{emitted}>")
+            del self._open[index:]
+            return
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self._parts.append(escape(data))
+
+    @staticmethod
+    def _safe_href(attrs: list[tuple[str, str | None]]) -> str:
+        for name, value in attrs:
+            if name.lower() != "href" or not value:
+                continue
+            href = value.strip()
+            if href.lower().startswith(("http://", "https://")):
+                return href
+        return ""
+
+    def result(self) -> str:
+        for _, emitted in reversed(self._open):
+            if emitted:
+                self._parts.append(f"</{emitted}>")
+        self._open.clear()
+        return "".join(self._parts).strip()
+
+
+def sanitize_release_notes_html(html: str) -> str:
+    """Return ``html`` reduced to the tag/attribute subset the app will render.
+
+    Release notes are remote content, so they are re-serialized from scratch
+    rather than filtered in place: unknown tags lose their markup but keep
+    their text, and only http(s) link targets survive.
+    """
+    if not html.strip():
+        return ""
+    parser = _ReleaseNotesSanitizer()
+    parser.feed(html)
+    parser.close()
+    return parser.result()
+
+
+def release_date_from_timestamp(value: str) -> str:
+    """Extract the ``YYYY-MM-DD`` date from an Atom ``<updated>`` timestamp."""
+    text = value.strip()
+    return text[:10] if len(text) >= 10 and text[4] == "-" and text[7] == "-" else ""
+
+
+def release_heading(release: ReleaseInfo) -> str:
+    """Human-readable heading for one release section."""
+    return release.name.strip() or release.tag_name.strip() or f"Version {release.version}"
+
+
+# Each release's own headings are pushed below the per-release section heading
+# the document adds, so the version banners stay the most prominent thing in an
+# accumulated document. Qt sizes h1..h6 from the tag alone and ignores any CSS
+# font-size for them, so the level itself is the only lever.
+_NOTES_HEADING_LEVELS = {"h1": "h4", "h2": "h4", "h3": "h5", "h4": "h5", "h5": "h5", "h6": "h5"}
+_HEADING_TAG_PATTERN = re.compile(r"<(/?)(h[1-6])>")
+
+
+def _demote_note_headings(html: str) -> str:
+    return _HEADING_TAG_PATTERN.sub(
+        lambda match: f"<{match.group(1)}{_NOTES_HEADING_LEVELS[match.group(2)]}>", html
+    )
+
+
+def build_release_notes_document(releases: Sequence[ReleaseInfo]) -> str:
+    """Accumulate the notes of every release in ``releases`` into one document.
+
+    ``releases`` is expected newest-first, so a build that is several versions
+    behind reads its way down through each skipped release in turn. The result
+    is a rich-text fragment (already sanitized) for a scrollable viewer.
+    """
+    sections: list[str] = []
+    for index, release in enumerate(releases):
+        if index:
+            sections.append("<hr/>")
+        sections.append(f"<h3>{escape(release_heading(release))}</h3>")
+        date = release_date_from_timestamp(release.published)
+        meta = f"Released {escape(date)}" if date else ""
+        if release.html_url:
+            link = f'<a href="{escape(release.html_url, quote=True)}">Release page</a>'
+            meta = f"{meta} &middot; {link}" if meta else link
+        if meta:
+            sections.append(f'<p class="releaseMeta">{meta}</p>')
+        notes = _demote_note_headings(release.notes_html.strip())
+        sections.append(notes or "<p><i>No release notes were published for this version.</i></p>")
+    return "\n".join(sections)
+
+
 def release_info_from_payload(payload: dict[str, Any]) -> ReleaseInfo:
     tag_name = str(payload.get("tag_name") or "").strip()
     name = str(payload.get("name") or "").strip()
@@ -93,6 +266,7 @@ def release_info_from_payload(payload: dict[str, Any]) -> ReleaseInfo:
             str(payload.get("html_url") or GITHUB_RELEASES_URL).strip()
             or GITHUB_RELEASES_URL
         ),
+        published=str(payload.get("published_at") or "").strip(),
     )
 
 
@@ -103,18 +277,7 @@ def release_info_from_json(data: bytes | str) -> ReleaseInfo:
     return release_info_from_payload(payload)
 
 
-def release_info_from_atom(data: bytes | str) -> ReleaseInfo:
-    """Parse the most recent release from a GitHub releases Atom feed.
-
-    The feed's first ``<entry>`` is the latest release; its ``<title>`` is the
-    release name and its alternate ``<link>`` / ``<id>`` carries the ``vX.Y.Z``
-    tag. No GitHub REST API call (and therefore no API rate limit) is involved.
-    """
-    raw = data if isinstance(data, bytes) else data.encode("utf-8")
-    root = ET.fromstring(raw)
-    entry = root.find(f"{_ATOM_NS}entry")
-    if entry is None:
-        raise ValueError("Releases feed contained no entries.")
+def _release_info_from_atom_entry(entry: ET.Element) -> ReleaseInfo:
     name = (entry.findtext(f"{_ATOM_NS}title") or "").strip()
     link = entry.find(f"{_ATOM_NS}link")
     html_url = ((link.get("href") if link is not None else "") or "").strip()
@@ -128,17 +291,59 @@ def release_info_from_atom(data: bytes | str) -> ReleaseInfo:
         name=name,
         version=version,
         html_url=html_url or GITHUB_RELEASES_URL,
+        notes_html=sanitize_release_notes_html(entry.findtext(f"{_ATOM_NS}content") or ""),
+        published=(entry.findtext(f"{_ATOM_NS}updated") or "").strip(),
     )
 
 
-def build_version_check_result(current_version: str, release: ReleaseInfo) -> VersionCheckResult:
+def releases_from_atom(data: bytes | str) -> list[ReleaseInfo]:
+    """Parse every release in a GitHub releases Atom feed, newest first.
+
+    Each ``<entry>`` carries the release name in ``<title>``, the ``vX.Y.Z``
+    tag in its alternate ``<link>`` / ``<id>``, and — the reason this reads the
+    whole feed rather than just the first entry — the rendered release notes in
+    ``<content type="html">``. Fetching them all lets a build that is several
+    versions behind show every release it skipped. No GitHub REST API call (and
+    therefore no API rate limit) is involved.
+    """
+    raw = data if isinstance(data, bytes) else data.encode("utf-8")
+    root = ET.fromstring(raw)
+    releases = [
+        _release_info_from_atom_entry(entry) for entry in root.findall(f"{_ATOM_NS}entry")
+    ]
+    if not releases:
+        raise ValueError("Releases feed contained no entries.")
+    return releases
+
+
+def release_info_from_atom(data: bytes | str) -> ReleaseInfo:
+    """Parse the most recent release (the feed's first entry) from an Atom feed."""
+    return releases_from_atom(data)[0]
+
+
+def build_version_check_result(
+    current_version: str, release: ReleaseInfo | Sequence[ReleaseInfo]
+) -> VersionCheckResult:
+    """Compare ``current_version`` against one release or a feed's worth of them.
+
+    Given a sequence, the highest version wins the "latest" slot and *every*
+    newer release is kept in :attr:`VersionCheckResult.releases` (newest first)
+    so the update dialog can accumulate the notes of each skipped version.
+    """
+    releases = (release,) if isinstance(release, ReleaseInfo) else tuple(release)
+    if not releases:
+        raise ValueError("No releases to compare against.")
+    ordered = sorted(releases, key=lambda item: version_segments(item.version), reverse=True)
+    latest = ordered[0]
+    newer = tuple(item for item in ordered if is_newer_version(item.version, current_version))
     return VersionCheckResult(
         current_version=clean_version_label(current_version),
-        latest_version=release.version,
-        release_name=release.name or release.tag_name or f"Version {release.version}",
-        release_url=release.html_url or GITHUB_RELEASES_URL,
-        update_available=is_newer_version(release.version, current_version),
-        tag_name=release.tag_name,
+        latest_version=latest.version,
+        release_name=latest.name or latest.tag_name or f"Version {latest.version}",
+        release_url=latest.html_url or GITHUB_RELEASES_URL,
+        update_available=bool(newer),
+        tag_name=latest.tag_name,
+        releases=newer,
     )
 
 
@@ -211,14 +416,14 @@ def download_installer(
     return destination
 
 
-def fetch_latest_release(
+def fetch_releases(
     *,
     user_agent: str,
     url: str = GITHUB_RELEASES_ATOM_URL,
     timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
-) -> ReleaseInfo:
-    """Fetch + parse the latest GitHub release over HTTPS using Python's own
-    SSL stack (``urllib``), from the releases **Atom feed**.
+) -> list[ReleaseInfo]:
+    """Fetch + parse the published GitHub releases (newest first) over HTTPS
+    using Python's own SSL stack (``urllib``), from the releases **Atom feed**.
 
     Two deliberate choices:
 
@@ -237,7 +442,17 @@ def fetch_latest_release(
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read()
-    return release_info_from_atom(body)
+    return releases_from_atom(body)
+
+
+def fetch_latest_release(
+    *,
+    user_agent: str,
+    url: str = GITHUB_RELEASES_ATOM_URL,
+    timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
+) -> ReleaseInfo:
+    """Fetch just the most recent release. See :func:`fetch_releases`."""
+    return fetch_releases(user_agent=user_agent, url=url, timeout=timeout)[0]
 
 
 def describe_check_error(error: object) -> str:
