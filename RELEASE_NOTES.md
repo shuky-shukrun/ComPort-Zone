@@ -1,3 +1,28 @@
+# ComPort Zone v0.7.0 Release Notes
+
+Release date: 2026-08-13
+
+ComPort Zone v0.7.0 adds a UDP transport alongside serial and TCP, shows what's actually in an update before you install it, and can download and launch that update for you.
+
+## Highlights
+
+- **UDP transport, in the app and the CLI** — connect a terminal tab to a UDP device from Connection Settings, or via the CLI's new `--udp-host`/`--udp-port`/`--udp-timeout` flags. A reply is treated as one whole datagram, so devices that answer without a CR/LF terminator work with no configuration. There's no auto-reconnect (there's no link to lose) and sending to a port with no listener doesn't tear the session down. `resources/udp_echo_server.py` ships as a local target to test against.
+- **Update dialog shows real release notes** — when a new version is available, the dialog now displays what's actually in it (accumulated across every skipped version if you're behind), pulled from GitHub Releases with unsafe HTML stripped before display.
+- **One-click download and install** — the update dialog's "Download and Install" button now streams the installer and launches it, instead of only linking to the release page.
+- **Choose your install folder** — the installer's destination-directory page is enabled, so you're no longer locked to the default per-user location.
+- The raw TCP connection type is now labelled "TCP" instead of "LAN" throughout the app, now that UDP sits alongside it as a second LAN transport.
+
+## Compatibility
+
+- Settings schema is now version 9. Only a settings file that actually uses a UDP endpoint declares the new floor — serial- and TCP-only files stay readable by older builds. A file that does use UDP will be refused by builds older than this one.
+- The TCP relabeling is cosmetic only: the persisted transport kind is still `lan`, so existing settings files load untouched.
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, and saved Control Panels under `%LOCALAPPDATA%\ComPortZone` are preserved across the upgrade; no action is required.
+
+---
+
 # ComPort Zone v0.6.1 Release Notes
 
 Release date: 2026-08-12

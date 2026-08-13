@@ -4,6 +4,8 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+## 0.7.0 - 2026-08-13
+
 ### Added
 
 - **UDP endpoints, in the app and the CLI** — a terminal tab can now talk to a UDP device: pick **UDP** in Connection Settings, enter a host and port, and send/receive exactly as you would over serial or TCP. The CLI gains matching `--udp-host`/`--udp-port`/`--udp-timeout` flags on `send`/`hex`/`listen`/`run`/`repl`, quick send, and `files run` (kept distinct from the serial `--port` and the TCP `--host`; mixing flags from two transports is a usage error), plus `COMPORTZONE_UDP_*` environment variables, UDP `/set` shortcuts in the REPL, and `"transport": "udp"` in JSON records. `resources/udp_echo_server.py` ships as a local target to test against.
@@ -11,6 +13,8 @@ All notable changes to ComPort Zone are documented here.
   UDP is connectionless and the app treats it that way rather than pretending otherwise. A reply is **one whole datagram**, so devices that answer without a CR/LF terminator work with no configuration — where a line-framed transport would sit there until the timeout. There is no auto-reconnect (there is no link to lose), so that checkbox is absent from the UDP page and `--auto-reconnect` is accepted and ignored; `--wait` is likewise a no-op, because opening a datagram socket does no network I/O. Sending to a port with no listener does not tear the session down: the resulting ICMP port-unreachable is ignored, as UDP requires.
 
 - **Release notes in the update prompt** — when a new version is found, the dialog now shows what is actually in it, read from the release notes published on GitHub Releases. If your build is more than one version behind, the notes of *every* release you skipped are accumulated newest-first, each under its own version heading with its date and a link to its release page, in a scrollable pane sized to the notes (capped, so the dialog stays on screen). The notes come from the same releases feed the check already uses, so this costs no extra request and is still not subject to the GitHub API rate limit. Notes are HTML from the network, so they are re-serialized down to a safe subset before rendering: scripts, styles, images, inline event handlers, and non-`http(s)` links are dropped, and only link text survives from a rejected link.
+- **Download and install updates in one click** — the update dialog's "Download and Install" action now streams the matching installer asset from the GitHub release to a temp file, shows a cancelable progress dialog, and launches it, instead of only linking to the release page for a manual download.
+- **Choose the install folder during setup** — the installer's destination-directory wizard page is now enabled, so you can browse to a different install location instead of being locked to the per-user LocalAppData default.
 
 ### Changed
 
