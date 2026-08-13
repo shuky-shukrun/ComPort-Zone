@@ -11,27 +11,39 @@ from ComPort_Zone.version_check import (
     GITHUB_RELEASES_URL,
     GITHUB_REPOSITORY_URL,
     DownloadCancelled,
+    ReleaseInfo,
+    build_release_notes_document,
     build_version_check_result,
     compare_versions,
     describe_check_error,
     download_installer,
     fetch_latest_release,
+    fetch_releases,
     installer_asset_name,
     installer_download_url,
     is_newer_version,
     release_info_from_atom,
     release_info_from_payload,
+    releases_from_atom,
+    sanitize_release_notes_html,
 )
 
 
-def _atom_feed(*entries: tuple[str, str, str]) -> bytes:
+def _atom_feed(*entries: tuple[str, str, str], notes: str = "", updated: str = "") -> bytes:
     """Build a minimal releases Atom feed from (tag, name, url) tuples."""
     body = ['<?xml version="1.0" encoding="UTF-8"?>', '<feed xmlns="http://www.w3.org/2005/Atom">']
     for tag, name, url in entries:
         body.append(
             f"<entry><id>tag:github.com,2008:Repository/1/{tag}</id>"
             f'<link rel="alternate" type="text/html" href="{url}"/>'
-            f"<title>{name}</title></entry>"
+            f"<title>{name}</title>"
+            + (f"<updated>{updated}</updated>" if updated else "")
+            + (
+                f'<content type="html">{notes.format(tag=tag)}</content>'
+                if notes
+                else ""
+            )
+            + "</entry>"
         )
     body.append("</feed>")
     return "".join(body).encode("utf-8")
@@ -77,6 +89,126 @@ class VersionCheckTests(unittest.TestCase):
         self.assertEqual(info.name, "Big Release")
         self.assertEqual(info.version, "9.9.9")
         self.assertEqual(info.html_url, "https://github.com/o/r/releases/tag/v9.9.9")
+
+    def test_releases_from_atom_keeps_every_entry_with_its_notes(self) -> None:
+        feed = _atom_feed(
+            ("v9.9.9", "Big Release", "https://github.com/o/r/releases/tag/v9.9.9"),
+            ("v9.9.8", "Older Release", "https://github.com/o/r/releases/tag/v9.9.8"),
+            notes="&lt;p&gt;Notes for {tag}&lt;/p&gt;",
+            updated="2026-08-12T07:32:42Z",
+        )
+
+        releases = releases_from_atom(feed)
+
+        self.assertEqual([release.version for release in releases], ["9.9.9", "9.9.8"])
+        self.assertEqual(releases[0].notes_html, "<p>Notes for v9.9.9</p>")
+        self.assertEqual(releases[1].notes_html, "<p>Notes for v9.9.8</p>")
+        self.assertEqual(releases[0].published, "2026-08-12T07:32:42Z")
+
+    def test_update_result_accumulates_every_release_newer_than_the_local_build(self) -> None:
+        releases = releases_from_atom(
+            _atom_feed(
+                ("v1.3.0", "Release 1.3.0", "https://github.com/o/r/releases/tag/v1.3.0"),
+                ("v1.2.0", "Release 1.2.0", "https://github.com/o/r/releases/tag/v1.2.0"),
+                ("v1.1.0", "Release 1.1.0", "https://github.com/o/r/releases/tag/v1.1.0"),
+                ("v1.0.0", "Release 1.0.0", "https://github.com/o/r/releases/tag/v1.0.0"),
+            )
+        )
+
+        result = build_version_check_result("1.1.0", releases)
+
+        self.assertTrue(result.update_available)
+        self.assertEqual(result.latest_version, "1.3.0")
+        # Newest first, and the running version (and older) are left out.
+        self.assertEqual([release.version for release in result.releases], ["1.3.0", "1.2.0"])
+
+    def test_update_result_reports_no_releases_when_current_is_latest(self) -> None:
+        releases = releases_from_atom(
+            _atom_feed(
+                ("v1.3.0", "Release 1.3.0", "https://github.com/o/r/releases/tag/v1.3.0"),
+                ("v1.2.0", "Release 1.2.0", "https://github.com/o/r/releases/tag/v1.2.0"),
+            )
+        )
+
+        result = build_version_check_result("1.3.0", releases)
+
+        self.assertFalse(result.update_available)
+        self.assertEqual(result.releases, ())
+
+    def test_release_notes_document_accumulates_sections_and_demotes_headings(self) -> None:
+        releases = (
+            ReleaseInfo(
+                tag_name="v1.3.0",
+                name="Release 1.3.0",
+                version="1.3.0",
+                html_url="https://github.com/o/r/releases/tag/v1.3.0",
+                notes_html="<h1>Highlights</h1><p>Faster</p>",
+                published="2026-08-12T07:32:42Z",
+            ),
+            ReleaseInfo(
+                tag_name="v1.2.0",
+                name="Release 1.2.0",
+                version="1.2.0",
+                html_url="https://github.com/o/r/releases/tag/v1.2.0",
+            ),
+        )
+
+        document = build_release_notes_document(releases)
+
+        self.assertLess(document.index("Release 1.3.0"), document.index("Release 1.2.0"))
+        self.assertIn("Released 2026-08-12", document)
+        # The release's own headings sit below the per-release section heading.
+        self.assertIn("<h3>Release 1.3.0</h3>", document)
+        self.assertIn("<h4>Highlights</h4>", document)
+        self.assertNotIn("<h1>", document)
+        self.assertIn("No release notes were published", document)
+
+    def test_release_notes_sanitizer_drops_unsafe_markup_but_keeps_text(self) -> None:
+        notes = (
+            '<div class="markdown-body"><script>alert(1)</script>'
+            '<p onclick="x()">Fixed <code>--baud</code></p>'
+            '<img src="https://example.invalid/a.png"/>'
+            '<a href="javascript:alert(1)">bad link</a>'
+            '<a class="mention" href="https://github.com/o/r/pull/1">#1</a></div>'
+        )
+
+        cleaned = sanitize_release_notes_html(notes)
+
+        self.assertNotIn("script", cleaned)
+        self.assertNotIn("alert(1)", cleaned)
+        self.assertNotIn("onclick", cleaned)
+        self.assertNotIn("<img", cleaned)
+        self.assertNotIn("javascript:", cleaned)
+        self.assertIn("bad link", cleaned)  # link stripped, text kept
+        self.assertIn('<a href="https://github.com/o/r/pull/1">#1</a>', cleaned)
+        self.assertIn("<p>Fixed <code>--baud</code></p>", cleaned)
+
+    def test_release_notes_sanitizer_escapes_text_and_closes_open_tags(self) -> None:
+        cleaned = sanitize_release_notes_html("<p>1 &lt; 2 &amp; 3 > 2<ul><li>item")
+
+        self.assertIn("1 &lt; 2 &amp; 3 &gt; 2", cleaned)
+        self.assertTrue(cleaned.endswith("</li></ul></p>"))
+
+    def test_fetch_releases_returns_the_whole_feed(self) -> None:
+        body = _atom_feed(
+            ("v9.9.9", "Big Release", "https://github.com/o/r/releases/tag/v9.9.9"),
+            ("v9.9.8", "Older Release", "https://github.com/o/r/releases/tag/v9.9.8"),
+        )
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return body
+
+        with patch("urllib.request.urlopen", lambda request, timeout=None: FakeResponse()):
+            releases = fetch_releases(user_agent="ComPort-Zone/1.2.3")
+
+        self.assertEqual([release.version for release in releases], ["9.9.9", "9.9.8"])
 
     def test_release_info_from_atom_rejects_an_empty_feed(self) -> None:
         with self.assertRaises(ValueError):

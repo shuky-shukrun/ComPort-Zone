@@ -26,7 +26,7 @@ from ComPort_Zone.serial_core import SerialClient, SerialEvent
 from ComPort_Zone.settings_service import SettingsService
 from ComPort_Zone.storage import SettingsStore
 from ComPort_Zone.ui import main_window as main_window_module
-from ComPort_Zone.version_check import VersionCheckResult
+from ComPort_Zone.version_check import ReleaseInfo, VersionCheckResult
 
 
 def drawer_action_rows(page) -> list[list[str]]:
@@ -641,6 +641,71 @@ class AppSessionTests(unittest.TestCase):
         finally:
             settings_path.unlink(missing_ok=True)
 
+    def test_version_check_hands_every_skipped_release_to_the_dialog(self) -> None:
+        """A build several versions behind gets all the skipped releases, not just the newest."""
+        settings_path = Path(__file__).with_name("_tmp_settings_update_check_notes.json")
+        settings_path.unlink(missing_ok=True)
+        try:
+            old_config_path = app_module.default_config_path
+            old_prompt_current = app_module.MainWindow.prompt_current_session_settings
+            old_prompt_session = app_module.MainWindow.prompt_session_settings
+            old_version_update_dialog = main_window_module.VersionUpdateDialog
+            seen: list[VersionCheckResult] = []
+            window = None
+
+            class FakeVersionUpdateDialog:
+                def __init__(self, result, check_on_launch: bool, parent=None) -> None:
+                    seen.append(result)
+
+                def exec(self) -> int:
+                    return 0
+
+                def check_on_launch_enabled(self) -> bool:
+                    return True
+
+            def newer(version: str) -> ReleaseInfo:
+                return ReleaseInfo(
+                    tag_name=f"v{version}",
+                    name=f"ComPort Zone {version}",
+                    version=version,
+                    html_url=f"https://github.com/o/r/releases/tag/v{version}",
+                    notes_html=f"<p>Notes for {version}</p>",
+                )
+
+            app_module.default_config_path = lambda: settings_path
+            app_module.MainWindow.prompt_current_session_settings = lambda self: None
+            app_module.MainWindow.prompt_session_settings = lambda self, session: None
+            main_window_module.VersionUpdateDialog = FakeVersionUpdateDialog
+            try:
+                window = app_module.MainWindow()
+                current = main_window_module.__version__
+                feed = [
+                    newer(f"{int(current.split('.')[0]) + 2}.0.0"),
+                    newer(f"{int(current.split('.')[0]) + 1}.0.0"),
+                    newer("0.0.1"),
+                ]
+
+                window._on_version_check_finished(feed, False)
+
+                self.assertEqual(len(seen), 1)
+                self.assertTrue(seen[0].update_available)
+                self.assertEqual(
+                    [release.version for release in seen[0].releases],
+                    [feed[0].version, feed[1].version],
+                )
+            finally:
+                app_module.default_config_path = old_config_path
+                app_module.MainWindow.prompt_current_session_settings = old_prompt_current
+                app_module.MainWindow.prompt_session_settings = old_prompt_session
+                main_window_module.VersionUpdateDialog = old_version_update_dialog
+                if window is not None:
+                    for active_session in window.iter_sessions():
+                        active_session.shutdown()
+                    window.deleteLater()
+                self.qt.processEvents()
+        finally:
+            settings_path.unlink(missing_ok=True)
+
     def test_confirming_update_dialog_downloads_and_launches_installer(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_update_install.json")
         settings_path.unlink(missing_ok=True)
@@ -749,7 +814,7 @@ class AppSessionTests(unittest.TestCase):
             app_module.MainWindow.prompt_session_settings = lambda self, session: None
             try:
                 with mock.patch.object(
-                    main_window_module, "fetch_latest_release", blocking_fetch
+                    main_window_module, "fetch_releases", blocking_fetch
                 ):
                     window = app_module.MainWindow()
                     window.check_for_updates(automatic=True)

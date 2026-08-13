@@ -1,5 +1,6 @@
 import unittest
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -13,7 +14,11 @@ from ComPort_Zone import app as app_module
 from ComPort_Zone.batch import BatchParameterOccurrence
 from ComPort_Zone.command_registry import CommandPaletteEntry
 from ComPort_Zone.models import QuickCommand, QuickFile
-from ComPort_Zone.version_check import VersionCheckResult
+from ComPort_Zone.version_check import (
+    ReleaseInfo,
+    VersionCheckResult,
+    build_version_check_result,
+)
 from ComPort_Zone.ui.dialogs import (
     APP_SETTINGS_EXPLANATION,
     AppSettingsTransferDialog,
@@ -123,6 +128,87 @@ class DialogExtractionTests(unittest.TestCase):
             buttons = {button.text() for button in dialog.findChildren(QPushButton)}
             self.assertIn("Download and Install", buttons)
             self.assertIn("Later", buttons)
+        finally:
+            dialog.deleteLater()
+
+    def test_version_update_dialog_accumulates_notes_of_every_missing_release(self) -> None:
+        releases = (
+            ReleaseInfo(
+                tag_name="v0.4.0",
+                name="ComPort Zone 0.4.0",
+                version="0.4.0",
+                html_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.4.0",
+                notes_html="<h2>Highlights</h2><p>Newest change</p>",
+                published="2026-08-12T07:32:42Z",
+            ),
+            ReleaseInfo(
+                tag_name="v0.3.0",
+                name="ComPort Zone 0.3.0",
+                version="0.3.0",
+                html_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.3.0",
+                notes_html="<p>Skipped-version change</p>",
+                published="2026-06-23T07:28:32Z",
+            ),
+        )
+        result = build_version_check_result("0.2.5", releases)
+        dialog = VersionUpdateDialog(result, check_on_launch=False)
+        try:
+            notes = dialog.release_notes
+
+            self.assertIsNotNone(notes)
+            text = dialog.release_notes_text()
+            # Both the newest release and the one that was skipped over show up,
+            # newest first, each under its own version heading.
+            self.assertIn("Newest change", text)
+            self.assertIn("Skipped-version change", text)
+            self.assertLess(text.index("0.4.0"), text.index("0.3.0"))
+            # The notes pane is scrollable rather than clipped.
+            self.assertTrue(notes.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.assertIn("2 releases behind", "\n".join(l.text() for l in dialog.findChildren(QLabel)))
+        finally:
+            dialog.deleteLater()
+
+    def test_version_update_dialog_scrolls_when_notes_are_longer_than_the_pane(self) -> None:
+        long_notes = "".join(f"<p>Change number {index}</p>" for index in range(200))
+        result = build_version_check_result(
+            "0.2.5",
+            (
+                ReleaseInfo(
+                    tag_name="v0.4.0",
+                    name="ComPort Zone 0.4.0",
+                    version="0.4.0",
+                    html_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.4.0",
+                    notes_html=long_notes,
+                ),
+            ),
+        )
+        dialog = VersionUpdateDialog(result, check_on_launch=False)
+        try:
+            dialog.show()
+            self.qt.processEvents()
+            notes = dialog.release_notes
+
+            self.assertIsNotNone(notes)
+            # The pane is capped rather than grown to fit, and the overflow
+            # stays reachable by scrolling.
+            self.assertLess(notes.height(), notes.document().size().height())
+            self.assertGreater(notes.verticalScrollBar().maximum(), 0)
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_version_update_dialog_omits_notes_pane_when_none_were_published(self) -> None:
+        result = VersionCheckResult(
+            current_version="0.2.5",
+            latest_version="0.2.6",
+            release_name="ComPort Zone v0.2.6",
+            release_url="https://github.com/shuky-shukrun/ComPort-Zone/releases/tag/v0.2.6",
+            update_available=True,
+        )
+        dialog = VersionUpdateDialog(result, check_on_launch=False)
+        try:
+            self.assertIsNone(dialog.release_notes)
+            self.assertEqual(dialog.release_notes_text(), "")
         finally:
             dialog.deleteLater()
 

@@ -27,7 +27,7 @@ ComPort Zone is a PySide6 desktop app for working with serial COM-port devices, 
 - Import/export of quick actions through CSV.
 - App settings import/export through JSON.
 - Restored workspace tabs across app launches.
-- Manual and default-on launch-time GitHub release checks with clickable release-page links.
+- Manual and default-on launch-time GitHub release checks, showing the release notes of every version being skipped, with clickable release-page links.
 
 Serial, raw TCP, and UDP are implemented transports today, and the design keeps a transport abstraction so future transports can be added without rewriting UI flows.
 
@@ -120,7 +120,7 @@ Rules:
 | ControlPanel UI | `ui/control_panel_tab.py`, `ui/control_panel_tiles.py`, `ui/control_panel_grid.py`, `ui/control_panel_targets.py`, `ui/dialogs/control_panel_entry.py`, `ui/dialogs/control_panel_manager.py` | ControlPanel workspace tab (tick loop, binding chip, empty states), value/LED tiles, drag grid with spans, binding coordinator with refcounted dispatchers, entry editor + library manager dialogs. |
 | Settings | `settings_service.py`, `storage.py`, `workspace_state.py`, `workspace_settings_controller.py` | App settings schema, JSON I/O, workspace capture/restore, save/apply coordination. |
 | App settings UI | `app_settings_controller.py`, `ui/dialogs/app_settings_transfer.py` | App settings import/export dialogs and busy workflow. |
-| Version checks | `version_check.py`, `ui/dialogs/version_update.py`, `ui/main_window.py` | GitHub release comparison, asynchronous latest-release requests, and the update-available dialog. |
+| Version checks | `version_check.py`, `ui/dialogs/version_update.py`, `ui/main_window.py` | GitHub release comparison, asynchronous releases-feed requests, release-notes sanitizing/accumulation, and the update-available dialog. |
 | Dialogs | `ui/dialogs/*` | Focused modal dialogs. |
 | Shared UI utilities | `icons.py`, `themes.py`, `widgets.py`, `ui/fonts.py` | Icons, theme palette, custom widgets, font helpers. |
 | Tests | `tests/` | Focused module tests plus app-session regression tests. |

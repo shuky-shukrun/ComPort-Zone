@@ -697,6 +697,12 @@ def build_stylesheet(theme: ThemePalette) -> str:
         background: {elevated}; color: {tx2};
         border: 1px solid {bd}; border-radius: {RADIUS_MD}px; padding: 10px;
     }}
+    /* Release notes in the update dialog: a read-only, scrollable panel. */
+    QTextBrowser#releaseNotesView {{
+        background: {elevated}; color: {tx2};
+        border: 1px solid {bd}; border-radius: {RADIUS_MD}px; padding: 8px;
+        selection-background-color: {sel}; selection-color: {tx};
+    }}
     QDialog#commandPalette {{ background: {panel}; }}
     QLineEdit#commandPaletteSearch {{ font-size: 14px; padding: 10px 12px; border-radius: {RADIUS_MD}px; }}
     QListWidget#commandPaletteList {{ padding: 6px; border-radius: {RADIUS_MD}px; }}
