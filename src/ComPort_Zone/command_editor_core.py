@@ -16,8 +16,9 @@ from .quick_actions import quick_group_name
 
 BATCH_KEYWORDS = (
     "SEND", "WAIT", "HEX", "EXPECT", "CAPTURE",
-    "LOOP", "ENDLOOP", "BREAK", "IF", "ELSE", "ENDIF", "SET", "LOG",
+    "LOOP", "ENDLOOP", "BREAK", "PAUSE", "IF", "ELSE", "ENDIF", "SET", "LOG",
 )
+VARIABLE_ACTION_SNIPPETS = (":INCREMENT", ":DECREMENT")
 COMMENT_SNIPPETS = ("// ", "# ")
 # ``@@`` execution-setting directives offered as completions (e.g. "@@wait").
 SETTING_SNIPPETS = tuple(f"@@{name}" for name in SETTING_NAMES)
@@ -126,6 +127,7 @@ class CommandEditorSources:
     def suggestions(self, document_text: str = "", prefix: str = "", exclude: str = "") -> list[str]:
         candidates: list[str] = []
         candidates.extend(BATCH_KEYWORDS)
+        candidates.extend(VARIABLE_ACTION_SNIPPETS)
         candidates.extend(SETTING_SNIPPETS)
         candidates.extend(COMMENT_SNIPPETS)
         candidates.extend(self.known_commands)

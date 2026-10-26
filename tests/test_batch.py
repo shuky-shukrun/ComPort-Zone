@@ -54,6 +54,25 @@ class BatchParserTests(unittest.TestCase):
         self.assertEqual(steps[0].payload, ("MODE", "FAST"))
         self.assertEqual(steps[1].payload, "Mode=$MODE")
 
+    def test_parse_pause_with_optional_message(self) -> None:
+        steps = parse_batch_script("PAUSE\nPAUSE Check voltage $VOLTAGE")
+
+        self.assertEqual([step.kind for step in steps], ["pause", "pause"])
+        self.assertEqual(steps[0].payload, "")
+        self.assertEqual(steps[1].payload, "Check voltage $VOLTAGE")
+
+    def test_parse_variable_actions_with_explicit_and_default_amounts(self) -> None:
+        steps = parse_batch_script("volt:increment 1.5\ncurr:DECREMENT")
+
+        self.assertEqual([step.kind for step in steps], ["variable_action", "variable_action"])
+        self.assertEqual(steps[0].payload, ("volt", "increment", "1.5"))
+        self.assertEqual(steps[1].payload, ("curr", "decrement", "1"))
+
+    def test_variable_actions_reject_invalid_static_amounts(self) -> None:
+        for line in ("volt:increment nope", "volt:decrement -1", "volt:increment NaN"):
+            with self.subTest(line=line), self.assertRaises(BatchParseError):
+                parse_batch_script(line)
+
     def test_break_must_be_inside_loop(self) -> None:
         with self.assertRaises(BatchParseError) as context:
             parse_batch_script("IF 1 == 1\nBREAK\nENDIF")
@@ -751,6 +770,131 @@ class BatchParserTests(unittest.TestCase):
         )
         self.assertFalse(any(event.message.startswith("SET ") for event in events))
         self.assertFalse(any(event.message.startswith("Setting @@") for event in events))
+
+    def test_increment_and_decrement_mutate_variables_without_sending(self) -> None:
+        sent: list[str] = []
+        events: list[SerialEvent] = []
+        runner = BatchRunner(
+            emit_event=events.append,
+            send_text=lambda text, **kw: sent.append(text),
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+        )
+        runner._resume_event.set()
+
+        runner._run_steps(
+            parse_batch_script(
+                "SET volt 10.5\nSET curr 4\nSET step 0.25\n"
+                "volt:increment\ncurr:decrement 2\nvolt:increment $step\n"
+                "SEND VOLT=$volt CURR=$curr"
+            )
+        )
+
+        self.assertEqual(sent, ["VOLT=11.75 CURR=2"])
+        self.assertFalse(any(event.kind == "error" for event in events))
+
+    def test_variable_action_errors_for_missing_or_non_numeric_target(self) -> None:
+        events: list[SerialEvent] = []
+        runner = BatchRunner(
+            emit_event=events.append,
+            send_text=lambda text, **kw: None,
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+        )
+        runner._resume_event.set()
+
+        runner._run_steps(parse_batch_script("missing:increment 1"))
+        self.assertTrue(any("not set" in event.message for event in events if event.kind == "error"))
+
+        events.clear()
+        runner._run_steps(parse_batch_script("SET mode FAST\nmode:decrement 1"))
+        self.assertTrue(any("must be finite numbers" in event.message for event in events if event.kind == "error"))
+
+    def test_variable_action_error_obeys_stop_and_continue_policies(self) -> None:
+        for directive, expected_sent in (
+            ("@@on-error stop", []),
+            ("@@on-error continue", ["after-FAST"]),
+        ):
+            with self.subTest(directive=directive):
+                sent: list[str] = []
+                events: list[SerialEvent] = []
+                runner = BatchRunner(
+                    emit_event=events.append,
+                    send_text=lambda text, **kw: sent.append(text),
+                    send_bytes=lambda data, **kw: None,
+                    connected_supplier=lambda: True,
+                )
+                runner._resume_event.set()
+
+                runner._run_steps(
+                    parse_batch_script(
+                        f"{directive}\nSET mode FAST\nmode:INCREMENT\nSEND after-$mode"
+                    )
+                )
+
+                self.assertEqual(sent, expected_sent)
+                errors = [event.message for event in events if event.kind == "error"]
+                self.assertEqual(len(errors), 1)
+                self.assertIn("must be finite numbers", errors[0])
+
+    def test_pause_directive_waits_for_resume_and_resolves_message(self) -> None:
+        sent: list[str] = []
+        events: list[SerialEvent] = []
+        pause_notifications: list[tuple[str, int]] = []
+        runner = BatchRunner(
+            emit_event=events.append,
+            send_text=lambda text, **kw: sent.append(text),
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+            pause_notifier=lambda message, line: pause_notifications.append((message, line)),
+        )
+
+        runner.start(
+            parse_batch_script(
+                "SET VOLTAGE 7\nSEND before\nPAUSE Check $VOLTAGE volts\nSEND after"
+            )
+        )
+        try:
+            self.assertTrue(
+                wait_until(
+                    lambda: runner.snapshot().is_paused
+                    and runner.snapshot().pause_reason == "script"
+                )
+            )
+            self.assertEqual(sent, ["before"])
+            self.assertEqual(pause_notifications, [("Check 7 volts", 3)])
+            self.assertTrue(
+                any(
+                    event.kind == "status" and "Check 7 volts" in event.message
+                    for event in events
+                )
+            )
+
+            self.assertTrue(runner.resume())
+            self.assertTrue(wait_until(lambda: sent == ["before", "after"]))
+            self.assertTrue(wait_until(lambda: not runner.is_running))
+        finally:
+            runner.stop(emit_message=False)
+
+    def test_parameterized_variable_action_runs_in_template_runner(self) -> None:
+        sent: list[str] = []
+        runner = BatchRunner(
+            emit_event=lambda event: None,
+            send_text=lambda text, **kw: sent.append(text),
+            send_bytes=lambda data, **kw: None,
+            connected_supplier=lambda: True,
+        )
+        runner._resume_event.set()
+        values: dict[str, str] = {}
+
+        runner._run_template_steps(
+            parse_batch_template("SET volt 1\nvolt:increment {{STEP=2.5}}\nSEND $volt"),
+            lambda line, line_number: substitute_batch_parameters(
+                line, values, lambda *_: None, line_number
+            ),
+        )
+
+        self.assertEqual(sent, ["3.5"])
 
     def test_parameterized_loop_count_is_resolved_before_execution(self) -> None:
         sent: list[str] = []

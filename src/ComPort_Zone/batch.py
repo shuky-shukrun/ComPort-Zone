@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException, InvalidOperation
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,8 +25,13 @@ CAPTURE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 BREAK_PATTERN = re.compile(r"^BREAK$", re.IGNORECASE)
+PAUSE_PATTERN = re.compile(r"^PAUSE(?:\s+(.*))?$", re.IGNORECASE)
 SET_PATTERN = re.compile(
     r"^SET\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$",
+    re.IGNORECASE,
+)
+VARIABLE_ACTION_PATTERN = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*):(INCREMENT|DECREMENT)(?:\s+(.+))?$",
     re.IGNORECASE,
 )
 LOG_PATTERN = re.compile(r"^LOG\s+(.+)$", re.IGNORECASE)
@@ -149,7 +154,7 @@ class BatchStep:
     kind: str
     # For a "setting" step the payload is a ``(name, parsed_value)`` tuple.
     # A ``None`` loop payload means an intentionally unbounded loop.
-    payload: str | bytes | int | tuple[str, object] | None
+    payload: str | bytes | int | tuple[object, ...] | None
     line_number: int
 
 
@@ -187,6 +192,7 @@ BatchLineResolver = Callable[[str, int], str | None]
 BatchParameterPrompt = Callable[[str, int, str], str | None]
 EventQueueFactory = Callable[[], Queue[SerialEvent]]
 EventQueueDisposer = Callable[[Queue[SerialEvent]], None]
+BatchPauseNotifier = Callable[[str, int], None]
 
 
 def parse_hex_payload(text: str) -> bytes:
@@ -305,12 +311,30 @@ def parse_batch_line(line: str, line_number: int) -> BatchStep:
         return BatchStep("break", "", line_number)
     if re.match(r"^BREAK\b", stripped, re.IGNORECASE):
         raise BatchParseError("BREAK does not accept an argument.", line_number)
+    pause_match = PAUSE_PATTERN.match(stripped)
+    if pause_match:
+        return BatchStep("pause", (pause_match.group(1) or "").strip(), line_number)
     set_match = SET_PATTERN.match(stripped)
     if set_match:
         name, value = set_match.groups()
         return BatchStep("set", (name, value), line_number)
     if re.match(r"^SET\b", stripped, re.IGNORECASE):
         raise BatchParseError("SET syntax is: SET NAME <value>.", line_number)
+    variable_action_match = VARIABLE_ACTION_PATTERN.match(stripped)
+    if variable_action_match:
+        name, action, amount = variable_action_match.groups()
+        amount = amount.strip() if amount is not None else "1"
+        if "$" not in amount and "{{" not in amount:
+            try:
+                parsed_amount = Decimal(amount)
+            except InvalidOperation:
+                parsed_amount = None
+            if parsed_amount is None or not parsed_amount.is_finite() or parsed_amount < 0:
+                raise BatchParseError(
+                    f"{action.upper()} amount must be a non-negative finite number or runtime variable.",
+                    line_number,
+                )
+        return BatchStep("variable_action", (name, action.lower(), amount), line_number)
     log_match = LOG_PATTERN.match(stripped)
     if log_match:
         return BatchStep("log", log_match.group(1), line_number)
@@ -542,7 +566,7 @@ def substitute_runtime_variables(
 
 def resolve_runtime_step(step: BatchStep, variables: dict[str, str]) -> BatchStep:
     """Return a step with runtime variables resolved in text-bearing fields."""
-    if step.kind in ("send", "expect"):
+    if step.kind in ("send", "expect", "pause"):
         return BatchStep(
             step.kind,
             substitute_runtime_variables(str(step.payload), variables, step.line_number),
@@ -583,6 +607,17 @@ def resolve_runtime_step(step: BatchStep, variables: dict[str, str]) -> BatchSte
             (name, substitute_runtime_variables(str(value), variables, step.line_number)),
             step.line_number,
         )
+    if step.kind == "variable_action":
+        name, action, amount = step.payload
+        return BatchStep(
+            "variable_action",
+            (
+                name,
+                action,
+                substitute_runtime_variables(str(amount), variables, step.line_number),
+            ),
+            step.line_number,
+        )
     if step.kind == "log":
         return BatchStep(
             "log",
@@ -590,6 +625,33 @@ def resolve_runtime_step(step: BatchStep, variables: dict[str, str]) -> BatchSte
             step.line_number,
         )
     return step
+
+
+def apply_variable_action(step: BatchStep, variables: dict[str, str]) -> None:
+    """Apply a parsed increment/decrement step to the per-run variable map."""
+    name, action, amount_text = step.payload
+    variable_name = str(name)
+    if variable_name not in variables:
+        raise BatchParseError(
+            f"Runtime variable '{variable_name}' is not set for {str(action).upper()}.",
+            step.line_number,
+        )
+    try:
+        current = Decimal(variables[variable_name])
+        amount = Decimal(str(amount_text))
+        if not current.is_finite() or not amount.is_finite() or amount < 0:
+            raise InvalidOperation
+        result = current + amount if action == "increment" else current - amount
+    except DecimalException:
+        raise BatchParseError(
+            f"Variable '{variable_name}' and the action amount must be finite numbers; "
+            "the amount cannot be negative.",
+            step.line_number,
+        ) from None
+    result_text = format(result, "f")
+    if "." in result_text:
+        result_text = result_text.rstrip("0").rstrip(".")
+    variables[variable_name] = "0" if result_text in ("-0", "") else result_text
 
 
 def find_batch_parameters(text: str) -> list[BatchParameterOccurrence]:
@@ -680,6 +742,7 @@ class BatchRunner:
         connected_supplier,
         event_queue_factory: EventQueueFactory | None = None,
         event_queue_disposer: EventQueueDisposer | None = None,
+        pause_notifier: BatchPauseNotifier | None = None,
         expect_timeout_ms: int = DEFAULT_EXPECT_TIMEOUT_MS,
         stop_on_error: bool = True,
     ) -> None:
@@ -689,6 +752,7 @@ class BatchRunner:
         self._connected_supplier = connected_supplier
         self._event_queue_factory = event_queue_factory
         self._event_queue_disposer = event_queue_disposer
+        self._pause_notifier = pause_notifier
         self._expect_timeout_ms = max(expect_timeout_ms, 1)
         # Defaults a script's @@settings start from (and can override per run).
         self._stop_on_error = stop_on_error
@@ -699,6 +763,7 @@ class BatchRunner:
         self._resume_event = Event()
         self._state_lock = Lock()
         self._user_paused = False
+        self._directive_paused = False
         self._connection_paused = False
         self._stopping = False
 
@@ -715,6 +780,7 @@ class BatchRunner:
         self._resume_event = Event()
         with self._state_lock:
             self._user_paused = False
+            self._directive_paused = False
             self._connection_paused = not self._connected_supplier()
             self._stopping = False
             self._refresh_resume_state_locked()
@@ -735,6 +801,7 @@ class BatchRunner:
         self._resume_event = Event()
         with self._state_lock:
             self._user_paused = False
+            self._directive_paused = False
             self._connection_paused = not self._connected_supplier()
             self._stopping = False
             self._refresh_resume_state_locked()
@@ -762,6 +829,7 @@ class BatchRunner:
         with self._state_lock:
             self._stopping = False
             self._user_paused = False
+            self._directive_paused = False
             self._connection_paused = False
             self._refresh_resume_state_locked()
 
@@ -770,7 +838,7 @@ class BatchRunner:
             return False
         reason = "connection" if reason == "connection" else "user"
         with self._state_lock:
-            was_paused = self._user_paused or self._connection_paused
+            was_paused = self._user_paused or self._directive_paused or self._connection_paused
             if reason == "connection":
                 self._connection_paused = True
             else:
@@ -791,8 +859,9 @@ class BatchRunner:
                 self._emit("status", "Connect before resuming batch run.")
             return False
         with self._state_lock:
-            was_paused = self._user_paused or self._connection_paused
+            was_paused = self._user_paused or self._directive_paused or self._connection_paused
             self._user_paused = False
+            self._directive_paused = False
             self._connection_paused = False
             self._refresh_resume_state_locked()
         if emit_message and was_paused:
@@ -802,7 +871,9 @@ class BatchRunner:
     def snapshot(self) -> BatchRunSnapshot:
         running = self.is_running
         with self._state_lock:
-            paused = running and (self._user_paused or self._connection_paused)
+            paused = running and (
+                self._user_paused or self._directive_paused or self._connection_paused
+            )
             reason = self._pause_reason_locked() if paused else ""
             can_resume = paused and self._connected_supplier() and not self._stopping
             return BatchRunSnapshot(
@@ -824,7 +895,7 @@ class BatchRunner:
                 self._emit("status", "Connection restored. Batch run waiting for Resume.")
             return
         with self._state_lock:
-            was_paused = self._user_paused or self._connection_paused
+            was_paused = self._user_paused or self._directive_paused or self._connection_paused
             self._connection_paused = True
             self._refresh_resume_state_locked()
         if not was_paused:
@@ -834,16 +905,20 @@ class BatchRunner:
         if self._stop_event.is_set():
             self._resume_event.set()
             return
-        if self._user_paused or self._connection_paused:
+        if self._user_paused or self._directive_paused or self._connection_paused:
             self._resume_event.clear()
             return
         self._resume_event.set()
 
     def _pause_reason_locked(self) -> str:
+        if self._directive_paused and self._connection_paused:
+            return "script+connection"
         if self._user_paused and self._connection_paused:
             return "user+connection"
         if self._connection_paused:
             return "connection"
+        if self._directive_paused:
+            return "script"
         if self._user_paused:
             return "user"
         return ""
@@ -863,6 +938,7 @@ class BatchRunner:
             with self._state_lock:
                 self._stopping = False
                 self._user_paused = False
+                self._directive_paused = False
                 self._connection_paused = False
                 self._refresh_resume_state_locked()
 
@@ -1057,6 +1133,27 @@ class BatchRunner:
             name, value = step.payload
             stored_value = _unquote_condition_value(str(value))
             runtime_variables[str(name)] = stored_value
+            return True
+        if step.kind == "pause":
+            with self._state_lock:
+                self._directive_paused = True
+                self._refresh_resume_state_locked()
+            message = str(step.payload).strip()
+            detail = f": {message}" if message else ""
+            self._emit(
+                "status",
+                f"Script paused on line {step.line_number}{detail}. "
+                "Press Return, Space, or Continue in the checkpoint dialog.",
+            )
+            if self._pause_notifier is not None:
+                self._pause_notifier(message, step.line_number)
+            return self._wait_for_connection()
+        if step.kind == "variable_action":
+            try:
+                apply_variable_action(step, runtime_variables)
+            except BatchParseError as exc:
+                self._emit("error", str(exc))
+                return False
             return True
         if step.kind == "log":
             self._emit("script", str(step.payload))

@@ -8,6 +8,7 @@
 @@expect-timeout 1000
 @@on-error stop
 SET EXPECTED PONG
+SET CHECK_COUNT 0
 LOG Starting {{COUNT=3}} checks
 
 LOOP {{COUNT=3}}
@@ -18,8 +19,11 @@ LOOP {{COUNT=3}}
     ELSE
         LOG Echo reply: $REPLY
     ENDIF
+    CHECK_COUNT:INCREMENT
     WAIT 100
 ENDLOOP
+
+LOG Completed $CHECK_COUNT checks
 
 SEND time
 CAPTURE SERVER_TIME REGEX TIME ([^\r\n]+)\r?\n

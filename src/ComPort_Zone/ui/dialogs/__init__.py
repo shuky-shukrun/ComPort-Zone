@@ -4,8 +4,10 @@ from .app_settings_transfer import APP_SETTINGS_EXPLANATION, AppSettingsTransfer
 from .command_palette import CommandPaletteDialog
 from .command_file_parameters import (
     BatchParameterPromptBridge,
+    BatchPausePromptBridge,
     CommandFileParameterSummary,
     CommandFileParametersDialog,
+    ScriptPauseDialog,
     summarize_parameter_occurrences,
 )
 from .connection import COMMON_BAUD_RATES, ConnectionSettingsDialog
@@ -19,10 +21,12 @@ __all__ = [
     "APP_SETTINGS_EXPLANATION",
     "AppSettingsTransferDialog",
     "BatchParameterPromptBridge",
+    "BatchPausePromptBridge",
     "COMMON_BAUD_RATES",
     "CommandPaletteDialog",
     "CommandFileParameterSummary",
     "CommandFileParametersDialog",
+    "ScriptPauseDialog",
     "ConnectionSettingsDialog",
     "ControlPanelEntryDialog",
     "PreferencesDialog",

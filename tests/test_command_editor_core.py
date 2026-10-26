@@ -82,6 +82,24 @@ class CommandEditorCoreTests(unittest.TestCase):
         issues = sources.validation_issues("BREAK")
         self.assertTrue(any(issue.severity == "error" and "LOOP" in issue.message for issue in issues))
 
+    def test_pause_validates_and_completes(self) -> None:
+        sources = CommandEditorSources()
+
+        self.assertEqual(sources.validation_issues("PAUSE Check the output"), [])
+        self.assertIn("PAUSE", sources.suggestions("", "PAU"))
+
+    def test_variable_actions_validate_and_complete(self) -> None:
+        sources = CommandEditorSources()
+
+        self.assertEqual(
+            sources.validation_issues("SET volt 1\nvolt:increment 2\nvolt:decrement"),
+            [],
+        )
+        self.assertIn(":INCREMENT", sources.suggestions("", "INC"))
+        self.assertIn(":DECREMENT", sources.suggestions("", "DEC"))
+        issues = sources.validation_issues("volt:increment wrong")
+        self.assertTrue(any(issue.severity == "error" for issue in issues))
+
     def test_sources_validate_and_suggest_without_qt_dependencies(self) -> None:
         sources = CommandEditorSources(
             history_commands=["MEAS:VOLT?"],

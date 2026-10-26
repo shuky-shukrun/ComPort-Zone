@@ -4,6 +4,15 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+### Added
+
+- **Operator checkpoints in command files.** `PAUSE [message]` stops a desktop or interactive CLI run until the operator continues. The desktop checkpoint accepts Return, Enter, Space, or the **Continue** button and can stop the script explicitly; `--non-interactive` exits with the interrupted status instead of waiting for input.
+- **Numeric runtime-variable actions.** `NAME:INCREMENT [amount]` and `NAME:DECREMENT [amount]` mutate an existing finite numeric variable without sending device traffic. Amounts default to `1` and may use parameters or runtime variables.
+
+### Changed
+
+- The desktop runner, CLI runner, command-file editor, bundled scripting example, and command-file documentation now share the checkpoint and variable-action syntax and behavior.
+
 ## 0.8.1 - 2026-10-18
 
 ### Fixed

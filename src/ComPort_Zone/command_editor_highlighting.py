@@ -44,6 +44,14 @@ class CommandFileHighlighter(QSyntaxHighlighter):
             if re.match(rf"^{keyword}\b", stripped, re.IGNORECASE):
                 self.setFormat(leading, len(keyword), self.keyword_format)
                 break
+        variable_action = re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*:(INCREMENT|DECREMENT)\b",
+            stripped,
+            re.IGNORECASE,
+        )
+        if variable_action:
+            action_start, action_end = variable_action.span(1)
+            self.setFormat(leading + action_start, action_end - action_start, self.keyword_format)
         setting_match = re.match(r"^@@[\w-]+", stripped)
         if setting_match:
             self.setFormat(leading, setting_match.end(), self.setting_format)

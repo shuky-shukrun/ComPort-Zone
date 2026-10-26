@@ -44,7 +44,7 @@ Keep the commands you use most one click away. The left drawer carries four cura
 
 ### Command-file automation and a built-in editor
 
-Turn a manual sequence into a repeatable script. Command files run top to bottom and understand a small, readable DSL — `SEND`, `WAIT`, `HEX`, `EXPECT`, response `CAPTURE`, variables with `SET`, messages with `LOG`, repeatable `LOOP` blocks with `BREAK`, and `IF` conditions, plus `{{parameters}}` you fill in at run time. Run them from a terminal tab, the drawer, or the CLI, with **Pause / Resume / Stop** controls and a status line.
+Turn a manual sequence into a repeatable script. Command files run top to bottom and understand a small, readable DSL — `SEND`, `WAIT`, `HEX`, `EXPECT`, response `CAPTURE`, variables with `SET` plus `NAME:INCREMENT` / `NAME:DECREMENT`, operator checkpoints with `PAUSE`, messages with `LOG`, repeatable `LOOP` blocks with `BREAK`, and `IF` conditions, plus `{{parameters}}` you fill in at run time. Run them from a terminal tab, the drawer, or the CLI, with **Pause / Resume / Stop** controls and a status line.
 
 The integrated editor opens command files as workspace tabs with line numbers, syntax highlighting, autocomplete, optional unknown-command warnings, find-and-replace, and a one-click run bar that targets any connected session.
 
@@ -151,6 +151,8 @@ WAIT 1000                   // pause 1000 ms before the next step
 EXPECT ComPort              // require matching RX text before continuing
 CAPTURE VOLTAGE REGEX VOLT:\s*([0-9.]+) // save the first regex group as $VOLTAGE
 SET LIMIT 12.5               // create or replace a runtime variable
+LIMIT:INCREMENT 0.5          // mutate a numeric runtime variable
+PAUSE Inspect the output     // show a Return/Space checkpoint popup
 LOG Voltage is $VOLTAGE      // write a message to the run log
 HEX 55 AA 01 0D             // send raw bytes, no line ending
 LOOP 3                      // repeat the enclosed block three times
@@ -177,13 +179,15 @@ ENDLOOP
 - **`EXPECT <text>`** waits (up to one second, unless `@@expect-timeout` changes it) for RX text containing `<text>`; if it doesn't arrive, the run stops with an error. RX is still shown in the terminal, and matches can span multiple chunks.
 - **`CAPTURE <name> REGEX <pattern>`** waits for a regex match using the EXPECT timeout, stores its first capture group (or the full match when there is no group), and makes it available as `$name` to later text-bearing steps. Use `$$` for a literal dollar sign.
 - **`SET <name> <value>`** creates or replaces a case-sensitive runtime `$name`. Matching quotes around the whole value are removed.
+- **`<name>:INCREMENT [amount]`** and **`<name>:DECREMENT [amount]`** add to or subtract from an existing numeric runtime variable. The amount defaults to `1` and may be a non-negative decimal, parameter, or numeric runtime variable.
+- **`PAUSE [message]`** creates an operator checkpoint. In the desktop app, a modal popup displays the resolved message; press Return/Enter/Space or click **Continue**. In the CLI, press Enter when prompted.
 - **`LOG <message>`** writes a visible `MSG` entry after resolving runtime variables. The desktop renders it in italic script-message color without a `LOG:` prefix.
 - **`LOOP <count>` ... `ENDLOOP`** repeats the enclosed steps exactly `<count>` times. Loops may be nested.
 - **`LOOP FOREVER` ... `ENDLOOP`** repeats until you press **Stop** in the desktop app or interrupt the CLI with Ctrl+C. `LOOP INFINITE` is accepted as an alias.
 - **`BREAK`** immediately leaves the innermost enclosing loop. Using it outside a loop is a validation error.
 - **`IF <left> <operator> <right>` ... `ELSE` ... `ENDIF`** selects one branch. `ELSE` is optional, conditions may be nested, and condition blocks may appear inside loops.
 
-Successful scripting internals (`SET`, `WAIT`, control-flow markers, settings,
+Successful scripting internals (`SET`, variable actions, `WAIT`, control-flow markers, settings,
 and successful `EXPECT`/`CAPTURE`) stay out of the terminal transcript. Batch
 lifecycle messages and errors remain visible, while script `SEND`/`HEX` traffic
 and device replies retain the normal TX/RX presentation.

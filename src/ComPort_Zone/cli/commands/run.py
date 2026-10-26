@@ -223,6 +223,21 @@ def execute_run(
                 log_handle.write(rendered + "\n")
                 log_handle.flush()
 
+    def pause_prompt(message: str, line_number: int) -> bool:
+        if non_interactive:
+            return False
+        detail = f" — {message}" if message else ""
+        prompt = f"PAUSE line {line_number}{detail}. Press Enter to continue..."
+        try:
+            if output.json_mode:
+                output.event("prompt", message=prompt, line_number=line_number)
+                input()
+            else:
+                input(prompt)
+        except EOFError:
+            return False
+        return True
+
     try:
         output.status(
             f"Running {file_path.name} against {endpoint.connection_summary} "
@@ -233,6 +248,7 @@ def execute_run(
             template,
             parameter_values,
             on_event=on_event,
+            pause_prompt=pause_prompt,
             stop_on_expect_fail=stop_on_expect_fail,
             expect_timeout_ms=expect_timeout_ms,
         )
@@ -306,7 +322,7 @@ def run_command(
     expect_timeout_ms: int,
     **endpoint_flag_values: Any,
 ) -> None:
-    """Execute a script with CAPTURE, LOOP/BREAK, IF, SET, and LOG."""
+    """Execute a script with CAPTURE, LOOP/BREAK/PAUSE, variables, and LOG."""
     execute_run(
         ctx,
         file_path=file_path,

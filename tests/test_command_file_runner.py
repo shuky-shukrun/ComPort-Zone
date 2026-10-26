@@ -395,6 +395,72 @@ class SetAndLogStepTests(unittest.TestCase):
         self.assertIn("Selected SAFE MODE", script_messages)
         self.assertFalse(any(str(message).startswith("SET ") for message in status_messages))
 
+    def test_variable_actions_and_pause_match_desktop_runner_semantics(self) -> None:
+        fake = FakeSerialTransport()
+        prompts: list[tuple[str, int]] = []
+
+        outcome = run_command_file(
+            fake,
+            _steps(
+                "SET VOLTAGE 1\nLOOP 2\nPAUSE Check $VOLTAGE volts\n"
+                "SEND volt $VOLTAGE\nVOLTAGE:INCREMENT\nENDLOOP\n"
+            ),
+            {},
+            on_event=_no_events_sink,
+            pause_prompt=lambda message, line: prompts.append((message, line)) or True,
+        )
+
+        self.assertTrue(outcome.success, outcome.failure_message)
+        self.assertEqual(prompts, [("Check 1 volts", 3), ("Check 2 volts", 3)])
+        self.assertEqual(fake.sent_text, [("volt 1", None), ("volt 2", None)])
+
+    def test_pause_without_interactive_prompt_returns_interrupted(self) -> None:
+        fake = FakeSerialTransport()
+
+        outcome = run_command_file(
+            fake,
+            _steps("PAUSE Inspect output\nSEND after\n"),
+            {},
+            on_event=_no_events_sink,
+        )
+
+        self.assertFalse(outcome.success)
+        self.assertEqual(outcome.failure_kind, "interrupted")
+        self.assertEqual(fake.sent_text, [])
+
+    def test_variable_action_error_stops_by_default(self) -> None:
+        fake = FakeSerialTransport()
+        events: list[tuple[str, dict]] = []
+
+        outcome = run_command_file(
+            fake,
+            _steps("SET mode FAST\nmode:INCREMENT\nSEND after\n"),
+            {},
+            on_event=lambda kind, fields: events.append((kind, dict(fields))),
+        )
+
+        self.assertFalse(outcome.success)
+        self.assertEqual(outcome.failure_kind, FAILURE_PARSE)
+        self.assertEqual(fake.sent_text, [])
+        self.assertFalse(any(kind == "error" for kind, _ in events))
+
+    def test_variable_action_error_continues_under_directive(self) -> None:
+        fake = FakeSerialTransport()
+        events: list[tuple[str, dict]] = []
+
+        outcome = run_command_file(
+            fake,
+            _steps("@@on-error continue\nSET mode FAST\nmode:INCREMENT\nSEND after-$mode\n"),
+            {},
+            on_event=lambda kind, fields: events.append((kind, dict(fields))),
+        )
+
+        self.assertTrue(outcome.success, outcome.failure_message)
+        self.assertEqual(fake.sent_text, [("after-FAST", None)])
+        errors = [fields["message"] for kind, fields in events if kind == "error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("must be finite numbers", errors[0])
+
 
 class ConditionStepTests(unittest.TestCase):
     def test_condition_selects_true_and_false_branches(self) -> None:

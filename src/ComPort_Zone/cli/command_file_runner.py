@@ -10,8 +10,8 @@ The CLI has different needs:
   translate into ``EXPECT_FAILED`` / ``PARSE_ERROR`` etc.
 
 This module reuses every parser from :mod:`ComPort_Zone.batch` and only
-re-implements the driving loop, keeping the SEND/HEX/WAIT/EXPECT/CAPTURE,
-LOOP/BREAK, IF, SET, and LOG semantics exactly aligned with the GUI.
+  re-implements the driving loop, keeping the SEND/HEX/WAIT/EXPECT/CAPTURE,
+  LOOP/BREAK/PAUSE, IF, runtime-variable, and LOG semantics aligned with the GUI.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from ..core.batch import (
     BatchParseError,
     BatchTemplateStep,
     RunSettings,
+    apply_variable_action,
     build_break_jumps,
     build_condition_jumps,
     build_loop_jumps,
@@ -64,6 +65,7 @@ class RunOutcome:
 # TX / RX / status / error events as they happen. Kept narrow so the CLI's
 # CliOutput integration stays simple.
 EventSink = Callable[[str, dict], None]
+PausePrompt = Callable[[str, int], bool]
 
 
 def _drain_rx(
@@ -211,6 +213,7 @@ def run_command_file(
     parameter_values: dict[str, str],
     *,
     on_event: EventSink,
+    pause_prompt: PausePrompt | None = None,
     stop_on_expect_fail: bool = True,
     expect_timeout_ms: int = 1000,
 ) -> RunOutcome:
@@ -388,6 +391,46 @@ def run_command_file(
                 ):
                     stored_value = stored_value[1:-1]
                 runtime_variables[str(name)] = stored_value
+                continue
+
+            if step.kind == "variable_action":
+                try:
+                    apply_variable_action(step, runtime_variables)
+                except BatchParseError as exc:
+                    if settings.stop_on_error:
+                        return RunOutcome(
+                            success=False,
+                            failure_kind=FAILURE_PARSE,
+                            failure_line=step.line_number,
+                            failure_message=str(exc),
+                            steps_run=steps_run,
+                            expect_failures=expect_failures,
+                        )
+                    on_event("error", {"message": str(exc)})
+                continue
+
+            if step.kind == "pause":
+                message = str(step.payload).strip()
+                detail = f": {message}" if message else ""
+                on_event(
+                    "status",
+                    {
+                        "message": f"Script paused on line {step.line_number}{detail}.",
+                        "line_number": step.line_number,
+                    },
+                )
+                if pause_prompt is None or not pause_prompt(message, step.line_number):
+                    return RunOutcome(
+                        success=False,
+                        failure_kind=FAILURE_INTERRUPTED,
+                        failure_line=step.line_number,
+                        failure_message=(
+                            f"PAUSE on line {step.line_number} could not continue "
+                            "because interactive input was unavailable."
+                        ),
+                        steps_run=steps_run,
+                        expect_failures=expect_failures,
+                    )
                 continue
 
             if step.kind == "log":

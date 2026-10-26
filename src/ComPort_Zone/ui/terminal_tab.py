@@ -72,7 +72,12 @@ from ..widgets import (
     set_button_role,
     set_widget_state,
 )
-from .dialogs import BatchParameterPromptBridge, CommandFileParametersDialog, ConnectionSettingsDialog
+from .dialogs import (
+    BatchParameterPromptBridge,
+    BatchPausePromptBridge,
+    CommandFileParametersDialog,
+    ConnectionSettingsDialog,
+)
 from .fonts import TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, pick_mono_font
 from .search_overlay import SearchOverlay
 from .tokens import DRAWER_COLLAPSE_AT, DRAWER_MAX_W, DRAWER_MIN_W, SPLITTER_HANDLE
@@ -131,10 +136,16 @@ class TerminalSessionWidget(QWidget):
         self.transport_kind = state.transport_kind or "serial"
         self.profile: ConnectionProfile = self._profile_from_state(state)
         self.parameter_prompt_bridge = BatchParameterPromptBridge(self)
+        self.pause_prompt_bridge = BatchPausePromptBridge(
+            self,
+            on_continue=self.resume_script,
+            on_stop=self.stop_script,
+        )
         self.controller = TerminalSessionController(
             self.profile,
             history_commands=host.history_catalog.all_commands(),
             parameter_prompt=self.parameter_prompt_bridge.prompt,
+            pause_notifier=self.pause_prompt_bridge.show,
             transport_kind=self.transport_kind,
         )
         self.transport = self.controller.transport
@@ -1261,6 +1272,7 @@ class TerminalSessionWidget(QWidget):
             self.profile,
             history_commands=self.host.history_catalog.all_commands(),
             parameter_prompt=self.parameter_prompt_bridge.prompt,
+            pause_notifier=self.pause_prompt_bridge.show,
             transport_kind=self.transport_kind,
         )
         self.controller.logger = logger
@@ -1275,6 +1287,13 @@ class TerminalSessionWidget(QWidget):
     def send_from_input(self) -> None:
         raw = self.command_input.text()
         if not raw.strip():
+            snapshot = self.controller.script_snapshot()
+            if (
+                snapshot.is_paused
+                and "script" in snapshot.pause_reason
+                and snapshot.can_resume
+            ):
+                self.resume_script()
             return
         if self._send_integrated_input(raw, self.mode_combo.currentText()):
             self._clear_command_input_after_send()
@@ -1473,7 +1492,7 @@ class TerminalSessionWidget(QWidget):
         # as SYS messages, so the command bar no longer carries a status label. The one
         # control-actionable hint — why Resume is disabled after a disconnect — rides
         # on the Resume button's tooltip so it is not lost.
-        if paused and snapshot.pause_reason in ("connection", "user+connection"):
+        if paused and "connection" in snapshot.pause_reason:
             self.script_resume_button.setToolTip(
                 "Paused after disconnect — reconnect, then click Resume."
             )

@@ -58,15 +58,21 @@ inline comment. Indentation helps readability but does not define a block.
 | `EXPECT READY` | Waits for received text containing `READY`. |
 | `CAPTURE VALUE REGEX pattern` | Waits for a regex match and stores its first group, or the whole match when there is no group, in `$VALUE`. |
 | `SET NAME value` | Creates or replaces a runtime variable; matching outer single or double quotes are removed. |
+| `NAME:INCREMENT [amount]` | Adds `amount` to an existing numeric runtime variable; the default amount is `1`. |
+| `NAME:DECREMENT [amount]` | Subtracts `amount` from an existing numeric runtime variable; the default amount is `1`. |
+| `PAUSE [message]` | Pauses at an operator checkpoint until the user continues the run. |
 | `LOG message` | Writes a progress message after substituting runtime variables. Desktop output uses a distinct `MSG` row; CLI `--log` files include the message. |
 | `LOOP 3` ... `ENDLOOP` | Repeats the enclosed steps three times. Counts must be positive whole numbers. Blocks can be nested. |
 | `LOOP FOREVER` ... `ENDLOOP` | Repeats until `BREAK`, desktop Stop, a stopping error, or CLI Ctrl+C. `INFINITE` is an alias for `FOREVER`. |
 | `BREAK` | Leaves only the innermost loop. It must appear inside a loop. |
 | `IF left operator right` ... `ELSE` ... `ENDIF` | Runs the matching branch; `ELSE` is optional. Conditions and loops may nest but their blocks must not cross. |
 
-Use `SEND` explicitly if a device command begins with a scripting keyword.
-For example, `SEND SET MODE FAST` sends the literal device command instead of
-creating a script variable. Close every `LOOP` with `ENDLOOP` and every `IF` with
+Use `SEND` explicitly if a device command begins with a scripting keyword or
+matches a variable-action shape. For example, `SEND SET MODE FAST` sends the
+literal device command instead of creating a script variable, and
+`SEND VOLT:INCREMENT 1` sends that exact device command rather than changing
+`$VOLT`; `SEND PAUSE` sends the literal device command instead of pausing the
+script. Close every `LOOP` with `ENDLOOP` and every `IF` with
 `ENDIF`; the editor and CLI validator report unbalanced blocks before a run.
 
 ## Parameters and runtime variables
@@ -86,10 +92,47 @@ ENDLOOP
 
 `$NAME` is a separate value created by `SET` or `CAPTURE` during execution. It is
 local to one run and does not change saved settings or parameter defaults. These
-values can be used in `SEND`, `EXPECT`, `CAPTURE` patterns, `SET`, `LOG`, and IF
-operands. They cannot supply `WAIT` durations, `LOOP` counts, `HEX` bytes, or
+values can be used in `SEND`, `EXPECT`, `CAPTURE` patterns, `SET`, `LOG`, variable
+action amounts, and IF operands. They cannot supply `WAIT` durations, `LOOP` counts, `HEX` bytes, or
 `@@` settings; use parameters for those fields. Use `$$` in script text for a
 literal dollar sign. Runtime substitution does not evaluate arithmetic.
+
+Variable actions provide the intentional arithmetic operation. The target must
+already exist, variable names remain case-sensitive, and both its current value
+and the amount must be finite numbers. Amounts must be non-negative; choose the
+action to select the direction. Actions are internal and produce no TX traffic:
+
+```text
+SET volt 0
+SET curr 10
+SET step 0.25
+volt:increment             // $volt is now 1
+volt:increment $step       // $volt is now 1.25
+curr:decrement 2           // $curr is now 8
+LOG volt=$volt curr=$curr
+```
+
+## Operator checkpoints
+
+`PAUSE` stops before the next step. An optional message supports parameters and
+runtime variables, which makes the reason for the checkpoint visible:
+
+```text
+SET VOLTAGE 1
+LOOP 50
+    LOG Testing Voltage = $VOLTAGE
+    SEND volt $VOLTAGE
+    PAUSE Inspect voltage $VOLTAGE, then continue
+    VOLTAGE:INCREMENT 1
+ENDLOOP
+```
+
+In the desktop app, a modal checkpoint popup displays the resolved message.
+Press Return, Enter, or Space, or click **Continue**, to resume. Click **Stop
+Script** or close the popup to cancel the run. A disconnect keeps the run paused
+until the endpoint is reconnected. In the CLI, press Enter at the prompt;
+`--non-interactive` rejects a script when it reaches `PAUSE` instead of hanging.
+`PAUSE` consumes no RX data and sends nothing to the device.
 
 ```text
 SET LIMIT {{LIMIT=12.5}}

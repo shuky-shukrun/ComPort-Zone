@@ -30,6 +30,7 @@ TERMINAL_QUIET_READ_S = 0.15
 ParameterSheet = tuple[dict[str, str], set[str]]
 ParameterCollector = Callable[[Iterable[Any]], ParameterSheet | None]
 ParameterPrompt = Callable[[str, int, str], str | None]
+PauseNotifier = Callable[[str, int], None]
 ConnectionProfile = SerialProfile | LanProfile | UdpProfile
 
 
@@ -69,6 +70,7 @@ class TerminalSessionController:
         *,
         history_commands: Iterable[str],
         parameter_prompt: ParameterPrompt,
+        pause_notifier: PauseNotifier | None = None,
         transport_kind: str = "serial",
         transport: TransportAdapter | None = None,
     ) -> None:
@@ -90,6 +92,7 @@ class TerminalSessionController:
             connected_supplier=lambda: self.transport.is_connected,
             event_queue_factory=self.transport.subscribe_monitor,
             event_queue_disposer=self.transport.unsubscribe_monitor,
+            pause_notifier=pause_notifier,
         )
 
     def close(self) -> None:

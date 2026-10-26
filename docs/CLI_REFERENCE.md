@@ -290,7 +290,8 @@ comport-zone run C:\bench\set-voltage.txt --port COM3 --param VOLT=3.3 --non-int
 ```
 
 Command files can contain `SEND`, `HEX`, `WAIT`, `EXPECT`, response `CAPTURE`,
-runtime-variable `SET`, visible `LOG` messages, and nested `LOOP <count>` ...
+runtime-variable `SET`, `NAME:INCREMENT` / `NAME:DECREMENT` numeric mutations,
+operator checkpoints with `PAUSE [message]`, visible `LOG` messages, and nested `LOOP <count>` ...
 `ENDLOOP` blocks. Use `LOOP FOREVER` for a run that continues until Ctrl+C and
 `BREAK` to leave the innermost loop. Nested `IF` / `ELSE` / `ENDIF` blocks support `==`, `!=`, `<`,
 `<=`, `>`, `>=`, `CONTAINS`, and `NOT CONTAINS` against literals or resolved
@@ -301,10 +302,15 @@ command also supports `--log`, `--expect-timeout`, and
 `CAPTURE NAME REGEX pattern` waits using the current EXPECT timeout, stores the
 first regex group (or full match), and exposes it as `$NAME` to later
 text-bearing steps. `SET NAME value` creates or replaces the same kind of
-per-run variable. `LOG message` resolves those variables and writes only the
+per-run variable. `NAME:INCREMENT [amount]` and `NAME:DECREMENT [amount]` mutate
+an existing numeric variable, defaulting the amount to `1`. `LOG message` resolves those variables and writes only the
 message text to console output and `--log` files; color-enabled console output
 uses a distinct italic script-message style. Successful internal directives
 remain silent in normal console output. Capture events are included in CLI logs.
+
+At `PAUSE [message]`, an interactive CLI run prints the resolved message and
+waits for Enter. With `--non-interactive`, reaching `PAUSE` stops with the
+interrupted exit code (`130`) rather than waiting on stdin.
 
 See the [command-file guide](COMMAND_FILES.md) for the full syntax, variable and
 timeout rules, and a complete example. Try the bundled script against the local

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from threading import Event
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -192,3 +192,67 @@ class BatchParameterPromptBridge(QObject):
                 return
         finally:
             event.set()
+
+
+class ScriptPauseDialog(QDialog):
+    """Modal operator checkpoint resumed explicitly with Return or Space."""
+
+    def __init__(self, message: str, line_number: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Script Paused")
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        text = f"Command file paused on line {line_number}."
+        if message.strip():
+            text += f"\n\n{message.strip()}"
+        text += "\n\nPress Return or Space to continue."
+        label = QLabel(text, self)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        buttons = QDialogButtonBox(self)
+        self.continue_button = buttons.addButton(
+            "Continue", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        self.stop_button = buttons.addButton(
+            "Stop Script", QDialogButtonBox.ButtonRole.RejectRole
+        )
+        self.continue_button.setDefault(True)
+        self.continue_button.setFocus()
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class BatchPausePromptBridge(QObject):
+    """Move a batch-worker PAUSE notification onto the Qt GUI thread."""
+
+    pause_requested = Signal(object)
+
+    def __init__(self, parent: QWidget, *, on_continue, on_stop) -> None:
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.on_continue = on_continue
+        self.on_stop = on_stop
+        self.pause_requested.connect(self._handle_pause)
+
+    def show(self, message: str, line_number: int) -> None:
+        self.pause_requested.emit({"message": message, "line_number": line_number})
+
+    def _handle_pause(self, request: dict[str, object]) -> None:
+        dialog = ScriptPauseDialog(
+            str(request["message"]),
+            int(request["line_number"]),
+            self.parent_widget,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.on_continue()
+        else:
+            self.on_stop()

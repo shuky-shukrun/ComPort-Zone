@@ -1,6 +1,7 @@
 import unittest
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -30,6 +31,7 @@ from ComPort_Zone.ui.dialogs import (
     QuickCommandDialog,
     QuickCommandImportDialog,
     QuickFileDialog,
+    ScriptPauseDialog,
     TerminalFontSettingsDialog,
     VersionUpdateDialog,
     summarize_parameter_occurrences,
@@ -63,6 +65,21 @@ class DialogExtractionTests(unittest.TestCase):
             self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
         finally:
             dialog.deleteLater()
+
+    def test_script_pause_dialog_accepts_return_and_space(self) -> None:
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Space):
+            with self.subTest(key=key):
+                dialog = ScriptPauseDialog("Inspect voltage 3", 7)
+                try:
+                    event = QKeyEvent(
+                        QEvent.Type.KeyPress,
+                        key,
+                        Qt.KeyboardModifier.NoModifier,
+                    )
+                    dialog.keyPressEvent(event)
+                    self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+                finally:
+                    dialog.deleteLater()
 
     def test_terminal_font_dialog_clamps_size_and_resets_to_default(self) -> None:
         dialog = TerminalFontSettingsDialog("Definitely Missing Mono", TERMINAL_FONT_MAX + 99, 999)
