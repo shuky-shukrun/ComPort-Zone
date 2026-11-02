@@ -1522,9 +1522,10 @@ class TerminalSessionWidget(QWidget):
     def toggle_pause(self) -> None:
         paused, pending_events = self.controller.toggle_pause()
         self.pause_label.setText("RX paused" if paused else "")
-        if not paused:
-            for event in pending_events:
-                self._render_event(event)
+        if not paused and pending_events:
+            with self.terminal_view.batch_render():
+                for event in pending_events:
+                    self._render_event(event)
 
     def clear_terminal(self) -> None:
         clear_transcript = getattr(self.terminal, "clear_transcript", None)
@@ -1785,12 +1786,18 @@ class TerminalSessionWidget(QWidget):
         self.command_input.setCursorPosition(len(value))
 
     def _drain_events(self) -> None:
-        while True:
-            try:
-                event = self.monitor_queue.get_nowait()
-            except Empty:
-                break
-            self._handle_event(event)
+        # Snapshot the backlog so a continuous producer cannot keep this tick
+        # running forever. Batch only Qt layout/search work: the controller,
+        # logger and transcript still receive each original event in order.
+        event_count = self.monitor_queue.qsize()
+        if event_count:
+            with self.terminal_view.batch_render():
+                for _ in range(event_count):
+                    try:
+                        event = self.monitor_queue.get_nowait()
+                    except Empty:
+                        break
+                    self._handle_event(event)
         self._refresh_script_controls()
 
     def _handle_event(self, event: SerialEvent) -> None:
@@ -1877,11 +1884,12 @@ class TerminalSessionWidget(QWidget):
             return
         self._replaying = True
         try:
-            for kind, payload in self._transcript:
-                if kind == "event":
-                    self._emit_plan(self.controller.render_plan(payload, self.host.settings.receive_display_mode))
-                else:
-                    self._emit_plan(payload)
+            with self.terminal_view.batch_render():
+                for kind, payload in self._transcript:
+                    if kind == "event":
+                        self._emit_plan(self.controller.render_plan(payload, self.host.settings.receive_display_mode))
+                    else:
+                        self._emit_plan(payload)
         finally:
             self._replaying = False
 

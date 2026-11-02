@@ -35,6 +35,41 @@ class IntegratedTerminalEditTests(unittest.TestCase):
             terminal.deleteLater()
             self.qt.processEvents()
 
+    def test_non_bmp_transcript_does_not_shift_draft_or_saved_text(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            transcript = "device \U0001f600\n"
+            terminal.setPlainText(transcript)
+            terminal.setText("next\ncommand")
+            terminal.setCursorPosition(2)
+            terminal.append_committed_runs([("received \U0001f600\n", "#8fe388")])
+
+            self.assertEqual(terminal.toPlainText(), transcript + "received \U0001f600\n")
+            self.assertEqual(terminal.text(), "next\ncommand")
+            self.assertEqual(terminal.cursorPosition(), 2)
+            self.assertTrue(terminal.display_text().endswith(terminal.prompt + "next\ncommand"))
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
+    def test_appending_at_scrollback_limit_preserves_multiline_draft_and_caret(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        try:
+            terminal.document().setMaximumBlockCount(6)
+            terminal.setPlainText("old\n" * 2)
+            terminal.setText("next\ncommand")
+            terminal.setCursorPosition(7)
+            for index in range(30):
+                terminal.append_committed_runs([(f"{index}\n", "#8fe388")])
+
+            self.assertEqual(terminal.document().blockCount(), 6)
+            self.assertEqual(terminal.toPlainText(), "26\n27\n28\n29\n")
+            self.assertEqual(terminal.text(), "next\ncommand")
+            self.assertEqual(terminal.cursorPosition(), 7)
+        finally:
+            terminal.deleteLater()
+            self.qt.processEvents()
+
     def test_draft_undo_and_redo_revert_typing(self) -> None:
         terminal = IntegratedTerminalEdit()
         try:
