@@ -4,6 +4,8 @@ All notable changes to ComPort Zone are documented here.
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-02
+
 ### Added
 
 - **Operator checkpoints in command files.** `PAUSE [message]` stops a desktop or interactive CLI run until the operator continues. The desktop checkpoint accepts Return, Enter, Space, or the **Continue** button and can stop the script explicitly; `--non-interactive` exits with the interrupted status instead of waiting for input.
@@ -12,6 +14,19 @@ All notable changes to ComPort Zone are documented here.
 ### Changed
 
 - The desktop runner, CLI runner, command-file editor, bundled scripting example, and command-file documentation now share the checkpoint and variable-action syntax and behavior.
+
+### Fixed
+
+- **Responsive receive rendering with long terminal histories.** Long device responses in Text and Hex modes no longer become progressively slower as scrollback grows, including history restored after restarting the app. Incoming output preserves the command draft and caret, while received events, timestamps, ordering, and session logs retain their original detail.
+- **Unicode transcript boundaries.** Output containing characters such as emoji no longer shifts the command draft or includes prompt text in saved terminal history.
+
+### Thanks
+
+- Many thanks to **George Hanna ([@georgehanna1993](https://github.com/georgehanna1993))** for contributing the new operator checkpoints and numeric runtime-variable actions, extending the command-file scripting capabilities he introduced in v0.8.0.
+
+### Validation
+
+- All 1,542 automated tests passed. Regression coverage includes checkpoint and variable-action behavior, restored terminal history, Text and Hex rendering, Unicode output, multiline drafts and caret positions at the scrollback limit, and preservation of event ordering and logging.
 
 ## 0.8.1 - 2026-10-18
 

@@ -1,3 +1,36 @@
+# ComPort Zone v0.9.0 Release Notes
+
+Release date: 2026-11-02
+
+Add operator checkpoints and numeric variable actions to your device scripts, and keep long device responses responsive even after a large terminal history has been saved and restored.
+
+**Many thanks to George Hanna ([@georgehanna1993](https://github.com/georgehanna1993)) for contributing the new scripting update: operator checkpoints and numeric runtime-variable actions. These additions extend the command-file scripting capabilities he generously contributed in v0.8.0.**
+
+## Highlights
+
+- **Pause a script for a bench check.** `PAUSE [message]` displays an operator checkpoint before the next step. In the desktop app, press Return, Enter, or Space, or click **Continue**; you can also stop the script from the checkpoint. Interactive CLI runs wait for Enter. Messages can include parameters and runtime variables.
+- **Step numeric values through a sequence.** `NAME:INCREMENT [amount]` and `NAME:DECREMENT [amount]` update an existing numeric runtime variable without sending anything to the device. The amount defaults to `1` and can use parameters or runtime variables, making sweeps and counters easier to write.
+- **Use the same script in the desktop app and CLI.** The editor highlights, completes, and validates the new commands. The [command-file guide](https://github.com/shuky-shukrun/ComPort-Zone/blob/v0.9.0/docs/COMMAND_FILES.md) and [bundled scripting example](https://github.com/shuky-shukrun/ComPort-Zone/blob/v0.9.0/src/ComPort_Zone/assets/example-scripting.cpz) include the new syntax.
+- **Read long replies without growing delays.** Text and Hex receive rendering stays responsive as terminal scrollback grows, including history restored after restarting the app. Your command draft and caret stay in place while output arrives; events, timestamps, ordering, and session logs keep their original detail.
+
+## Fixed
+
+- Unicode output, including emoji, no longer shifts the command draft or causes prompt text to appear in saved terminal history.
+
+## Upgrading
+
+Settings, Quick Commands, Quick Files, saved Control Panels, and existing command-file scripts are preserved; no migration or clearing of terminal history is needed. All scripting capabilities from v0.8.0 remain available. Scripts using `PAUSE` or numeric variable actions require v0.9.0 or later. With `--non-interactive`, reaching `PAUSE` stops the run with interrupted exit code `130` instead of waiting for input. To send a literal device command that matches a scripting keyword, prefix it with `SEND`.
+
+## Downloads
+
+Choose `ComPort_Zone-0.9.0-win64-setup.exe` for installation, or `ComPort_Zone-0.9.0-win64.zip` for portable use. Both run on Windows without installing Python.
+
+## Validation
+
+All 1,542 automated tests passed. Regression checks cover operator checkpoints, numeric variable actions, restored terminal history, Text and Hex rendering, Unicode output, multiline drafts and caret positions at the scrollback limit, and preservation of event ordering and logging. Windows packaging checks that the bundled Qt libraries load before creating the installer.
+
+---
+
 # ComPort Zone v0.8.1 Release Notes
 
 Release date: 2026-10-18
