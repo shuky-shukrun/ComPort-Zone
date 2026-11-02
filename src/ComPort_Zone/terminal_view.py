@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 
 from PySide6.QtGui import (
     QColor,
@@ -51,6 +52,32 @@ class TerminalView:
     def __init__(self, terminal: QTextEdit, search_count: QLabel) -> None:
         self.terminal = terminal
         self.search_count = search_count
+        self._batch_active = False
+        self._batch_changed = False
+        self._pending_search: tuple[str, str] | None = None
+
+    @contextmanager
+    def batch_render(self) -> Iterator[None]:
+        """Lay out a burst once while keeping every event's text and metadata."""
+        if self._batch_active:
+            yield
+            return
+        document = self.terminal.document()
+        layout_enabled = document.isLayoutEnabled()
+        self._batch_active = True
+        self._batch_changed = False
+        self._pending_search = None
+        try:
+            yield
+        finally:
+            self._batch_active = False
+            if self._batch_changed:
+                document.setLayoutEnabled(layout_enabled)
+                if layout_enabled:
+                    self.terminal.ensureCursorVisible()
+            if self._pending_search is not None:
+                self.refresh_search_highlights(*self._pending_search)
+            self._pending_search = None
 
     def find(self, query: str, *, backward: bool) -> bool:
         query = query.strip()
@@ -94,12 +121,18 @@ class TerminalView:
         search_text: str,
         search_highlight: str,
     ) -> None:
-        if plan.stream_text:
-            self._render_stream_plan(plan, colors=colors, timestamps_enabled=timestamps_enabled)
-        else:
-            self._render_line_plan(plan, colors=colors, timestamps_enabled=timestamps_enabled)
-        if search_visible:
-            self.refresh_search_highlights(search_text, search_highlight)
+        with self.batch_render():
+            # A drain containing only hidden control-panel traffic or paused RX
+            # must not invalidate an unchanged terminal's layout.
+            if not self._batch_changed:
+                self.terminal.document().setLayoutEnabled(False)
+                self._batch_changed = True
+            if plan.stream_text:
+                self._render_stream_plan(plan, colors=colors, timestamps_enabled=timestamps_enabled)
+            else:
+                self._render_line_plan(plan, colors=colors, timestamps_enabled=timestamps_enabled)
+            if search_visible:
+                self._pending_search = (search_text, search_highlight)
 
     def _render_line_plan(
         self,
@@ -190,7 +223,8 @@ class TerminalView:
             italic = run[2] if len(run) > 2 else False
             cursor.insertText(run[0], self._char_format(run[1], italic))
         self.terminal.setTextCursor(cursor)
-        self.terminal.ensureCursorVisible()
+        if self.terminal.document().isLayoutEnabled():
+            self.terminal.ensureCursorVisible()
 
     def _char_format(self, color: str, italic: bool = False) -> QTextCharFormat:
         fmt = QTextCharFormat()
@@ -200,8 +234,18 @@ class TerminalView:
         return fmt
 
     def _terminal_at_line_start(self) -> bool:
-        text = self.terminal.toPlainText()
-        return not text or text.endswith("\n")
+        committed_end = getattr(self.terminal, "committed_end_cursor", None)
+        if callable(committed_end):
+            cursor = committed_end()
+        else:
+            cursor = QTextCursor(self.terminal.document())
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+        # Inspect only the insertion point. Reading toPlainText here copies all
+        # prior output once per RX chunk, making long-lived sessions crawl.
+        return (
+            cursor.atBlockStart()
+            or self.terminal.document().characterAt(cursor.position() - 1) == "\u2028"
+        )
 
     def _ensure_terminal_line_break(self) -> None:
         if self._terminal_at_line_start():

@@ -304,6 +304,19 @@ Rules:
 - `TerminalSessionController` decides what should happen.
 - `TerminalView` applies rendered text to `QTextEdit`.
 - `TerminalSessionWidget` coordinates timers and UI labels.
+- RX insertion checks the committed boundary through a `QTextCursor` and inserts
+  before the existing prompt/draft; Qt moves the caret and boundary cursors as
+  text arrives and old scrollback is trimmed. Never extract the full document
+  to check an offset or line boundary: scrollback is persisted in
+  `TerminalSessionState.terminal_text`, so that per-chunk cost grows during use
+  and survives restarts. Full transcript extraction is reserved for explicit
+  snapshots such as workspace saves; Qt cursor offsets must not index Python
+  strings because Qt uses UTF-16 positions.
+- Each event-drain tick handles a snapshot of the queued events. `TerminalView`
+  batches Qt layout, scrolling, and search highlighting across that burst (also
+  on pause/resume and transcript replay). Events are never merged: the controller,
+  session logger, source filtering, and stored transcript retain their original
+  order, timestamps, and payloads.
 
 ## Flow: Command-File Run
 

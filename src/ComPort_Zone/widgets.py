@@ -462,7 +462,15 @@ class IntegratedTerminalEdit(QTextEdit):
         return self._placeholder
 
     def toPlainText(self) -> str:
-        return super().toPlainText()[: self._safe_prompt_start()]
+        cursor = self.committed_end_cursor()
+        cursor.setPosition(0, QTextCursor.MoveMode.KeepAnchor)
+        return cursor.selection().toPlainText()
+
+    def committed_end_cursor(self) -> QTextCursor:
+        """Return the transcript boundary without extracting the scrollback."""
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(self._safe_prompt_start())
+        return cursor
 
     def display_text(self) -> str:
         return super().toPlainText()
@@ -472,16 +480,7 @@ class IntegratedTerminalEdit(QTextEdit):
         self._replace_document(str(text), draft, min(self.cursorPosition(), len(draft)))
 
     def append_committed_text(self, text: str, color: str) -> None:
-        if not text:
-            return
-        draft = self.text()
-        cursor_offset = self.cursorPosition()
-        self._remove_prompt()
-        cursor = QTextCursor(self.document())
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text, self._format(color))
-        self._insert_prompt(draft, cursor_offset)
-        self.ensureCursorVisible()
+        self.append_committed_runs([(text, color)])
 
     def append_committed_runs(self, runs, *, hang_indent: float = 0.0) -> None:
         """Append colored runs ``(text, color[, italic])`` to the committed
@@ -491,22 +490,34 @@ class IntegratedTerminalEdit(QTextEdit):
         runs = [run for run in runs if run and run[0]]
         if not runs:
             return
-        draft = self.text()
-        cursor_offset = self.cursorPosition()
-        self._remove_prompt()
-        cursor = QTextCursor(self.document())
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        if hang_indent > 0:
-            block_format = QTextBlockFormat()
-            block_format.setLeftMargin(hang_indent)
-            block_format.setTextIndent(-hang_indent)
-            cursor.mergeBlockFormat(block_format)
-        for run in runs:
-            color = run[1]
-            italic = run[2] if len(run) > 2 else False
-            cursor.insertText(run[0], self._format(color, italic=italic))
-        self._insert_prompt(draft, cursor_offset)
-        self.ensureCursorVisible()
+        # Insert before the live prompt instead of removing and rebuilding the
+        # prompt/draft for every run. Qt moves the user's caret and these boundary
+        # cursors with the insertion, including when old scrollback is trimmed.
+        current = self.textCursor()
+        reset_cursor = current.hasSelection() or current.position() < self._safe_draft_start()
+        cursor_offset = self.cursorPosition() if reset_cursor else 0
+        cursor = self.committed_end_cursor()
+        draft_start = QTextCursor(self.document())
+        draft_start.setPosition(self._safe_draft_start())
+        cursor.beginEditBlock()
+        try:
+            if hang_indent > 0:
+                block_format = QTextBlockFormat()
+                block_format.setLeftMargin(hang_indent)
+                block_format.setTextIndent(-hang_indent)
+                cursor.mergeBlockFormat(block_format)
+            for run in runs:
+                color = run[1]
+                italic = run[2] if len(run) > 2 else False
+                cursor.insertText(run[0], self._format(color, italic=italic))
+        finally:
+            cursor.endEditBlock()
+            self._prompt_start = cursor.position()
+            self._draft_start = draft_start.position()
+        if reset_cursor:
+            self.setCursorPosition(cursor_offset)
+        if self.document().isLayoutEnabled():
+            self.ensureCursorVisible()
 
     def clear_transcript(self, *, clear_draft: bool = False) -> None:
         draft = "" if clear_draft else self.text()
@@ -516,9 +527,13 @@ class IntegratedTerminalEdit(QTextEdit):
         self.setText("")
 
     def text(self) -> str:
-        full_text = super().toPlainText()
-        start = self._safe_draft_start()
-        return full_text[start:]
+        # Reading the input must extract only the draft, never the growing
+        # terminal scrollback (which is also restored from settings).
+        # Qt cursor positions are UTF-16 offsets, not Python string indices.
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(self._safe_draft_start())
+        cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+        return cursor.selection().toPlainText()
 
     def setText(self, text: str) -> None:
         # Programmatic draft swaps (history recall, clearing after send) start a fresh
@@ -907,12 +922,6 @@ class IntegratedTerminalEdit(QTextEdit):
         cursor.setPosition(self._draft_start + cursor_offset)
         self.setTextCursor(cursor)
 
-    def _remove_prompt(self) -> None:
-        cursor = QTextCursor(self.document())
-        cursor.setPosition(self._safe_prompt_start())
-        cursor.setPosition(self._document_end_position(), QTextCursor.MoveMode.KeepAnchor)
-        cursor.removeSelectedText()
-
     def _replace_draft(self, text: str, cursor_offset: int) -> None:
         cursor = QTextCursor(self.document())
         cursor.setPosition(self._safe_draft_start())
@@ -967,15 +976,14 @@ class IntegratedTerminalEdit(QTextEdit):
         return False
 
     def _document_end_position(self) -> int:
-        cursor = QTextCursor(self.document())
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        return cursor.position()
+        # characterCount includes the document's final paragraph separator.
+        return self.document().characterCount() - 1
 
     def _safe_prompt_start(self) -> int:
-        return max(0, min(self._prompt_start, len(super().toPlainText())))
+        return max(0, min(self._prompt_start, self._document_end_position()))
 
     def _safe_draft_start(self) -> int:
-        return max(self._safe_prompt_start(), min(self._draft_start, len(super().toPlainText())))
+        return max(self._safe_prompt_start(), min(self._draft_start, self._document_end_position()))
 
     def _has_prompt(self) -> bool:
         return self._draft_start >= len(self.prompt)

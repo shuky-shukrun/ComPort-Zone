@@ -1,6 +1,8 @@
 import unittest
+from datetime import datetime, timedelta, timezone
+from unittest import mock
 
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QTextCursor, QTextDocument
 from PySide6.QtWidgets import QApplication, QLabel, QTextEdit
 
 from ComPort_Zone.serial_core import SerialEvent
@@ -10,6 +12,7 @@ from ComPort_Zone.terminal_view import (
     clamp_prompt_label,
     prompt_leader_text,
 )
+from ComPort_Zone.widgets import IntegratedTerminalEdit
 
 
 COLORS = {
@@ -31,6 +34,122 @@ class TerminalViewTests(unittest.TestCase):
         terminal = QTextEdit()
         count = QLabel("0")
         return TerminalView(terminal, count), terminal, count
+
+    def test_rx_after_restored_scrollback_never_reads_the_whole_document(self) -> None:
+        # Saved terminal text is restored on launch. Rendering a small response
+        # must not serialize that growing history for each incoming fragment.
+        history = ("previous device output " + "x" * 76 + "\n") * 5000
+        for widget_type in (QTextEdit, IntegratedTerminalEdit):
+            with self.subTest(widget=widget_type.__name__):
+                terminal = widget_type()
+                count = QLabel()
+                try:
+                    terminal.setPlainText(history)
+                    if isinstance(terminal, IntegratedTerminalEdit):
+                        terminal.setText("next\ncommand")
+                        terminal.setCursorPosition(2)
+                    view = TerminalView(terminal, count)
+                    with (
+                        mock.patch.object(QTextEdit, "toPlainText", side_effect=AssertionError("full widget scan")),
+                        mock.patch.object(QTextDocument, "toPlainText", side_effect=AssertionError("full document scan")),
+                    ):
+                        for message in ("read", " complete\nnext", " line\n"):
+                            view.render_plan(
+                                TerminalRenderPlan(
+                                    event=SerialEvent(kind="rx", message=message),
+                                    message=message,
+                                    direction="RX",
+                                    color_role="rx",
+                                    stream_text=True,
+                                ),
+                                colors=COLORS,
+                                timestamps_enabled=False,
+                                search_visible=False,
+                                search_text="",
+                                search_highlight="#333333",
+                            )
+                        if isinstance(terminal, IntegratedTerminalEdit):
+                            self.assertEqual(terminal.text(), "next\ncommand")
+                            self.assertEqual(terminal.cursorPosition(), 2)
+                    self.assertEqual(terminal.toPlainText(), history + "RX  read complete\nRX  next line\n")
+                finally:
+                    terminal.deleteLater()
+                    count.deleteLater()
+                    self.qt.processEvents()
+
+    def test_batch_preserves_timestamps_and_updates_search_and_scroll_once(self) -> None:
+        terminal = IntegratedTerminalEdit()
+        count = QLabel()
+        view = TerminalView(terminal, count)
+        first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        expected = []
+        try:
+            with (
+                mock.patch.object(view, "refresh_search_highlights", wraps=view.refresh_search_highlights) as search,
+                mock.patch.object(terminal, "ensureCursorVisible") as scroll,
+                view.batch_render(),
+            ):
+                for index in range(3):
+                    stamp = first + timedelta(seconds=index)
+                    event = SerialEvent(kind="rx", message="reply\n", timestamp=stamp)
+                    view.render_plan(
+                        TerminalRenderPlan(event=event, message=event.message, direction="RX", color_role="rx", stream_text=True),
+                        colors=COLORS,
+                        timestamps_enabled=True,
+                        search_visible=True,
+                        search_text="reply",
+                        search_highlight="#333333",
+                    )
+                    expected.append(stamp.astimezone().strftime("%H:%M:%S.%f")[:-3] + " RX  reply\n")
+                    self.assertFalse(terminal.document().isLayoutEnabled())
+                    search.assert_not_called()
+                    scroll.assert_not_called()
+            search.assert_called_once_with("reply", "#333333")
+            scroll.assert_called_once_with()
+            self.assertTrue(terminal.document().isLayoutEnabled())
+            self.assertEqual(terminal.toPlainText(), "".join(expected))
+            self.assertEqual(count.text(), "3")
+        finally:
+            terminal.deleteLater()
+            count.deleteLater()
+            self.qt.processEvents()
+
+    def test_failed_batch_restores_previous_layout_state(self) -> None:
+        view, terminal, count = self.make_view()
+        try:
+            for enabled in (True, False):
+                with self.subTest(layout_enabled=enabled):
+                    terminal.document().setLayoutEnabled(enabled)
+                    with self.assertRaisesRegex(ValueError, "render failed"):
+                        with view.batch_render():
+                            with view.batch_render():
+                                view.render_plan(
+                                    TerminalRenderPlan(event=SerialEvent(kind="rx", message="x"), message="x", stream_text=True),
+                                    colors=COLORS,
+                                    timestamps_enabled=False,
+                                    search_visible=False,
+                                    search_text="",
+                                    search_highlight="#333333",
+                                )
+                                raise ValueError("render failed")
+                    self.assertEqual(terminal.document().isLayoutEnabled(), enabled)
+        finally:
+            terminal.deleteLater()
+            count.deleteLater()
+            self.qt.processEvents()
+
+    def test_batch_without_visible_output_does_not_invalidate_layout(self) -> None:
+        view, terminal, count = self.make_view()
+        document = terminal.document()
+        try:
+            with mock.patch.object(document, "setLayoutEnabled", wraps=document.setLayoutEnabled) as layout:
+                with view.batch_render():
+                    pass
+                layout.assert_not_called()
+        finally:
+            terminal.deleteLater()
+            count.deleteLater()
+            self.qt.processEvents()
 
     def test_render_plan_streams_rx_text_without_extra_line_breaks(self) -> None:
         view, terminal, _ = self.make_view()

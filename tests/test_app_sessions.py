@@ -7,7 +7,7 @@ from unittest import mock
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QKeyEvent, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QToolButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QMenu, QTextEdit, QToolButton
 
 from ComPort_Zone import app as app_module
 from ComPort_Zone.batch import BatchRunSnapshot
@@ -2504,6 +2504,68 @@ class AppSessionTests(unittest.TestCase):
                 window.deleteLater()
             self.qt.processEvents()
             settings_path.unlink(missing_ok=True)
+
+    def test_rx_queue_after_large_saved_session_restore_avoids_scrollback_scans(self) -> None:
+        settings_path = Path(__file__).with_name("_tmp_settings_rx_restore.json")
+        history = ("saved device output " + "x" * 80 + "\n") * 5000
+        self.assertTrue(
+            SettingsService(SettingsStore(settings_path)).save(
+                AppSettings(
+                    check_for_updates_on_launch=False,
+                    timestamps_enabled=False,
+                    receive_display_mode="Text",
+                    restored_tabs=[TerminalSessionState(terminal_text=history, command_draft="next command")],
+                )
+            )
+        )
+        window = None
+        try:
+            with mock.patch.object(app_module, "default_config_path", return_value=settings_path):
+                window = app_module.MainWindow()
+            session = window.current_session()
+            session.event_timer.stop()
+            session.command_input.setCursorPosition(4)
+            events = [
+                SerialEvent(kind="rx", message="first", raw=b"first"),
+                SerialEvent(kind="rx", message=" reply\n", raw=b" reply\n"),
+                SerialEvent(kind="rx", message="hidden", raw=b"hidden", source="control_panel"),
+                SerialEvent(kind="status", message="done"),
+            ]
+            for event in events:
+                session.monitor_queue.put(event)
+            deferred = SerialEvent(kind="rx", message="later\n", raw=b"later\n")
+            handle_event = session._handle_event
+
+            def receive_during_drain(event):
+                handle_event(event)
+                if event is events[0]:
+                    session.monitor_queue.put(deferred)
+
+            with (
+                mock.patch.object(QTextEdit, "toPlainText", side_effect=AssertionError("full scrollback scan")),
+                mock.patch.object(session, "_handle_event", side_effect=receive_during_drain),
+                mock.patch.object(type(session.logger), "enabled", new_callable=mock.PropertyMock, return_value=True),
+                mock.patch.object(session.logger, "log_event") as log,
+            ):
+                session._drain_events()
+                self.assertEqual(log.call_args_list, [mock.call(event) for event in events])
+
+            expected = history + "RX  first reply\nSYS done\n"
+            state = session.to_state()
+            self.assertEqual(state.terminal_text, expected)
+            self.assertEqual(state.command_draft, "next command")
+            self.assertEqual(session.command_input.cursorPosition(), 4)
+            self.assertEqual([payload for _, payload in session._transcript], [events[0], events[1], events[3]])
+            self.assertEqual(session.monitor_queue.qsize(), 1)
+            session._drain_events()
+            self.assertEqual(session.terminal.toPlainText(), expected + "RX  later\n")
+            self.assertTrue(session.monitor_queue.empty())
+        finally:
+            if window is not None:
+                for session in window.iter_sessions():
+                    session.shutdown()
+                window.deleteLater()
+            self.qt.processEvents()
 
     def test_quick_command_description_controls_tooltip(self) -> None:
         settings_path = Path(__file__).with_name("_tmp_settings_quick_tooltip.json")
