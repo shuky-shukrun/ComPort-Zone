@@ -1,0 +1,18 @@
+# Target: python tools/media/demo_device.py (localhost TCP 5025, CRLF)
+@@expect-timeout 1500
+@@on-error stop
+SEND *IDN?
+EXPECT ComPort Zone
+SET PASSED 0
+LOOP {{COUNT=3}}
+    SEND MEAS:VOLT?
+    CAPTURE VOLTS REGEX ([0-9]+\.[0-9]+)
+    IF $VOLTS >= 11
+        PASSED:INCREMENT
+        LOG Check passed: $VOLTS V
+    ELSE
+        LOG Check below limit: $VOLTS V
+    ENDIF
+    WAIT 500
+ENDLOOP
+LOG Completed $PASSED passing checks

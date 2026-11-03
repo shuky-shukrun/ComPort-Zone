@@ -1,6 +1,10 @@
 ---
 name: comport-zone-version-update
-description: Prepare and publish a ComPort Zone version release. Use to cut/release/publish a new version, bump the app version (vX.Y.Z) with update_version.bat, update user-facing docs (README version badge, CHANGELOG, RELEASE_NOTES, architecture), create the release commit and an annotated vX.Y.Z tag, push, and then verify and repair the GitHub Release so its body and the tag message are a user-focused summary of changes since the previous release. Triggers on: release, publish, cut a version, version bump, tag a release, changelog, release notes.
+description: >-
+  Prepare and publish a ComPort Zone version release. Use to cut or publish a new
+  version, bump vX.Y.Z, update user-facing documentation and release notes, create
+  the release commit and annotated tag, push, and verify the GitHub Release body
+  and documentation assets. Also use when updating this release procedure.
 ---
 
 # ComPort Zone Version Release
@@ -118,11 +122,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File skills\comport-zone-version-
   when they explain a user-visible reliability, compatibility, or automation
   benefit.
 - **`docs/ARCHITECTURE.md`**, **`docs/DESIGN.md`** — update only if ownership, flow, or architecture changed.
+- **`docs/USER_MANUAL.md`**, **`docs/COMMAND_FILES.md`**, **`docs/CLI_REFERENCE.md`** —
+  review the complete user-facing change list against these guides. Include
+  relevant instructions and screenshots, and update the manual's English-edition
+  header to the new app version and ISO review date. A stale manual version blocks
+  release. Update tutorial source/storyboard if demonstrated workflows changed;
+  do not commit generated PDF/video. See
+  `skills/comport-zone-user-media/SKILL.md` and `tools/media/README.md`.
 
 ### 5. Validate
 
 ```
 .\run_tests.bat
+python tools/media/check_docs.py
 git diff --check
 ```
 
@@ -163,6 +175,13 @@ is `tag`, and prints `git tag -n99 vX.Y.Z`. A **title-only** tag message is the
 exact bug this step prevents.
 
 ### 8. Push — this triggers the Release workflow
+
+The workflow always rebuilds and publishes the manual PDF from this tag's
+Markdown/screenshots. It compares video inputs with the previous published media
+manifest and regenerates changed walkthroughs; unchanged video retains its
+original version/URL in the new release notes. A workflow dispatch can force
+video rebuilding with `video: always`. No PDF or MP4 belongs in the release
+commit. Verify the documentation assets/checksums along with the app artifacts.
 
 ```
 git push origin master

@@ -1,0 +1,6 @@
+# Media production only. Keep these out of the application's runtime dependencies.
+# Kokoro currently supports Python 3.10-3.13; use a separate Python 3.12 environment.
+kokoro-onnx==0.6.1
+soundfile==0.14.0
+imageio-ffmpeg==0.8.0
+-r requirements-pdf.txt

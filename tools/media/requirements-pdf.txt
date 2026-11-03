@@ -1,0 +1,5 @@
+# Lightweight PR/release PDF builder; no speech model or application dependency.
+markdown==3.11.2
+Pillow>=11,<13
+reportlab>=4,<5
+pypdf>=5,<7

@@ -1,0 +1,8 @@
+00:00 Getting started
+01:56 Connect and communicate
+04:33 Terminal essentials
+06:34 Save reusable workflows
+07:36 Automate a check
+09:40 Monitor with Control Panels
+13:25 Workspace and command line
+15:02 Troubleshooting and sharing

@@ -1,0 +1,168 @@
+{
+  "title": "ComPort Zone: from first connection to repeatable checks",
+  "version": "0.9.0",
+  "language": "en-us",
+  "narrator": {"provider": "kokoro-onnx", "model": "kokoro-v1.0.onnx", "voice": "am_michael", "speed": 0.88},
+  "scenes": [
+    {
+      "id": "welcome", "chapter": "Getting started", "title": "Connect. Inspect. Automate.", "shot": "overview",
+      "notes": ["Serial, TCP and UDP", "Desktop + command line", "A complete local demo"],
+      "narration": "Welcome to ComPort Zone, a terminal and automation workbench for Windows. In this tutorial, we will identify a device, save useful commands, run a repeatable check, and build a live monitoring panel. Everything shown uses a local demonstration instrument. You can follow along without a physical board, a serial adapter, or a COM port."
+    },
+    {
+      "id": "install", "chapter": "Getting started", "title": "Install and open the application", "shot": "overview",
+      "notes": ["Windows installer or portable ZIP", "Packaged app includes Python", "Source setup: setup_dev.bat"],
+      "narration": "Download the Windows installer or portable zip from the project's releases page. Run the installer, or extract the whole portable folder and open the application. The packaged desktop app includes its own runtime. If you are working from source, run the setup development batch file, followed by the launch app batch file. The illustrated manual covers both installation paths."
+    },
+    {
+      "id": "demo", "chapter": "Getting started", "title": "Start the tutorial instrument", "shot": "demo-card",
+      "notes": ["Python required for this demo server", "TCP + UDP: 127.0.0.1:5025", "Leave its terminal running"],
+      "narration": "The tutorial device is a small Python script in the tools, media folder. Open PowerShell in the repository and run the command shown here. It uses only Python's standard library. Keep that terminal open while following the tutorial. The server listens on your own computer, on port fifty twenty five. Its voltage, current, temperature, and status readings are simulated."
+    },
+    {
+      "id": "layout", "chapter": "Getting started", "title": "Find your way around", "shot": "overview",
+      "notes": ["Workspace tabs across the top", "Reusable actions in the drawer", "Compose after TX>"],
+      "narration": "The center of the window is a workspace for terminal, editor, and Control Panel tabs. The drawer on the left keeps favorites, saved commands, files, and history close at hand. In a terminal, outgoing and incoming messages use separate rows and colors. The editable line begins with the transmit prompt. The connection indicator and footer help you confirm the current target."
+    },
+    {
+      "id": "tcp", "chapter": "Connect and communicate", "title": "Connect to the local device", "shot": "connection",
+      "notes": ["Transport: TCP", "Host: 127.0.0.1 | Port: 5025", "Line ending: CRLF"],
+      "narration": "Open Connection Settings for your terminal tab. Choose TCP, enter the localhost address shown here, set the port to fifty twenty five, and select carriage return plus line feed. Accept the settings and connect. A green connection indicator means the socket is open. These settings belong to this tab, so another terminal can use a different connection and a different device."
+    },
+    {
+      "id": "identity", "chapter": "Connect and communicate", "title": "Send your first query", "shot": "terminal",
+      "notes": ["Type *IDN? and press Enter", "TX is sent; RX is received", "Expected identity: Demo PSU"],
+      "narration": "Click after the transmit prompt, type the identification query shown on screen, and press Enter. The demo replies with its name and serial number. You have now checked the complete path from the application to the target and back. Device commands depend on your instrument or firmware. ComPort Zone sends them; it does not require every device to understand this particular identification query."
+    },
+    {
+      "id": "queries", "chapter": "Connect and communicate", "title": "Read measurements and status", "shot": "terminal",
+      "notes": ["MEAS:VOLT? / MEAS:CURR?", "MEAS:TEMP? / STAT?", "Expected: about 12 V and READY"],
+      "narration": "Try the voltage, current, temperature, and status queries. At the default settings, voltage is near twelve volts, current is near zero point four two amps, and status is ready. Small changes between readings are intentional. Notice how timestamps and message direction make it easy to associate a query with its reply. Keep this terminal connected for the automation and monitoring examples."
+    },
+    {
+      "id": "serial", "chapter": "Connect and communicate", "title": "Connect a real serial device", "shot": "serial",
+      "notes": ["Select the device's COM port", "Match baud, parity and flow control", "Check line ending and DTR/RTS"],
+      "narration": "For a physical serial device, create another terminal and select Serial instead. Pick its COM port and match the baud rate, data bits, parity, stop bits, and flow control to the firmware documentation. Set the required line ending. DTR and RTS can affect the board, so choose their states intentionally. The local tutorial demonstrates traffic over TCP; this serial settings screen is a configuration example."
+    },
+    {
+      "id": "udp", "chapter": "Connect and communicate", "title": "Understand TCP and UDP", "shot": "connection",
+      "notes": ["TCP opens a stream connection", "UDP sends separate datagrams", "A UDP reply confirms the target"],
+      "narration": "TCP provides a connected byte stream. UDP sends separate datagrams and does not establish a remote connection. For UDP, a green indicator means the local socket is available, not that a device has answered. The tutorial server supports both on the same port, so you can try a UDP terminal later. Serial and TCP support auto reconnect; UDP has no connection to reestablish."
+    },
+    {
+      "id": "readback", "chapter": "Terminal essentials", "title": "Write, then verify by reading back", "shot": "readback",
+      "notes": ["VOLT 15 changes the demo", "VOLT? confirms 15.000", "*RST restores demo defaults"],
+      "narration": "Send the voltage setting command, followed by the voltage query. The write is silent; the query confirms the new setting. This is common for instrument protocols. A missing reply to a write is not automatically an error. Verify changes using the device's documented readback command. Reset the demonstration instrument before the next exercise so its output is enabled and its voltage returns to twelve volts."
+    },
+    {
+      "id": "history", "chapter": "Terminal essentials", "title": "Recall and find commands", "shot": "history",
+      "notes": ["Up / Down: command history", "Ctrl+Space: completions", "Ctrl+F: search the transcript"],
+      "narration": "Use the up and down arrows to recall earlier commands. Control plus Space offers completions from history and saved commands. The History page provides another way to find and reuse what you sent. Control plus F searches the terminal. You can adjust text size with Control and the mouse wheel, and toggle timestamps or line wrapping from the View menu."
+    },
+    {
+      "id": "hex", "chapter": "Terminal essentials", "title": "Choose text or raw bytes", "shot": "hex-card",
+      "notes": ["Text uses the selected line ending", "Hex Bytes adds no terminator", "Receive display is independent"],
+      "narration": "Text mode adds your selected line ending. Hex Bytes mode sends exactly the bytes entered, so include any required terminator yourself. The bytes shown here spell ping followed by carriage return and line feed; the demo answers pong. Receive display mode only changes how incoming bytes appear. It does not change the bytes sent. Return to text mode for the remaining exercises."
+    },
+    {
+      "id": "logging", "chapter": "Terminal essentials", "title": "Keep a record of communication", "shot": "terminal",
+      "notes": ["Choose a terminal log file", "Verify logging is enabled", "Receive pause differs from script pause"],
+      "narration": "Use terminal logging when you need a record of communication. Select a file, confirm that logging is on, and stop logging when the capture is complete. Receive pause holds the display; it does not disconnect your device. Script pause controls command-file progress instead. Later, Control Panel CSV logging will record parsed measurements, which is useful for a different kind of analysis."
+    },
+    {
+      "id": "saved", "chapter": "Save reusable workflows", "title": "Build a saved-command library", "shot": "saved-commands",
+      "notes": ["Label commands by purpose", "Organize them into groups", "Star your most useful commands"],
+      "narration": "Open Saved Commands in the drawer and add a command with a useful label. For example, save the identification query as Identify in a Tutorial group. Star frequently used commands to put them in Favorites. Keep each command's text or hexadecimal send mode correct. Before sending from a library, check the active terminal so a useful shortcut goes to the intended device."
+    },
+    {
+      "id": "libraries", "chapter": "Save reusable workflows", "title": "Share commands and keep script shortcuts", "shot": "saved-commands",
+      "notes": ["Import examples/tutorial/quick-commands.csv", "CSV shares the command library", "File shortcuts still need actual scripts"],
+      "narration": "The tutorial includes a command library in CSV format. Import it through the saved-command import action, reviewing the append or replace options. Export a CSV when sharing your own library. The Files page stores paths to command files, and those entries can be favorites too. A file shortcut does not include the file's contents, so copy the actual scripts when moving to another computer."
+    },
+    {
+      "id": "editor", "chapter": "Automate a check", "title": "Open the first-check script", "shot": "editor",
+      "notes": ["examples/tutorial/first-check.cpz", "Highlighting and line numbers", "Select the connected run target"],
+      "narration": "Open the first check command file from the examples, tutorial folder. The editor shows line numbers and highlights the script language. Choose your connected tutorial terminal as the run target. This matters when several sessions are open. The prepared script identifies the device, repeats voltage measurements, checks the result, and writes a summary. Inspect a shared script before running it against your equipment."
+    },
+    {
+      "id": "parameters", "chapter": "Automate a check", "title": "Parameters and runtime values", "shot": "editor",
+      "notes": ["{{COUNT=3}} asks once before a run", "$VOLTS is captured during a run", "WAIT and timeouts use milliseconds"],
+      "narration": "Double braces mark a parameter supplied before the run. Count has a default of three. A dollar-prefixed name is a runtime variable, created while the script runs. Capture extracts a value from the device reply using a regular expression. Wait delays use milliseconds. The response timeout also uses milliseconds, so fifteen hundred means one and a half seconds, rather than fifteen hundred seconds."
+    },
+    {
+      "id": "script-run", "chapter": "Automate a check", "title": "Run and inspect the result", "shot": "script-result",
+      "notes": ["Keep COUNT at 3", "Expect three passing checks", "Read both output and run status"],
+      "narration": "Run the script and keep the count parameter at three. With the demo at its defaults, you should see three passing checks and a completion summary. The loop repeats the measurement, capture saves its numeric value, and the condition compares it with the threshold. Log messages explain the result without sending their text to the device. Read the run status as well as the individual replies."
+    },
+    {
+      "id": "run-control", "chapter": "Automate a check", "title": "Pause, stop, and handle failures", "shot": "editor",
+      "notes": ["Pause / Resume controls progress", "Stop ends a running script", "EXPECT failure normally stops the run"],
+      "narration": "Pause and Resume control a running command file. Stop ends the run. A Pause instruction creates an operator checkpoint, while Break leaves a loop. By default, a response check that times out stops the script. Increase the timeout only when the device needs more time. The continue-on-error setting changes this behavior deliberately. The manual links to the complete scripting reference for these options."
+    },
+    {
+      "id": "panel-import", "chapter": "Monitor with Control Panels", "title": "Open Tutorial Bench", "shot": "control-panel",
+      "notes": ["Ctrl+Shift+D: panel manager", "Import tutorial/control-panel.json", "Bind to the tutorial terminal"],
+      "narration": "Open the Control Panel manager with Control, Shift, and D. Import the tutorial panel JSON and open Tutorial Bench. Bind it to the connected tutorial terminal. The panel shares that terminal's connection instead of opening a competing one. Confirm the target in its binding chip. The prepared panel includes measurements, a status indicator, calculated power, an output toggle, and a numeric voltage setpoint."
+    },
+    {
+      "id": "poll", "chapter": "Monitor with Control Panels", "title": "Poll and parse live values", "shot": "control-panel", "live": true,
+      "notes": ["500 ms interval in this local demo", "Numeric parsing of the first line", "Poll traffic stays out of the transcript"],
+      "narration": "Each measurement tile sends a query on its own schedule, collects the response, and applies a parse rule. The voltage tile reads the first reply line as a number and adds the volts unit. For replies containing labels, use a regular expression to extract the value. Choose intervals and timeouts appropriate to your hardware. Poll traffic stays out of the normal terminal transcript, keeping manual work readable."
+    },
+    {
+      "id": "derived", "chapter": "Monitor with Control Panels", "title": "Use rules and calculated values", "shot": "control-panel",
+      "notes": ["Rules are evaluated in order", "Temperature over 50 C becomes FAIL", "Power = {Voltage} * {Current}"],
+      "narration": "Color rules turn a reply into an understandable state. The tutorial temperature tile reports failure above fifty degrees. Rules are evaluated in order, so place specific conditions before broad ones. The power tile combines voltage and current with an expression. It calculates a value from other tiles rather than sending another device command. Clear labels make these references easier to understand and maintain."
+    },
+    {
+      "id": "chart", "chapter": "Monitor with Control Panels", "title": "Inspect recent history", "shot": "chart",
+      "notes": ["Numeric tiles can show sparklines", "Double-click to open a chart", "Choose a span and inspect a point"],
+      "narration": "Numeric tiles can show a sparkline beneath the current value. Double-click one to open its larger chart. Select a time span and use the hover readout to inspect points. A newly opened panel needs time to gather a useful history. This chart is for live inspection. Enable CSV logging when you need measurement records that remain available after the session ends."
+    },
+    {
+      "id": "alerts", "chapter": "Monitor with Control Panels", "title": "Demonstrate a fault and recovery", "shot": "fault",
+      "notes": ["DEMO:FAULT ON triggers the demo fault", "Inspect the alert history", "DEMO:FAULT OFF restores normal status"],
+      "narration": "Send the demo fault command from the terminal. Status changes to fault and temperature rises above the configured threshold. The panel records transitions into failure or error states in its alert history. You can control alert sounds per tile or globally. Send the fault-off command to recover. Acknowledging or silencing an alert changes the notification; it does not repair or reset the device."
+    },
+    {
+      "id": "arm", "chapter": "Monitor with Control Panels", "title": "Arm writing tiles intentionally", "shot": "armed",
+      "notes": ["Master Arm enables panel writes", "Esc disarms immediately", "Disarming does not shut down hardware"],
+      "narration": "Writing tiles start disarmed. Enable Master Arm before using the output toggle or voltage setpoint, and press Escape to disarm afterward. Readback should confirm the device's actual state. Disarming blocks further panel writes; it does not undo a setting or send an output-off command. Master Arm applies to panel controls, while terminal and script sends retain their own workflows."
+    },
+    {
+      "id": "panel-log", "chapter": "Monitor with Control Panels", "title": "Log values and recognize paused polling", "shot": "control-panel",
+      "notes": ["CSV records parsed measurements", "kind distinguishes poll/derived/control", "Check the binding chip when paused"],
+      "narration": "Choose a file and enable CSV logging to record parsed values. The kind column distinguishes polled values, calculated values, and control sends. Keep the application open and the PC awake during an unattended run. Polling normally pauses when the target disconnects or a command file uses its connection. Check the binding chip to understand a pause, and verify each target when using a panel across multiple devices."
+    },
+    {
+      "id": "split", "chapter": "Workspace and command line", "title": "Keep the script beside the terminal", "shot": "split",
+      "notes": ["Split right or down", "Compare output while editing", "Ctrl+Shift+P opens the palette"],
+      "narration": "Split the workspace to keep the command-file editor beside its terminal. You can also compare two devices, then join panes when the extra view is no longer useful. Give tabs recognizable names. The command palette opens with Control, Shift, and P and helps you find actions quickly. Preferences and the View menu provide themes, terminal fonts, wrapping, and timestamp options."
+    },
+    {
+      "id": "cli", "chapter": "Workspace and command line", "title": "Use the same workflow from the CLI", "shot": "cli-card",
+      "notes": ["send: one query", "validate: check script syntax", "run: repeat the saved workflow"],
+      "narration": "The command-line interface uses the same application settings and scripting engine. Send runs a one-shot query. Validate checks a command file without contacting a device. Run executes the saved check, and parameter flags provide values for unattended operation. These commands are shown against the same local tutorial server. The manual explains how to activate the source environment if the command is not on your path."
+    },
+    {
+      "id": "cli-status", "chapter": "Workspace and command line", "title": "Make automation check the exit code", "shot": "cli-card",
+      "notes": ["0: success", "11: response check failed", "Use --non-interactive and --param"],
+      "narration": "An automation script should check the process exit code, not just look for familiar text. Zero indicates success, while eleven indicates a failed response check. Supply required parameters and use noninteractive operation in unattended jobs. Avoid opening a physical COM port from the GUI and CLI at the same time. The CLI reference lists all commands, connection flags, and stable exit codes."
+    },
+    {
+      "id": "share", "chapter": "Troubleshooting and sharing", "title": "Share each kind of work", "shot": "sharing-card",
+      "notes": ["Settings: JSON | Commands: CSV", "Panels: JSON | Scripts: .cpz", "Copy files referenced by shortcuts"],
+      "narration": "Export application settings as JSON, saved commands as CSV, and Control Panels through their JSON export. Share command files themselves, together with a description of the target. A quick-file export shares paths, not script contents. App-settings transfer intentionally keeps quick-action libraries separate. Import a panel, bind the correct terminal, and verify commands and ranges before adapting a tutorial to real equipment."
+    },
+    {
+      "id": "troubleshoot", "chapter": "Troubleshooting and sharing", "title": "Work from the symptom", "shot": "trouble-card",
+      "notes": ["No reply: command + framing + timeout", "Port busy: close the other owner", "Panel paused: inspect its target"],
+      "narration": "If a device does not reply, check its address, command, line ending, and connection settings. Garbled serial text usually calls for checking line configuration. A busy port may belong to another tab or program. For a script failure, inspect the actual response and timeout. For a stopped panel, check its binding and pause reason. The manual includes a symptom table with the next action for each case."
+    },
+    {
+      "id": "finish", "chapter": "Troubleshooting and sharing", "title": "Your next bench workflow", "shot": "closing",
+      "notes": ["Connect and verify", "Save and automate", "Monitor, log and share"],
+      "narration": "You have now used a terminal, built a reusable command library, run a repeatable check, and monitored a device with a Control Panel. Start your own workflow with one known query, verify the reply, and add automation a step at a time. The user manual, scripting guide, CLI reference, and tutorial examples are linked from the repository. Stop the demo server with Control C when you finish."
+    }
+  ]
+}

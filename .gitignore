@@ -232,3 +232,8 @@ __marimo__/
 .preview/
 scripts/_preview*.py
 skills/comport-zone-control-panel-workspace
+
+# Generated documentation downloads live on GitHub Releases, never in Git.
+/docs/media/*.mp4
+/docs/media/*.wav
+/docs/media/comport-zone-user-manual.pdf

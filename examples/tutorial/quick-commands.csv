@@ -1,0 +1,8 @@
+label,command,send_mode,group
+Identify,*IDN?,Text,Tutorial
+Voltage,MEAS:VOLT?,Text,Tutorial
+Current,MEAS:CURR?,Text,Tutorial
+Temperature,MEAS:TEMP?,Text,Tutorial
+Status,STAT?,Text,Tutorial
+Simulate fault,DEMO:FAULT ON,Text,Tutorial
+Clear fault,DEMO:FAULT OFF,Text,Tutorial

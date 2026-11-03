@@ -5,6 +5,12 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      video:
+        description: Rebuild video automatically when inputs change, or force a new recording
+        type: choice
+        options: [auto, always]
+        default: auto
 
 permissions:
   contents: write
@@ -54,6 +60,10 @@ jobs:
             throw "Release tag '$actualTag' must match project version tag '$expectedTag'."
           }
 
+      - name: Verify current user manual and asset policy
+        shell: pwsh
+        run: python tools/media/check_docs.py
+
       - name: Install build environment
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_dev.ps1 -WithBuild -SkipTests -NoPipUpgrade
@@ -61,6 +71,55 @@ jobs:
       - name: Run unit tests
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_tests.ps1
+
+      - name: Decide whether the published walkthrough can be reused
+        id: media
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VIDEO_MODE: ${{ inputs.video || 'auto' }}
+        run: python tools/media/release_media.py plan --online --video $env:VIDEO_MODE --github-output $env:GITHUB_OUTPUT
+
+      - name: Cache local narrator model files
+        if: steps.media.outputs.rebuild_video == 'true'
+        uses: actions/cache@v5
+        with:
+          path: artifacts/user-guide/voice
+          key: ${{ runner.os }}-kokoro-${{ hashFiles('tools/media/download_models.py') }}
+
+      - name: Rebuild changed tutorial against the local demo
+        if: steps.media.outputs.rebuild_video == 'true'
+        shell: pwsh
+        run: |
+          python -m pip install -r tools/media/requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/media/download_models.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\.venv\Scripts\python.exe tools/media/capture.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/media/build.py narrate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/media/build.py video
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the manual from this release's Markdown and screenshots
+        shell: pwsh
+        run: |
+          python -m pip install -r tools/media/requirements-pdf.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/media/build.py pdf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/media/check_docs.py --pdf docs/media/comport-zone-user-manual.pdf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/media/release_media.py package
+
+      - name: Upload documentation build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ComPort_Zone-${{ steps.version.outputs.version }}-documentation
+          path: artifacts/user-guide/publish/*
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Install Inno Setup
         shell: pwsh
@@ -100,3 +159,8 @@ jobs:
           else {
             gh release create $tag $env:RELEASE_ZIP $env:RELEASE_INSTALLER --repo $env:GITHUB_REPOSITORY --title $title --generate-notes --verify-tag
           }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # The media publisher preserves the existing release notes and app
+          # assets, verifies uploaded hashes, and adds versioned download links.
+          python tools/media/release_media.py upload --tag $tag --replace

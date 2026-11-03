@@ -1,0 +1,1034 @@
+1
+00:00:00,600 --> 00:00:06,275
+Welcome to ComPort Zone, a terminal and
+automation workbench for Windows.
+
+2
+00:00:06,495 --> 00:00:13,120
+In this tutorial, we will identify a device,
+save useful commands, run a repeatable
+
+3
+00:00:13,120 --> 00:00:16,393
+check, and build a live monitoring panel.
+
+4
+00:00:16,613 --> 00:00:20,965
+Everything shown uses a local demonstration
+instrument.
+
+5
+00:00:21,185 --> 00:00:27,372
+You can follow along without a physical board,
+a serial adapter, or a COM port.
+
+6
+00:00:29,017 --> 00:00:34,905
+Download the Windows installer or portable zip
+from the project's releases page.
+
+7
+00:00:35,125 --> 00:00:41,226
+Run the installer, or extract the whole
+portable folder and open the application.
+
+8
+00:00:41,446 --> 00:00:45,030
+The packaged desktop app includes its own
+runtime.
+
+9
+00:00:45,250 --> 00:00:50,838
+If you are working from source, run the setup
+development batch file, followed by
+
+10
+00:00:50,838 --> 00:00:52,631
+the launch app batch file.
+
+11
+00:00:52,851 --> 00:00:56,905
+The illustrated manual covers both
+installation paths.
+
+12
+00:00:58,600 --> 00:01:03,891
+The tutorial device is a small Python script
+in the tools, media folder.
+
+13
+00:01:04,111 --> 00:01:08,825
+Open PowerShell in the repository and run the
+command shown here.
+
+14
+00:01:09,045 --> 00:01:12,096
+It uses only Python's standard library.
+
+15
+00:01:12,316 --> 00:01:15,985
+Keep that terminal open while following the
+tutorial.
+
+16
+00:01:16,205 --> 00:01:20,984
+The server listens on your own computer, on
+port fifty twenty five.
+
+17
+00:01:21,204 --> 00:01:26,132
+Its voltage, current, temperature, and status
+readings are simulated.
+
+18
+00:01:27,767 --> 00:01:33,465
+The center of the window is a workspace for
+terminal, editor, and Control Panel
+
+19
+00:01:33,465 --> 00:01:33,825
+tabs.
+
+20
+00:01:34,045 --> 00:01:39,961
+The drawer on the left keeps favorites, saved
+commands, files, and history close at
+
+21
+00:01:39,961 --> 00:01:40,317
+hand.
+
+22
+00:01:40,537 --> 00:01:46,383
+In a terminal, outgoing and incoming messages
+use separate rows and colors.
+
+23
+00:01:46,603 --> 00:01:50,037
+The editable line begins with the transmit
+prompt.
+
+24
+00:01:50,257 --> 00:01:55,036
+The connection indicator and footer help you
+confirm the current target.
+
+25
+00:01:56,683 --> 00:01:59,734
+Open Connection Settings for your terminal
+tab.
+
+26
+00:01:59,954 --> 00:02:06,581
+Choose TCP, enter the localhost address shown
+here, set the port to fifty twenty
+
+27
+00:02:06,581 --> 00:02:10,557
+five, and select carriage return plus line
+feed.
+
+28
+00:02:10,777 --> 00:02:12,889
+Accept the settings and connect.
+
+29
+00:02:13,109 --> 00:02:17,247
+A green connection indicator means the socket
+is open.
+
+30
+00:02:17,467 --> 00:02:22,247
+These settings belong to this tab, so another
+terminal can use a different
+
+31
+00:02:22,247 --> 00:02:24,443
+connection and a different device.
+
+32
+00:02:26,100 --> 00:02:32,083
+Click after the transmit prompt, type the
+identification query shown on screen, and
+
+33
+00:02:32,083 --> 00:02:32,948
+press Enter.
+
+34
+00:02:33,168 --> 00:02:36,475
+The demo replies with its name and serial
+number.
+
+35
+00:02:36,695 --> 00:02:41,921
+You have now checked the complete path from
+the application to the target and back.
+
+36
+00:02:42,141 --> 00:02:45,917
+Device commands depend on your instrument or
+firmware.
+
+37
+00:02:46,137 --> 00:02:52,022
+ComPort Zone sends them; it does not require
+every device to understand this
+
+38
+00:02:52,022 --> 00:02:54,500
+particular identification query.
+
+39
+00:02:56,183 --> 00:03:00,130
+Try the voltage, current, temperature, and
+status queries.
+
+40
+00:03:00,350 --> 00:03:06,547
+At the default settings, voltage is near
+twelve volts, current is near zero point
+
+41
+00:03:06,547 --> 00:03:09,225
+four two amps, and status is ready.
+
+42
+00:03:09,445 --> 00:03:12,709
+Small changes between readings are
+intentional.
+
+43
+00:03:12,929 --> 00:03:19,070
+Notice how timestamps and message direction
+make it easy to associate a query with
+
+44
+00:03:19,070 --> 00:03:19,819
+its reply.
+
+45
+00:03:20,039 --> 00:03:24,925
+Keep this terminal connected for the
+automation and monitoring examples.
+
+46
+00:03:26,600 --> 00:03:32,360
+For a physical serial device, create another
+terminal and select Serial instead.
+
+47
+00:03:32,580 --> 00:03:38,868
+Pick its COM port and match the baud rate,
+data bits, parity, stop bits, and flow
+
+48
+00:03:38,868 --> 00:03:41,817
+control to the firmware documentation.
+
+49
+00:03:42,037 --> 00:03:44,064
+Set the required line ending.
+
+50
+00:03:44,284 --> 00:03:50,300
+DTR and RTS can affect the board, so choose
+their states intentionally.
+
+51
+00:03:50,520 --> 00:03:57,618
+The local tutorial demonstrates traffic over
+TCP; this serial settings screen is a
+
+52
+00:03:57,618 --> 00:03:59,523
+configuration example.
+
+53
+00:04:01,183 --> 00:04:04,362
+TCP provides a connected byte stream.
+
+54
+00:04:04,582 --> 00:04:10,449
+UDP sends separate datagrams and does not
+establish a remote connection.
+
+55
+00:04:10,669 --> 00:04:17,397
+For UDP, a green indicator means the local
+socket is available, not that a device
+
+56
+00:04:17,397 --> 00:04:18,477
+has answered.
+
+57
+00:04:18,697 --> 00:04:24,834
+The tutorial server supports both on the same
+port, so you can try a UDP terminal
+
+58
+00:04:24,834 --> 00:04:25,289
+later.
+
+59
+00:04:25,509 --> 00:04:32,698
+Serial and TCP support auto reconnect; UDP has
+no connection to reestablish.
+
+60
+00:04:34,350 --> 00:04:38,745
+Send the voltage setting command, followed by
+the voltage query.
+
+61
+00:04:38,965 --> 00:04:42,997
+The write is silent; the query confirms the
+new setting.
+
+62
+00:04:43,217 --> 00:04:45,905
+This is common for instrument protocols.
+
+63
+00:04:46,125 --> 00:04:50,413
+A missing reply to a write is not
+automatically an error.
+
+64
+00:04:50,633 --> 00:04:55,774
+Verify changes using the device's documented
+readback command.
+
+65
+00:04:55,994 --> 00:05:02,353
+Reset the demonstration instrument before the
+next exercise so its output is enabled
+
+66
+00:05:02,353 --> 00:05:05,381
+and its voltage returns to twelve volts.
+
+67
+00:05:07,017 --> 00:05:10,985
+Use the up and down arrows to recall earlier
+commands.
+
+68
+00:05:11,205 --> 00:05:16,261
+Control plus Space offers completions from
+history and saved commands.
+
+69
+00:05:16,481 --> 00:05:21,387
+The History page provides another way to find
+and reuse what you sent.
+
+70
+00:05:21,607 --> 00:05:24,381
+Control plus F searches the terminal.
+
+71
+00:05:24,601 --> 00:05:30,264
+You can adjust text size with Control and the
+mouse wheel, and toggle timestamps or
+
+72
+00:05:30,264 --> 00:05:32,515
+line wrapping from the View menu.
+
+73
+00:05:34,183 --> 00:05:37,234
+Text mode adds your selected line ending.
+
+74
+00:05:37,454 --> 00:05:43,702
+Hex Bytes mode sends exactly the bytes
+entered, so include any required terminator
+
+75
+00:05:43,702 --> 00:05:44,387
+yourself.
+
+76
+00:05:44,607 --> 00:05:50,620
+The bytes shown here spell ping followed by
+carriage return and line feed; the demo
+
+77
+00:05:50,620 --> 00:05:51,562
+answers pong.
+
+78
+00:05:51,782 --> 00:05:56,625
+Receive display mode only changes how incoming
+bytes appear.
+
+79
+00:05:56,845 --> 00:05:59,085
+It does not change the bytes sent.
+
+80
+00:05:59,305 --> 00:06:03,081
+Return to text mode for the remaining
+exercises.
+
+81
+00:06:04,767 --> 00:06:08,905
+Use terminal logging when you need a record of
+communication.
+
+82
+00:06:09,125 --> 00:06:14,947
+Select a file, confirm that logging is on, and
+stop logging when the capture is
+
+83
+00:06:14,947 --> 00:06:15,611
+complete.
+
+84
+00:06:15,831 --> 00:06:20,801
+Receive pause holds the display; it does not
+disconnect your device.
+
+85
+00:06:21,021 --> 00:06:24,541
+Script pause controls command-file progress
+instead.
+
+86
+00:06:24,761 --> 00:06:31,037
+Later, Control Panel CSV logging will record
+parsed measurements, which is useful
+
+87
+00:06:31,037 --> 00:06:33,593
+for a different kind of analysis.
+
+88
+00:06:35,267 --> 00:06:40,387
+Open Saved Commands in the drawer and add a
+command with a useful label.
+
+89
+00:06:40,607 --> 00:06:47,071
+For example, save the identification query as
+Identify in a Tutorial group.
+
+90
+00:06:47,291 --> 00:06:50,832
+Star frequently used commands to put them in
+Favorites.
+
+91
+00:06:51,052 --> 00:06:55,468
+Keep each command's text or hexadecimal send
+mode correct.
+
+92
+00:06:55,688 --> 00:07:01,852
+Before sending from a library, check the
+active terminal so a useful shortcut goes
+
+93
+00:07:01,852 --> 00:07:03,581
+to the intended device.
+
+94
+00:07:05,267 --> 00:07:09,875
+The tutorial includes a command library in CSV
+format.
+
+95
+00:07:10,095 --> 00:07:16,101
+Import it through the saved-command import
+action, reviewing the append or replace
+
+96
+00:07:16,101 --> 00:07:16,687
+options.
+
+97
+00:07:16,907 --> 00:07:20,747
+Export a CSV when sharing your own library.
+
+98
+00:07:20,967 --> 00:07:26,920
+The Files page stores paths to command files,
+and those entries can be favorites
+
+99
+00:07:26,920 --> 00:07:27,217
+too.
+
+100
+00:07:27,437 --> 00:07:33,365
+A file shortcut does not include the file's
+contents, so copy the actual scripts
+
+101
+00:07:33,365 --> 00:07:35,736
+when moving to another computer.
+
+102
+00:07:37,433 --> 00:07:42,468
+Open the first check command file from the
+examples, tutorial folder.
+
+103
+00:07:42,688 --> 00:07:46,912
+The editor shows line numbers and highlights
+the script language.
+
+104
+00:07:47,132 --> 00:07:51,463
+Choose your connected tutorial terminal as the
+run target.
+
+105
+00:07:51,683 --> 00:07:54,605
+This matters when several sessions are open.
+
+106
+00:07:54,825 --> 00:08:00,675
+The prepared script identifies the device,
+repeats voltage measurements, checks the
+
+107
+00:08:00,675 --> 00:08:02,719
+result, and writes a summary.
+
+108
+00:08:02,939 --> 00:08:07,099
+Inspect a shared script before running it
+against your equipment.
+
+109
+00:08:08,767 --> 00:08:12,799
+Double braces mark a parameter supplied before
+the run.
+
+110
+00:08:13,019 --> 00:08:15,067
+Count has a default of three.
+
+111
+00:08:15,287 --> 00:08:20,748
+A dollar-prefixed name is a runtime variable,
+created while the script runs.
+
+112
+00:08:20,968 --> 00:08:26,685
+Capture extracts a value from the device reply
+using a regular expression.
+
+113
+00:08:26,905 --> 00:08:29,252
+Wait delays use milliseconds.
+
+114
+00:08:29,472 --> 00:08:35,598
+The response timeout also uses milliseconds,
+so fifteen hundred means one and a half
+
+115
+00:08:35,598 --> 00:08:38,880
+seconds, rather than fifteen hundred seconds.
+
+116
+00:08:40,517 --> 00:08:43,994
+Run the script and keep the count parameter at
+three.
+
+117
+00:08:44,214 --> 00:08:49,876
+With the demo at its defaults, you should see
+three passing checks and a completion
+
+118
+00:08:49,876 --> 00:08:50,422
+summary.
+
+119
+00:08:50,642 --> 00:08:56,298
+The loop repeats the measurement, capture
+saves its numeric value, and the condition
+
+120
+00:08:56,298 --> 00:08:58,386
+compares it with the threshold.
+
+121
+00:08:58,606 --> 00:09:04,089
+Log messages explain the result without
+sending their text to the device.
+
+122
+00:09:04,309 --> 00:09:08,575
+Read the run status as well as the individual
+replies.
+
+123
+00:09:10,267 --> 00:09:13,957
+Pause and Resume control a running command
+file.
+
+124
+00:09:14,177 --> 00:09:15,756
+Stop ends the run.
+
+125
+00:09:15,976 --> 00:09:21,331
+A Pause instruction creates an operator
+checkpoint, while Break leaves a loop.
+
+126
+00:09:21,551 --> 00:09:25,583
+By default, a response check that times out
+stops the script.
+
+127
+00:09:25,803 --> 00:09:29,899
+Increase the timeout only when the device
+needs more time.
+
+128
+00:09:30,119 --> 00:09:34,791
+The continue-on-error setting changes this
+behavior deliberately.
+
+129
+00:09:35,011 --> 00:09:39,299
+The manual links to the complete scripting
+reference for these options.
+
+130
+00:09:40,933 --> 00:09:45,371
+Open the Control Panel manager with Control,
+Shift, and D.
+
+131
+00:09:45,591 --> 00:09:50,455
+Import the tutorial panel JSON and open
+Tutorial Bench.
+
+132
+00:09:50,675 --> 00:09:53,725
+Bind it to the connected tutorial terminal.
+
+133
+00:09:53,945 --> 00:09:59,236
+The panel shares that terminal's connection
+instead of opening a competing one.
+
+134
+00:09:59,456 --> 00:10:02,165
+Confirm the target in its binding chip.
+
+135
+00:10:02,385 --> 00:10:08,727
+The prepared panel includes measurements, a
+status indicator, calculated power, an
+
+136
+00:10:08,727 --> 00:10:12,284
+output toggle, and a numeric voltage setpoint.
+
+137
+00:10:13,933 --> 00:10:19,926
+Each measurement tile sends a query on its own
+schedule, collects the response, and
+
+138
+00:10:19,926 --> 00:10:21,443
+applies a parse rule.
+
+139
+00:10:21,663 --> 00:10:27,721
+The voltage tile reads the first reply line as
+a number and adds the volts unit.
+
+140
+00:10:27,941 --> 00:10:33,595
+For replies containing labels, use a regular
+expression to extract the value.
+
+141
+00:10:33,815 --> 00:10:37,612
+Choose intervals and timeouts appropriate to
+your hardware.
+
+142
+00:10:37,832 --> 00:10:43,295
+Poll traffic stays out of the normal terminal
+transcript, keeping manual work
+
+143
+00:10:43,295 --> 00:10:43,933
+readable.
+
+144
+00:10:45,600 --> 00:10:49,632
+Color rules turn a reply into an
+understandable state.
+
+145
+00:10:49,852 --> 00:10:54,801
+The tutorial temperature tile reports failure
+above fifty degrees.
+
+146
+00:10:55,021 --> 00:11:01,251
+Rules are evaluated in order, so place
+specific conditions before broad ones.
+
+147
+00:11:01,471 --> 00:11:06,015
+The power tile combines voltage and current
+with an expression.
+
+148
+00:11:06,235 --> 00:11:12,229
+It calculates a value from other tiles rather
+than sending another device command.
+
+149
+00:11:12,449 --> 00:11:17,569
+Clear labels make these references easier to
+understand and maintain.
+
+150
+00:11:19,267 --> 00:11:23,811
+Numeric tiles can show a sparkline beneath the
+current value.
+
+151
+00:11:24,031 --> 00:11:27,060
+Double-click one to open its larger chart.
+
+152
+00:11:27,280 --> 00:11:31,803
+Select a time span and use the hover readout
+to inspect points.
+
+153
+00:11:32,023 --> 00:11:36,737
+A newly opened panel needs time to gather a
+useful history.
+
+154
+00:11:36,957 --> 00:11:39,432
+This chart is for live inspection.
+
+155
+00:11:39,652 --> 00:11:46,210
+Enable CSV logging when you need measurement
+records that remain available after the
+
+156
+00:11:46,210 --> 00:11:47,225
+session ends.
+
+157
+00:11:48,850 --> 00:11:51,709
+Send the demo fault command from the terminal.
+
+158
+00:11:51,929 --> 00:11:57,454
+Status changes to fault and temperature rises
+above the configured threshold.
+
+159
+00:11:57,674 --> 00:12:03,498
+The panel records transitions into failure or
+error states in its alert history.
+
+160
+00:12:03,718 --> 00:12:07,515
+You can control alert sounds per tile or
+globally.
+
+161
+00:12:07,735 --> 00:12:10,210
+Send the fault-off command to recover.
+
+162
+00:12:10,430 --> 00:12:17,406
+Acknowledging or silencing an alert changes
+the notification; it does not repair or
+
+163
+00:12:17,406 --> 00:12:18,835
+reset the device.
+
+164
+00:12:20,517 --> 00:12:22,799
+Writing tiles start disarmed.
+
+165
+00:12:23,019 --> 00:12:29,315
+Enable Master Arm before using the output
+toggle or voltage setpoint, and press
+
+166
+00:12:29,315 --> 00:12:31,467
+Escape to disarm afterward.
+
+167
+00:12:31,687 --> 00:12:35,207
+Readback should confirm the device's actual
+state.
+
+168
+00:12:35,427 --> 00:12:41,111
+Disarming blocks further panel writes; it does
+not undo a setting or send an
+
+169
+00:12:41,111 --> 00:12:42,531
+output-off command.
+
+170
+00:12:42,751 --> 00:12:48,965
+Master Arm applies to panel controls, while
+terminal and script sends retain their
+
+171
+00:12:48,965 --> 00:12:50,026
+own workflows.
+
+172
+00:12:51,683 --> 00:12:57,145
+Choose a file and enable CSV logging to record
+parsed values.
+
+173
+00:12:57,365 --> 00:13:03,701
+The kind column distinguishes polled values,
+calculated values, and control sends.
+
+174
+00:13:03,921 --> 00:13:09,211
+Keep the application open and the PC awake
+during an unattended run.
+
+175
+00:13:09,431 --> 00:13:15,227
+Polling normally pauses when the target
+disconnects or a command file uses its
+
+176
+00:13:15,227 --> 00:13:16,045
+connection.
+
+177
+00:13:16,265 --> 00:13:22,414
+Check the binding chip to understand a pause,
+and verify each target when using a
+
+178
+00:13:22,414 --> 00:13:24,691
+panel across multiple devices.
+
+179
+00:13:26,350 --> 00:13:31,022
+Split the workspace to keep the command-file
+editor beside its terminal.
+
+180
+00:13:31,242 --> 00:13:37,571
+You can also compare two devices, then join
+panes when the extra view is no longer
+
+181
+00:13:37,571 --> 00:13:38,111
+useful.
+
+182
+00:13:38,331 --> 00:13:40,721
+Give tabs recognizable names.
+
+183
+00:13:40,941 --> 00:13:46,713
+The command palette opens with Control, Shift,
+and P and helps you find actions
+
+184
+00:13:46,713 --> 00:13:47,298
+quickly.
+
+185
+00:13:47,518 --> 00:13:52,972
+Preferences and the View menu provide themes,
+terminal fonts, wrapping, and
+
+186
+00:13:52,972 --> 00:13:54,281
+timestamp options.
+
+187
+00:13:55,933 --> 00:14:01,864
+The command-line interface uses the same
+application settings and scripting engine.
+
+188
+00:14:02,084 --> 00:14:04,324
+Send runs a one-shot query.
+
+189
+00:14:04,544 --> 00:14:09,024
+Validate checks a command file without
+contacting a device.
+
+190
+00:14:09,244 --> 00:14:15,531
+Run executes the saved check, and parameter
+flags provide values for unattended
+
+191
+00:14:15,531 --> 00:14:16,327
+operation.
+
+192
+00:14:16,547 --> 00:14:21,176
+These commands are shown against the same
+local tutorial server.
+
+193
+00:14:21,396 --> 00:14:27,241
+The manual explains how to activate the source
+environment if the command is not on
+
+194
+00:14:27,241 --> 00:14:27,945
+your path.
+
+195
+00:14:29,600 --> 00:14:35,536
+An automation script should check the process
+exit code, not just look for familiar
+
+196
+00:14:35,536 --> 00:14:35,893
+text.
+
+197
+00:14:36,113 --> 00:14:41,468
+Zero indicates success, while eleven indicates
+a failed response check.
+
+198
+00:14:41,688 --> 00:14:48,109
+Supply required parameters and use
+noninteractive operation in unattended jobs.
+
+199
+00:14:48,329 --> 00:14:55,071
+Avoid opening a physical COM port from the GUI
+and CLI at the same time.
+
+200
+00:14:55,291 --> 00:15:01,691
+The CLI reference lists all commands,
+connection flags, and stable exit codes.
+
+201
+00:15:03,350 --> 00:15:10,534
+Export application settings as JSON, saved
+commands as CSV, and Control Panels
+
+202
+00:15:10,534 --> 00:15:12,929
+through their JSON export.
+
+203
+00:15:13,149 --> 00:15:17,906
+Share command files themselves, together with
+a description of the target.
+
+204
+00:15:18,126 --> 00:15:22,158
+A quick-file export shares paths, not script
+contents.
+
+205
+00:15:22,378 --> 00:15:27,327
+App-settings transfer intentionally keeps
+quick-action libraries separate.
+
+206
+00:15:27,547 --> 00:15:33,622
+Import a panel, bind the correct terminal, and
+verify commands and ranges before
+
+207
+00:15:33,622 --> 00:15:36,507
+adapting a tutorial to real equipment.
+
+208
+00:15:38,183 --> 00:15:44,053
+If a device does not reply, check its address,
+command, line ending, and connection
+
+209
+00:15:44,053 --> 00:15:44,690
+settings.
+
+210
+00:15:44,910 --> 00:15:50,073
+Garbled serial text usually calls for checking
+line configuration.
+
+211
+00:15:50,293 --> 00:15:53,962
+A busy port may belong to another tab or
+program.
+
+212
+00:15:54,182 --> 00:15:58,598
+For a script failure, inspect the actual
+response and timeout.
+
+213
+00:15:58,818 --> 00:16:02,722
+For a stopped panel, check its binding and
+pause reason.
+
+214
+00:16:02,942 --> 00:16:07,849
+The manual includes a symptom table with the
+next action for each case.
+
+215
+00:16:09,517 --> 00:16:15,523
+You have now used a terminal, built a reusable
+command library, run a repeatable
+
+216
+00:16:15,523 --> 00:16:19,351
+check, and monitored a device with a Control
+Panel.
+
+217
+00:16:19,571 --> 00:16:26,124
+Start your own workflow with one known query,
+verify the reply, and add automation a
+
+218
+00:16:26,124 --> 00:16:27,294
+step at a time.
+
+219
+00:16:27,514 --> 00:16:34,409
+The user manual, scripting guide, CLI
+reference, and tutorial examples are linked
+
+220
+00:16:34,409 --> 00:16:36,111
+from the repository.
+
+221
+00:16:36,331 --> 00:16:39,979
+Stop the demo server with Control C when you
+finish.

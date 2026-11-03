@@ -73,6 +73,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File skills\comport-zone-version-
 - Qt widget tests should follow existing `QApplication.instance() or QApplication([])` patterns.
 - Do not assume physical COM hardware is available. Use existing fakes, adapters, or test seams.
 
+## User Documentation And Media
+
+- Review `docs/USER_MANUAL.md` and its linked scripting/CLI guides with **every PR**.
+- User-facing behavior changes must include the affected manual/reference updates
+  and relevant screenshots. If behavior is unchanged, explain that in the PR's
+  manual review notes instead of making a meaningless documentation edit.
+- Complete the PR template's manual review declaration. CI checks it and builds
+  a reviewable PDF; reviewers still verify the content is accurate.
+- Keep the manual's app version and ISO review date current when releasing.
+- Update tutorial scripts/storyboard when a demonstrated workflow changes, but
+  do not commit generated MP4/audio/model files or the PDF. Downloads live on
+  GitHub Releases; small Markdown, text sidecars and screenshots stay in Git.
+- See `tools/media/README.md` and the shared
+  `skills/comport-zone-user-media/SKILL.md` for rebuild, publication and checks.
+
 ## Change Guardrails
 
 - Avoid generated or local output directories such as `.venv`, `build`, `dist`, `release`, `__pycache__`, and test/cache artifacts.

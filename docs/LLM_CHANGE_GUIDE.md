@@ -14,6 +14,11 @@ For full design context, read `docs/DESIGN.md`. For current refactor status, rea
 4. Run focused tests.
 5. Run the full suite if code changed.
 6. Update `docs/ARCHITECTURE.md` or `docs/DESIGN.md` if ownership, flow, or architecture changes.
+7. Review `docs/USER_MANUAL.md` and the linked scripting/CLI reference for every
+   PR. Include affected user documentation and screenshots with user-facing
+   changes; otherwise explain why behavior is unchanged in the PR template.
+   Update tutorial source when its demonstrated workflows change, but leave
+   generated PDF/video out of Git. See `tools/media/README.md`.
 
 Full suite:
 

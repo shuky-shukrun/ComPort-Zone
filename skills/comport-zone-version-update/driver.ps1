@@ -272,7 +272,7 @@ function Invoke-Verify {
 
     # 2) GitHub Release body
     if (-not $RepoSlug) { Warn "could not derive owner/repo from origin; pass --repo to gh manually"; return }
-    $json = & gh release view $tag --repo $RepoSlug --json url,name,isDraft,body 2>$null
+    $json = & gh release view $tag --repo $RepoSlug --json url,name,isDraft,body,assets 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $json) {
         Warn "no readable GitHub Release for $tag yet. The tag-triggered Release workflow may still be running, or gh needs auth/network. Check:"
         Say  "      gh release view $tag --repo $RepoSlug"
@@ -282,6 +282,12 @@ function Invoke-Verify {
     Say "Release : $($rel.name)"
     Say "URL     : $($rel.url)"
     Say "Draft   : $($rel.isDraft)"
+    $assetNames = @($rel.assets | ForEach-Object { $_.name })
+    foreach ($required in @('comport-zone-user-manual.pdf', 'comport-zone-media.json', 'comport-zone-media.sha256')) {
+        if ($assetNames -contains $required) { Ok "release includes $required" }
+        else { Bad "release is missing $required - verify the documentation build/upload steps" }
+    }
+    Say "Video may be reused from an earlier release; its original version and URL are in comport-zone-media.json."
     $body = ''
     if (($rel.PSObject.Properties.Name -contains 'body') -and $rel.body) { $body = [string]$rel.body }
     $trimmed = $body.Trim()

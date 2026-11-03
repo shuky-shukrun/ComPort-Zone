@@ -1,0 +1,21 @@
+{
+  "comport_zone_control_panels": 3,
+  "control_panels": [{
+    "id": "tutorial-bench",
+    "name": "Tutorial Bench",
+    "description": "Use only with tools/media/demo_device.py on localhost TCP 5025.",
+    "columns": 4,
+    "rows": 3,
+    "favorite": true,
+    "entries": [
+      {"id": "voltage", "label": "Voltage", "unit": "V", "command": "MEAS:VOLT?", "interval_ms": 500, "timeout_ms": 300, "parse": {"kind": "line", "value_type": "number"}, "show_sparkline": true, "tile": {"col": 0, "row": 0, "span_w": 2, "span_h": 1, "kind": "value"}},
+      {"id": "current", "label": "Current", "unit": "A", "command": "MEAS:CURR?", "interval_ms": 500, "timeout_ms": 300, "parse": {"kind": "line", "value_type": "number"}, "show_sparkline": true, "tile": {"col": 2, "row": 0, "span_w": 2, "span_h": 1, "kind": "value"}},
+      {"id": "temperature", "label": "Temperature", "unit": "C", "command": "MEAS:TEMP?", "interval_ms": 500, "timeout_ms": 300, "parse": {"kind": "line", "value_type": "number"}, "rules": [{"op": "gt", "operand": "50", "state": "fail", "label": "HOT"}, {"op": "ge", "operand": "0", "state": "ok"}], "tile": {"col": 0, "row": 1, "kind": "value"}},
+      {"id": "status", "label": "Status", "command": "STAT?", "interval_ms": 500, "timeout_ms": 300, "parse": {"kind": "line", "value_type": "text"}, "rules": [{"op": "contains", "operand": "FAULT", "state": "fail"}, {"op": "contains", "operand": "READY", "state": "ok"}], "tile": {"col": 1, "row": 1, "kind": "led"}},
+      {"id": "power", "label": "Power", "unit": "W", "source": "derived", "expression": "{Voltage} * {Current}", "tile": {"col": 2, "row": 1, "span_w": 2, "span_h": 1, "kind": "value"}},
+      {"id": "output-state", "label": "Output state", "command": "OUTP?", "interval_ms": 500, "timeout_ms": 300, "parse": {"kind": "line", "value_type": "number"}, "alerts_enabled": false, "rules": [{"op": "eq_num", "operand": "1", "state": "ok"}, {"op": "eq_num", "operand": "0", "state": "fail"}], "tile": {"col": 0, "row": 2, "kind": "led"}},
+      {"id": "output-control", "label": "Output", "tile": {"col": 1, "row": 2, "kind": "control"}, "control": {"mode": "toggle", "on_command": "OUTP ON", "off_command": "OUTP OFF", "watch_entry_id": "output-state", "confirm": false}},
+      {"id": "set-voltage", "label": "Voltage setpoint", "tile": {"col": 2, "row": 2, "span_w": 2, "span_h": 1, "kind": "setpoint"}, "setpoint": {"min_value": 0, "max_value": 24, "step": 0.1, "decimals": 1, "unit": "V", "command_template": "VOLT {value}", "watch_entry_id": "voltage", "confirm": false}}
+    ]
+  }]
+}

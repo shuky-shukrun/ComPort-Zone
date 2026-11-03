@@ -1,0 +1,49 @@
+name: Documentation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manual:
+    name: Documentation policy and PDF preview
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify manual review, version, links and binary policy
+        shell: pwsh
+        run: python tools/media/check_docs.py --event $env:GITHUB_EVENT_PATH
+      - name: Install lightweight PDF tools
+        shell: pwsh
+        run: python -m pip install -r tools/media/requirements-pdf.txt
+      - name: Build current manual and verify the PDF
+        shell: pwsh
+        run: |
+          python tools/media/build.py pdf
+          python tools/media/check_docs.py --pdf docs/media/comport-zone-user-manual.pdf
+      - name: Upload reviewable PDF preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: user-manual-preview
+          path: docs/media/comport-zone-user-manual.pdf
+          retention-days: 14
+          if-no-files-found: error

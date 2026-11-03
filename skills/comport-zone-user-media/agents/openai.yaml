@@ -1,0 +1,4 @@
+interface:
+  display_name: "ComPort Zone User Media"
+  short_description: "Maintain manuals and release-hosted tutorials"
+  default_prompt: "Use $comport-zone-user-media to update and verify ComPort Zone's user manual and tutorial release assets."
