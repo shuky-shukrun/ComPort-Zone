@@ -119,6 +119,9 @@ def package(root: Path, work: Path, plan: dict) -> dict:
         video = {"version": version, "inputs_sha256": build["inputs_sha256"],
                  "narrator": build["narrator"],
                  "assets": [asset_info(output / name, version, repository) for name in VIDEO_ASSETS]}
+        for key in ("format", "fps", "duration_seconds", "recording_sha256", "interaction_count"):
+            if key in build:
+                video[key] = build[key]
         names.extend(VIDEO_ASSETS)
     else:
         if plan["video_inputs_sha256"] != video_fingerprint(root):

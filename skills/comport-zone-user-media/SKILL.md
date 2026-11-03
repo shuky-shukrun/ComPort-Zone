@@ -16,7 +16,7 @@ changes. If users observe no difference, explain why in the PR template's manual
 review notes. A checked review is a statement of actual review, not a substitute
 for checking the changed workflow.
 
-Update `tools/media/storyboard.json`, capture steps and runnable examples when a
+Update `tools/media/storyboard.json`, `walkthrough.py` actions, capture steps and runnable examples when a
 demonstrated workflow changes. PRs contain these sources and small images/text,
 not generated PDF, MP4, audio or models. `tools/media/check_docs.py` checks the
 version, links, tracked binaries and PR declaration; CI builds a PDF preview.
@@ -25,12 +25,16 @@ version, links, tracked binaries and PR declaration; CI builds a PDF preview.
 
 - The app environment runs `tools/media/capture.py` against its isolated localhost
   demo. It never uses physical COM hardware or the user's settings.
+- The video is a hands-on GUI recording: real clicks, typing, menus, dialogs,
+  scripts and polling. Preserve this tutorial style when updating it. Run
+  `walkthrough.py --rehearse`, inspect the step screenshots, then record with
+  `walkthrough.py` after narration. Keep Qt tests separate from recording.
 - A separate Python 3.12 media environment uses `tools/media/requirements.txt`.
   For PDF-only work, install `requirements-pdf.txt`; do not download speech models.
 - Narration is local **Kokoro v1.0 / am_michael**. ElevenLabs is a later upgrade.
   `download_models.py` verifies model hashes. Do not substitute another narrator
   unless the user asks to change the voice/provider.
-- Use `build.py pdf`, `narrate`, and `video`; see the runbook for ordering. Inspect
+- Use `build.py pdf`, `narrate`, `walkthrough.py`, and `build.py video`; see the runbook for ordering. Inspect
   PDF page renders and representative finished video frames, verify captions and
   audio, and exercise the GUI/CLI examples. Tests use unittest, not pytest.
 

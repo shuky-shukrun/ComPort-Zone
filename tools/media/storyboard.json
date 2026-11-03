@@ -1,168 +1,57 @@
 {
-  "title": "ComPort Zone: from first connection to repeatable checks",
-  "version": "0.9.0",
+  "title": "ComPort Zone: a hands-on walkthrough",
+  "format": "live-gui",
   "language": "en-us",
-  "narrator": {"provider": "kokoro-onnx", "model": "kokoro-v1.0.onnx", "voice": "am_michael", "speed": 0.88},
+  "narrator": {"provider":"kokoro-onnx","model":"kokoro-v1.0.onnx","voice":"am_michael","speed":0.88},
   "scenes": [
-    {
-      "id": "welcome", "chapter": "Getting started", "title": "Connect. Inspect. Automate.", "shot": "overview",
-      "notes": ["Serial, TCP and UDP", "Desktop + command line", "A complete local demo"],
-      "narration": "Welcome to ComPort Zone, a terminal and automation workbench for Windows. In this tutorial, we will identify a device, save useful commands, run a repeatable check, and build a live monitoring panel. Everything shown uses a local demonstration instrument. You can follow along without a physical board, a serial adapter, or a COM port."
-    },
-    {
-      "id": "install", "chapter": "Getting started", "title": "Install and open the application", "shot": "overview",
-      "notes": ["Windows installer or portable ZIP", "Packaged app includes Python", "Source setup: setup_dev.bat"],
-      "narration": "Download the Windows installer or portable zip from the project's releases page. Run the installer, or extract the whole portable folder and open the application. The packaged desktop app includes its own runtime. If you are working from source, run the setup development batch file, followed by the launch app batch file. The illustrated manual covers both installation paths."
-    },
-    {
-      "id": "demo", "chapter": "Getting started", "title": "Start the tutorial instrument", "shot": "demo-card",
-      "notes": ["Python required for this demo server", "TCP + UDP: 127.0.0.1:5025", "Leave its terminal running"],
-      "narration": "The tutorial device is a small Python script in the tools, media folder. Open PowerShell in the repository and run the command shown here. It uses only Python's standard library. Keep that terminal open while following the tutorial. The server listens on your own computer, on port fifty twenty five. Its voltage, current, temperature, and status readings are simulated."
-    },
-    {
-      "id": "layout", "chapter": "Getting started", "title": "Find your way around", "shot": "overview",
-      "notes": ["Workspace tabs across the top", "Reusable actions in the drawer", "Compose after TX>"],
-      "narration": "The center of the window is a workspace for terminal, editor, and Control Panel tabs. The drawer on the left keeps favorites, saved commands, files, and history close at hand. In a terminal, outgoing and incoming messages use separate rows and colors. The editable line begins with the transmit prompt. The connection indicator and footer help you confirm the current target."
-    },
-    {
-      "id": "tcp", "chapter": "Connect and communicate", "title": "Connect to the local device", "shot": "connection",
-      "notes": ["Transport: TCP", "Host: 127.0.0.1 | Port: 5025", "Line ending: CRLF"],
-      "narration": "Open Connection Settings for your terminal tab. Choose TCP, enter the localhost address shown here, set the port to fifty twenty five, and select carriage return plus line feed. Accept the settings and connect. A green connection indicator means the socket is open. These settings belong to this tab, so another terminal can use a different connection and a different device."
-    },
-    {
-      "id": "identity", "chapter": "Connect and communicate", "title": "Send your first query", "shot": "terminal",
-      "notes": ["Type *IDN? and press Enter", "TX is sent; RX is received", "Expected identity: Demo PSU"],
-      "narration": "Click after the transmit prompt, type the identification query shown on screen, and press Enter. The demo replies with its name and serial number. You have now checked the complete path from the application to the target and back. Device commands depend on your instrument or firmware. ComPort Zone sends them; it does not require every device to understand this particular identification query."
-    },
-    {
-      "id": "queries", "chapter": "Connect and communicate", "title": "Read measurements and status", "shot": "terminal",
-      "notes": ["MEAS:VOLT? / MEAS:CURR?", "MEAS:TEMP? / STAT?", "Expected: about 12 V and READY"],
-      "narration": "Try the voltage, current, temperature, and status queries. At the default settings, voltage is near twelve volts, current is near zero point four two amps, and status is ready. Small changes between readings are intentional. Notice how timestamps and message direction make it easy to associate a query with its reply. Keep this terminal connected for the automation and monitoring examples."
-    },
-    {
-      "id": "serial", "chapter": "Connect and communicate", "title": "Connect a real serial device", "shot": "serial",
-      "notes": ["Select the device's COM port", "Match baud, parity and flow control", "Check line ending and DTR/RTS"],
-      "narration": "For a physical serial device, create another terminal and select Serial instead. Pick its COM port and match the baud rate, data bits, parity, stop bits, and flow control to the firmware documentation. Set the required line ending. DTR and RTS can affect the board, so choose their states intentionally. The local tutorial demonstrates traffic over TCP; this serial settings screen is a configuration example."
-    },
-    {
-      "id": "udp", "chapter": "Connect and communicate", "title": "Understand TCP and UDP", "shot": "connection",
-      "notes": ["TCP opens a stream connection", "UDP sends separate datagrams", "A UDP reply confirms the target"],
-      "narration": "TCP provides a connected byte stream. UDP sends separate datagrams and does not establish a remote connection. For UDP, a green indicator means the local socket is available, not that a device has answered. The tutorial server supports both on the same port, so you can try a UDP terminal later. Serial and TCP support auto reconnect; UDP has no connection to reestablish."
-    },
-    {
-      "id": "readback", "chapter": "Terminal essentials", "title": "Write, then verify by reading back", "shot": "readback",
-      "notes": ["VOLT 15 changes the demo", "VOLT? confirms 15.000", "*RST restores demo defaults"],
-      "narration": "Send the voltage setting command, followed by the voltage query. The write is silent; the query confirms the new setting. This is common for instrument protocols. A missing reply to a write is not automatically an error. Verify changes using the device's documented readback command. Reset the demonstration instrument before the next exercise so its output is enabled and its voltage returns to twelve volts."
-    },
-    {
-      "id": "history", "chapter": "Terminal essentials", "title": "Recall and find commands", "shot": "history",
-      "notes": ["Up / Down: command history", "Ctrl+Space: completions", "Ctrl+F: search the transcript"],
-      "narration": "Use the up and down arrows to recall earlier commands. Control plus Space offers completions from history and saved commands. The History page provides another way to find and reuse what you sent. Control plus F searches the terminal. You can adjust text size with Control and the mouse wheel, and toggle timestamps or line wrapping from the View menu."
-    },
-    {
-      "id": "hex", "chapter": "Terminal essentials", "title": "Choose text or raw bytes", "shot": "hex-card",
-      "notes": ["Text uses the selected line ending", "Hex Bytes adds no terminator", "Receive display is independent"],
-      "narration": "Text mode adds your selected line ending. Hex Bytes mode sends exactly the bytes entered, so include any required terminator yourself. The bytes shown here spell ping followed by carriage return and line feed; the demo answers pong. Receive display mode only changes how incoming bytes appear. It does not change the bytes sent. Return to text mode for the remaining exercises."
-    },
-    {
-      "id": "logging", "chapter": "Terminal essentials", "title": "Keep a record of communication", "shot": "terminal",
-      "notes": ["Choose a terminal log file", "Verify logging is enabled", "Receive pause differs from script pause"],
-      "narration": "Use terminal logging when you need a record of communication. Select a file, confirm that logging is on, and stop logging when the capture is complete. Receive pause holds the display; it does not disconnect your device. Script pause controls command-file progress instead. Later, Control Panel CSV logging will record parsed measurements, which is useful for a different kind of analysis."
-    },
-    {
-      "id": "saved", "chapter": "Save reusable workflows", "title": "Build a saved-command library", "shot": "saved-commands",
-      "notes": ["Label commands by purpose", "Organize them into groups", "Star your most useful commands"],
-      "narration": "Open Saved Commands in the drawer and add a command with a useful label. For example, save the identification query as Identify in a Tutorial group. Star frequently used commands to put them in Favorites. Keep each command's text or hexadecimal send mode correct. Before sending from a library, check the active terminal so a useful shortcut goes to the intended device."
-    },
-    {
-      "id": "libraries", "chapter": "Save reusable workflows", "title": "Share commands and keep script shortcuts", "shot": "saved-commands",
-      "notes": ["Import examples/tutorial/quick-commands.csv", "CSV shares the command library", "File shortcuts still need actual scripts"],
-      "narration": "The tutorial includes a command library in CSV format. Import it through the saved-command import action, reviewing the append or replace options. Export a CSV when sharing your own library. The Files page stores paths to command files, and those entries can be favorites too. A file shortcut does not include the file's contents, so copy the actual scripts when moving to another computer."
-    },
-    {
-      "id": "editor", "chapter": "Automate a check", "title": "Open the first-check script", "shot": "editor",
-      "notes": ["examples/tutorial/first-check.cpz", "Highlighting and line numbers", "Select the connected run target"],
-      "narration": "Open the first check command file from the examples, tutorial folder. The editor shows line numbers and highlights the script language. Choose your connected tutorial terminal as the run target. This matters when several sessions are open. The prepared script identifies the device, repeats voltage measurements, checks the result, and writes a summary. Inspect a shared script before running it against your equipment."
-    },
-    {
-      "id": "parameters", "chapter": "Automate a check", "title": "Parameters and runtime values", "shot": "editor",
-      "notes": ["{{COUNT=3}} asks once before a run", "$VOLTS is captured during a run", "WAIT and timeouts use milliseconds"],
-      "narration": "Double braces mark a parameter supplied before the run. Count has a default of three. A dollar-prefixed name is a runtime variable, created while the script runs. Capture extracts a value from the device reply using a regular expression. Wait delays use milliseconds. The response timeout also uses milliseconds, so fifteen hundred means one and a half seconds, rather than fifteen hundred seconds."
-    },
-    {
-      "id": "script-run", "chapter": "Automate a check", "title": "Run and inspect the result", "shot": "script-result",
-      "notes": ["Keep COUNT at 3", "Expect three passing checks", "Read both output and run status"],
-      "narration": "Run the script and keep the count parameter at three. With the demo at its defaults, you should see three passing checks and a completion summary. The loop repeats the measurement, capture saves its numeric value, and the condition compares it with the threshold. Log messages explain the result without sending their text to the device. Read the run status as well as the individual replies."
-    },
-    {
-      "id": "run-control", "chapter": "Automate a check", "title": "Pause, stop, and handle failures", "shot": "editor",
-      "notes": ["Pause / Resume controls progress", "Stop ends a running script", "EXPECT failure normally stops the run"],
-      "narration": "Pause and Resume control a running command file. Stop ends the run. A Pause instruction creates an operator checkpoint, while Break leaves a loop. By default, a response check that times out stops the script. Increase the timeout only when the device needs more time. The continue-on-error setting changes this behavior deliberately. The manual links to the complete scripting reference for these options."
-    },
-    {
-      "id": "panel-import", "chapter": "Monitor with Control Panels", "title": "Open Tutorial Bench", "shot": "control-panel",
-      "notes": ["Ctrl+Shift+D: panel manager", "Import tutorial/control-panel.json", "Bind to the tutorial terminal"],
-      "narration": "Open the Control Panel manager with Control, Shift, and D. Import the tutorial panel JSON and open Tutorial Bench. Bind it to the connected tutorial terminal. The panel shares that terminal's connection instead of opening a competing one. Confirm the target in its binding chip. The prepared panel includes measurements, a status indicator, calculated power, an output toggle, and a numeric voltage setpoint."
-    },
-    {
-      "id": "poll", "chapter": "Monitor with Control Panels", "title": "Poll and parse live values", "shot": "control-panel", "live": true,
-      "notes": ["500 ms interval in this local demo", "Numeric parsing of the first line", "Poll traffic stays out of the transcript"],
-      "narration": "Each measurement tile sends a query on its own schedule, collects the response, and applies a parse rule. The voltage tile reads the first reply line as a number and adds the volts unit. For replies containing labels, use a regular expression to extract the value. Choose intervals and timeouts appropriate to your hardware. Poll traffic stays out of the normal terminal transcript, keeping manual work readable."
-    },
-    {
-      "id": "derived", "chapter": "Monitor with Control Panels", "title": "Use rules and calculated values", "shot": "control-panel",
-      "notes": ["Rules are evaluated in order", "Temperature over 50 C becomes FAIL", "Power = {Voltage} * {Current}"],
-      "narration": "Color rules turn a reply into an understandable state. The tutorial temperature tile reports failure above fifty degrees. Rules are evaluated in order, so place specific conditions before broad ones. The power tile combines voltage and current with an expression. It calculates a value from other tiles rather than sending another device command. Clear labels make these references easier to understand and maintain."
-    },
-    {
-      "id": "chart", "chapter": "Monitor with Control Panels", "title": "Inspect recent history", "shot": "chart",
-      "notes": ["Numeric tiles can show sparklines", "Double-click to open a chart", "Choose a span and inspect a point"],
-      "narration": "Numeric tiles can show a sparkline beneath the current value. Double-click one to open its larger chart. Select a time span and use the hover readout to inspect points. A newly opened panel needs time to gather a useful history. This chart is for live inspection. Enable CSV logging when you need measurement records that remain available after the session ends."
-    },
-    {
-      "id": "alerts", "chapter": "Monitor with Control Panels", "title": "Demonstrate a fault and recovery", "shot": "fault",
-      "notes": ["DEMO:FAULT ON triggers the demo fault", "Inspect the alert history", "DEMO:FAULT OFF restores normal status"],
-      "narration": "Send the demo fault command from the terminal. Status changes to fault and temperature rises above the configured threshold. The panel records transitions into failure or error states in its alert history. You can control alert sounds per tile or globally. Send the fault-off command to recover. Acknowledging or silencing an alert changes the notification; it does not repair or reset the device."
-    },
-    {
-      "id": "arm", "chapter": "Monitor with Control Panels", "title": "Arm writing tiles intentionally", "shot": "armed",
-      "notes": ["Master Arm enables panel writes", "Esc disarms immediately", "Disarming does not shut down hardware"],
-      "narration": "Writing tiles start disarmed. Enable Master Arm before using the output toggle or voltage setpoint, and press Escape to disarm afterward. Readback should confirm the device's actual state. Disarming blocks further panel writes; it does not undo a setting or send an output-off command. Master Arm applies to panel controls, while terminal and script sends retain their own workflows."
-    },
-    {
-      "id": "panel-log", "chapter": "Monitor with Control Panels", "title": "Log values and recognize paused polling", "shot": "control-panel",
-      "notes": ["CSV records parsed measurements", "kind distinguishes poll/derived/control", "Check the binding chip when paused"],
-      "narration": "Choose a file and enable CSV logging to record parsed values. The kind column distinguishes polled values, calculated values, and control sends. Keep the application open and the PC awake during an unattended run. Polling normally pauses when the target disconnects or a command file uses its connection. Check the binding chip to understand a pause, and verify each target when using a panel across multiple devices."
-    },
-    {
-      "id": "split", "chapter": "Workspace and command line", "title": "Keep the script beside the terminal", "shot": "split",
-      "notes": ["Split right or down", "Compare output while editing", "Ctrl+Shift+P opens the palette"],
-      "narration": "Split the workspace to keep the command-file editor beside its terminal. You can also compare two devices, then join panes when the extra view is no longer useful. Give tabs recognizable names. The command palette opens with Control, Shift, and P and helps you find actions quickly. Preferences and the View menu provide themes, terminal fonts, wrapping, and timestamp options."
-    },
-    {
-      "id": "cli", "chapter": "Workspace and command line", "title": "Use the same workflow from the CLI", "shot": "cli-card",
-      "notes": ["send: one query", "validate: check script syntax", "run: repeat the saved workflow"],
-      "narration": "The command-line interface uses the same application settings and scripting engine. Send runs a one-shot query. Validate checks a command file without contacting a device. Run executes the saved check, and parameter flags provide values for unattended operation. These commands are shown against the same local tutorial server. The manual explains how to activate the source environment if the command is not on your path."
-    },
-    {
-      "id": "cli-status", "chapter": "Workspace and command line", "title": "Make automation check the exit code", "shot": "cli-card",
-      "notes": ["0: success", "11: response check failed", "Use --non-interactive and --param"],
-      "narration": "An automation script should check the process exit code, not just look for familiar text. Zero indicates success, while eleven indicates a failed response check. Supply required parameters and use noninteractive operation in unattended jobs. Avoid opening a physical COM port from the GUI and CLI at the same time. The CLI reference lists all commands, connection flags, and stable exit codes."
-    },
-    {
-      "id": "share", "chapter": "Troubleshooting and sharing", "title": "Share each kind of work", "shot": "sharing-card",
-      "notes": ["Settings: JSON | Commands: CSV", "Panels: JSON | Scripts: .cpz", "Copy files referenced by shortcuts"],
-      "narration": "Export application settings as JSON, saved commands as CSV, and Control Panels through their JSON export. Share command files themselves, together with a description of the target. A quick-file export shares paths, not script contents. App-settings transfer intentionally keeps quick-action libraries separate. Import a panel, bind the correct terminal, and verify commands and ranges before adapting a tutorial to real equipment."
-    },
-    {
-      "id": "troubleshoot", "chapter": "Troubleshooting and sharing", "title": "Work from the symptom", "shot": "trouble-card",
-      "notes": ["No reply: command + framing + timeout", "Port busy: close the other owner", "Panel paused: inspect its target"],
-      "narration": "If a device does not reply, check its address, command, line ending, and connection settings. Garbled serial text usually calls for checking line configuration. A busy port may belong to another tab or program. For a script failure, inspect the actual response and timeout. For a stopped panel, check its binding and pause reason. The manual includes a symptom table with the next action for each case."
-    },
-    {
-      "id": "finish", "chapter": "Troubleshooting and sharing", "title": "Your next bench workflow", "shot": "closing",
-      "notes": ["Connect and verify", "Save and automate", "Monitor, log and share"],
-      "narration": "You have now used a terminal, built a reusable command library, run a repeatable check, and monitored a device with a Control Panel. Start your own workflow with one known query, verify the reply, and add automation a step at a time. The user manual, scripting guide, CLI reference, and tutorial examples are linked from the repository. Stop the demo server with Control C when you finish."
-    }
+    {"id":"welcome","chapter":"Getting started","title":"Let's talk to a device","zoom":1.0,"narration":"Let's take ComPort Zone through a real workflow. We'll connect to a simulated instrument, send commands, automate a test, and watch a live dashboard. The tutorial device runs locally, so you can follow along without any hardware."},
+    {"id":"connection_menu","chapter":"Connect and communicate","title":"Open connection settings","zoom":1.15,"narration":"Start with Connection, then Connection Settings. Each terminal tab has its own connection. For this walkthrough, the demonstration server is already running on this computer. The manual explains how to start it."},
+    {"id":"tcp_fields","chapter":"Connect and communicate","title":"Choose the endpoint","zoom":1.15,"narration":"Choose TCP. Enter the local address shown here, and port fifty twenty five. Select carriage return plus line feed. For your own instrument, use its address and required line ending."},
+    {"id":"connect","chapter":"Connect and communicate","title":"Make the connection","zoom":1.0,"narration":"Accept the settings to connect. Watch the connection indicator turn green. Before sending anything, check the target shown in the terminal header. This keeps commands going to the device you intended."},
+    {"id":"identity","chapter":"Connect and communicate","title":"Identify the instrument","zoom":1.28,"narration":"Click the transmit prompt and type the identification query. Press Enter. The outgoing command appears, followed by the device's reply. Here, the model and serial number confirm that we're talking to the tutorial instrument."},
+    {"id":"measurements","chapter":"Connect and communicate","title":"Read live values","zoom":1.2,"narration":"Now ask for voltage, current, and status. Each reply appears in the terminal as it arrives. The simulated instrument returns changing measurements and a ready state. You can inspect the conversation while continuing to type."},
+    {"id":"history","chapter":"Connect and communicate","title":"Recall a command","zoom":1.3,"narration":"To repeat a command, press the Up arrow at the prompt. The previous command comes back into the editable line. Press Enter to send it again. This is useful when you're checking a changing value."},
+    {"id":"autocomplete","chapter":"Connect and communicate","title":"Complete while typing","zoom":1.3,"narration":"Start typing a familiar command prefix and press Control Space to open completion suggestions. You can choose a suggestion or dismiss the popup with Escape. Let's clear the prompt before the next example."},
+    {"id":"find","chapter":"Connect and communicate","title":"Search the conversation","zoom":1.15,"narration":"Press Control F and enter part of a command to search the terminal. Matching text is highlighted in the conversation. Escape closes the search and returns you to your work."},
+    {"id":"hex","chapter":"Connect and communicate","title":"Send exact bytes","zoom":1.2,"narration":"Switch the input mode to Hex Bytes. These byte pairs spell ping followed by carriage return and line feed. Send them and look for PONG. Then switch back to Text for normal commands."},
+    {"id":"readback","chapter":"Connect and communicate","title":"Write, then verify","zoom":1.25,"narration":"A write command may produce no reply. Set the voltage to fifteen, then query the voltage separately. The returned value confirms the change. Finally, reset the demonstration instrument so the remaining examples start from a known state."},
+    {"id":"saved_menu","chapter":"Reusable commands","title":"Save a useful command","zoom":1.1,"narration":"Let's turn the identification query into a reusable action. Open Tools and choose Add Saved Command. This saves typing and makes a common operation available from the drawer."},
+    {"id":"saved_fields","chapter":"Reusable commands","title":"Name and group the action","zoom":1.2,"narration":"Give the command a short label, enter the identification query, and put it in a Tutorial group. Confirm the dialog. The label helps you recognize the action without reading the entire command."},
+    {"id":"saved_send","chapter":"Reusable commands","title":"Send from the drawer","zoom":1.2,"narration":"Open Saved Commands in the drawer. Click the send action beside Identify. The actual query runs in the selected terminal, and its reply appears just as it did when we typed it."},
+    {"id":"favorite","chapter":"Reusable commands","title":"Keep favorites close","zoom":1.25,"narration":"Click the star beside the saved command. Now open Favorites. The same action is available here, ready for repeated checks. Use favorites for a small set of commands you reach for most often."},
+    {"id":"export_csv","chapter":"Reusable commands","title":"Export the command library","zoom":1.05,"narration":"To share these commands, open File, Import and Export, then choose Export Saved Commands. Save the CSV file in a location you can find. Your teammate can import that library into their own installation."},
+    {"id":"open_editor","chapter":"Repeatable command files","title":"Open a command file","zoom":1.0,"narration":"Next, let's automate a check. Use File, Open Command File Editor, and select the tutorial's first check file. This opens an editable script in a workspace tab beside the terminal."},
+    {"id":"edit_script","chapter":"Repeatable command files","title":"Inspect and save the script","zoom":1.22,"narration":"The script identifies the device, repeats a voltage measurement, checks the value, and prints a summary. Add a comment and press Control S to save. We're editing a working copy of the supplied example."},
+    {"id":"run_target","chapter":"Repeatable command files","title":"Choose where to run","zoom":1.15,"narration":"Check the run target above the editor. It should be the connected tutorial terminal. Click Run. Because this script contains a parameter, ComPort Zone asks for its value before execution starts."},
+    {"id":"parameter_pause","chapter":"Repeatable command files","title":"Start and pause a run","zoom":1.1,"narration":"Set the repeat count to five and click Start. Switch to the terminal to watch the commands execute. Click Pause during the run. The controls now offer Resume, so you can inspect progress before continuing."},
+    {"id":"resume","chapter":"Repeatable command files","title":"Resume execution","zoom":1.1,"narration":"Click Resume and watch the remaining measurements arrive. The script handles the repeated commands and checks for us. Wait for the run to finish before starting another operation on this connection."},
+    {"id":"script_result","chapter":"Repeatable command files","title":"Read the result","zoom":1.3,"narration":"The final log reports five passing checks. Read the terminal output as well as the completion status. Together they show what was sent, what came back, and whether the script's conditions were satisfied."},
+    {"id":"split","chapter":"Workspace shortcuts","title":"Work side by side","zoom":1.0,"narration":"Return to the editor and choose Split Right from View. Drag the divider to give each pane enough space. A split workspace is useful when you want the command file and a terminal visible together."},
+    {"id":"palette","chapter":"Workspace shortcuts","title":"Use the command palette","zoom":1.1,"narration":"Open the command palette from Tools. Search for Join Tabs and press Enter. The workspace returns to one pane. The palette gives you a quick route to actions without navigating menus."},
+    {"id":"panel_manager","chapter":"Live control panels","title":"Open panel management","zoom":1.05,"narration":"Now let's build a live view of the same device. Open Tools, then Control Panels, to manage your saved panels. Panels collect measurements, status indicators, and device controls in one workspace tab."},
+    {"id":"import_panel","chapter":"Live control panels","title":"Import the example panel","zoom":1.1,"narration":"Click Import and select the tutorial control panel JSON file. The imported panel appears in the list. The repository includes this example so you can reproduce the dashboard without entering every tile by hand."},
+    {"id":"open_panel","chapter":"Live control panels","title":"Watch the dashboard start","zoom":1.0,"narration":"Select the imported panel and click Open. Measurements begin updating from the connected instrument. Notice the numeric readings, the ready indicator, and the controls grouped together in the same view."},
+    {"id":"bind_panel","chapter":"Live control panels","title":"Check the connection binding","zoom":1.1,"narration":"Open the connection selector and choose the tutorial device. The binding chip shows which terminal supplies the panel's connection. Always check this before using a panel with multiple devices open."},
+    {"id":"edit_tile","chapter":"Live control panels","title":"Edit a measurement tile","zoom":1.15,"narration":"Right click the voltage tile and choose Edit. A tile defines the command to send, how to interpret the reply, and when to poll. You can adjust an existing tile as your workflow changes."},
+    {"id":"tile_fields","chapter":"Live control panels","title":"Adjust the polling interval","zoom":1.2,"narration":"Change the polling interval to seven hundred fifty milliseconds and save. Choose a rate your device can handle. Faster updates can be helpful, but every poll still consumes time on the underlying connection."},
+    {"id":"poll","chapter":"Live control panels","title":"Follow changing readings","zoom":1.18,"narration":"Watch the voltage and power readings update. The device simulator varies its measurements, so these are fresh responses rather than a static display. The panel keeps polling while we watch."},
+    {"id":"chart","chapter":"Live control panels","title":"Open a live trend","zoom":1.0,"narration":"Double click the voltage tile to open its chart. Change the visible time span to one minute. The trace makes it easier to spot movement over time than reading individual numbers alone."},
+    {"id":"chart_hover","chapter":"Live control panels","title":"Inspect the trace","zoom":1.12,"narration":"Move the pointer across the chart to inspect values along the trace. This helps you compare earlier readings with the current measurement. Use Back to return to the tile dashboard."},
+    {"id":"fault","chapter":"Status and alerts","title":"Trigger a visible fault","zoom":1.1,"narration":"Let's deliberately enable a fault on the simulator. Send the demonstration fault command in the terminal, then return to the panel. The status indicator changes, showing how an unexpected device state appears during monitoring."},
+    {"id":"alerts","chapter":"Status and alerts","title":"Review panel alerts","zoom":1.15,"narration":"Click the bell to inspect the panel's alerts. Use this view to see what needs attention while the dashboard continues updating. Close the alert view when you're ready to investigate the device."},
+    {"id":"recover","chapter":"Status and alerts","title":"Clear the fault","zoom":1.05,"narration":"Return to the terminal and clear the simulated fault. Back on the panel, wait for the next status response. The indicator returns to its normal state, confirming the device has recovered."},
+    {"id":"arm","chapter":"Device controls","title":"Arm the panel controls","zoom":1.15,"narration":"A panel can arm automatically when its bound device connects. Check the lock control. Click to disarm, then click again to arm before writing. This makes the difference between monitoring and changing the instrument visible."},
+    {"id":"output_off","chapter":"Device controls","title":"Switch the output off","zoom":1.2,"narration":"Click the output control to switch the simulated supply off. Watch the related measurements respond. You're sending a real command to the local simulator through the panel's bound connection."},
+    {"id":"output_on","chapter":"Device controls","title":"Restore the output","zoom":1.2,"narration":"Click again to restore the output. The measurements recover on subsequent polls. For your own hardware, understand the effect of each write command before using its panel control."},
+    {"id":"setpoint","chapter":"Device controls","title":"Change a setpoint","zoom":1.2,"narration":"Enter fifteen in the voltage setpoint control and press Enter to send. Watch the measured voltage move to the new level. A separate readback is useful confirmation that the device accepted the requested setting."},
+    {"id":"disarm","chapter":"Device controls","title":"Return to monitoring","zoom":1.1,"narration":"Disarm the controls when you're finished changing settings. The write buttons become unavailable while monitoring continues. This is a useful habit when leaving a dashboard open for observation."},
+    {"id":"csv_log","chapter":"Record measurements","title":"Start a value log","zoom":1.05,"narration":"Click the panel's CSV logging control and choose an output file. Logging records measurement events for later analysis. Save the file somewhere separate from the application files so you can find it easily."},
+    {"id":"csv_stop","chapter":"Record measurements","title":"Finish the capture","zoom":1.1,"narration":"Let a few polls arrive, then click the logging control again to stop. The CSV now contains recorded values. You can open it in a spreadsheet or use it in your own analysis tools."},
+    {"id":"cli_query","chapter":"Command line automation","title":"Query from PowerShell","zoom":1.0,"narration":"The same device is available from the command line. In this PowerShell console, run a single identification query against localhost. The actual reply appears below the command, and a zero exit code confirms success."},
+    {"id":"cli_validate","chapter":"Command line automation","title":"Validate before running","zoom":1.1,"narration":"Run validate on the tutorial command file. This checks the script without opening a device connection. Use validation after editing a file and before adding it to an automated workflow."},
+    {"id":"cli_run","chapter":"Command line automation","title":"Run a scripted check","zoom":1.0,"narration":"Now run that file against the local device with the repeat count set to three. Non interactive mode keeps parameter handling explicit. Watch the measurements and the summary report three passing checks."},
+    {"id":"cli_udp","chapter":"Command line automation","title":"Try a UDP exchange","zoom":1.05,"narration":"For a datagram example, send ping to the simulator's UDP endpoint and expect PONG. The command checks the reply and exits successfully. The tutorial server supports both transports on the same local port."},
+    {"id":"return_app","chapter":"Wrap up","title":"Return to the dashboard","zoom":1.0,"narration":"Return to the desktop app and reset the demonstration instrument. The panel continues to reflect the live device state. You've now used the terminal, reusable commands, scripts, charts, controls, logging, and the command line."},
+    {"id":"finish","chapter":"Wrap up","title":"Disconnect when finished","zoom":1.0,"narration":"Disconnect the terminal when you're finished. To repeat this walkthrough, use the example files and instructions linked with the project. The English manual provides the detailed reference, and the release includes captions and chapter timestamps for this video."}
   ]
 }

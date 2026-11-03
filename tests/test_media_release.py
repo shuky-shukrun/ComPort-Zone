@@ -29,7 +29,7 @@ class MediaReleaseTests(unittest.TestCase):
             "docs/USER_MANUAL.md", "tools/media/capture.py", "tools/media/demo_device.py",
             "tools/media/build.py", "tools/media/common.py", "tools/media/storyboard.json",
             "tools/media/requirements.txt", "tools/media/requirements-pdf.txt", "tools/media/manual_pdf.py",
-            "tools/media/download_models.py",
+            "tools/media/download_models.py", "tools/media/walkthrough.py", "tools/media/live_timing.py", "tools/media/assemble_live.py",
             "examples/tutorial/check.cpz",
         ]
         for relative in paths:
@@ -69,6 +69,16 @@ class MediaReleaseTests(unittest.TestCase):
         self.assertEqual(set(receipt["uploads"]), {MANUAL_ASSET, *VIDEO_ASSETS, RECEIPT_ASSET, CHECKSUM_ASSET})
         self.assertEqual(checked_package(self.work / "publish"), receipt)
 
+    def test_published_manifest_preserves_live_recording_provenance(self):
+        path = self.work / "video-build.json"
+        build = json.loads(path.read_text())
+        metadata = {"format": "live-gui", "fps": 30, "duration_seconds": 786.5,
+                    "recording_sha256": "a" * 64, "interaction_count": 140}
+        build.update(metadata)
+        path.write_text(json.dumps(build))
+        receipt = self.published()
+        self.assertEqual({key: receipt["video"][key] for key in metadata}, metadata)
+
     def test_version_only_release_reuses_original_video_and_rebuilds_manual(self):
         previous = self.published()
         self.set_version("0.9.1")
@@ -86,6 +96,16 @@ class MediaReleaseTests(unittest.TestCase):
         previous = self.published()
         (self.root / "src/ComPort_Zone/app.py").write_text("changed behavior\n")
         self.assertEqual(make_plan(self.root, REPOSITORY, previous)["video_action"], "rebuild")
+
+    def test_live_choreography_or_timing_change_requires_new_recording(self):
+        previous = self.published()
+        for relative in ("tools/media/walkthrough.py", "tools/media/live_timing.py", "tools/media/assemble_live.py"):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                original = path.read_text()
+                path.write_text("changed recording behavior\n")
+                self.assertEqual(make_plan(self.root, REPOSITORY, previous)["video_action"], "rebuild")
+                path.write_text(original)
 
     def test_dependency_change_invalidates_recording_but_version_metadata_does_not(self):
         previous = self.published()

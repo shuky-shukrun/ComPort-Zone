@@ -15,6 +15,8 @@ The [narrated tutorial](https://github.com/shuky-shukrun/ComPort-Zone/releases/l
 [printable manual](https://github.com/shuky-shukrun/ComPort-Zone/releases/latest/download/comport-zone-user-manual.pdf)
 accompany this guide. Release notes identify the recording's version; a release
 can reuse an earlier walkthrough when its demonstrated workflows are unchanged.
+The video follows actual mouse and keyboard actions in the app, with live replies
+from the local demo, captions, and chapters for jumping to a workflow.
 
 ## Contents
 
@@ -314,13 +316,16 @@ Keep the application open and the machine awake for an unattended run.
 
 ### Master Arm and connection sharing
 
-The panel starts **disarmed**. Enable **Master Arm** before using writing tiles;
-press **Esc** to disarm immediately. Disarming blocks further panel writes. It
+The panel can arm automatically when its bound device connects. Check the
+**Master Arm** lock before using writing tiles; click it to disarm or re-arm.
+With focus in the grid, **Esc** clears a tile selection first; press it again
+when nothing is selected to disarm. Disarming blocks further panel writes. It
 does not send a device shutdown command or undo previous commands. Terminal and
 script sends have their own workflows, so Master Arm is not a global write lock.
 
-In the demo, arm the panel, change the voltage setpoint, and confirm the measured
-voltage changes. Try the output toggle and observe output state. Disarm when done.
+In the demo, check that the panel is armed, type a voltage setpoint and press
+**Enter** to send. Confirm the measured voltage changes. Try the output toggle
+and observe its readback before toggling again. Disarm when done.
 
 Background polls do not fill the terminal transcript. They pause for a
 disconnected target or a command-file run, then resume when available again.

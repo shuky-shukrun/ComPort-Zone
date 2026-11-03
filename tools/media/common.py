@@ -81,6 +81,7 @@ def video_fingerprint(root: Path = ROOT) -> str:
     # a recording whose original version remains explicit in its release receipt.
     return fingerprint(root, capture_paths(root) + [
         "tools/media/build.py", "tools/media/common.py", "tools/media/storyboard.json",
+        "tools/media/walkthrough.py", "tools/media/live_timing.py", "tools/media/assemble_live.py",
         "tools/media/requirements.txt", "tools/media/requirements-pdf.txt", "tools/media/download_models.py",
     ])
 

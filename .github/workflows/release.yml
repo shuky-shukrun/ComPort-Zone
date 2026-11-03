@@ -99,6 +99,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/media/build.py narrate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:COMPORT_ZONE_FFMPEG = python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\.venv\Scripts\python.exe tools/media/walkthrough.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/media/build.py video
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

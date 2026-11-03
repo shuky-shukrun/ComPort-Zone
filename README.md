@@ -110,7 +110,8 @@ Read the illustrated [User Manual](docs/USER_MANUAL.md), download the
 [English narrated tutorial linked in the release notes](https://github.com/shuky-shukrun/ComPort-Zone/releases/latest)
 ([captions](docs/media/comport-zone-walkthrough.srt),
 [transcript](docs/media/comport-zone-walkthrough.transcript.md)). The tutorial
-includes a local demo device and runnable examples, so no COM hardware is needed.
+shows actual clicks, typing and live device replies. It includes a local demo
+device and runnable examples, so no COM hardware is needed.
 Media maintainers can use the [rebuild instructions](tools/media/README.md).
 
 ### Install

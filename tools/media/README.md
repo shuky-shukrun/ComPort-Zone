@@ -2,7 +2,8 @@
 
 The initial English manual and tutorial describe ComPort Zone 0.9.0. The manual's source
 is [docs/USER_MANUAL.md](../../docs/USER_MANUAL.md); the video script, chapters,
-on-screen notes and voice settings live in [storyboard.json](storyboard.json).
+action narration and voice settings live in [storyboard.json](storyboard.json).
+The matching mouse/keyboard choreography lives in [walkthrough.py](walkthrough.py).
 
 The narration matches the RDT reference project's current engine: **local
 Kokoro v1.0 through kokoro-onnx, `am_michael`, English**. No account, service, API
@@ -16,9 +17,9 @@ Builds write to `docs/media/`, with MP4/WAV/PDF ignored by Git. Canonical binary
 downloads live on **GitHub Releases**, outside Git history and Git LFS:
 
 - `comport-zone-user-manual.pdf`: illustrated, searchable manual.
-- `comport-zone-walkthrough.mp4`: 1920 x 1080 narrated guided walkthrough,
-  with real application captures, a short live polling sequence, chapter labels,
-  explanatory notes and burned-in English captions.
+- `comport-zone-walkthrough.mp4`: 1920 x 1080, 30 fps continuous GUI tutorial,
+  with visible typing, menus, dialogs, device responses, an animated pointer,
+  click rings, gentle focus zooms, chapter labels and English captions.
 - `comport-zone-walkthrough.srt`: separate subtitles.
 - `comport-zone-walkthrough.chapters.txt`: chapter timestamps.
 - `comport-zone-walkthrough.transcript.md`: readable narration transcript.
@@ -42,9 +43,10 @@ the new release notes/manifest; old videos are not relabeled or duplicated.
 Use `--video always` for a new cut, including a screenshot-only refresh. Runtime
 timestamps in newly captured images do not force perpetual later rebuilds.
 
-The guide combines actual GUI captures with explanatory command cards. It does
-not represent an uninterrupted recording of a physical bench. Serial settings
-are illustrated; the demonstrated communication uses localhost TCP and UDP.
+The tutorial records real Qt widgets responding to mouse and keyboard events.
+Only the separate instrument is simulated, on localhost TCP and UDP. No physical
+COM hardware is needed. The CLI segment runs actual PowerShell subprocesses in
+an isolated terminal frontend; output and exit codes come from the real CLI.
 
 Intermediates, model downloads, speech cache, validation reports and video clips
 go into the git-ignored `artifacts/user-guide/`. Override that location with
@@ -54,7 +56,8 @@ already contains the audio.
 ## Prerequisites on Windows
 
 1. Set up the app with `setup_dev.bat`. Its Python environment supplies PySide6
-   for `capture.py`.
+   for `capture.py` and `walkthrough.py`. Recording requires a Qt offscreen
+   plugin supporting JSON screen configuration (the current PySide6 supports it).
 2. Use **Python 3.12** for the media environment. The current Kokoro package
    supports Python 3.10-3.13; a Python 3.14 app environment can still capture the
    GUI but cannot install this Kokoro version.
@@ -85,6 +88,13 @@ stop that process first. Nothing connects to a physical COM port.
 # Local narration; unchanged sentences reuse their cached audio.
 .\artifacts\user-guide\venv\Scripts\python.exe tools/media/build.py narrate
 
+# Rehearse all GUI/CLI actions quickly and check their assertions first.
+.\.venv\Scripts\python.exe tools/media/walkthrough.py --rehearse
+
+# Record in real time. Keep this separate from other Qt tests/captures.
+$env:COMPORT_ZONE_FFMPEG = .\artifacts\user-guide\venv\Scripts\python.exe -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+.\.venv\Scripts\python.exe tools/media/walkthrough.py
+
 # Assemble the video, subtitles, transcript and chapter timestamps.
 .\artifacts\user-guide\venv\Scripts\python.exe tools/media/build.py video
 
@@ -92,28 +102,42 @@ stop that process first. Nothing connects to a physical COM port.
 .\artifacts\user-guide\venv\Scripts\python.exe tools/media/build.py pdf
 ```
 
-`narrate --pilot` and `video --pilot` build the first two scenes only. Full scene
-audio is padded to video frame boundaries to avoid cumulative A/V drift. The
-narration manifest records voice settings and model hashes. Video scene caches
-include the renderer, captions, screenshot and audio hashes.
+For a short visual preview, generate full narration, then run `walkthrough.py
+--pilot` and `build.py video --pilot`. These record/assemble the first eight
+actions in `live-pilot/` without replacing the full recording or build receipt.
+Each scene waits for its narration; a longer interaction extends that step.
+Assembly aligns audio, captions and chapters to actual action timestamps rather
+than speeding footage up to fit a fixed slide. The narration manifest records
+voice settings and model hashes. `live/recording.json` records every step and
+input event, output hashes, frame count, and any assertion failures. Stale
+sources, changed narration, missing steps and failed actions block assembly.
 
 The PDF renderer is `manual_pdf.py`, separate from the video renderer in
 `build.py`; changing PDF formatting alone does not invalidate a video. Build
 receipts in the work directory record inputs/output hashes. Changed sources
 require rebuilding; do not edit receipt hashes to bypass this check.
 
-Capture uses the offscreen Qt backend and explicitly loads fonts on Windows.
+Capture and recording use a configured offscreen Qt screen and explicitly load fonts on Windows.
 It never drives your desktop. It writes only to the media work directory and
 the tutorial screenshots, disabling app update checks in its isolated settings.
 It verifies the identity reply and three successful script checks, then runs
 the documented CLI examples with a separate configuration file. Check
 `capture-validation.json` and `cli-validation.json` after rebuilding.
+For the interactive tutorial, inspect `live/rehearsal.json`, the rehearsal PNGs,
+and `live/recording.json`. All 49 steps must finish without errors. Recordings
+show the workflow unfolding; avoid replacing interactions with screenshot cards.
+To diagnose a timing-sensitive interaction, run `walkthrough.py --check-step
+setpoint` (or another scene ID). It rehearses prerequisites quickly, then drives
+that step at recording speed without producing publishable footage. Use the
+actual text child when clicking composite controls such as a spinbox, so input
+follows the same route as a physical pointer click.
 
 ## Verify before publishing
 
 ```powershell
 .\scripts\run_tests.ps1 tests.test_tutorial_media
 .\scripts\run_tests.ps1 tests.test_media_release
+.\scripts\run_tests.ps1 tests.test_live_timing
 .\run_tests.bat
 python tools/media/check_docs.py
 git diff --check
@@ -159,7 +183,7 @@ installer and portable build.
 python tools/media/release_media.py plan --online
 # Optional: --video always forces a new recording.
 
-# If rebuilding: run capture.py, build.py narrate and build.py video.
+# If rebuilding: capture.py, build.py narrate, walkthrough.py, build.py video.
 # Always build the PDF after any capture refresh, even when reusing video.
 python tools/media/build.py pdf
 python tools/media/check_docs.py --pdf docs/media/comport-zone-user-manual.pdf
