@@ -11,6 +11,54 @@ key, or paid generation is needed. ElevenLabs is deferred to a later improvement
 The scene-level scripts, cached audio, and timeline make replacing the narrator
 possible without rewriting the tutorial.
 
+## Local voice auditions
+
+Use `audition.json` and `audition.py` to compare the current Michael voice,
+Kokoro Heart, and Qwen3-TTS 1.7B CustomVoice Aiden/Ryan on one shared passage.
+Auditions write only to ignored `artifacts/user-guide/audition/`. They do not
+select a production narrator or rebuild/publish the manual or walkthrough.
+
+The pinned Qwen checkpoint is Apache-2.0 licensed and uses preset voices; no
+personal voice recording or paid service is needed. Install in a separate
+Python 3.12 environment. On an NVIDIA GPU with a compatible driver:
+
+```powershell
+py -3.12 -m venv artifacts/user-guide/audition-venv
+$voicePython = '.\artifacts\user-guide\audition-venv\Scripts\python.exe'
+& $voicePython -m pip install --upgrade pip
+& $voicePython -m pip install torch==2.10.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+& $voicePython -m pip install -r tools/media/requirements-audition.txt
+& $voicePython tools/media/audition.py download
+& $voicePython tools/media/audition.py kokoro
+& $voicePython tools/media/audition.py qwen
+& $voicePython tools/media/audition.py report
+```
+
+The initial checkpoint/runtime download is several GB. Large checkpoint files
+use resumable HTTP ranges and must pass SHA-256 verification before use. Native
+Windows inference uses PyTorch SDPA rather than requiring FlashAttention.
+The upstream package may print optional FlashAttention/SoX warnings on import;
+this preset-voice path uses SDPA and does not invoke the SoX binary.
+If the large PyTorch wheel repeatedly stalls, use the same bounded downloader
+with the checksum from PyTorch's official wheel index, then install locally:
+
+```powershell
+& $voicePython tools/media/download_range.py 'https://download-r2.pytorch.org/whl/cu128/torch-2.10.0%2Bcu128-cp312-cp312-win_amd64.whl' 'artifacts/user-guide/wheels/torch-2.10.0+cu128-cp312-cp312-win_amd64.whl' --bytes 2867409626 --sha256 fbde8f6a9ec8c76979a0d14df21c10b9e5cab6f0d106a73ca73e2179bc597cae
+& $voicePython -m pip install 'artifacts/user-guide/wheels/torch-2.10.0+cu128-cp312-cp312-win_amd64.whl' torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
+The sample receipts record model revision/hashes, voice, seed, generation time,
+peak GPU allocation, natural duration, and final audio checksums. All candidates
+read the same paragraphs; outputs are normalized to -19 LUFS without changing
+pitch or stretching time. Listen for acronym pronunciation, pauses, clarity,
+warmth, and consistent delivery. The target is 45–60 seconds per candidate.
+
+Auditions remain local review files. Commit their scripts, passage, and
+instructions; do not add audio, checkpoints, environments, or download chunks
+to Git. A voice-only audition does not change application behavior or require
+an empty user-manual edit. Once a narrator is chosen, update the production
+storyboard/settings and rebuild using the main workflow below.
+
 ## Outputs
 
 Builds write to `docs/media/`, with MP4/WAV/PDF ignored by Git. Canonical binary

@@ -34,6 +34,10 @@ version, links, tracked binaries and PR declaration; CI builds a PDF preview.
 - Narration is local **Kokoro v1.0 / am_michael**. ElevenLabs is a later upgrade.
   `download_models.py` verifies model hashes. Do not substitute another narrator
   unless the user asks to change the voice/provider.
+- For a voice comparison, use `tools/media/audition.py` and `audition.json`.
+  The runbook covers the separate GPU environment and pinned local Qwen model.
+  Auditions are local review files; select a production narrator only after the
+  user chooses a candidate, then rebuild production media through its usual checks.
 - Use `build.py pdf`, `narrate`, `walkthrough.py`, and `build.py video`; see the runbook for ordering. Inspect
   PDF page renders and representative finished video frames, verify captions and
   audio, and exercise the GUI/CLI examples. Tests use unittest, not pytest.

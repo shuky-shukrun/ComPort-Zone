@@ -1,0 +1,22 @@
+{
+  "title": "ComPort Zone English narration audition",
+  "target_seconds": [45, 60],
+  "seed": 42,
+  "paragraphs": [
+    "Let's connect ComPort Zone to a device and run a repeatable check. Open Connection Settings, choose TCP, and enter the local address and port. Select carriage return plus line feed, then connect. The green indicator confirms that the connection is open.",
+    "Type the identification query and press Enter. The instrument replies with its model and serial number. Next, read the voltage, recall a command from history, and save it as a favorite. You can also send raw bytes or communicate over UDP.",
+    "Now open a command file, choose the connected terminal, and click Run. Watch the measurements arrive and check the final summary. Finally, open the live control panel, change the voltage setpoint to fifteen volts, and confirm the readback before continuing."
+  ],
+  "qwen": {
+    "repository": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
+    "instruction": "Speak as a friendly, confident American English software tutorial narrator. Use clear technical pronunciation and a calm, measured conversational pace, around 140 words per minute. Keep an even volume and natural pauses. Do not sound theatrical or overly excited.",
+    "attention": "sdpa"
+  },
+  "candidates": [
+    {"id":"kokoro-michael","label":"Kokoro Michael (current voice)","provider":"kokoro","voice":"am_michael","speed":0.88},
+    {"id":"kokoro-heart","label":"Kokoro Heart","provider":"kokoro","voice":"af_heart","speed":0.95},
+    {"id":"qwen-aiden","label":"Qwen3-TTS Aiden","provider":"qwen","voice":"Aiden"},
+    {"id":"qwen-ryan","label":"Qwen3-TTS Ryan","provider":"qwen","voice":"Ryan"}
+  ]
+}
