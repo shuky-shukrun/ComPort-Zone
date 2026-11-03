@@ -14,7 +14,7 @@ from tools.media.common import (
 )
 from tools.media.release_media import (
     CHECKSUM_ASSET, RECEIPT_ASSET, checked_package, make_plan, package,
-    updated_notes, validate_previous, verify,
+    remote_release, updated_notes, validate_previous, verify,
 )
 
 
@@ -134,6 +134,15 @@ class MediaReleaseTests(unittest.TestCase):
         self.assertTrue(once.startswith(original))
         self.assertEqual(updated_notes(once, receipt), once)
         self.assertIn("recorded for v0.9.0", once)
+
+    def test_release_api_windows_line_endings_match_the_published_notes(self):
+        receipt = self.published()
+        expected = updated_notes("# Existing release\n", receipt)
+        response = json.dumps({"body": expected.replace("\n", "\r\n"), "assets": []})
+        with mock.patch("tools.media.release_media.gh", return_value=response):
+            actual = remote_release(REPOSITORY, "v0.9.0")["body"]
+        self.assertEqual(actual, expected)
+        self.assertEqual(updated_notes(actual, receipt), expected)
 
     def test_reused_video_is_verified_on_its_original_release(self):
         previous = self.published()

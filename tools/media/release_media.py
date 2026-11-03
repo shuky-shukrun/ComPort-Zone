@@ -181,7 +181,10 @@ def updated_notes(body: str, receipt: dict) -> str:
 
 
 def remote_release(repository: str, tag: str) -> dict:
-    return json.loads(gh("api", f"repos/{repository}/releases/tags/{tag}"))
+    release = json.loads(gh("api", f"repos/{repository}/releases/tags/{tag}"))
+    if isinstance(release.get("body"), str):
+        release["body"] = release["body"].replace("\r\n", "\n")
+    return release
 
 
 def verify(staging: Path, tag: str) -> dict:
@@ -237,7 +240,7 @@ def upload(staging: Path, tag: str, replace=False) -> None:
     verify(staging, tag)
     body = updated_notes(remote.get("body") or "", receipt)
     notes_path = staging.parent / "release-notes-with-media.md"
-    notes_path.write_text(body, encoding="utf-8")
+    notes_path.write_text(body, encoding="utf-8", newline="\n")
     gh("release", "edit", tag, "--repo", receipt["repository"], "--notes-file", str(notes_path))
     if notes_block(receipt) not in (remote_release(receipt["repository"], tag).get("body") or ""):
         raise ValueError("Uploaded assets are verified, but the release download links did not persist.")
